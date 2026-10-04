@@ -16,6 +16,7 @@ import type {
   PictureCoordinate,
   PictureTone,
   ScreenColor,
+  TextBoxLayout,
   TransferCoordinate,
   TransferDirection,
   TransferMap,
@@ -48,6 +49,9 @@ export interface EditableField {
   options?: readonly string[];
   /** Visible guidance for free-text fields, especially project resources. */
   hint?: string;
+  /** The handheld editor draws `hint` under the field, wrapped (Studio
+   *  shows every hint). Set on fields whose hint names them in Chinese. */
+  inlineHint?: boolean;
   readOnly?: boolean;
 }
 
@@ -77,6 +81,16 @@ const ICON_FRAMES = ["0", "1", "2"] as const;
 const PICTURE_ORIGINS = ["topLeft", "center"] as const;
 const PICTURE_BLENDS = ["normal", "add", "multiply", "screen"] as const;
 const PICTURE_EASINGS = ["linear", "easeIn", "easeOut", "easeInOut"] as const;
+/** The text window's optional layout fields (schema order) with the value an
+ * absent key means. Choosing that default removes the key, so a default text
+ * keeps its exact JSON. The hint names the field in Chinese and English. */
+const TEXT_LAYOUT = {
+  position: { label: "POSITION", hint: "窗口位置 · window position, default bottom", fallback: "bottom", values: ["top", "center", "bottom", "topLeft", "topRight", "bottomLeft", "bottomRight", "left", "right"] },
+  align: { label: "ALIGN", hint: "水平对齐 · row alignment, default left", fallback: "left", values: ["left", "center", "right"] },
+  valign: { label: "V-ALIGN", hint: "垂直对齐 · vertical alignment, default top", fallback: "top", values: ["top", "center", "bottom"] },
+  background: { label: "BACKGROUND", hint: "窗口背景 · window background, default window", fallback: "window", values: ["window", "dim", "transparent"] },
+} as const satisfies Record<keyof TextBoxLayout, { label: string; hint: string; fallback: string; values: readonly string[] }>;
+const TEXT_LAYOUT_KEYS = Object.keys(TEXT_LAYOUT) as (keyof TextBoxLayout)[];
 const TIMER_ACTIONS = ["start", "stop", "read"] as const;
 const CHOICE_OPTION_KEY = /^option:(\d+)(?:\.(icon|icon\.dir|icon\.frame))?$/;
 const COMMAND_SCHEMA = (PROJECT_SCHEMA as { $defs: { command: Schema } }).$defs.command;
@@ -429,7 +443,14 @@ export function commandFields(
 ): EditableField[] {
   switch (command.op) {
     case "text":
-      return [field("lines", "LINES", command.lines.join("\n")), field("cps", "CPS", command.cps ?? "", "integer")];
+      return [
+        field("lines", "LINES", command.lines.join("\n")),
+        field("cps", "CPS", command.cps ?? "", "integer"),
+        ...TEXT_LAYOUT_KEYS.map((key) => {
+          const { label, hint, fallback, values } = TEXT_LAYOUT[key];
+          return { ...field(key, label, command[key] ?? fallback, "enum", values), hint, inlineHint: true };
+        }),
+      ];
     case "choices":
       return [
         field("prompt", "PROMPT", command.prompt),
@@ -939,6 +960,15 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       if (key === "cps") {
         if (raw.trim() === "") { const { cps: _, ...rest } = command; return good(rest); }
         const value = integer(raw, "cps", 1, 120); return value.ok ? good({ ...command, cps: value.value }) : value;
+      }
+      if (Object.hasOwn(TEXT_LAYOUT, key)) {
+        const layoutKey = key as keyof TextBoxLayout;
+        const { fallback, values } = TEXT_LAYOUT[layoutKey];
+        const value = enumValue<string>(raw, values, `text ${layoutKey}`);
+        if (!value.ok) return value;
+        if (value.value !== fallback) return good({ ...command, [layoutKey]: value.value });
+        const { [layoutKey]: _, ...rest } = command;
+        return good(rest);
       }
       break;
     }

@@ -7,6 +7,8 @@ import {
   hitTestEventInspector,
   inspectorActionKey,
   inspectorControlFullyVisible,
+  inspectorFieldLines,
+  INSPECTOR_ROW_H,
   type EventInspectorAction,
   type InspectorCommandRow,
   type InspectorConditionRow,
@@ -14,6 +16,7 @@ import {
   type InspectorRect,
 } from "../editor/engine/event-layout.ts";
 import { flattenCommands } from "../editor/engine/commands.ts";
+import { commandInspectorRows } from "../editor/engine/event-fields.ts";
 import { HEADER_H, STATUS_H } from "../editor/engine/layout.ts";
 
 const conditions: InspectorConditionRow[] = [
@@ -292,4 +295,48 @@ describe("condition action button geometry", () => {
       expect(4 + (leftWidth - 68)).toBe(add!.rect.x - 4);
     });
   }
+});
+
+describe("fields that draw their hint", () => {
+  // 12 px per CJK character, 6 px per other one.
+  const measure = (text: string) => [...text].reduce((w, ch) => w + (ch.codePointAt(0)! >= 0x2e80 ? 12 : 6), 0);
+  const rows = commandInspectorRows([{ op: "text", lines: ["Hi"], position: "topRight" }]);
+  const fields = rows[0]!.fields!;
+  const position = fields.find((field) => field.key === "position")!;
+
+  test("the label and the hint wrap inside the control, nothing cut", () => {
+    for (const width of [400, 160, 80, 40]) {
+      const lines = inspectorFieldLines(position, width, "topRight", measure)!;
+      // Each row fits the text budget; joined back they hold every
+      // character in order (a too-wide word breaks between letters).
+      const strip = (text: string) => text.replace(/\s/g, "");
+      expect(strip(lines.label.join(""))).toBe("POSITIONtopRight");
+      for (const row of [...lines.label, ...lines.hint]) expect(measure(row)).toBeLessThanOrEqual(width - 6);
+      expect(strip(lines.hint.join(""))).toBe(strip(position.hint!));
+      if (width >= 160) expect(lines.label).toEqual(["POSITION topRight"]);
+      expect(lines.rows).toBeGreaterThanOrEqual(lines.label.length + lines.hint.length);
+    }
+    // At 40 px the four Chinese characters break between them ("·" may
+    // not begin a row, so "置" moves down with it).
+    expect(inspectorFieldLines(position, 40, "topRight", measure)!.hint.slice(0, 3)).toEqual(["窗口", "位", "置 ·"]);
+    // Fields without inlineHint stay one row.
+    expect(inspectorFieldLines(fields.find((field) => field.key === "cps")!, 400, "", measure)).toBeNull();
+  });
+
+  test("the command row grows by the hint rows and the fields stack", () => {
+    for (const width of [480, 720]) {
+      const layout = createEventInspectorLayout({ width, height: 4000, pageCount: 1, activePage: 0, conditions: [], commands: rows, measure });
+      const controls = layout.commandRows[0]!.fields;
+      expect(controls.map((control) => control.label)).toEqual(fields.map((field) => field.label));
+      for (let i = 1; i < controls.length; i++) {
+        expect(controls[i]!.rect.y).toBe(controls[i - 1]!.rect.y + controls[i - 1]!.rect.h);
+      }
+      for (const [i, field] of fields.entries()) {
+        const lines = inspectorFieldLines(field, controls[i]!.rect.w, String(field.value), measure);
+        expect(controls[i]!.rect.h).toBe(lines ? Math.max(INSPECTOR_ROW_H, 6 + 12 * lines.rows) : INSPECTOR_ROW_H);
+      }
+      // The four layout fields take two rows or more each.
+      expect(controls.slice(2).every((control) => control.rect.h >= 30)).toBe(true);
+    }
+  });
 });

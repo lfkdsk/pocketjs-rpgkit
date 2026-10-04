@@ -83,6 +83,7 @@ import type {
   ChoiceIcon,
   CameraTarget,
   Command,
+  TextBoxLayout,
   CommonEvent,
   Condition,
   Dir,
@@ -627,7 +628,7 @@ export function eventIdLess(a: string, b: string): boolean {
 // --- compiled programs -------------------------------------------------------
 
 export type Instr =
-  | { op: "text"; lines: string[]; cps: number }
+  | { op: "text"; lines: string[]; cps: number; box?: TextBoxLayout }
   | {
       op: "choices";
       prompt: string;
@@ -920,9 +921,13 @@ function compileScoped(
         case "jumpLabel":
           emit({ op: "jumpLabel", name: c.name });
           break;
-        case "text":
-          emit({ op: "text", lines: c.lines, cps: c.cps ?? DEFAULT_CPS });
+        case "text": {
+          const ins: Extract<Instr, { op: "text" }> = { op: "text", lines: c.lines, cps: c.cps ?? DEFAULT_CPS };
+          const box = textBoxLayout(c);
+          if (box) ins.box = box;
+          emit(ins);
           break;
+        }
         case "choices": {
           const ins: Extract<Instr, { op: "choices" }> = {
             op: "choices",
@@ -1613,11 +1618,26 @@ export interface TextModal {
   pageStarts?: readonly number[];
   /** The page on screen, an index into pageStarts (present with it). */
   page?: number;
+  /** Only on a text command with a layout other than the default box: the
+   *  command's window position, alignment and background, for the UI. */
+  box?: TextBoxLayout;
+}
+
+/** The layout fields of a text command that differ from the default box,
+ *  or undefined when it draws the default one (the common case, which then
+ *  carries no field at all). */
+export function textBoxLayout(c: TextBoxLayout): TextBoxLayout | undefined {
+  let box: TextBoxLayout | undefined;
+  if (c.position !== undefined && c.position !== "bottom") (box ??= {}).position = c.position;
+  if (c.align !== undefined && c.align !== "left") (box ??= {}).align = c.align;
+  if (c.valign !== undefined && c.valign !== "top") (box ??= {}).valign = c.valign;
+  if (c.background !== undefined && c.background !== "window") (box ??= {}).background = c.background;
+  return box;
 }
 
 /** A text box opening on `lines`, with its pages when World.paginateText
- *  splits it. */
-function openTextModal(w: World, fiber: string, lines: string[]): TextModal {
+ *  splits it (at the width of the box's window). */
+function openTextModal(w: World, fiber: string, lines: string[], box: TextBoxLayout | undefined): TextModal {
   const modal: TextModal = {
     kind: "text",
     fiber,
@@ -1626,7 +1646,8 @@ function openTextModal(w: World, fiber: string, lines: string[]): TextModal {
     revealed: 0,
     complete: false,
   };
-  const starts = w.paginateText?.(lines);
+  if (box) modal.box = box;
+  const starts = w.paginateText?.(lines, box);
   if (starts && starts.length > 1) {
     modal.pageStarts = starts;
     modal.page = 0;
@@ -1701,6 +1722,12 @@ export type Modal = TextModal | ChoiceModal | ShopModal;
  *  `item` command's authored count range). */
 export const SHOP_ITEM_CAP = 99;
 
+function textBoxEquals(a: TextBoxLayout | undefined, b: TextBoxLayout | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  return a.position === b.position && a.align === b.align && a.valign === b.valign && a.background === b.background;
+}
+
 /** Did the VISIBLE modal identity/content change between two reducer
  *  frames? The UI repaints the message layer only when this is true, so a
  *  parked typewriter emits zero ops on idle frames. Comparing only kind and
@@ -1708,7 +1735,10 @@ export const SHOP_ITEM_CAP = 99;
  *  (a nested choice opens right after its parent is picked), and the second
  *  box has a different prompt, options and cancel permission. Those fields
  *  must be part of the identity or Solid keeps the previous box on screen
- *  and useActions never binds the newly-authored back action (review C07). */
+ *  and useActions never binds the newly-authored back action (review C07).
+ *  Likewise two text boxes with the same words on one fiber may differ only
+ *  in their layout or page cuts, with no empty frame between them when a
+ *  host frame folds several ticks or a rewind swaps the shown state. */
 export function modalChanged(a: Modal | null, b: Modal | null): boolean {
   if (a === b) return false;
   if (a === null || b === null) return true;
@@ -1719,7 +1749,13 @@ export function modalChanged(a: Modal | null, b: Modal | null): boolean {
       a.complete !== b.complete ||
       a.page !== b.page ||
       a.lines.length !== b.lines.length ||
-      a.lines.some((line, i) => line !== b.lines[i])
+      a.lines.some((line, i) => line !== b.lines[i]) ||
+      !textBoxEquals(a.box, b.box) ||
+      (a.pageStarts === undefined) !== (b.pageStarts === undefined) ||
+      (a.pageStarts !== undefined && (
+        a.pageStarts.length !== b.pageStarts!.length ||
+        a.pageStarts.some((start, i) => start !== b.pageStarts![i])
+      ))
     );
   }
   if (a.kind === "choices" && b.kind === "choices") {
@@ -2174,14 +2210,16 @@ export interface WorldOptions {
    *  dialog-pages.ts createDialogPaginator). Called once when a text box
    *  opens, with the lines as shown (player name substituted); the answer
    *  is kept in the modal, so each further page takes one more confirm.
-   *  It must be a pure function of the lines. Absent (headless callers,
+   *  It must be a pure function of the lines and the command's layout
+   *  (`box`, absent for the default box: a corner or side window is
+   *  narrower, so its words take more pages). Absent (headless callers,
    *  boxes that never wrap): every message is one page. */
   paginateText?: TextPaginator;
 }
 
 /** Code-point offsets into `lines.join("\n")` where each page of a message
  *  starts ([0, ...]), or null when it fits one box. */
-export type TextPaginator = (lines: readonly string[]) => readonly number[] | null;
+export type TextPaginator = (lines: readonly string[], box?: TextBoxLayout) => readonly number[] | null;
 
 export interface KeyedEvent {
   ev: GameEvent;
@@ -4790,7 +4828,7 @@ function runFiber(
       // does not retype it (RPG Maker converts escapes once).
       const open = s.modal?.kind === "text"
         ? s.modal
-        : openTextModal(w, f.key, boxLines(s, w, ins.lines, extension.ext));
+        : openTextModal(w, f.key, boxLines(s, w, ins.lines, extension.ext), ins.box);
       // The typewriter counts code points (one per drawn glyph), not UTF-16
       // units: a supplementary character is one step. Same as .length for
       // text without surrogate pairs. It types the open page only.
@@ -4812,6 +4850,7 @@ function runFiber(
         next.pageStarts = open.pageStarts;
         next.page = open.page ?? 0;
       }
+      if (open.box) next.box = open.box;
       if (input.confirmEdge && timed >= pageLength) {
         if (next.pageStarts && next.page! + 1 < next.pageStarts.length) {
           // Turn the page: its typewriter starts on this frame, like a box
@@ -5557,7 +5596,7 @@ function runFiber(
         f.mode = "text";
         f.since = s.frame;
         const firstLines = boxLines(s, w, ins.lines, extension.ext);
-        s.modal = openTextModal(w, f.key, firstLines);
+        s.modal = openTextModal(w, f.key, firstLines, ins.box);
         return;
       case "choices": {
         // Same single-slot rule for the choices box.

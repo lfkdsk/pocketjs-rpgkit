@@ -122,6 +122,12 @@ const mzText = (speaker: string, ...lines: string[]): RmCommand[] => [
   ...lines.map((l) => cmd(401, l)),
 ];
 const mvText = (...lines: string[]): RmCommand[] => [cmd(101, "", 0, 0, 2), ...lines.map((l) => cmd(401, l))];
+/** MV Show Text with a background (0 window, 1 dim, 2 transparent) and a
+ *  position type (0 top, 1 middle, 2 bottom). */
+const mvTextAt = (background: number, position: number, ...lines: string[]): RmCommand[] => [
+  cmd(101, "", 0, background, position),
+  ...lines.map((l) => cmd(401, l)),
+];
 
 /** Conditional Branch with an optional Else. */
 const ifThen = (cond: unknown[], then: Part[], otherwise?: Part[]): RmCommand[] => [
@@ -1885,7 +1891,7 @@ function stageMap(): RmMap {
         image: { characterName: "Cast", characterIndex: 4 },
         moveType: 1,
         freq: 4,
-        list: list(mvText("Woo! Front row!")),
+        list: list(mvTextAt(1, 0, "Woo! Front row!")),
       }),
     ]),
     event(5, "Stagehand", 12, 3, [
@@ -1927,7 +1933,7 @@ function stageMap(): RmMap {
       page({
         image: { tileId: SB.spotlight },
         priority: 0,
-        list: list(mvText("A chalk mark: the lead's spot.")),
+        list: list(mvTextAt(2, 1, "A chalk mark: the lead's spot.")),
       }),
     ]),
     event(9, "Usher", 14, 10, [

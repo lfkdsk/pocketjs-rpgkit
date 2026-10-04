@@ -36,6 +36,7 @@ import type {
   RouteTarget,
   ScreenColor,
   ShopGood,
+  TextBoxLayout,
   Trigger,
 } from "../../src/engine/types.ts";
 import { RM_COMMAND_BY_CODE, RM_CONDITION_TYPES, RM_ROUTE_BY_CODE } from "./catalog.ts";
@@ -510,7 +511,7 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
     case 101: {
       const m = message(nd, st);
       rec(st, 101, m.reasons.length ? "Degraded" : "Native", m.reasons[0]);
-      return textCommands(m.lines);
+      return textCommands(m.lines, m.layout);
     }
     case 102:
       return emitChoices(nd, st, scope, "");
@@ -803,7 +804,29 @@ function exitCommand(st: State, code: number): Command[] {
 
 // --- text and choices --------------------------------------------------------
 
-function message(nd: RmNode, st: State): { lines: string[]; reasons: string[] } {
+/** Show Text background (params[2]: 0 window, 1 dim, 2 transparent) and
+ *  position type (params[3]: 0 top, 1 middle, 2 bottom) as the text box
+ *  layout. The defaults (window, bottom) are omitted, so a default message
+ *  emits the plain text command. Any other value is shown as the default
+ *  and noted. */
+function messageLayout(p: readonly unknown[], reasons: string[]): TextBoxLayout {
+  const layout: TextBoxLayout = {};
+  const background = p[2];
+  if (background === 1) layout.background = "dim";
+  else if (background === 2) layout.background = "transparent";
+  else if (background !== 0 && background != null) {
+    reasons.push(`non-standard message background ${JSON.stringify(background)} shown as a window`);
+  }
+  const position = p[3];
+  if (position === 0) layout.position = "top";
+  else if (position === 1) layout.position = "center";
+  else if (position !== 2 && position != null) {
+    reasons.push(`non-standard message position ${JSON.stringify(position)} shown at the bottom`);
+  }
+  return layout;
+}
+
+function message(nd: RmNode, st: State): { lines: string[]; reasons: string[]; layout: TextBoxLayout } {
   const p = nd.cmd.parameters ?? [];
   const reasons: string[] = [];
   let lines = convertMessage(nd.lines.map((l) => String(l.parameters?.[0] ?? "")), st.ctx);
@@ -818,12 +841,14 @@ function message(nd: RmNode, st: State): { lines: string[]; reasons: string[] } 
   if (typeof p[0] === "string" && p[0] !== "") reasons.push("face graphic not shown");
   const wrapped = wrap(lines);
   if (wrapped.length !== lines.length) reasons.push("long lines re-wrapped to the 52-column box");
-  return { lines: wrapped.length > 0 ? wrapped : [""], reasons };
+  const layout = messageLayout(p, reasons);
+  return { lines: wrapped.length > 0 ? wrapped : [""], reasons, layout };
 }
 
-function textCommands(lines: readonly string[]): Command[] {
+/** One text command per TEXT_ROWS lines; every page carries the layout. */
+function textCommands(lines: readonly string[], layout: TextBoxLayout = {}): Command[] {
   const out: Command[] = [];
-  for (let k = 0; k < lines.length; k += TEXT_ROWS) out.push({ op: "text", lines: lines.slice(k, k + TEXT_ROWS) });
+  for (let k = 0; k < lines.length; k += TEXT_ROWS) out.push({ op: "text", lines: lines.slice(k, k + TEXT_ROWS), ...layout });
   return out;
 }
 
@@ -864,17 +889,19 @@ function tokenSafeSlice(text: string, width: number): string {
  *  under the choice list. The kit hides the message box during choices and
  *  shows a one-line prompt, so a one-line message becomes the prompt; a
  *  longer one shows its earlier lines first and keeps the last as the
- *  prompt. */
+ *  prompt. The message's position/background go on those earlier text
+ *  pages (and on the message a single-option list becomes); the choices
+ *  command has no layout, so its prompt is drawn in the default choice box. */
 function emitTextThenChoices(textNode: RmNode, choiceNode: RmNode, st: State, scope: Scope): Command[] {
   const m = message(textNode, st);
   const reasons = [...m.reasons];
   const out: Command[] = [];
   if (m.lines.length > 1) {
     reasons.push("only the last message line stays on screen with the choices");
-    out.push(...textCommands(m.lines.slice(0, -1)));
+    out.push(...textCommands(m.lines.slice(0, -1), m.layout));
   }
   rec(st, 101, reasons.length ? "Degraded" : "Native", reasons[0]);
-  out.push(...emitChoices(choiceNode, st, scope, m.lines[m.lines.length - 1]!));
+  out.push(...emitChoices(choiceNode, st, scope, m.lines[m.lines.length - 1]!, m.layout));
   return out;
 }
 
@@ -887,7 +914,7 @@ function choiceLabel(text: unknown, st: State): { text: string; truncated: boole
 /** Show Choices. cancelType -2 runs the When Cancel branch, -1 disallows
  *  cancel, n >= 0 runs option n's branch (MV setupChoices treats n beyond
  *  the list as -2). */
-function emitChoices(nd: RmNode, st: State, scope: Scope, prompt: string): Command[] {
+function emitChoices(nd: RmNode, st: State, scope: Scope, prompt: string, layout: TextBoxLayout = {}): Command[] {
   const p = nd.cmd.parameters ?? [];
   const convertedLabels = (Array.isArray(p[0]) ? (p[0] as unknown[]) : []).map((t) => choiceLabel(t, st));
   const labels = convertedLabels.map((label) => label.text);
@@ -919,7 +946,7 @@ function emitChoices(nd: RmNode, st: State, scope: Scope, prompt: string): Comma
       // One option the player must take (cancel absent or the same option):
       // a message with the option's label, then its branch.
       rec(st, 102, "Degraded", "single-option list shown as a message");
-      return [...textCommands(wrap(prompt ? [prompt, labels[0]!] : [labels[0]!])), ...bodies[0]!];
+      return [...textCommands(wrap(prompt ? [prompt, labels[0]!] : [labels[0]!]), layout), ...bodies[0]!];
     }
     reasons.unshift("single-option list padded with a Cancel option");
     labels.push("Cancel");

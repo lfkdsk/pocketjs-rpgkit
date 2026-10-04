@@ -16,7 +16,7 @@ import {
   type InterpState,
 } from "../src/engine/interpreter.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
-import type { Command, Condition, GameEvent, MapDef } from "../src/engine/types.ts";
+import type { Command, Condition, GameEvent, MapDef, TextBoxLayout } from "../src/engine/types.ts";
 import { RM_COMMANDS, RM_COMMAND_BY_CODE, RM_CONDITION_TYPES, RM_ROUTE_CODES, sampleCommands } from "../tools/rpgmaker-import/catalog.ts";
 import { Coverage, type Disposition } from "../tools/rpgmaker-import/coverage.ts";
 import {
@@ -450,6 +450,62 @@ describe("messages", () => {
     expect(r.cmds[0]).toEqual({ op: "text", lines: ["It costs 10."] });
     expect(r.cmds[1]).toMatchObject({ op: "choices", prompt: "Buy it?" });
     expect(only(r.cov, 101)).toBe("Degraded");
+  });
+
+  test.each([
+    ["window (default) is omitted", 0, {}],
+    ["dim", 1, { background: "dim" }],
+    ["transparent", 2, { background: "transparent" }],
+  ] as [string, number, TextBoxLayout][])("Show Text background %s", (_name, background, layout) => {
+    const r = conv([C(101, 0, ["", 0, background, 2]), C(401, 0, ["Hi."])]);
+    expect(r.cmds).toEqual([{ op: "text", lines: ["Hi."], ...layout }]);
+    expect(only(r.cov, 101)).toBe("Native");
+  });
+
+  test.each([
+    ["top", 0, { position: "top" }],
+    ["middle", 1, { position: "center" }],
+    ["bottom (default) is omitted", 2, {}],
+  ] as [string, number, TextBoxLayout][])("Show Text position %s", (_name, position, layout) => {
+    const r = conv([C(101, 0, ["", 0, 0, position]), C(401, 0, ["Hi."])]);
+    expect(r.cmds).toEqual([{ op: "text", lines: ["Hi."], ...layout }]);
+    expect(only(r.cov, 101)).toBe("Native");
+  });
+
+  test("Show Text with absent layout parameters emits the plain text command", () => {
+    const r = conv([C(101, 0, [""]), C(401, 0, ["Hi."])]);
+    expect(r.cmds).toEqual([{ op: "text", lines: ["Hi."] }]);
+    expect(only(r.cov, 101)).toBe("Native");
+  });
+
+  test("Show Text with a non-standard background or position shows the default box", () => {
+    let r = conv([C(101, 0, ["", 0, 3, 2]), C(401, 0, ["Hi."])]);
+    expect(r.cmds).toEqual([{ op: "text", lines: ["Hi."] }]);
+    expect(only(r.cov, 101)).toBe("Degraded");
+    r = conv([C(101, 0, ["", 0, 1, "0"]), C(401, 0, ["Hi."])]);
+    expect(r.cmds).toEqual([{ op: "text", lines: ["Hi."], background: "dim" }]);
+    expect(only(r.cov, 101)).toBe("Degraded");
+  });
+
+  test("every page of a split Show Text carries the layout", () => {
+    const long = "word ".repeat(30).trim();
+    const r = conv([C(101, 0, ["", 0, 2, 0]), ...[1, 2, 3, 4].map(() => C(401, 0, [long]))]);
+    expect(r.cmds.length).toBeGreaterThan(1);
+    for (const c of r.cmds) expect(c).toMatchObject({ op: "text", position: "top", background: "transparent" });
+  });
+
+  test("Show Text before Show Choices: the layout goes on the text pages, not the choices", () => {
+    const choices = [C(102, 0, [["Yes", "No"], -1, 0, 2, 0]), C(402, 0, [0, "Yes"]), END(1), C(402, 0, [1, "No"]), END(1), C(404, 0)];
+    let r = conv([C(101, 0, ["", 0, 1, 1]), C(401, 0, ["It costs 10."]), C(401, 0, ["Buy it?"]), ...choices]);
+    expect(r.cmds[0]).toEqual({ op: "text", lines: ["It costs 10."], position: "center", background: "dim" });
+    expect(r.cmds[1]).toEqual({
+      op: "choices", prompt: "Buy it?", options: [{ text: "Yes", commands: [] }, { text: "No", commands: [] }],
+    });
+
+    // A single-option list becomes a message showing the prompt: it keeps the layout.
+    const single = [C(102, 0, [["OK"], -1, 0, 2, 0]), C(402, 0, [0, "OK"]), END(1), C(404, 0)];
+    r = conv([C(101, 0, ["", 0, 1, 0]), C(401, 0, ["Ready?"]), ...single]);
+    expect(r.cmds).toEqual([{ op: "text", lines: ["Ready?", "OK"], position: "top", background: "dim" }]);
   });
 
   test("Show Scrolling Text becomes message pages", () => {

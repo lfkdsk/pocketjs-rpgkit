@@ -2,6 +2,8 @@
 // the companion-input path both consume this object, so there are no hidden
 // DOM hit targets (PocketJS receives raw logical-pixel pointer coordinates).
 
+import { breakText, type Measure } from "../../src/engine/text-break.ts";
+
 export interface InspectorRect {
   x: number;
   y: number;
@@ -17,6 +19,8 @@ export interface InspectorField {
   kind?: "text" | "integer" | "number" | "boolean" | "enum";
   options?: readonly string[];
   hint?: string;
+  /** Draw `hint` under the field, wrapped (see inspectorFieldLines). */
+  inlineHint?: boolean;
   readOnly?: boolean;
 }
 
@@ -138,6 +142,10 @@ export interface EventInspectorLayoutOptions {
   conditions: readonly InspectorConditionRow[];
   commands: readonly InspectorCommandRow[];
   scroll?: Partial<InspectorScrollOffsets>;
+  /** Width of a `text-xs` string; the app passes the baked font's
+   *  measurer. Sizes the rows of fields that draw their hint (absent: an
+   *  estimate of 12 px per CJK character and 7 px per other one). */
+  measure?: Measure;
 }
 
 export const INSPECTOR_HEADER_H = 24;
@@ -146,12 +154,50 @@ export const INSPECTOR_PAGES_H = 28;
 export const INSPECTOR_BODY_TOP =
   INSPECTOR_HEADER_H + INSPECTOR_EVENT_H + INSPECTOR_PAGES_H;
 export const INSPECTOR_ROW_H = 18;
+/** Line height of a field's wrapped text (`text-xs`). */
+export const INSPECTOR_LINE_H = 12;
+/** Text inset inside a field control: 3 px left, right and top. */
+const FIELD_TEXT_PAD = 3;
 
 const PAD = 4;
 const GAP = 3;
 const CONTROL_H = 20;
 const SECTION_H = 22;
 const PAGE_TAB_W = 42;
+
+const estimateWidth: Measure = (text) => {
+  let width = 0;
+  for (const ch of text) width += (ch.codePointAt(0) ?? 0) >= 0x2e80 ? 12 : 7;
+  return width;
+};
+
+/** The wrapped lines of a field that draws its hint (`inlineHint`) in a
+ *  control `width` wide: its "LABEL value" lines, then the hint's lines.
+ *  Lines break between CJK characters and at spaces, and a word wider than
+ *  the control breaks between letters, so nothing is ever cut. The label
+ *  lines are sized for the widest option, so cycling an enum keeps the
+ *  row's height. Null for a field drawn on one line. */
+export function inspectorFieldLines(
+  field: InspectorField,
+  width: number,
+  value: string,
+  measure: Measure = estimateWidth,
+): { label: string[]; hint: string[]; rows: number } | null {
+  if (!field.inlineHint || !field.hint) return null;
+  const budget = Math.max(1, width - 2 * FIELD_TEXT_PAD);
+  const wrap = (text: string) => breakText(text, budget, measure).map((row) => row.text.replace(/ +$/, ""));
+  const label = wrap(value === "" ? field.label : `${field.label} ${value}`);
+  const widest = Math.max(label.length, ...(field.options ?? []).map((option) => wrap(`${field.label} ${option}`).length));
+  const hint = wrap(field.hint);
+  return { label, hint, rows: widest + hint.length };
+}
+
+/** Height of a field control: one row, or the wrapped lines of a field
+ *  that draws its hint. */
+function fieldHeight(field: InspectorField, width: number, measure: Measure | undefined): number {
+  const lines = inspectorFieldLines(field, width, String(field.value ?? ""), measure);
+  return lines ? Math.max(INSPECTOR_ROW_H, 2 * FIELD_TEXT_PAD + lines.rows * INSPECTOR_LINE_H) : INSPECTOR_ROW_H;
+}
 
 export function inspectorCommandOp(row: InspectorCommandRow): string {
   return row.op ?? row.command?.op ?? "unknown";
@@ -388,10 +434,11 @@ export function createEventInspectorLayout(
   rowY = commandClip.y - scroll.commandsY;
   options.commands.forEach((command, row) => {
     const fieldsList = inspectorCommandFields(command);
-    const rowH = CONTROL_H + fieldsList.length * INSPECTOR_ROW_H + 3;
     const indent = Math.max(0, Math.floor(command.depth)) * 10;
     const contentX = commandClip.x + Math.min(indent, Math.max(0, commandClip.w - 50));
     const contentW = commandClip.x + commandClip.w - contentX;
+    const fieldHeights = fieldsList.map((field) => fieldHeight(field, contentW - 8, options.measure));
+    const rowH = CONTROL_H + fieldHeights.reduce((sum, h) => sum + h, 0) + 3;
     const rowRect = rect(contentX, rowY, contentW, rowH);
     const readOnly = command.readOnly === true
       || command.unsupported === true
@@ -414,9 +461,11 @@ export function createEventInspectorLayout(
         { kind: "command-pick" as const, row },
       );
     }
+    let fieldY = rowY + CONTROL_H;
+    const fieldTops = fieldHeights.map((h) => (fieldY += h) - h);
     const fields = fieldsList.map((field, fieldIndex) => control(
       field.label,
-      rect(rowRect.x + 8, rowY + CONTROL_H + fieldIndex * INSPECTOR_ROW_H, rowRect.w - 8, INSPECTOR_ROW_H),
+      rect(rowRect.x + 8, fieldTops[fieldIndex]!, rowRect.w - 8, fieldHeights[fieldIndex]!),
       {
         kind: "command-field" as const,
         row,

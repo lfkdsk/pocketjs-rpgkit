@@ -30,6 +30,7 @@ import {
   deleteCommandOp,
   eventCopyOp,
   fieldControl,
+  fieldText,
   fieldLabel,
   filterPickerEntries,
   insertCommandOp,
@@ -234,7 +235,10 @@ describe("branches and the visible tree", () => {
 describe("pure helpers", () => {
   test("field controls", () => {
     const text = commandFields({ op: "text", lines: ["a", "b"] });
-    expect(text.map(fieldControl)).toEqual(["textarea", "number"]);
+    expect(text.map(fieldControl)).toEqual(["textarea", "number", "select", "select", "select", "select"]);
+    expect(text.slice(2).map((field) => [fieldLabel(field.label), fieldText(field), field.options?.length])).toEqual([
+      ["Position", "bottom", 9], ["Align", "left", 3], ["V-align", "top", 3], ["Background", "window", 3],
+    ]);
     const sw = commandFields({ op: "switch", id: "s", value: true });
     expect(sw.map(fieldControl)).toEqual(["text", "checkbox"]);
     const self = commandFields({ op: "selfSwitch", key: "A", value: true });

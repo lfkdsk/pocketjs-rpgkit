@@ -2046,6 +2046,7 @@ export function GameView(props: GameViewProps) {
           choiceIconBox={props.choiceIcons}
           choiceIcon={props.choiceIcons && ((icon) => resolveChoiceIcon(icon, sprites, assets.npcSrc))}
           viewportWidth={viewport().w}
+          viewportHeight={viewport().h}
           uiText={uiTextOverrides()}
         />
       </ProfileMount>

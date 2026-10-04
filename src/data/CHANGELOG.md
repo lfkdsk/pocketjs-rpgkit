@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `1127febbfb43f2f33b1bd7a2df8c554efbbdc56e1e9a35f26558dbda4f8261b9` | optional `text` layout fields: `position` (top/center/bottom, the four corners, left/right), `align`, `valign` and `background` (window/dim/transparent); a text without them draws the same box as before | additive |
 | `5f14109a6414a63f6a4eaaa25c586aca61218b3a8e53f4f3776853a9573e7349` | `autosave` command; optional `save.autosave` interface label | additive |
 | `c0e962138a1f12dc5627590869b99f7c9b2ced3040e3d05ed0ebd663142d4857` | optional `system.textTokens` — declaring it is the explicit opt-in that switches `{x:<key>}` text-token expansion on (the allowlist of keys the game's session resolver answers); a document without it keeps the pre-`{x:}` literal behavior | additive |
 | `3315cbf7af3ceb5f6690824bf7fe0d0d7ac90f080fd741c7e24159a2b3e99ddb` | optional label `ord` (the label's position in the original flat RPG Maker source list, so a `jumpLabel` resolves the first label in source order even when the importer reordered branches) | additive |
@@ -786,6 +787,22 @@ No format change. Behavior fix in the session fold:
 - The project format and `schema.json` are unchanged, so the schema identity
   (`MAP_SCHEMA_HASH`) is unchanged and no row is added to
   [Schema identities](#schema-identities).
+
+## v1 amendment — 2026-10-04 (text box layout)
+
+- The `text` command gains four optional fields: `position` (`top`,
+  `center`, `bottom`, `topLeft`, `topRight`, `bottomLeft`, `bottomRight`,
+  `left`, `right`), `align` (`left`, `center`, `right`), `valign` (`top`,
+  `center`, `bottom`) and `background` (`window`, `dim`, `transparent`).
+  Absent, each means the box every earlier text drew (bottom, left, top,
+  window), so the change is additive: the previous identity stays loadable.
+- The compiled `text` instruction and the open text modal carry the
+  non-default fields as an optional `box`; a text without layout (or with
+  every default spelled out) carries none, so its states, saves and
+  checksums are unchanged. A saved instruction's `box` is validated on load
+  (a non-empty record of the fields above with their values).
+- `TextPaginator` receives the layout as an optional second argument; a
+  corner or side box is narrower, so its pages are cut at its own width.
 
 Breaking changes to any of the above require a new marker
 (`rpgkit-project/v2`) and a new entry here.

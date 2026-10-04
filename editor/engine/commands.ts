@@ -448,7 +448,11 @@ export function commandSummary(command: unknown): string {
       const lines = Array.isArray(command.lines)
         ? command.lines.filter((line): line is string => typeof line === "string")
         : [];
-      return `Text: ${truncate(lines.join(" / ") || "(empty)")}`;
+      // Only the layout fields an author set; a default box reads as before.
+      const layout = (["position", "align", "valign", "background"] as const)
+        .map((key) => command[key])
+        .filter((value): value is string => typeof value === "string");
+      return `Text: ${truncate(lines.join(" / ") || "(empty)")}${layout.length > 0 ? ` [${layout.join(", ")}]` : ""}`;
     }
     case "choices":
       return `Choices: ${truncate(text(command.prompt, "(no prompt)"))} (${Array.isArray(command.options) ? command.options.length : 0})`;

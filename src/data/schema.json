@@ -661,7 +661,11 @@
           "properties": {
             "op": { "const": "text" },
             "lines": { "type": "array", "items": { "type": "string", "maxLength": 52 }, "minItems": 1, "maxItems": 4 },
-            "cps": { "type": "integer", "minimum": 1, "maximum": 120, "description": "Chars per virtual second of typewriter reveal; default 30." }
+            "cps": { "type": "integer", "minimum": 1, "maximum": 120, "description": "Chars per virtual second of typewriter reveal; default 30." },
+            "position": { "enum": ["top", "center", "bottom", "topLeft", "topRight", "bottomLeft", "bottomRight", "left", "right"], "description": "Where the window sits; default bottom. top/center/bottom span the screen width, the corners and sides are a narrower window against that edge." },
+            "align": { "enum": ["left", "center", "right"], "description": "Horizontal place of each row in the text column; default left." },
+            "valign": { "enum": ["top", "center", "bottom"], "description": "Vertical place of the page's rows in the box's text area (four rows in a band, fewer in a corner or side box); default top." },
+            "background": { "enum": ["window", "dim", "transparent"], "description": "window: the framed panel (default); dim: a translucent panel fill without the frame; transparent: the words alone." }
           }
         },
         {

@@ -52,6 +52,20 @@ export function resolveUiTheme(theme?: Partial<UiTheme>): UiTheme {
   return out;
 }
 
+/** A fully transparent colour: a layer that draws nothing. */
+export const CLEAR_COLOR = "#00000000";
+
+/** `color` ("#rgb", "#rgba", "#rrggbb" or "#rrggbbaa") at `alpha` (0..1) of
+ *  its own opacity, as "#rrggbbaa". Anything else comes back unchanged. */
+export function translucentColor(color: string, alpha: number): string {
+  let hex = color.startsWith("#") ? color.slice(1) : "";
+  if (hex.length === 3 || hex.length === 4) hex = [...hex].map((c) => c + c).join("");
+  if ((hex.length !== 6 && hex.length !== 8) || !/^[0-9a-fA-F]+$/.test(hex)) return color;
+  const own = hex.length === 8 ? parseInt(hex.slice(6), 16) : 255;
+  const a = Math.round(own * Math.min(1, Math.max(0, alpha)));
+  return `#${hex.slice(0, 6)}${a.toString(16).padStart(2, "0")}`;
+}
+
 export interface SpeakerSplit {
   /** The speaker's key in the faces table, or null for a plain line. */
   name: string | null;

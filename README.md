@@ -960,7 +960,7 @@ conversion point are documented in `src/ui/world-contract.ts`.
 
 | op | purpose |
 | --- | --- |
-| `text` | typewriter dialog lines; a message longer than the box continues on further pages, one confirm each ([Long text is never cut](#long-text-is-never-cut)); `{name}` and, with `system.textVariables`, `{v:<id>}` tokens ([Text tokens](#text-tokens)) |
+| `text` | typewriter dialog lines; a message longer than the box continues on further pages, one confirm each ([Long text is never cut](#long-text-is-never-cut)); `{name}` and, with `system.textVariables`, `{v:<id>}` tokens ([Text tokens](#text-tokens)); optional `position`, `align`, `valign` and `background` place and draw the box ([Text box layout](#text-box-layout)) |
 | `choices` | prompt with 2-8 option branches (a scrolling box past 4), an optional cancel branch, and optional per-option sprite icons ([Choice icons](#choice-icons)) |
 | `switch` | set a global switch |
 | `variable` | set/add/sub, a seeded random range, or arithmetic against another variable (copy/add/sub/mul/div/mod) |
@@ -2433,13 +2433,19 @@ mount(() => <GameView project={project} assets={GAME_ASSETS} theme={PARCHMENT} f
 
 A text whose first line starts with `NAME: ` (`/^([A-Z][A-Z]+): /`) for a
 name in `faces` shows that portrait left of the text and a `Name` tab on
-the box's top edge. The prefix is never typed: the interpreter still
+the box's top edge (its bottom edge for a box against the top of the
+screen, a top corner). The portrait is drawn inside the box and never
+changes its size or place: it is scaled with nearest-neighbour sampling to
+the box's inner height (the box less 10 px of frame and padding above and
+below), in whole multiples of 64 px when one fits and smaller when 1× does
+not, so it is 64 px in a band and 48 px in a corner or side box at
+480×272. The column (`faceWidth`) scales with it. The prefix is never typed: the interpreter still
 counts it, so the reveal is offset by its length and the words start after
 a short beat with the portrait already up. Any other line, including
 `MAYOR: ...` when `MAYOR` has no face, renders exactly as it would without
 `faces`. Pak images are power-of-two and at most 512 px, so portraits are
 64×64; a game that draws a smaller face inside that canvas narrows the
-column with `faceWidth` (default 72: the image plus an 8 px gap). As with
+column with `faceWidth` (default 72: the image plus an 8 px gap, at 64 px). As with
 every image, the paths must appear as full string literals in the game's
 sources so the build bakes them.
 
@@ -2447,6 +2453,45 @@ sources so the build bakes them.
 both components draw (border, optional rim, paper), for a game's own
 screens such as a help page. `resolveUiTheme` and `splitSpeaker` are plain
 TypeScript and are exported from `pocket-rpgkit` as well.
+
+### Text box layout
+
+A `text` command may carry four optional fields. Without them the box is
+the one above: docked to the bottom, framed, rows from the top left.
+
+```json
+{ "op": "text", "lines": ["You got a Potion!"],
+  "position": "center", "align": "center", "valign": "center", "background": "transparent" }
+```
+
+| field | values (default first) | effect |
+| --- | --- | --- |
+| `position` | `bottom`, `top`, `center`, `topLeft`, `topRight`, `bottomLeft`, `bottomRight`, `left`, `right` | `bottom`, `top` and `center` are the RPG Maker band: the default box (full width less 8 px a side, 92 px high, 8 px from the top or bottom edge). The corners and the sides are Tuxemon's small dialog window: 0.8 of the screen wide and 0.25 high, flush with the edges it is anchored to (384×68 at 480×272, 768×136 at 960×544; a corner touches its two edges). `center`, `left` and `right` sit at mid-height. The top band moves down 8 px more while a speaker's name tab shows above it; a portrait never moves or resizes a corner or side window (the portrait shrinks to fit inside it, and a top corner's tab hangs below it). |
+| `align` | `left`, `center`, `right` | Each row's place in the text column. A row is aligned whole, so the typewriter fills it from its first letter without shifting it. |
+| `valign` | `top`, `center`, `bottom` | The page's rows as a block inside the box's text area (four rows in a band; a corner or side box's height less its chrome and legend row, two rows at 480×272). A page with fewer rows moves down by half or all of the free pixels. The `next` legend follows the last row. |
+| `background` | `window`, `dim`, `transparent` | `window` is the framed panel. `dim` drops the frame and fills the box with the theme's paper colour at 60 % opacity. `transparent` draws only the words and the legend. |
+
+A band holds four rows. A corner or side box has a narrower column and a
+shorter text area, so its words wrap more and a page holds fewer rows: pages
+are cut at that box's width and rows at the 480×272 design size (the
+paginator receives the layout), so the same message takes the same pages at
+every viewport. A page that needs more rows than the box has at the live
+size (a window narrower than the design width) grows the box instead of
+cutting it. A speaker's portrait narrows the column further (by 54 px in a
+480×272 corner or side box, the 48 px portrait and its gap), so that
+message takes more rows and pages; the window keeps its size. Nothing is
+ever cut. Alignment uses the same measured widths as wrapping, so Latin and CJK
+rows centre and right-align alike. The words keep the theme's `ink` on every
+background; pick a theme that reads on the map behind a `transparent` box.
+
+The interpreter keeps only fields that differ from the default (`box` on
+the compiled instruction and on the open text modal), so a text without
+layout, or with every default written out, compiles and draws exactly as
+before. The RPG Maker importer maps Show Text's window position (top,
+middle, bottom) and background (window, dim, transparent) onto these
+fields, and the editor and Studio edit them as select fields labelled in
+Chinese and English (the handheld editor wraps the label under the value
+instead of cutting it, and bakes the few Chinese characters it needs).
 
 ### Choice icons
 
@@ -2526,7 +2571,7 @@ than its pixel width:
 - a line that already fits keeps its authored rows exactly, so Latin
   dialog renders as before;
 - after the player name is substituted for `{name}`, a page that no longer
-  fits four rows is reflowed as one paragraph; text that still does not fit
+  fits the box's rows is reflowed as one paragraph; text that still does not fit
   continues on a second page ([Long text is never cut](#long-text-is-never-cut)).
 
 The typewriter counts code points, one per drawn glyph, so a supplementary
@@ -2643,7 +2688,8 @@ keyboard and there is no input method.
 
 No box in the kit drops characters or adds `…`:
 
-- **Dialog.** A message that needs more than the box's four rows (a long
+- **Dialog.** A message that needs more than the box's rows (four in the
+  default box, two in a corner or side box at 480×272; a long
   CJK line, a long player name in `{name}`) continues on a second page, and
   so on. Each page types from its first character, shows `next` when typed,
   and takes one confirm; the last page's confirm closes the box. Authored
@@ -2653,7 +2699,9 @@ No box in the kit drops characters or adds `…`:
   open modal (`pageStarts`, `page`), so the number of confirms is reducer
   state: the same at every host rate and after a rewind; saves never hold
   an open box. Pages are cut at the 480 px design width whatever the window
-  size; a wider window lays each page out in fewer rows. `GameView` installs
+  size (and at the narrower width and fewer rows of a corner or side box, see
+  [Text box layout](#text-box-layout)); a wider window lays each page out
+  in fewer rows. `GameView` installs
   the paginator; a session without one (a headless tool, `DialogBox` used
   on its own) shows every message as one page. A headless tool that needs
   the device's pages passes `createDialogPaginator({}, createFontMeasure(…))`

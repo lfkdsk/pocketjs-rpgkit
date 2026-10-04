@@ -542,6 +542,10 @@ function validateProg(prog: unknown, path: string): string | null {
           return fail(`${here}.lines`, "string array required");
         }
         if (!isFiniteNumber(ins.cps)) return fail(`${here}.cps`, "number required");
+        if (ins.box !== undefined) {
+          const e = validateTextBox(ins.box, `${here}.box`);
+          if (e) return e;
+        }
         break;
       }
       case "choices": {
@@ -1847,6 +1851,27 @@ function validateTileProperties(v: unknown, path: string): string | null {
   return null;
 }
 
+const TEXT_BOX_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  position: ["top", "center", "bottom", "topLeft", "topRight", "bottomLeft", "bottomRight", "left", "right"],
+  align: ["left", "center", "right"],
+  valign: ["top", "center", "bottom"],
+  background: ["window", "dim", "transparent"],
+};
+
+/** A text box layout (TextBoxLayout): a non-empty record of known fields
+ *  with their schema values. */
+function validateTextBox(v: unknown, path: string): string | null {
+  if (!isRecord(v)) return fail(path, "object required");
+  const keys = Object.keys(v);
+  if (keys.length === 0) return fail(path, "an absent box, not an empty one");
+  for (const key of keys) {
+    const allowed = Object.hasOwn(TEXT_BOX_FIELDS, key) ? TEXT_BOX_FIELDS[key]! : null;
+    if (!allowed) return fail(`${path}.${key}`, "unknown text box field");
+    if (!allowed.includes(v[key] as string)) return fail(`${path}.${key}`, `one of ${allowed.join(", ")} required`);
+  }
+  return null;
+}
+
 function validateModal(v: unknown, path: string, liveKeys: ReadonlySet<string>): string | null {
   if (v === null) return null;
   if (!isRecord(v)) return fail(path, "modal must be an object or null");
@@ -1871,6 +1896,7 @@ function validateModal(v: unknown, path: string, liveKeys: ReadonlySet<string>):
         return fail(`${path}.page`, "an index into pageStarts required");
       }
     }
+    if (v.box !== undefined) return validateTextBox(v.box, `${path}.box`);
     return null;
   }
   if (v.kind === "choices") {

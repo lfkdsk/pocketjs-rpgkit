@@ -185,10 +185,16 @@ const maybeTest = preflight.ok ? test : test.skip;
 // validation and narrow host bridge add 4,598 B to Meadow, 4,809 B to
 // Sunstone and 5,183 B to the WAV fixture: 597,797, 955,183 and 754,620.
 // Storage adapters remain host-side.
+// The text command's optional layout (position/align/valign/background:
+// shared box geometry, DialogBox placement, alignment, background and
+// portrait-in-box scaling, the interpreter's sparse `box` and its page cuts
+// in the visible modal identity, the saved instruction's box validation)
+// adds 7,325 B to Meadow, 8,628 B to Sunstone and 7,531 B to the WAV
+// fixture: 605,122, 963,811 and 762,151.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 597_797;
-const EXPECTED_SUNSTONE_QOA_BYTES = 955_183;
-const EXPECTED_WAV_FIXTURE_BYTES = 754_620;
+const EXPECTED_MEADOW_BYTES = 605_122;
+const EXPECTED_SUNSTONE_QOA_BYTES = 963_811;
+const EXPECTED_WAV_FIXTURE_BYTES = 762_151;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

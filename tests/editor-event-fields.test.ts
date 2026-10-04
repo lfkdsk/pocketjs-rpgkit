@@ -415,6 +415,58 @@ describe("event inspector command fields", () => {
 
     expect(validateProject(projectWith([appearance, layer, tile, fade, audio, backdrop, animation, choice]))).toEqual([]);
   });
+
+  test("text layout fields show their defaults and stay sparse", () => {
+    const plain: Command = { op: "text", lines: ["Hello"], cps: 40 };
+    const fields = commandFields(plain);
+    expect(fields.map((entry) => [entry.key, entry.label, entry.value, entry.kind])).toEqual([
+      ["lines", "LINES", "Hello", "text"],
+      ["cps", "CPS", 40, "integer"],
+      ["position", "POSITION", "bottom", "enum"],
+      ["align", "ALIGN", "left", "enum"],
+      ["valign", "V-ALIGN", "top", "enum"],
+      ["background", "BACKGROUND", "window", "enum"],
+    ]);
+    expect(Object.fromEntries(fields.slice(2).map((entry) => [entry.key, entry.options]))).toEqual({
+      position: ["top", "center", "bottom", "topLeft", "topRight", "bottomLeft", "bottomRight", "left", "right"],
+      align: ["left", "center", "right"],
+      valign: ["top", "center", "bottom"],
+      background: ["window", "dim", "transparent"],
+    });
+    // Each layout field names itself in Chinese and English in its hint.
+    expect(fields.slice(2).map((entry) => entry.hint?.split(" · ")[0])).toEqual(["窗口位置", "水平对齐", "垂直对齐", "窗口背景"]);
+    for (const entry of fields.slice(2)) expect(entry.hint).toContain(`default ${entry.value}`);
+    // The handheld editor draws these hints under the fields (Studio shows
+    // every hint); no other text field asks for it.
+    expect(fields.map((entry) => entry.inlineHint === true)).toEqual([false, false, true, true, true, true]);
+
+    // Re-choosing every shown default leaves a default text byte-identical.
+    let same: Command = plain;
+    for (const entry of fields.slice(2)) same = edit(same, entry.key, String(entry.value));
+    expect(JSON.stringify(same)).toBe(JSON.stringify(plain));
+
+    let laid = edit(plain, "position", "bottomRight");
+    laid = edit(laid, "align", "center");
+    laid = edit(laid, "valign", "bottom");
+    laid = edit(laid, "background", "transparent");
+    expect(laid).toEqual({ op: "text", lines: ["Hello"], cps: 40, position: "bottomRight", align: "center", valign: "bottom", background: "transparent" });
+    expect(commandFields(laid).slice(2).map((entry) => entry.value)).toEqual(["bottomRight", "center", "bottom", "transparent"]);
+    // Changing a set value keeps its place; choosing the default removes it.
+    expect(Object.keys(edit(laid, "position", "top"))).toEqual(Object.keys(laid));
+    let cleared = laid;
+    for (const [key, value] of [["position", "bottom"], ["align", "left"], ["valign", "top"], ["background", "window"]] as const) {
+      cleared = edit(cleared, key, value);
+      expect(cleared, key).not.toHaveProperty(key);
+    }
+    expect(JSON.stringify(cleared)).toBe(JSON.stringify(plain));
+    expect(validateProject(projectWith([laid, edit(plain, "background", "dim")]))).toEqual([]);
+
+    for (const [key, raw] of [["position", "middle"], ["position", "Bottom"], ["align", "justify"], ["valign", ""], ["background", "none"]] as const) {
+      const result = editCommandField(laid, key, raw);
+      expect(result.ok, `${key}=${raw}`).toBe(false);
+      if (!result.ok) expect(result.error).toContain(`text ${key} must be`);
+    }
+  });
 });
 
 describe("choice option icons", () => {

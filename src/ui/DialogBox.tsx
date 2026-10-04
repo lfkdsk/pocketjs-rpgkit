@@ -33,6 +33,10 @@
 // interpreter still counts it, so the reveal is offset by its length (the
 // words start after that many characters' worth of typing time). Other
 // lines hide the column and the tab and lay out exactly as without faces.
+// The portrait never changes the box's size or place: it is scaled
+// (nearest neighbour) to the box's inner height, 64 px in a band and 48 px
+// in a 480x272 corner or side box (dialog-pages.ts dialogFaceSize), and the
+// tab of a box against the top edge of the screen hangs below it.
 //
 //     ┌ Keeper ┐
 //   ┌─┴────────┴────────────────┐
@@ -40,6 +44,15 @@
 //   │ │ face │ Climb while the  │
 //   │ └──────┘           ○ next │
 //   └───────────────────────────┘
+//
+// Layout. A text command may place its box (`position`: the top, centre or
+// bottom band, a corner or a side; dialog-pages.ts has the geometry), align
+// each row left/centre/right and the page's rows top/centre/bottom in the
+// box's text area, and draw it on the framed window, a translucent fill
+// without the frame ("dim") or nothing ("transparent"). A text without
+// layout fields carries no `box` and draws exactly the default box. Rows
+// are aligned as whole rows (paint offsets of the fixed row nodes), so the
+// typewriter never shifts letters it has already drawn.
 
 import { createMemo, For, Show, type Accessor } from "solid-js";
 import { Image, Text, View } from "@pocketjs/framework/components";
@@ -48,10 +61,29 @@ import { fitBounded, marqueeOffset, windowByRows, wrapLabel, type BoundedCell } 
 import { useMarqueeTick } from "./use-marquee-tick.ts";
 import { BoundedLine } from "./BoundedLine.tsx";
 import { flowRows, revealRows } from "./text-flow.ts";
-import { DIALOG_ROWS, FACE_WIDTH, dialogColumnWidth, messagePage, messageSpeaker, pageRevealed, shownMessageLines } from "./dialog-pages.ts";
+import {
+  DIALOG_PAGE_VIEWPORT,
+  DIALOG_ROWS,
+  DIALOG_VIEWPORT_H,
+  dialogAlignShift,
+  dialogBoxBottom,
+  dialogBoxHeight,
+  dialogBoxInsets,
+  dialogBoxRows,
+  dialogColumnWidth,
+  dialogFaceColumn,
+  dialogFaceSize,
+  dialogTextAreaHeight,
+  dialogValignShift,
+  messagePage,
+  messageSpeaker,
+  pageRevealed,
+  shownMessageLines,
+} from "./dialog-pages.ts";
 import { slotMeasure } from "./text-measure.ts";
 import { Panel } from "./Panel.tsx";
-import { resolveUiTheme, speakerLabel, type SpeakerSplit, type UiTheme } from "./theme.ts";
+import { CLEAR_COLOR, resolveUiTheme, speakerLabel, translucentColor, type SpeakerSplit, type UiTheme } from "./theme.ts";
+import type { TextBoxLayout } from "../engine/types.ts";
 import { startupProfileMark } from "../startup-profile.ts";
 import type { ChoiceIconBoxComponent, ChoiceIconResolver } from "./choice-icons.ts";
 import { formatUiText, KIT_UI_TEXT, withUiText, type UiTextOverrides } from "../engine/ui-text.ts";
@@ -68,12 +100,6 @@ import {
 
 type ShopText = { readonly [K in keyof typeof KIT_UI_TEXT]: string };
 
-/** Portrait images are 64x64: pak images must be power-of-two. */
-const FACE_PX = 64;
-/** The message box's top edge, measured up from the layer bottom
- *  (insetB 8 + height 92); the name tab sits on it. */
-const BOX_TOP = 100;
-
 /** Presentation-only item data consumed by the shop box. `{ name }` remains
  * the complete legacy shape; a nonempty icon opts the current shop into its
  * icon layout. */
@@ -87,6 +113,9 @@ export interface DialogBoxProps {
   legend: Accessor<string>;
   /** Screen width for fixed message cells; omit to retain intrinsic layout. */
   viewportWidth?: number;
+  /** Screen height, for a message box placed at the top or the centre
+   *  (default 272, the design height). */
+  viewportHeight?: number;
   /** Colours of both boxes; missing keys keep DEFAULT_UI_THEME. */
   theme?: Partial<UiTheme>;
   /** Speaker portraits: NAME -> 64x64 image src (a full string literal
@@ -138,15 +167,25 @@ const SHOP_GOLD_W = 110;
 const SHOP_PRICE_W = 90;
 /** Row height of a box's bottom legend (`text-xs`, 12 px). */
 const LEGEND_ROW_H = 12;
-/** The message box: 92 px for four rows; a page that needs more rows at
- *  a window narrower than the design width grows it upward. */
-const MESSAGE_BOX_H = 92;
+/** Text rows of the message box are 15 px; the box's height and row count
+ *  come from its position (dialog-pages.ts: 92 px and four rows for the
+ *  band). A page that needs more rows at a window narrower than the design
+ *  width grows it upward. */
 const MESSAGE_ROW_H = 15;
 /** Row cursor prefixes ("> " selected, "  " not); the label is fitted to
  *  what remains after the wider of the two. */
 const CURSOR_ON = "> ";
 const CURSOR_OFF = "  ";
 const NO_SPEAKER: SpeakerSplit = { name: null, rest: "", cut: 0 };
+/** The dim background's fill: the theme's paper at this opacity. */
+const DIM_ALPHA = 0.6;
+/** Gap above the top band while its name tab shows. */
+const TAB_TOP_GAP = 16;
+/** The name tab's height; it overlaps the frame (and rim) it sits on. */
+const TAB_H = 15;
+const sameBox = (a: TextBoxLayout | undefined, b: TextBoxLayout | undefined): boolean =>
+  a === b || (a !== undefined && b !== undefined && a.position === b.position && a.align === b.align &&
+    a.valign === b.valign && a.background === b.background);
 const EMPTY_LINES: readonly string[] = [];
 const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
 const sameRange = (a: number[], b: number[]): boolean => a.length === b.length;
@@ -252,11 +291,23 @@ export function DialogBox(props: DialogBoxProps) {
   const choicesDisplay = createMemo(() => (isChoice() ? 0 : 1));
   const shopDisplay = createMemo(() => (shop() ? 0 : 1));
   const messageDisplay = createMemo(() => (message() ? 0 : 1));
+  // The open text's layout (absent: the default box). Changes only when a
+  // text with a different layout opens.
+  const box = createMemo(() => message()?.box, undefined, { equals: sameBox });
+  const position = createMemo(() => box()?.position);
+  const viewportH = () => props.viewportHeight ?? DIALOG_VIEWPORT_H;
+  // The portrait's side and its column (image and gap) in this box.
+  const faceSize = createMemo(() => dialogFaceSize(position(), viewportH()));
+  const faceColumn = createMemo(() => dialogFaceColumn(
+    { viewportWidth: props.viewportWidth ?? DIALOG_PAGE_VIEWPORT, viewportHeight: viewportH(), faceWidth: props.faceWidth },
+    position(),
+  ));
   const textWidth = createMemo(() => props.viewportWidth === undefined
     ? Number.NaN
     : dialogColumnWidth(
-        { viewportWidth: props.viewportWidth, faces: props.faces, faceWidth: props.faceWidth },
+        { viewportWidth: props.viewportWidth, viewportHeight: viewportH(), faces: props.faces, faceWidth: props.faceWidth },
         speaker().name !== null,
+        position(),
       ));
   const measure = slotMeasure();
   // Row width the text may fill: the Text node's width, less the rim's 1 px
@@ -472,14 +523,27 @@ export function DialogBox(props: DialogBoxProps) {
     EMPTY_LINES,
     { equals: sameLines },
   );
-  const flow = createMemo(() => flowRows(pageLines(), textBudget(), DIALOG_ROWS, measure));
-  // Four rows, more only when a page needs them (a window narrower than
-  // the width pages are cut at).
+  // The box's rows at the live screen height: four for a band, a quarter
+  // of the screen's worth for a corner or side box.
+  const boxRows = createMemo(() => dialogBoxRows(position(), viewportH()));
+  const flow = createMemo(() => flowRows(pageLines(), textBudget(), boxRows(), measure));
+  // Four row nodes, more only when a page needs them (a window narrower
+  // than the width pages are cut at); unused rows are hidden.
   const textRows = createMemo(() => range(Math.max(DIALOG_ROWS, flow().rows.length)), range(DIALOG_ROWS), { equals: sameRange });
-  // The box grows by the text rows past four and by the wrapped legend's
-  // extra rows (shown once the message is complete).
+  // The box grows by the text rows past its own and by the wrapped
+  // legend's extra rows (shown once the message is complete).
   const extraTextH = () =>
-    (textRows().length - DIALOG_ROWS) * MESSAGE_ROW_H + (messageLegend() ? legendExtra() : 0);
+    Math.max(0, flow().rows.length - boxRows()) * MESSAGE_ROW_H + (messageLegend() ? legendExtra() : 0);
+  // Paint offsets of the page's rows (dialog-pages.ts): null/0 for the
+  // default box, so its rows draw exactly where they always did.
+  const rowShifts = createMemo(() => {
+    const align = box()?.align;
+    if (align === undefined) return null;
+    return flow().rows.map((row) => dialogAlignShift(align, textBudget(), measure(row.text.replace(/ +$/, ""))));
+  });
+  const rowsShift = createMemo(() => box()?.valign === undefined
+    ? 0
+    : dialogValignShift(box()!.valign, flow().rows.length, dialogTextAreaHeight(position(), viewportH())));
   const textLines = createMemo(() => {
     const m = message();
     if (m?.kind !== "text") return textRows().map(() => "");
@@ -507,6 +571,8 @@ export function DialogBox(props: DialogBoxProps) {
                 height: MESSAGE_ROW_H,
                 width: textWidth(),
                 display: line() ? 0 : 1,
+                translateX: rowShifts()?.[row] ?? 0,
+                translateY: rowsShift(),
               }}
               debugName={`rpgkit-message-row-${row}`}
             >
@@ -515,7 +581,7 @@ export function DialogBox(props: DialogBoxProps) {
           );
         }}
       </For>
-      <View class="flex-row justify-end" style={{ height: LEGEND_ROW_H * messageLegendRows().length }}>
+      <View class="flex-row justify-end" style={{ height: LEGEND_ROW_H * messageLegendRows().length, translateY: rowsShift() }}>
         <Text
           class="text-xs"
           style={{
@@ -533,6 +599,38 @@ export function DialogBox(props: DialogBoxProps) {
       </View>
     </>
   );
+
+  // The message box's place and look for the open text's layout; the
+  // default box keeps its 8 px insets and the theme unchanged.
+  const boxInsets = createMemo(() => dialogBoxInsets(props.viewportWidth ?? DIALOG_PAGE_VIEWPORT, position()));
+  // A portrait never changes the box: it is scaled into it (faceSize).
+  const messageBoxH = () => dialogBoxHeight(position(), viewportH()) + extraTextH();
+  const boxBottom = () => dialogBoxBottom(
+    position(),
+    viewportH(),
+    messageBoxH(),
+    props.faces && speaker().name ? TAB_TOP_GAP : undefined,
+  );
+  // The name tab sits on the box's top edge, or hangs from its bottom edge
+  // when the box is against the top of the screen (a top corner).
+  const tabBottom = () => {
+    const overlap = theme().rim ? 3 : 2;
+    const pos = position();
+    return pos === "topLeft" || pos === "topRight"
+      ? boxBottom() - TAB_H + overlap
+      : boxBottom() + messageBoxH() - overlap;
+  };
+  const boxTheme = createMemo((): UiTheme => {
+    const look = box()?.background;
+    const t = theme();
+    if (look === undefined || look === "window") return t;
+    // Same layers as the window (a rim stays a node, just unpainted), so
+    // switching looks restyles and never remounts the paper.
+    const rim = t.rim === undefined ? undefined : CLEAR_COLOR;
+    return look === "dim"
+      ? { ...t, border: CLEAR_COLOR, rim, paper: translucentColor(t.paper, DIM_ALPHA) }
+      : { ...t, border: CLEAR_COLOR, rim, paper: CLEAR_COLOR };
+  });
 
   const view = (
     <View
@@ -734,8 +832,8 @@ export function DialogBox(props: DialogBoxProps) {
         {/* Message box: framed panel, four fixed text rows + legend, and
             the portrait column when the game passes faces. */}
       <Panel
-            theme={theme()}
-            style={{ posType: 1, height: MESSAGE_BOX_H + extraTextH(), insetL: 8, insetR: 8, insetB: 8, display: messageDisplay() }}
+            theme={boxTheme()}
+            style={{ posType: 1, height: messageBoxH(), insetL: boxInsets().left, insetR: boxInsets().right, insetB: boxBottom(), display: messageDisplay() }}
             paperClass="flex-col p-[8]"
             debugName="rpgkit-message-box"
           >
@@ -746,12 +844,12 @@ export function DialogBox(props: DialogBoxProps) {
             <Show when={props.faces} fallback={messageRows()}>
               <View style={{ flexDir: 0, grow: 1 }}>
                 <View
-                  style={{ width: props.faceWidth ?? FACE_WIDTH, height: FACE_PX, display: faceDisplay() }}
+                  style={{ width: faceColumn(), height: faceSize(), display: faceDisplay() }}
                   debugName="rpgkit-message-face"
                 >
                   <Image
                     src={speaker().name ? props.faces![speaker().name!] : ""}
-                    style={{ width: FACE_PX, height: FACE_PX }}
+                    style={{ width: faceSize(), height: faceSize() }}
                   />
                 </View>
                 <View style={{ flexDir: 1, grow: 1 }}>{messageRows()}</View>
@@ -759,14 +857,15 @@ export function DialogBox(props: DialogBoxProps) {
             </Show>
       </Panel>
       {/* Name tab: overlaps the frame (border, and rim if any) so it
-          reads as part of the box; paper-coloured text on the border. */}
+          reads as part of the box; paper-coloured text on the border.
+          Above the box, or below a box against the top of the screen. */}
       <Show when={props.faces}>
         <View
           style={{
             posType: 1,
-            insetL: 20,
-            insetB: BOX_TOP + extraTextH() - (theme().rim ? 3 : 2),
-            height: 15,
+            insetL: boxInsets().left + 12,
+            insetB: tabBottom(),
+            height: TAB_H,
             flexDir: 0,
             paddingL: 6,
             paddingR: 6,
@@ -775,7 +874,7 @@ export function DialogBox(props: DialogBoxProps) {
           }}
           debugName="rpgkit-message-name"
         >
-          <Text class="text-xs" style={{ textColor: theme().paper, lineHeight: 15, height: 15 }}>
+          <Text class="text-xs" style={{ textColor: theme().paper, lineHeight: TAB_H, height: TAB_H }}>
             {speaker().name ? speakerLabel(speaker().name!) : " "}
           </Text>
         </View>

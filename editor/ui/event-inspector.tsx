@@ -16,6 +16,8 @@ import {
   inspectorActionKey,
   inspectorCommandFields,
   inspectorCommandOp,
+  inspectorFieldLines,
+  INSPECTOR_LINE_H,
   type EventInspectorAction,
   type EventInspectorLayout,
   type InspectorCommandRow,
@@ -226,13 +228,22 @@ function DisplayControl(props: {
   focused?: boolean;
   readOnly?: boolean;
   rect?: InspectorRect;
+  /** The source field: one that draws its hint gets wrapped lines. */
+  field?: InspectorField;
   debugName?: string;
 }): JSX.Element {
   const r = () => props.rect ?? props.control.rect;
+  const lines = createMemo(() => props.field
+    ? inspectorFieldLines(props.field, r().w, props.value === undefined ? "" : stringValue(props.value), editorTextWidth)
+    : null);
   const text = () => {
+    const wrapped = lines();
+    if (wrapped) return wrapped.label.join("\n");
     const value = props.value === undefined ? "" : ` ${stringValue(props.value)}`;
     return fitEditorText(`${props.control.label}${value}`, Math.max(0, r().w - 6));
   };
+  const labelRows = () => lines()?.label.length ?? 1;
+  const hintRows = () => lines()?.hint.length ?? 0;
   return (
     <View
       class="absolute flex-row items-center"
@@ -251,10 +262,26 @@ function DisplayControl(props: {
     >
       <Text
         class="text-xs absolute"
-        style={{ posType: 1, insetL: 3, insetT: 3, height: 12, lineHeight: 12, textColor: props.readOnly ? DIM : INK }}
+        style={{ posType: 1, insetL: 3, insetT: 3, height: INSPECTOR_LINE_H * labelRows(), lineHeight: INSPECTOR_LINE_H, textColor: props.readOnly ? DIM : INK }}
       >
         {text()}
       </Text>
+      <Show when={hintRows() > 0}>
+        <Text
+          class="text-xs absolute"
+          style={{
+            posType: 1,
+            insetL: 3,
+            insetT: r().h - 3 - INSPECTOR_LINE_H * hintRows(),
+            height: INSPECTOR_LINE_H * hintRows(),
+            lineHeight: INSPECTOR_LINE_H,
+            textColor: DIM,
+          }}
+          debugName={props.debugName ? `${props.debugName}-hint` : undefined}
+        >
+          {lines()!.hint.join("\n")}
+        </Text>
+      </Show>
     </View>
   );
 }
@@ -453,6 +480,7 @@ function RowList(props: {
                       value={shownValue()}
                       focused={focused()}
                       readOnly={actionReadOnly()}
+                      field={sourceField()}
                       debugName={`event-inspector-${props.kind}-${rowGeom.row}-field-${sourceField()?.key ?? sourceIndex}`}
                     />
                   );
@@ -478,6 +506,7 @@ export function EventInspector(props: EventInspectorProps): JSX.Element {
     conditions: props.conditionRows,
     commands: props.commandRows,
     scroll: props.scroll,
+    measure: editorTextWidth,
   }));
   const focused = (action: EventInspectorAction) => isFocused(props.focus, action);
   const buffered = (action: EventInspectorAction, value: unknown) => focused(action) ? `${props.inputBuffer}_` : value;

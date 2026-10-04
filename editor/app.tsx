@@ -592,6 +592,7 @@ export function EditorApp(): JSX.Element {
       conditions: conditionRows(),
       commands: commandRows(),
       scroll: inspectorScroll(),
+      measure: editorTextWidth,
     });
   });
   const mapInspectorLayout = createMemo(() => {

@@ -99,6 +99,16 @@ describe("rpgmaker-import: output", () => {
     }
   });
 
+  test("MV Show Text background and position become the text box layout", () => {
+    const texts = allCommands(stage.project).filter((c) => c.op === "text") as unknown as Record<string, unknown>[];
+    expect(texts).toContainEqual({ op: "text", lines: ["Woo! Front row!"], position: "top", background: "dim" });
+    expect(texts).toContainEqual({ op: "text", lines: ["A chalk mark: the lead's spot."], position: "center", background: "transparent" });
+    // Default messages (window, bottom) stay plain.
+    expect(texts).toContainEqual({ op: "text", lines: ["Break a leg!"] });
+    expect(texts.filter((t) => "position" in t || "background" in t)).toHaveLength(2);
+    expect(validateSchema(stage.project, schema as Record<string, unknown>)).toEqual([]);
+  });
+
   test("variable text tokens opt the generated project in only when used", async () => {
     expect(hollow.project.system).toMatchObject({ messageBlocksPlayer: true, mapNameDisplay: true, textVariables: true });
     expect(stage.project.system).toMatchObject({ messageBlocksPlayer: true, mapNameDisplay: true, textVariables: true });

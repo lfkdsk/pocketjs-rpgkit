@@ -184,11 +184,11 @@ partially transparent cells; frame 0 has a sound plus target flash and frame
 | 1 | Director | (0, 12) | autorun cutscene; p2 (self A) inert |
 | 2 | Lead | (8, 3) | same priority; p2 (switch 2) uses Cast index 5 |
 | 3 | Dancer | (4, 4) | custom move type, repeating route (not skippable) |
-| 4 | Fan | (13, 8) | random move type, inside the sealed pen |
+| 4 | Fan | (13, 8) | random move type, inside the sealed pen; its text is dim at the top |
 | 5 | Stagehand | (12, 3) | p2 (switch 4) parallel: walks right 2 / left 2, Claps += 1, switch 4 OFF at 3 |
 | 6 | Moth | (2, 8) | approach move type, above characters, through, empty list |
 | 7 | Smoke | (6, 5) | p2 (switch 3) parallel, above characters, tile image: SE, wait 45, erase event |
-| 8 | Spotlight | (8, 5) | below characters, tile image |
+| 8 | Spotlight | (8, 5) | below characters, tile image; its text is transparent in the middle |
 | 9 | Usher | (14, 10) | p1 "wait"; p2 (switch 1 and Claps >= 3) checks Claps == 3, Encore = 1 |
 
 ### Walkthrough

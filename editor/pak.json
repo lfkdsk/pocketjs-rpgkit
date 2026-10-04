@@ -10,5 +10,9 @@
   {
     "key": "ui:tile.editor-sheet-icons",
     "file": "assets/playtest/sheet-icons.pkts"
+  },
+  {
+    "key": "license:NotoSansCJK.txt",
+    "file": "fonts/LICENSE-NotoSansCJK.txt"
   }
 ]

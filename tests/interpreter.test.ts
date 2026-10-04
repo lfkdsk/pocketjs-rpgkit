@@ -1000,6 +1000,31 @@ describe("modalChanged — visible modal identity", () => {
     expect(modalChanged(t, { ...t, revealed: 2, complete: false })).toBe(true);
   });
 
+  test("a text box that changes only its layout or its page cuts is a change", () => {
+    // Same fiber, same words, same typewriter state: a host frame that
+    // folds several reducer ticks (low hz) or a rewind that swaps the shown
+    // state skips the null frame between two such boxes, so the layout and
+    // the page cuts must be part of the identity or the old box stays up.
+    const t: Modal = { kind: "text", fiber: "m/sign", lines: ["abc"], total: 3, revealed: 3, complete: true };
+    const top: Modal = { ...t, box: { position: "top" } };
+    expect(modalChanged(t, top)).toBe(true);
+    expect(modalChanged(top, t)).toBe(true);
+    expect(modalChanged(top, { ...t, box: { position: "top" } })).toBe(false);
+    for (const box of [
+      { position: "topRight" },
+      { position: "top", align: "center" },
+      { position: "top", valign: "bottom" },
+      { position: "top", background: "dim" },
+    ] as const) {
+      expect(modalChanged(top, { ...t, box }), JSON.stringify(box)).toBe(true);
+    }
+    const paged: Modal = { ...t, total: 3, revealed: 1, pageStarts: [0, 2], page: 0 };
+    expect(modalChanged(paged, { ...paged, pageStarts: [0, 2] })).toBe(false);
+    expect(modalChanged(paged, { ...paged, pageStarts: [0, 1] })).toBe(true);
+    expect(modalChanged(paged, { ...paged, pageStarts: [0, 1, 2] })).toBe(true);
+    expect(modalChanged(paged, { ...t, revealed: 1 })).toBe(true);
+  });
+
   test("null <-> modal and kind/fiber swaps are changes", () => {
     expect(modalChanged(null, outer)).toBe(true);
     expect(modalChanged(outer, null)).toBe(true);

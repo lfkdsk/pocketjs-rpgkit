@@ -185,6 +185,8 @@ function inspectorLayout(width: number, height: number): EventInspectorLayout {
     conditions: [],
     commands: commandInspectorRows(page.commands),
     scroll: { pagesX: 0, conditionsY: 0, commandsY: 0 },
+    // The app sizes rows of fields that draw their hint with the baked font.
+    measure: (text) => (globalThis as unknown as { ui: { measureText(s: string, slot: number): number } }).ui.measureText(text, 0),
   });
 }
 
@@ -595,8 +597,8 @@ function pixel(framebuffer: Uint8Array, width: number, x: number, y: number): [n
 }
 
 const screenshotPins: Record<string, string> = {
-  "480x272": "79499b2f",
-  "720x480": "03660555",
+  "480x272": "cdba4758",
+  "720x480": "30074177",
 };
 
 simDescribe("event inspector responsive rendering", () => {
@@ -634,6 +636,56 @@ simDescribe("event inspector responsive rendering", () => {
       const png = new Uint8Array(await Bun.file(new URL(`./goldens/editor-events.${nameKey}.png`, import.meta.url)).arrayBuffer());
       const decoded = decodePng(png);
       expect({ width: decoded.width, height: decoded.height, hash: fnv1a(decoded.rgba) }).toEqual({ width, height, hash });
+    });
+  }
+});
+
+// The text command's layout fields show their Chinese and English names
+// under the value, wrapped inside the field and never cut, at every
+// editor size (the smallest one wraps them).
+simDescribe("text layout fields show bilingual hints", () => {
+  const hints: Record<string, { label: string; hint: string }> = {
+    position: { label: "POSITION", hint: "窗口位置 · window position, default bottom" },
+    align: { label: "ALIGN", hint: "水平对齐 · row alignment, default left" },
+    valign: { label: "V-ALIGN", hint: "垂直对齐 · vertical alignment, default top" },
+    background: { label: "BACKGROUND", hint: "窗口背景 · window background, default window" },
+  };
+  const measure = (text: string) => (globalThis as unknown as { ui: { measureText(s: string, slot: number): number } }).ui.measureText(text, 0);
+  for (const [width, height] of [[400, 240], [480, 272], [720, 480]] as const) {
+    test(`${width}x${height}`, async () => {
+      const inbox: string[] = [];
+      const outbox: string[] = [];
+      const world = await bootSvc(inbox, outbox, width, height);
+      enterEventMode(inbox, world);
+      click(inbox, world, ...cellPoint(width, height, 9, 5)); // elder: a text first
+      click(inbox, world, ...eventToolPoint("edit"));
+      frame(world);
+      const clip = inspectorLayout(width, height).commandClip;
+      line(inbox, world, { t: "mouse", x: clip.x + 20, y: HEADER_H + clip.y + 20, d: false });
+      let wrapped = 0;
+      for (const [key, { label, hint }] of Object.entries(hints)) {
+        const name = `event-inspector-command-0-field-${key}`;
+        let node = findDebugNode(world.getTree() as DebugTreeNode, `${name}-hint`);
+        for (let i = 0; i < 40 && !node; i++) {
+          line(inbox, world, { t: "scroll", dy: 1 });
+          frame(world);
+          node = findDebugNode(world.getTree() as DebugTreeNode, `${name}-hint`);
+        }
+        expect(node, `${key} hint at ${width}x${height}`).not.toBeNull();
+        const field = findDebugNode(world.getTree() as DebugTreeNode, name)!;
+        const control = inspectorLayout(width, height).commandRows[0]!.fields.find((f) => f.action.kind === "command-field" && f.action.field === key)!;
+        const rows = debugText(node!).split("\n");
+        if (rows.length > 1) wrapped++;
+        // Every character of the hint, in order, each row inside the field.
+        expect(rows.join(" ").replace(/ +/g, " ")).toBe(hint);
+        for (const row of rows) expect(measure(row), `${key}: "${row}"`).toBeLessThanOrEqual(control.rect.w - 6);
+        const text = debugText(field);
+        expect(text).toContain(label);
+        expect(text).toContain(hint.slice(0, 4));
+        expect(text).not.toContain("…");
+      }
+      // The smallest editor is too narrow for some hints on one row.
+      if (width === 400) expect(wrapped).toBeGreaterThan(0);
     });
   }
 });
@@ -739,7 +791,9 @@ simDescribe("map management + transfer picking end to end", () => {
       name: "Pick review",
       x: 0,
       y: 0,
-      pages: [{ trigger: "action", commands: [{ op: "text", lines: ["anchor"] }, transferA] }],
+      // A two-field command in front of the transfer (a text now shows six
+      // field rows and would push the transfer's PICK out of the clip).
+      pages: [{ trigger: "action", commands: [{ op: "switch", id: "anchor", value: true }, transferA] }],
     }];
     expect(probes().inject(JSON.stringify(project))).toEqual({ ok: true });
 
@@ -778,7 +832,7 @@ simDescribe("map management + transfer picking end to end", () => {
 
     const after = (JSON.parse(probes().export().text) as Project)
       .maps[0]!.events![0]!.pages[0]!.commands;
-    expect(after).toEqual([{ op: "text", lines: ["anchor"] }, transferA]);
+    expect(after).toEqual([{ op: "switch", id: "anchor", value: true }, transferA]);
   });
 
   test("adds the first command into scene @done and @cancel branches through the ADD prompt", async () => {

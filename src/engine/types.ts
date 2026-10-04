@@ -310,13 +310,39 @@ export interface TransferHandoff {
   portalId: string;
 }
 
+/** Where a text window sits on the screen. `top`, `center` and `bottom`
+ *  span the screen width; the corners and the sides (`left`, `right`) are a
+ *  narrower window (four fifths of the screen) against that edge. */
+export type TextBoxPosition =
+  | "top" | "center" | "bottom"
+  | "topLeft" | "topRight" | "bottomLeft" | "bottomRight"
+  | "left" | "right";
+
+/** Optional layout of a `text` command's window. Every field absent is the
+ *  default box (bottom, words left/top aligned, framed window). */
+export interface TextBoxLayout {
+  /** The window's place on screen; default "bottom". */
+  position?: TextBoxPosition;
+  /** Each row's horizontal place in the text column; default "left". */
+  align?: "left" | "center" | "right";
+  /** The page's rows as a block in the box's text area (four rows in a
+   *  band, fewer in a corner or side box); default "top". */
+  valign?: "top" | "center" | "bottom";
+  /** "window" the framed panel (default), "dim" a translucent fill of the
+   *  panel colour without the frame, "transparent" the words alone. */
+  background?: "window" | "dim" | "transparent";
+}
+
 export type Command =
   /** Lines may hold `{name}` (the player's name), and, when the project sets
    *  `system.textVariables`, `{v:<id>}` (variable `id`'s value). A project
    *  that declares `system.textTokens` may also use `{x:<key>}`, answered by
    *  the session's resolver (see SessionOptions.textTokens). Tokens are
-   *  expanded when the box opens. */
-  | { op: "text"; lines: string[]; cps?: number }
+   *  expanded when the box opens. The optional layout fields
+   *  (TextBoxLayout) place the window and the words in it; a text without
+   *  them draws the default box: docked to the bottom, framed, words from
+   *  the top left. */
+  | ({ op: "text"; lines: string[]; cps?: number } & TextBoxLayout)
   | {
       op: "choices";
       prompt: string;

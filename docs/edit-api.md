@@ -637,7 +637,7 @@ Field names are literal and case-sensitive. The core forms are:
 
 | command | `field` spellings |
 | --- | --- |
-| `text` | `lines`, `cps` |
+| `text` | `lines`, `cps`, `position`, `align`, `valign`, `background` (choosing a field's default removes it) |
 | `choices` | `prompt`, `optionCount`, `option:<i>` (label), `option:<i>.icon`, `option:<i>.icon.dir`, `option:<i>.icon.frame`, `cancel`; `<i>` is the zero-based option index |
 | `switch` | `id`, `value` |
 | `variable` | `id`, `mode`, then `value`, `from`, or `min`/`max` as selected by the mode |

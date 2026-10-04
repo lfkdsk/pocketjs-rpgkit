@@ -497,8 +497,11 @@ simDescribe("sunstone — render budget", () => {
     // it to 950,374 B (+4,988). Keep a narrow margin so an accidental
     // bundle-in still trips it. The autosave command's shared exact-tick
     // snapshot/effect seam and in-flight player validation add 4,809 B,
-    // measuring 955,183 B.
-    expect(jsBytes).toBeLessThan(955_900);
+    // measuring 955,183 B. The text command's optional layout (box
+    // geometry, DialogBox placement/alignment/background, portrait-in-box
+    // scaling, the sparse `box` and its save validation) adds 8,628 B,
+    // measuring 963,811 B.
+    expect(jsBytes).toBeLessThan(964_500);
   });
 });
 

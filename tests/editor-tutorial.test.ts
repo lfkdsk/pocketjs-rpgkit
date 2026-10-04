@@ -150,6 +150,8 @@ function inspectorLayout(): EventInspectorLayout {
     conditions: flattenConditions(page),
     commands: commandInspectorRows(page.commands),
     scroll: { pagesX: 0, conditionsY: 0, commandsY: cmdScroll },
+    // The app sizes rows of fields that draw their hint with the baked font.
+    measure: (text) => (globalThis as unknown as { ui: { measureText(s: string, slot: number): number } }).ui.measureText(text, 0),
   });
 }
 function allControls(layout: EventInspectorLayout): InspectorControl[] {
@@ -212,7 +214,22 @@ function selectCommandRow(inbox: string[], world: World, pred: (row: any) => boo
   const page = event.pages[s.selectedPageIndex]!;
   const index = commandInspectorRows(page.commands).findIndex((r) => pred(r));
   expect(index).toBeGreaterThanOrEqual(0);
-  const geo = inspectorLayout().commandRows.find((r) => r.row === index)!;
+  // Scroll the command list until the row's header is inside its clip.
+  let layout = inspectorLayout();
+  let geo = layout.commandRows.find((r) => r.row === index)!;
+  let guard = 0;
+  while (geo.header.rect.y < layout.commandClip.y && cmdScroll > 0 && guard++ < 24) {
+    line(inbox, world, { t: "scroll", dy: -1 });
+    cmdScroll = Math.max(0, cmdScroll - 36);
+    layout = inspectorLayout();
+    geo = layout.commandRows.find((r) => r.row === index)!;
+  }
+  while (geo.header.rect.y + geo.header.rect.h > layout.commandClip.y + layout.commandClip.h && guard++ < 24) {
+    line(inbox, world, { t: "scroll", dy: 1 });
+    cmdScroll += 36;
+    layout = inspectorLayout();
+    geo = layout.commandRows.find((r) => r.row === index)!;
+  }
   clickControl(inbox, world, geo.header);
 }
 function enterEventMode(inbox: string[], world: World): void {

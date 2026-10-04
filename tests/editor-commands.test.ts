@@ -165,6 +165,14 @@ describe("editor command tree", () => {
     ]);
   });
 
+  test("a text summary names only the layout fields an author set", () => {
+    expect(commandSummary({ op: "text", lines: ["Hi", "there"], cps: 20 })).toBe("Text: Hi / there");
+    expect(commandSummary({ op: "text", lines: ["Hi"], position: "top", align: "center" })).toBe("Text: Hi [top, center]");
+    expect(commandSummary({ op: "text", lines: ["Hi"], position: "bottomRight", align: "right", valign: "bottom", background: "dim" }))
+      .toBe("Text: Hi [bottomRight, right, bottom, dim]");
+    expect(commandSummary({ op: "text", lines: ["Hi"], background: 3 })).toBe("Text: Hi");
+  });
+
   test("treats a loop body as a command container with break as an owned leaf", () => {
     expect(defaultCommand("loop")).toEqual({ op: "loop", commands: [] });
     expect(defaultCommand("break")).toEqual({ op: "break" });

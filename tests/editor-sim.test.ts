@@ -705,8 +705,10 @@ simDescribe("editor budget", () => {
     // images, and the larger text slots used by the play/debug chrome.
     // The playtest-art fixture adds its icon sheet's 3 cells, 4 animation
     // frames, one 128x64 parallax and a sheet-icons TILESET: measured
-    // complete editor pak 522,384 B.
-    expect(pak).toBeLessThan(530_000);
+    // complete editor pak 522,384 B. The Chinese names of the text layout
+    // fields bake a 12-character CJK subset into the editor's font atlases
+    // and carry the Noto Sans CJK license (4,560 B): measured 541,152 B.
+    expect(pak).toBeLessThan(545_000);
     // Shared framework + tile editor + structured event inspector, the map
     // inspector/passage mode/transfer picking (E2), the two bundled documents,
     // and KS1's embedded command schema/read-only summaries.
@@ -776,8 +778,11 @@ simDescribe("editor budget", () => {
     // connected-world neighbour preview plus the session's left-map snapshot
     // bring it to 1,606,330 B (+2,798). Autosave's embedded schema, bilingual
     // picker/summary, in-flight validation and shared snapshot seam add
-    // 5,813 B: 1,612,143 B.
+    // 5,813 B: 1,612,143 B. The text command's optional layout (shared box
+    // geometry and DialogBox, the four select fields with wrapped bilingual
+    // hints in the event inspector, the embedded schema, interpreter, theme
+    // and list summary, portrait-in-box scaling) adds 13,223 B: 1,625,366 B.
     // Keep a narrow margin.
-    expect(js).toBeLessThan(1_615_000);
+    expect(js).toBeLessThan(1_628_000);
   });
 });
