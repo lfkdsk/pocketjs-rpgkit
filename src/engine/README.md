@@ -569,6 +569,7 @@ without changing `MAP_SCHEMA_HASH`.
 | `scene` | `{ worldContinues?: boolean }` | `{ worldContinues: false }` | let map fibers keep folding while a scene owns the screen |
 | `verifyMapManifest` | `boolean` | `false` | recompute a sharded shell's declared content hash for untrusted inputs |
 | `onFiberStart` | `(key: string, pageIndex: number, parallel: boolean) => void` | none | page-fiber start trace; see below |
+| `onInstruction` | `(key: string, pageIndex: number, ins: Instr) => void` | none | per-instruction execution trace; see below |
 
 The former bare-repository third argument remains accepted for v1 callers.
 Packaged splitter output uses its build-time content hash directly, and
@@ -593,6 +594,16 @@ commands never create a fiber and do not fire the trace. The callback costs
 nothing when omitted. `AttractController` does not currently accept or forward
 it, so attract/rewind sessions cannot install the trace through the
 controller.
+
+`onInstruction` fires once for every event instruction that executes, right
+before it runs, on the fiber that runs it — the event key, the selected
+page's index, and the instruction. A called common event's instructions run
+as stacked frames on the calling page's fiber, so they are attributed to
+that page. Because it fires at execution time, a coverage tool observes the
+commands a simulation actually reached, including ones in branches that
+were taken, and never the ones in branches that were not. The callback
+costs nothing when omitted (one optional dispatch in the run loop), and the
+idle-scan cache stays enabled when it is not installed.
 
 An `ext` command handler receives cloned JSON arguments, read-only built-in
 banks and `random()`, the only permitted entropy source. It returns a new

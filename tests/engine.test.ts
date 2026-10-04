@@ -392,3 +392,104 @@ describe("onFiberStart trace", () => {
     expect(state.sw.switches["did-run"]).toBe(true);
   });
 });
+
+function instructionTraceProject(): Project {
+  return {
+    format: "rpgkit-project/v1",
+    title: "Instruction trace",
+    tileSize: 16,
+    start: { map: "m", x: 1, y: 1, dir: "down" },
+    sheets: [{ id: "grass", cols: 1, rows: 1 }],
+    items: [],
+    sprites: {},
+    maps: [
+      {
+        id: "m",
+        name: "M",
+        width: 5,
+        height: 5,
+        sheets: ["grass"],
+        ground: new Array<string>(25).fill("grass.0"),
+        events: [
+          // An autorun page whose `if` takes the else branch (switch A is
+          // off): the transfer in the never-taken branch must not appear
+          // in the trace, while the commands that did run must.
+          {
+            id: "auto",
+            x: 1,
+            y: 1,
+            pages: [{
+              trigger: "autorun",
+              commands: [
+                { op: "switch", id: "ran", value: true },
+                {
+                  op: "if",
+                  if: { kind: "switch", id: "A" },
+                  then: [{ op: "transfer", map: "cave", x: 1, y: 1 }],
+                  else: [{ op: "switch", id: "B", value: true }],
+                },
+                { op: "erase" },
+              ],
+            }],
+          },
+        ],
+      },
+      { id: "cave", name: "Cave", width: 5, height: 5, sheets: ["grass"], ground: new Array<string>(25).fill("grass.0"), events: [] },
+    ],
+  };
+}
+
+describe("onInstruction trace", () => {
+  test("fires for executed commands but not for commands in a branch never taken", () => {
+    const project = instructionTraceProject();
+    const seen: { key: string; pageIndex: number; op: string }[] = [];
+    const session = createSession(project, 60, {
+      onInstruction: (key, pageIndex, ins) => seen.push({ key, pageIndex, op: ins.op }),
+    });
+    let state = startSession(project, session);
+    state = stepSession(session, state, { buttons: 0, confirmEdge: false, cancelEdge: false, upEdge: false, downEdge: false });
+    // The page really ran: A stays off, so the else branch set B.
+    expect(state.sw.switches["ran"]).toBe(true);
+    expect(state.sw.switches["B"]).toBe(true);
+    // The trace saw the commands that executed on the page's own fiber.
+    const ops = seen.filter((s) => s.key === "m/auto" && s.pageIndex === 0).map((s) => s.op);
+    expect(ops).toContain("switch");
+    expect(ops).toContain("if");
+    expect(ops).toContain("erase");
+    // The transfer sits in the never-taken branch: the trace never saw it.
+    expect(ops).not.toContain("transfer");
+  });
+
+  test("attributes a common event's commands to the calling page's fiber", () => {
+    const project = instructionTraceProject();
+    project.commonEvents = [{
+      id: "heal",
+      trigger: "none",
+      commands: [{ op: "switch", id: "healed", value: true }],
+    }];
+    // The page calls the common event, then erases itself: the common
+    // event's switch runs as a stacked frame on the page's own fiber.
+    project.maps[0]!.events![0]!.pages[0]!.commands = [
+      { op: "common", id: "heal" },
+      { op: "erase" },
+    ];
+    const seen: { key: string; pageIndex: number; op: string }[] = [];
+    const session = createSession(project, 60, {
+      onInstruction: (key, pageIndex, ins) => seen.push({ key, pageIndex, op: ins.op }),
+    });
+    let state = startSession(project, session);
+    state = stepSession(session, state, { buttons: 0, confirmEdge: false, cancelEdge: false, upEdge: false, downEdge: false });
+    expect(state.sw.switches["healed"]).toBe(true);
+    // The common event's switch is attributed to the calling page's fiber.
+    expect(seen.some((s) => s.key === "m/auto" && s.pageIndex === 0 && s.op === "switch")).toBe(true);
+  });
+
+  test("costs nothing when not installed", () => {
+    const project = instructionTraceProject();
+    const session = createSession(project, 60);
+    let state = startSession(project, session);
+    state = stepSession(session, state, { buttons: 0, confirmEdge: false, cancelEdge: false, upEdge: false, downEdge: false });
+    expect(state.sw.switches["ran"]).toBe(true);
+    expect(state.sw.switches["B"]).toBe(true);
+  });
+});

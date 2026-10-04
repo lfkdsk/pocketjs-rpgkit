@@ -8,16 +8,33 @@ import type { ArtRegistry } from "./art.ts";
 import type { MapCanvas } from "./canvas.ts";
 import { h, icon, replace } from "./dom.ts";
 
-export function hoverCardX(hostWidth: number, eventCenter: number, eventHalfWidth: number, cardWidth: number): number {
+export interface HoverCardPlacement {
+  x: number;
+  /** The side of the event the card opens on, chosen by the roomier-side
+   *  rule (before clamping). The card stamps this on its root as
+   *  `data-side` for inspection and debugging; the verification does not
+   *  trust it — it measures the card's actual rect against the anchor. */
+  side: "left" | "right";
+  /** True when the ideal x had to be clamped toward a host edge. */
+  clamped: boolean;
+}
+
+export function hoverCardPlacement(hostWidth: number, eventCenter: number, eventHalfWidth: number, cardWidth: number): HoverCardPlacement {
   const inset = 8;
   const gap = 12;
   const right = eventCenter + eventHalfWidth + gap;
   const left = eventCenter - eventHalfWidth - gap - cardWidth;
   const rightRoom = hostWidth - inset - right;
   const leftRoom = left + cardWidth - inset;
-  const ideal = rightRoom >= leftRoom ? right : left;
+  const chooseRight = rightRoom >= leftRoom;
+  const ideal = chooseRight ? right : left;
   const maxX = Math.max(inset, hostWidth - cardWidth - inset);
-  return Math.max(inset, Math.min(maxX, ideal));
+  const x = Math.max(inset, Math.min(maxX, ideal));
+  return { x, side: chooseRight ? "right" : "left", clamped: x !== ideal };
+}
+
+export function hoverCardX(hostWidth: number, eventCenter: number, eventHalfWidth: number, cardWidth: number): number {
+  return hoverCardPlacement(hostWidth, eventCenter, eventHalfWidth, cardWidth).x;
 }
 
 export class EventHoverCard {
@@ -122,9 +139,10 @@ export class EventHoverCard {
     const localX = center.x - hostRect.left;
     const localY = center.y - hostRect.top;
     const halfEvent = Math.max(8, (event.w ?? 1) * 8 * this.app.view.zoom);
-    const x = hoverCardX(hostRect.width, localX, halfEvent, width);
+    const placement = hoverCardPlacement(hostRect.width, localX, halfEvent, width);
     const y = Math.max(8, Math.min(hostRect.height - height - 8, localY - height / 2));
-    this.root.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    this.root.dataset.side = placement.side;
+    this.root.style.transform = `translate(${Math.round(placement.x)}px, ${Math.round(y)}px)`;
   }
 }
 

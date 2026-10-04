@@ -189,7 +189,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // (box geometry, DialogBox placement, alignment, background and
 // portrait-in-box scaling, the sparse `box`, its page cuts in the visible
 // modal identity and its save validation) brings it to 963,811 (+8,628).
-const EXPECTED_BYTES = 963_811;
+// The opt-in onInstruction execution trace (one optional dispatch in the
+// interpreter run loop) adds 171 B: 963,982.
+const EXPECTED_BYTES = 963_982;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

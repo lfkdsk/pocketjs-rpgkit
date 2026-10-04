@@ -7,7 +7,7 @@ import { fuzzyScore, rankCommands, type StudioCommand } from "../editor/studio/c
 import { StudioApp } from "../editor/studio/app.ts";
 import { isStudioMapBlank } from "../editor/studio/canvas.ts";
 import { normalizeStudioPreferences } from "../editor/studio/host.ts";
-import { hoverCardX } from "../editor/studio/event-hover-card.ts";
+import { hoverCardX, hoverCardPlacement } from "../editor/studio/event-hover-card.ts";
 import { mapDropIndex } from "../editor/studio/map-tree.ts";
 import { rectangularTileSelection, searchPaletteTiles } from "../editor/studio/palette.ts";
 import { SHORTCUT_GROUPS } from "../editor/studio/shortcuts.ts";
@@ -97,6 +97,27 @@ describe("Studio polish contracts", () => {
     expect(hoverCardX(1_000, 700, 20, 200)).toBe(468);
     expect(hoverCardX(1_000, 500, 20, 200)).toBe(532);
     expect(hoverCardX(300, 150, 8, 400)).toBe(8);
+  });
+
+  test("hover card placement reports the chosen side and whether it clamped", () => {
+    // Event left of centre: the right side is roomier.
+    expect(hoverCardPlacement(1_000, 300, 20, 200)).toMatchObject({ x: 332, side: "right", clamped: false });
+    // Event right of centre: the left side is roomier.
+    expect(hoverCardPlacement(1_000, 700, 20, 200)).toMatchObject({ x: 468, side: "left", clamped: false });
+    // A tie (equal rooms) opens on the right, deterministically.
+    const tied = hoverCardPlacement(1_000, 500, 20, 200);
+    expect(tied.side).toBe("right");
+    // Card wider than the host clamps to the 8 px inset and reports clamped.
+    const clamped = hoverCardPlacement(300, 150, 8, 400);
+    expect(clamped.x).toBe(8);
+    expect(clamped.clamped).toBe(true);
+    // A wide card whose roomier (left) side still runs off the host clamps to
+    // the inset and keeps reporting the side it chose, so data-side stays
+    // trustworthy even when the card is pinned to the edge.
+    const pinned = hoverCardPlacement(400, 350, 20, 350);
+    expect(pinned.side).toBe("left");
+    expect(pinned.x).toBe(8);
+    expect(pinned.clamped).toBe(true);
   });
 
   test("a pattern that is not declared by the next map is cleared", () => {

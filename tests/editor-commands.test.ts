@@ -441,7 +441,7 @@ describe("editor command tree", () => {
       { op: "stopAnim", anim: "aura" },
       { op: "stopAnim" },
     ];
-    expect(commands.map(commandSummary)).toEqual([
+    expect(commands.map((command) => commandSummary(command))).toEqual([
       "Move control event guard: speed 6",
       "Map animation spark as spark-1 on tile (3, 4)",
       "Map animation aura as aura-1 on player",
@@ -457,7 +457,7 @@ describe("editor condition and route helpers", () => {
   test("covers defaults and summaries for every condition kind", () => {
     const conditions = CONDITION_KINDS.map((kind) => defaultCondition(kind));
     expect(conditions.map((condition) => condition.kind)).toEqual([...CONDITION_KINDS]);
-    expect(conditions.map(conditionSummary)).toEqual([
+    expect(conditions.map((condition) => conditionSummary(condition))).toEqual([
       "Switch switch is ON",
       "Variable variable >= 0",
       "Self switch A is ON",

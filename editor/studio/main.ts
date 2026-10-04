@@ -28,7 +28,7 @@ import { mountPlayTestPanel } from "./preview-panel.ts";
 import { mountMapTree } from "./map-tree.ts";
 import { mountPalette } from "./palette.ts";
 import { keyLabel, SHORTCUT_GROUPS } from "./shortcuts.ts";
-import { schemaProblems, type StudioProblem } from "./problems.ts";
+import { doctorProblems, mergeCheckAndDoctor, schemaProblems, type StudioProblem } from "./problems.ts";
 import { LintScheduler } from "./problem-lint.ts";
 
 const host: StudioHost = (globalThis as { studioHost?: StudioHost }).studioHost ?? new BrowserHost();
@@ -367,7 +367,12 @@ async function recomputeProblems(): Promise<StudioProblem[]> {
     const outcome = await host.runChecks({ project, mode: "lint" });
     checks = outcome.ok ? outcome.problems : [{ severity: "warning", source: "check", code: "rpgkit-check", message: outcome.message }];
   }
-  return [...schema, ...checks];
+  // The doctor's fixable findings run on the inline project (the edit
+  // operations its fixes use need the whole document). Where a doctor
+  // finding restates a lint finding at the same location, the fix is
+  // attached to the lint line instead of adding a duplicate row.
+  const doctor = project && schema.length === 0 ? doctorProblems(project) : [];
+  return [...schema, ...mergeCheckAndDoctor(checks, doctor)];
 }
 
 function scheduleProblems(): void {
@@ -384,6 +389,17 @@ function locate(problem: StudioProblem): void {
     requestAnimationFrame(() => canvas?.reveal({ x: event.x, y: event.y, w: event.w, h: event.h }));
   }
   app.emit("selection");
+}
+
+/** Apply a doctor fix: one undoable transaction, then refresh the list. */
+function applyDoctorFix(problem: StudioProblem): void {
+  if (!problem.fix) return;
+  const response = app.transaction(problem.fix.label, problem.fix.ops);
+  if (response && !response.ok) {
+    app.notify("error", `Fix refused: ${response.error.message}`);
+    return;
+  }
+  scheduleProblems();
 }
 
 function renderProblems(): void {
@@ -410,7 +426,8 @@ function renderProblems(): void {
       iconButton("chevron", "Close problems", () => { problemsOpen = false; renderProblems(); renderStatus(); })),
     problems.length === 0
       ? emptyState("check", "No problems", "Schema validation and rpgkit-check found nothing to fix.")
-      : h("ul", { class: "problem-list" }, problems.map((problem) => h("li", null, h("button", {
+      : h("ul", { class: "problem-list" }, problems.map((problem) => h("li", null,
+        h("button", {
           type: "button",
           class: `problem ${problem.severity}`,
           title: problem.code,
@@ -418,7 +435,15 @@ function renderProblems(): void {
         },
         h("span", { class: `sev ${problem.severity}` }, problem.severity),
         h("span", { class: "problem-message" }, problem.message),
-        h("span", { class: "problem-where" }, [problem.map, problem.event, problem.page === undefined ? undefined : `page ${problem.page + 1}`].filter(Boolean).join(" › ") || problem.code))))),
+        h("span", { class: "problem-where" }, [problem.map, problem.event, problem.page === undefined ? undefined : `page ${problem.page + 1}`].filter(Boolean).join(" › ") || problem.code)),
+        problem.fix
+          ? h("button", {
+              type: "button",
+              class: "problem-fix",
+              title: problem.fix.description,
+              onclick: () => applyDoctorFix(problem),
+            }, icon("check"), problem.fix.label)
+          : null))),
   );
 }
 
@@ -430,7 +455,11 @@ async function runEngineChecks(): Promise<void> {
     app.notify("error", outcome.message);
     return;
   }
-  problems = [...problems.filter((problem) => problem.source === "schema"), ...outcome.problems];
+  // Keep the schema, lint and doctor findings (recomputed from the current
+  // document) and add the dynamic engine-check findings on top, so running
+  // engine checks no longer clears the fixable problems.
+  const staticProblems = await recomputeProblems();
+  problems = [...staticProblems, ...outcome.problems];
   renderStatus();
   renderProblems();
 }

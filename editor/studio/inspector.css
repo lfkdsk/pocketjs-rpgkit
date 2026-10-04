@@ -725,3 +725,51 @@ select.ins-input {
 .ins-picker-empty {
   padding: 8px;
 }
+
+/* ---- event explanation --------------------------------------------------- */
+
+.ins-explain-line {
+  margin: 0 0 6px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.ins-explain-page {
+  margin: 8px 0 4px;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.ins-explain-steps {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  background: var(--bg);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.ins-explain-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 8px 2px calc(8px + var(--depth, 0) * 14px);
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ins-explain-steps li:nth-child(odd) {
+  background: color-mix(in srgb, var(--panel-2) 40%, transparent);
+}
+
+.ins-explain-branch {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+}

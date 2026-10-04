@@ -70,6 +70,7 @@ import {
   type ConditionContext,
   type EventPageAppearance,
   type InterpInput,
+  type Instr,
   type InterpState,
   type HostAction,
   type SoundCue,
@@ -449,6 +450,10 @@ export interface SessionOptions {
    *  WorldOptions.onFiberStart). Coverage/QA tools use it to observe pages
    *  whose fibers begin and end inside one tick. */
   onFiberStart?: (key: string, pageIndex: number, parallel: boolean) => void;
+  /** Opt-in instruction trace forwarded to every world (see
+   *  WorldOptions.onInstruction). Coverage/QA tools use it to observe the
+   *  commands a simulation actually reached. */
+  onInstruction?: (key: string, pageIndex: number, ins: Instr) => void;
   /** Where a message too long for one box breaks into pages, forwarded to
    *  every world (see WorldOptions.paginateText). GameView passes the
    *  dialog box's paginator; without one every message is one page. */
@@ -838,6 +843,7 @@ export function createSession(
     items: project.items,
     inventory: project.system?.inventory,
     onFiberStart: options.onFiberStart,
+    onInstruction: options.onInstruction,
     animations: project.animations,
     textTokens: options.textTokens,
   };

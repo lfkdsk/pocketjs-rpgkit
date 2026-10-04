@@ -268,6 +268,29 @@ selection.
 
 ![An event hover card in the dark theme](screenshots/studio/studio-event-hover-dark.png)
 
+### Explaining an event
+
+Selecting an event shows an **Explain** section in the inspector: a
+deterministic, human-readable summary generated from the command tree alone
+(no model calls, so the same event always explains the same way). It lists
+the event's headline trigger, what the event changes (switches, self
+switches, variables, items, gold, map transfers, common events), and each
+page's own trigger, condition and commands in execution order — branches
+indented and labelled (Then, Else, Option 1…, Win, Lose, …). The "writes
+variables" list covers every command that can target a variable: the
+variable command, timer read, input number, select item, location info and
+extension-choice writes. The one-line digest names runtime-decided channels
+(extension commands, extension choices, battles, scenes, shops, and a
+transfer whose map is read from a variable) as a possibility, and only says
+"changes no switches, variables, items or maps" when every command is
+classified as writing none of them and no static target was collected; a
+command with an empty-string id (schema-valid for items, common-event calls
+and literal transfer maps) lists that empty target instead of vanishing. Text is never shortened — long lines wrap
+instead of truncating, so the tail of a long message stays visible. The
+section collapses to leave room for the command tree.
+
+![The event explanation in the inspector](screenshots/studio/studio-event-explain-light.png)
+
 ## Art
 
 Projects name tile sheets and sprites by id; the pixels are not in the JSON.
@@ -309,6 +332,60 @@ The problems list combines the protocol's schema validation (`validate`)
 with `rpgkit-check`'s static lint (unknown transfer targets, missing items
 or sprites, unreachable pages, unused switches and so on). It refreshes
 after every edit for inline projects.
+
+Some findings also carry a **Fix** button: a one-click repair that runs as
+one undoable `editor/api` transaction (Ctrl/⌘+Z reverses it). The doctor
+covers these fixable categories:
+
+| Finding | Fix |
+| --- | --- |
+| Jump to a label that is not defined on the page | Insert the missing label at the end of the page |
+| Transfer to a map that is not in the project | Delete the transfer |
+| Call to a common event that is not defined | Delete the call |
+| Page needs a self switch nobody ever sets (dead page) | Delete the page — or, on a single-page event (whose last page cannot be deleted), clear the impossible condition |
+| The autorun probe stopped on a command it cannot simulate (an unknown extension left a variable unset, so a variable-target transfer failed) | None — review the page manually (info) |
+
+The autorun check is measured, not guessed from syntax: the doctor runs the
+real engine on a copy of the map from a fresh entry with no input for a short
+fixed window (12 frames), counts each autorun page's fiber starts, and flags a
+page only when it restarted on every frame from its first start. The finding
+is a warning that states only what was observed — the probe window and the
+start frames; it does not claim the page can never deactivate (a finite
+window cannot prove that), and it carries no automatic rewrite. A fix cannot
+be proven safe from a finite window, so the message describes the standard
+one-shot pattern (set a self switch at the top of the page or before each
+exit, and add an empty page conditioned on it, or erase the event) and leaves
+the repair to the author. A page that waits, opens a box/choice/scene, writes
+off its own condition, or hands priority to a later page (including via a
+common event) does not restart every frame and is not flagged; neither does a
+page that restarts with a short wait between runs, since the check is
+every-frame only. A page whose commands include a runtime-decided writer —
+an extension command or choice, a battle, a scene, a shop, or a transfer
+whose map is read from a variable, including one reached through a called
+common event — carries a note saying what the probe did with each channel
+the probe actually executed on this page's fiber (recorded by an
+instruction trace, so a channel in a branch the probe never took is not
+claimed): extension commands run as no-ops, while extension choices,
+battles, scenes and shops park on their open modals (no input arrives) and
+variable-target transfers are followed to whatever map the variable names,
+so the observation may not match the game. If the probe stops on a command
+it cannot simulate — an unknown extension run as a no-op, so a variable a
+real handler would set stays unset and a later variable-target transfer
+fails — the check is reported as incomplete for that page (info, no fix):
+the finding names the command that stopped the probe and why the probe
+could not simulate it, and the page is left for manual review. A `break`
+outside a loop is the language's defined early exit for a page — the
+doctor never touches it; the lint lists it for review without a fix.
+
+Where the doctor restates a lint finding at the same location (a missing
+label, an unknown transfer target or common event), the fix is attached to
+the lint row instead of adding a duplicate line.
+
+The fix's tooltip previews what it will change. The doctor runs on inline
+projects only (its fixes address the whole document); sharded packs keep
+the schema and lint findings without fixes.
+
+![A doctor finding with its Fix button in the Problems panel](screenshots/studio/studio-problems-fix.png)
 
 **Run engine checks** (rpgkit-check's dynamic checks, which run the game
 engine) and the agent button in the toolbar are disabled on the web page;

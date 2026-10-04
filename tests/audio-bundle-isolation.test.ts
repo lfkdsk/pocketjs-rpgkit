@@ -192,9 +192,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // adds 7,325 B to Meadow, 8,628 B to Sunstone and 7,531 B to the WAV
 // fixture: 605,122, 963,811 and 762,151.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 605_122;
-const EXPECTED_SUNSTONE_QOA_BYTES = 963_811;
-const EXPECTED_WAV_FIXTURE_BYTES = 762_151;
+// The opt-in onInstruction execution trace (one optional dispatch in the
+// interpreter run loop) adds 171 B to each bundle: 605,293, 963,982 and 762,322.
+const EXPECTED_MEADOW_BYTES = 605_293;
+const EXPECTED_SUNSTONE_QOA_BYTES = 963_982;
+const EXPECTED_WAV_FIXTURE_BYTES = 762_322;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

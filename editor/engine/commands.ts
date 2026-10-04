@@ -397,14 +397,14 @@ function boolText(value: unknown): string {
   return value === true ? "ON" : value === false ? "OFF" : "?";
 }
 
-function truncate(value: string, max = 64): string {
-  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`;
+function truncate(value: string, max = 64, full = false): string {
+  return full || value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`;
 }
 
-function jsonPreview(value: unknown, max = 48): string {
+function jsonPreview(value: unknown, max = 48, full = false): string {
   try {
     const encoded = JSON.stringify(value);
-    return truncate(encoded === undefined ? String(value) : encoded, max);
+    return truncate(encoded === undefined ? String(value) : encoded, max, full);
   } catch {
     return "[opaque]";
   }
@@ -440,8 +440,12 @@ function colorSummary(value: unknown): string {
 }
 
 /** A compact single-line display. It is deliberately total over unknown and
- * malformed data so an editor can still open and preserve newer projects. */
-export function commandSummary(command: unknown): string {
+ * malformed data so an editor can still open and preserve newer projects.
+ * With `{ full: true }` no text is shortened: callers that wrap lines
+ * themselves (the event explanation) get the complete content, while list
+ * rows and hover cards keep the 64-character default. */
+export function commandSummary(command: unknown, opts: { full?: boolean } = {}): string {
+  const full = opts.full === true;
   if (!isRecord(command)) return "Unknown command";
   switch (command.op) {
     case "text": {
@@ -452,10 +456,10 @@ export function commandSummary(command: unknown): string {
       const layout = (["position", "align", "valign", "background"] as const)
         .map((key) => command[key])
         .filter((value): value is string => typeof value === "string");
-      return `Text: ${truncate(lines.join(" / ") || "(empty)")}${layout.length > 0 ? ` [${layout.join(", ")}]` : ""}`;
+      return `Text: ${truncate(lines.join(" / ") || "(empty)", 64, full)}${layout.length > 0 ? ` [${layout.join(", ")}]` : ""}`;
     }
     case "choices":
-      return `Choices: ${truncate(text(command.prompt, "(no prompt)"))} (${Array.isArray(command.options) ? command.options.length : 0})`;
+      return `Choices: ${truncate(text(command.prompt, "(no prompt)"), 64, full)} (${Array.isArray(command.options) ? command.options.length : 0})`;
     case "switch":
       return `Switch ${text(command.id)} = ${boolText(command.value)}`;
     case "variable": {
@@ -471,7 +475,10 @@ export function commandSummary(command: unknown): string {
     case "selfSwitch":
       return `Self switch ${text(command.key)} = ${boolText(command.value)}`;
     case "if":
-      return `If ${conditionSummary(command.if)}`;
+      // The full flag must reach the nested condition too: a long extension
+      // condition inside an `if` is part of the explanation's text and must
+      // not be truncated at the model layer.
+      return `If ${conditionSummary(command.if, { full })}`;
     case "transfer":
       return `Transfer ${operandSummary(command.map)} (${operandSummary(command.x)}, ${operandSummary(command.y)})`;
     case "wait":
@@ -525,24 +532,24 @@ export function commandSummary(command: unknown): string {
     }
     case "moveControl": {
       const control = isRecord(command.control) ? command.control : {};
-      return `Move control ${targetSummary(command.target)}: ${text(control.kind)}${control.value === undefined ? "" : ` ${jsonPreview(control.value)}`}`;
+      return `Move control ${targetSummary(command.target)}: ${text(control.kind)}${control.value === undefined ? "" : ` ${jsonPreview(control.value, 48, full)}`}`;
     }
     case "shop":
       return `Shop ${text(command.id)} (${Array.isArray(command.goods) ? command.goods.length : 0} goods)`;
     case "ext":
-      return `Extension ${text(command.call)} ${jsonPreview(command.args)}`;
+      return `Extension ${text(command.call)} ${jsonPreview(command.args, 48, full)}`;
     case "extChoice":
       return `Extension choice ${text(command.call)}: ${text(command.prompt)}`;
     case "appearance":
-      return `Appearance ${jsonPreview(command.target)} ${jsonPreview({ sprite: command.sprite, opacity: command.opacity, visible: command.visible })}`;
+      return `Appearance ${jsonPreview(command.target, 48, full)} ${jsonPreview({ sprite: command.sprite, opacity: command.opacity, visible: command.visible }, 48, full)}`;
     case "layer":
-      return `Layer ${text(command.layer)} ${jsonPreview({ visible: command.visible, variant: command.variant })}`;
+      return `Layer ${text(command.layer)} ${jsonPreview({ visible: command.visible, variant: command.variant }, 48, full)}`;
     case "changeParallax":
       return command.image === null
         ? "Clear parallax"
         : `Parallax ${text(command.image)} loop ${command.loopX ? "X" : "-"}${command.loopY ? "Y" : "-"} speed (${numberText(command.sx)}, ${numberText(command.sy)})`;
     case "tileProperty":
-      return `Tile property (${numberText(command.x)}, ${numberText(command.y)}) ${jsonPreview({ passage: command.passage, enter: command.enter, exit: command.exit })}`;
+      return `Tile property (${numberText(command.x)}, ${numberText(command.y)}) ${jsonPreview({ passage: command.passage, enter: command.enter, exit: command.exit }, 48, full)}`;
     case "screenFade":
       return `Screen fade ${text(command.direction)} ${numberText(command.duration)}s${command.color === undefined ? "" : ` ${colorSummary(command.color)}`}`;
     case "screenTint":
@@ -570,7 +577,7 @@ export function commandSummary(command: unknown): string {
     case "rotatePicture":
       return `Rotate picture ${numberText(command.id)} at ${numberText(command.speed)}`;
     case "tintPicture":
-      return `Tint picture ${numberText(command.id)} ${jsonPreview(command.tone)} over ${numberText(command.duration)}s`;
+      return `Tint picture ${numberText(command.id)} ${jsonPreview(command.tone, 48, full)} over ${numberText(command.duration)}s`;
     case "erasePicture":
       return `Erase picture ${numberText(command.id)}`;
     case "timer":
@@ -612,7 +619,7 @@ export function commandSummary(command: unknown): string {
       if (typeof command.anim === "string") return `Stop map animations using ${text(command.anim)}`;
       return "Stop all map animations";
     case "battle":
-      return `Battle ${jsonPreview(command.setup)}`;
+      return `Battle ${jsonPreview(command.setup, 48, full)}`;
     case "scene":
       return `Scene ${text(command.id)}`;
     case "loop": {
@@ -708,8 +715,11 @@ function childBranches(command: Command, address: CommandAddress): ChildBranch[]
 
 /** Pre-order flattening: a container appears before all of its branches, and
  * branches appear in authored order (then/else, options/cancel,
- * win/lose/escape, a loop's body). */
-export function flattenCommands(commands: readonly Command[]): FlatCommandRow[] {
+ * win/lose/escape, a loop's body). With `fullSummary` the row summaries keep
+ * the complete command text instead of the compact 64-character form, for
+ * callers that wrap lines themselves (the event explanation). */
+export function flattenCommands(commands: readonly Command[], opts: { fullSummary?: boolean } = {}): FlatCommandRow[] {
+  const full = opts.fullSummary === true;
   const rows: FlatCommandRow[] = [];
 
   const visit = (list: readonly Command[], path: CommandListPath, branch?: string): void => {
@@ -724,7 +734,7 @@ export function flattenCommands(commands: readonly Command[]): FlatCommandRow[] 
         depth: path.length,
         ...(branch === undefined ? {} : { branch, branchLabel: branch }),
         command,
-        summary: commandSummary(command),
+        summary: commandSummary(command, { full }),
         editable,
         readOnly: !editable,
       });
@@ -1071,7 +1081,8 @@ export function isEditableCondition(
   return isRecord(condition) && CONDITION_KINDS.includes(condition.kind as ConditionKind);
 }
 
-export function conditionSummary(condition: unknown): string {
+export function conditionSummary(condition: unknown, opts: { full?: boolean } = {}): string {
+  const full = opts.full === true;
   if (!isRecord(condition)) return "Unknown condition";
   switch (condition.kind) {
     case "switch":
@@ -1089,7 +1100,7 @@ export function conditionSummary(condition: unknown): string {
     case "appearance":
       return `Appearance ${targetSummary(condition.target)} uses ${condition.sprite === null ? "default sprite" : text(condition.sprite)}`;
     case "tileProperty":
-      return `Tile property (${numberText(condition.x)}, ${numberText(condition.y)}) ${jsonPreview({ passage: condition.passage, enter: condition.enter, exit: condition.exit })}`;
+      return `Tile property (${numberText(condition.x)}, ${numberText(condition.y)}) ${jsonPreview({ passage: condition.passage, enter: condition.enter, exit: condition.exit }, 48, full)}`;
     case "region":
       return `Region ${numberText(condition.id)} at (${numberText(condition.x)}, ${numberText(condition.y)})`;
     case "worldIdle":
@@ -1103,7 +1114,7 @@ export function conditionSummary(condition: unknown): string {
     case "timer":
       return `Timer ${text(condition.op)} ${numberText(condition.seconds)}s`;
     case "ext":
-      return `Extension ${text(condition.call)} ${jsonPreview(condition.args)}`;
+      return `Extension ${text(condition.call)} ${jsonPreview(condition.args, 48, full)}`;
     default:
       return `Unknown condition${typeof condition.kind === "string" ? ` (${condition.kind})` : ""}`;
   }
@@ -1150,9 +1161,9 @@ export function pageConditionClauses(pageCondition?: PageCondition): PageConditi
   });
 }
 
-export function pageConditionSummary(pageCondition?: PageCondition): string {
-  const summaries = pageConditionClauses(pageCondition).map((entry) => entry.summary);
-  return summaries.length === 0 ? "Always" : summaries.join(" AND ");
+export function pageConditionSummary(pageCondition?: PageCondition, opts: { full?: boolean } = {}): string {
+  const clauses = pageConditionClauses(pageCondition);
+  return clauses.length === 0 ? "Always" : clauses.map((entry) => conditionSummary(entry.condition, opts)).join(" AND ");
 }
 
 /** A page condition containing one default clause. The four legacy kinds use

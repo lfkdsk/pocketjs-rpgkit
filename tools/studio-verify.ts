@@ -972,12 +972,25 @@ async function main(): Promise<void> {
     const hoverPoint = await cell(11, 5);
     await mouse("mouseMoved", hoverPoint.x, hoverPoint.y, "none");
     await waitFor("merchant hover card", `(() => { const card = document.querySelector(".event-hover-card"); return card && !card.hidden && card.dataset.event === "merchant"; })()`);
+    // The card fades in over a CSS entrance animation. This verifier forces
+    // prefers-reduced-motion: reduce before navigation, which compresses that
+    // animation to a fraction of a millisecond, so a mid-fade capture cannot
+    // happen here; waiting for the animations to finish is still a safe,
+    // environment-independent net (and stays correct if a run ever drops the
+    // reduced-motion override), so the rect is measured only once it is
+    // final.
+    await waitFor("hover card entrance settled", `(() => {
+      const card = document.querySelector(".event-hover-card");
+      if (!card || card.hidden) return false;
+      return card.getAnimations().every((a) => a.playState === "finished");
+    })()`);
     const hoverCard = await evaluate<{
       event: string | null;
       text: string;
       commands: number;
       inside: boolean;
-      side: string;
+      onLeft: boolean;
+      onRight: boolean;
       leftRoom: number;
       rightRoom: number;
       box: number[];
@@ -988,15 +1001,26 @@ async function main(): Promise<void> {
       const r = card.getBoundingClientRect();
       const h = host.getBoundingClientRect();
       const center = __studio.cellToClient(11, 5);
-      const halfEvent = Math.max(8, 8 * __studio.app.view.zoom);
+      const ev = __studio.app.currentMap().events.find((e) => e.id === "merchant");
+      const zoom = __studio.app.view.zoom;
+      const halfW = Math.max(8, (ev?.w ?? 1) * 8 * zoom);
+      const anchorLeft = center.x - halfW;
+      const anchorRight = center.x + halfW;
+      // The side assertion measures the card's actual rect against the
+      // anchor's rect (not a field the editor writes about itself): the
+      // card's right edge stays left of the anchor's left edge when the
+      // left side is roomier. Half a pixel covers rounding. The editor
+      // clamps to an 8 px inset, so "inside" uses that inset with a half-
+      // pixel tolerance for sub-pixel host rects.
       return {
         event: card.dataset.event ?? null,
         text: card.textContent ?? "",
         commands: card.querySelectorAll("li").length,
-        inside: r.left >= h.left + 7 && r.top >= h.top + 7 && r.right <= h.right - 7 && r.bottom <= h.bottom - 7,
-        side: r.right <= center.x - halfEvent ? "left" : r.left >= center.x + halfEvent ? "right" : "overlap",
-        leftRoom: center.x - halfEvent - 12 - (h.left + 8),
-        rightRoom: h.right - 8 - (center.x + halfEvent + 12),
+        inside: r.left >= h.left + 7.5 && r.top >= h.top + 7.5 && r.right <= h.right - 7.5 && r.bottom <= h.bottom - 7.5,
+        onLeft: r.right <= anchorLeft + 0.5,
+        onRight: r.left >= anchorRight - 0.5,
+        leftRoom: center.x - halfW - 12 - (h.left + 8),
+        rightRoom: h.right - 8 - (center.x + halfW + 12),
         box: [r.left, r.top, r.width, r.height],
         host: [h.left, h.top, h.width, h.height],
       };
@@ -1004,8 +1028,8 @@ async function main(): Promise<void> {
     expect("polish: the delayed event hover card contains identity, trigger, position and command summaries",
       hoverCard.event === "merchant" && /Traveling Merchant/.test(hoverCard.text) && /merchant/.test(hoverCard.text) && /action/.test(hoverCard.text) && /\(11, 5\)/.test(hoverCard.text) && hoverCard.commands === 3,
       JSON.stringify(hoverCard));
-    expect("polish: the hover card chooses the roomier left side and stays inside the canvas host",
-      hoverCard.leftRoom > hoverCard.rightRoom && hoverCard.side === "left" && hoverCard.inside,
+    expect("polish: the hover card opens on the roomier side of the anchor and stays inside the canvas host",
+      hoverCard.leftRoom > hoverCard.rightRoom && hoverCard.onLeft && !hoverCard.onRight && hoverCard.inside,
       JSON.stringify(hoverCard));
     await studioShot("studio-event-hover-light", "light");
     await mouse("mouseMoved", 2, 2, "none");
@@ -1333,6 +1357,23 @@ async function main(): Promise<void> {
     const written = await evaluate<unknown>(`__studio.app.currentMap().events.find((e) => e.id === ${JSON.stringify(created?.id ?? "")})?.pages[0].commands`);
     expect("event: the inspector writes a line of dialog", JSON.stringify(written) === JSON.stringify([{ op: "text", lines: ["Hello from Studio!"] }]), JSON.stringify(written));
 
+    // The inspector explains the selected event: its trigger, what it changes,
+    // and the page's commands in execution order. The text wraps (no
+    // truncation) so a long line stays readable.
+    const explained = await evaluate<{ trigger: boolean; changes: boolean; steps: string[] } | null>(`(() => {
+      const section = [...document.querySelectorAll("#inspector .ins-section")].find((s) => s.querySelector("h2")?.textContent === "Explain");
+      if (!section) return null;
+      const text = section.textContent ?? "";
+      return {
+        trigger: text.includes("confirms facing"),
+        changes: text.includes("changes no switches"),
+        steps: [...section.querySelectorAll(".ins-explain-steps li")].map((li) => li.textContent ?? ""),
+      };
+    })()`);
+    expect("event: the inspector explains the selected event",
+      !!explained && explained.trigger && explained.changes && explained.steps.length === 1 && /Hello from Studio!/.test(explained.steps[0]!),
+      JSON.stringify(explained));
+
     // ---- drag and drop ----
     phase = "drag";
     const rectOf = (expression: string) => evaluate<{ x: number; y: number; w: number; h: number } | null>(`(() => {
@@ -1410,6 +1451,11 @@ async function main(): Promise<void> {
     const elderAt = await cell(9, 5);
     await click(elderAt.x, elderAt.y);
     await waitFor("elder command tree", `document.querySelectorAll('[data-action="select-command"]').length >= 4`);
+    // The Explain section above the command tree can be taller than the
+    // inspector's visible area (long command text wraps instead of
+    // truncating), so scroll the tree into view before measuring rows.
+    await evaluate(`document.querySelector('[data-role="command-tree"]')?.scrollIntoView({ block: "start" })`);
+    await sleep(120);
     const elderBefore = await evaluate<any[]>(`__studio.app.currentMap().events.find((e) => e.id === "elder").pages[0].commands`);
     const firstText = await rectOf(`document.querySelector('.ins-row[data-op="text"]')`);
     const farewell = await rectOf(`[...document.querySelectorAll(".ins-branch")].find((el) => /farewell/i.test(el.textContent))`);
@@ -1507,6 +1553,10 @@ async function main(): Promise<void> {
     await key("v", "KeyV", 0, "v");
     await click(elder.x, elder.y);
     await sleep(200);
+    // Capture the event explanation in the inspector (light theme).
+    await evaluate(`[...document.querySelectorAll('#inspector h2')].find((h) => h.textContent === "Explain")?.scrollIntoView({ block: "start" })`);
+    await sleep(150);
+    await studioShot("studio-event-explain-light", "light");
     // Select a command inside a choice branch so the tree shows its nesting
     // and the form shows that command's fields.
     const rows = await evaluate<number>(`document.querySelectorAll('[data-action="select-command"]').length`);
@@ -2203,6 +2253,19 @@ async function main(): Promise<void> {
     await waitFor("problem pulse to fade", `globalThis.__studio?.canvas?.flashing === false`, 5_000);
     await shot("studio-problems");
 
+    // The doctor offers a one-click fix for a jump to a missing label: the
+    // Fix button runs one undoable transaction that inserts the label.
+    await evaluate(`__studio.app.run("insert-command", { map: "village", event: "elder", page: 0, address: { path: [], index: 0 }, command: { op: "jumpLabel", name: "farewell" } }, "Add a jump")`);
+    await waitFor("doctor finding listed", `!!document.querySelector(".problem-fix")`, 5_000);
+    const fixLabel = await evaluate<string | null>(`[...document.querySelectorAll(".problem-fix")].map((b) => b.textContent).find((t) => t && t.includes("Insert label")) ?? null`);
+    expect("problems: the doctor offers a fix for the missing label", fixLabel !== null, String(fixLabel));
+    await shot("studio-problems-fix");
+    await evaluate(`[...document.querySelectorAll(".problem-fix")].find((b) => b.textContent?.includes("Insert label"))?.click()`);
+    await waitFor("label inserted", `__studio.app.currentMap().events.find((e) => e.id === "elder")?.pages[0].commands.some((c) => c.op === "label" && c.name === "farewell") === true`, 5_000);
+    // The fix is one undoable transaction.
+    await key("z", "KeyZ", CTRL);
+    await waitFor("fix undone", `__studio.app.currentMap().events.find((e) => e.id === "elder")?.pages[0].commands.some((c) => c.op === "label" && c.name === "farewell") !== true`, 5_000);
+
     // ---- narrow ----
     phase = "narrow";
     await clickSelector("#status-problems");
@@ -2530,24 +2593,40 @@ async function main(): Promise<void> {
     const merchant2 = await cell(11, 5);
     await mouse("mouseMoved", merchant2.x, merchant2.y, "none");
     await waitFor("dark merchant hover card", `(() => { const card = document.querySelector(".event-hover-card"); return card && !card.hidden && card.dataset.event === "merchant"; })()`);
-    const darkHover = await evaluate<{ rows: number; side: string; leftRoom: number; rightRoom: number }>(`(() => {
+    // Same entrance-animation settle as the light-theme card above, so the
+    // measurement and the --double capture see the finished card.
+    await waitFor("dark hover card entrance settled", `(() => {
+      const card = document.querySelector(".event-hover-card");
+      if (!card || card.hidden) return false;
+      return card.getAnimations().every((a) => a.playState === "finished");
+    })()`);
+    const darkHover = await evaluate<{ rows: number; onLeft: boolean; leftRoom: number; rightRoom: number }>(`(() => {
       const card = document.querySelector(".event-hover-card");
       const host = document.getElementById("canvas-host").getBoundingClientRect();
-      const box = card.getBoundingClientRect();
+      const r = card.getBoundingClientRect();
       const center = __studio.cellToClient(11, 5);
-      const halfEvent = Math.max(8, 8 * __studio.app.view.zoom);
+      const ev = __studio.app.currentMap().events.find((e) => e.id === "merchant");
+      const halfW = Math.max(8, (ev?.w ?? 1) * 8 * __studio.app.view.zoom);
       return {
         rows: card.querySelectorAll("li").length,
-        side: box.right <= center.x - halfEvent ? "left" : box.left >= center.x + halfEvent ? "right" : "overlap",
-        leftRoom: center.x - halfEvent - 12 - (host.left + 8),
-        rightRoom: host.right - 8 - (center.x + halfEvent + 12),
+        onLeft: r.right <= center.x - halfW + 0.5,
+        leftRoom: center.x - halfW - 12 - (host.left + 8),
+        rightRoom: host.right - 8 - (center.x + halfW + 12),
       };
     })()`);
-    expect("theme: the event hover summary chooses the roomier side in the dark theme",
-      darkHover.rows === 3 && darkHover.leftRoom > darkHover.rightRoom && darkHover.side === "left",
+    expect("theme: the event hover summary opens on the roomier side in the dark theme",
+      darkHover.rows === 3 && darkHover.leftRoom > darkHover.rightRoom && darkHover.onLeft,
       JSON.stringify(darkHover));
     await studioShot("studio-event-hover-dark", "dark");
     await mouse("mouseMoved", 2, 2, "none");
+
+    // Capture the event explanation in the inspector (dark theme).
+    const elderDark = await cell(9, 5);
+    await click(elderDark.x, elderDark.y);
+    await sleep(200);
+    await evaluate(`[...document.querySelectorAll('#inspector h2')].find((h) => h.textContent === "Explain")?.scrollIntoView({ block: "start" })`);
+    await sleep(150);
+    await studioShot("studio-event-explain-dark", "dark");
 
     const darkTileSearch = await evaluate<boolean>(`(() => {
       const input = document.querySelector('[data-testid="tile-search"]');

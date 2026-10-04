@@ -38,6 +38,7 @@ import {
   type FieldEdit,
 } from "../engine/event-fields.ts";
 import type { EventEditorResources } from "../engine/event-resources.ts";
+import { explainEffectsDigest, explainEvent, type EventExplanation } from "../engine/event-explain.ts";
 import type { Selection, StudioApp } from "./app.ts";
 import { emptyState, h, icon, replace, type Child } from "./dom.ts";
 import {
@@ -602,9 +603,45 @@ class Inspector {
     const resources = this.resources(map);
     return [
       this.eventSection(map, event, pageIndex),
+      this.explainSection(event),
       this.pageSection(map, event, page, ref, resources),
       this.conditionSection(page, ref, resources),
       this.commandSection(page, ref, selected, resources),
+    ];
+  }
+
+  /** A deterministic, human-readable summary of the selected event: its
+   *  trigger, each page's condition and command order, and the state it
+   *  changes. Collapsible (default open) so a long event still leaves room
+   *  for the command tree. */
+  private explainSection(event: GameEvent): HTMLElement {
+    const key = `explain:${event.id}`;
+    const collapsed = collapsedCommands.has(key);
+    const explanation = explainEvent(event);
+    const toggle = this.button("explain-toggle", collapsed ? "Show" : "Hide", () => {
+      if (collapsedCommands.has(key)) collapsedCommands.delete(key);
+      else collapsedCommands.add(key);
+      this.request(true);
+    }, { icon: collapsed ? "chevron" : "down", text: false, title: collapsed ? "Show the explanation" : "Hide the explanation" });
+    const body: Child[] = collapsed ? [] : [
+      h("p", { class: "ins-explain-line" }, h("span", { class: "ins-muted" }, "Trigger: "), explanation.trigger),
+      h("p", { class: "ins-explain-line" }, h("span", { class: "ins-muted" }, "Changes: "), explainEffectsDigest(explanation)),
+      ...explanation.pages.flatMap((page) => this.explainPage(page)),
+    ];
+    return this.section("Explain", toggle, ...body);
+  }
+
+  private explainPage(page: EventExplanation["pages"][number]): Child[] {
+    const head = h("p", { class: "ins-explain-page" },
+      h("span", { class: "ins-badge" }, `Page ${page.index + 1}`),
+      h("span", { class: "ins-muted" }, ` · ${page.trigger} · ${page.condition} · ${page.commandCount} command${page.commandCount === 1 ? "" : "s"}`));
+    if (page.steps.length === 0) return [head];
+    return [
+      head,
+      h("ol", { class: "ins-explain-steps" }, page.steps.map((step) =>
+        h("li", { style: `--depth: ${step.depth}` },
+          step.branch ? h("span", { class: "ins-explain-branch" }, step.branch) : null,
+          h("span", null, step.summary)))),
     ];
   }
 

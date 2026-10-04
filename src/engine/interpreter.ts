@@ -2172,6 +2172,8 @@ export interface World {
   textTokens?: TextTokenResolver;
   /** Opt-in fiber-start trace (see WorldOptions.onFiberStart). */
   onFiberStart?: (key: string, pageIndex: number, parallel: boolean) => void;
+  /** Opt-in instruction trace (see WorldOptions.onInstruction). */
+  onInstruction?: (key: string, pageIndex: number, ins: Instr) => void;
   /** Message pagination (see WorldOptions.paginateText). */
   paginateText?: TextPaginator;
   /** Project animation catalog (AnimationDef id -> compiled timing), for
@@ -2205,6 +2207,14 @@ export interface WorldOptions {
    *  default: the call sites are only reached when a fiber actually
    *  starts, so games that do not install it pay nothing. */
   onFiberStart?: (key: string, pageIndex: number, parallel: boolean) => void;
+  /** Opt-in instruction trace. Called once for every event instruction
+   *  that executes, on the fiber that runs it (common-event stacked frames
+   *  included), right before the instruction runs — so a coverage/QA tool
+   *  observes the commands a simulation actually reached, including ones in
+   *  branches that were taken, and never the ones in branches that were
+   *  not. Absent by default: the call site is one optional dispatch in the
+   *  run loop, so games that do not install it pay nothing. */
+  onInstruction?: (key: string, pageIndex: number, ins: Instr) => void;
   animations?: readonly AnimationDef[];
   /** Where a message too long for one box breaks into pages (the UI's
    *  dialog-pages.ts createDialogPaginator). Called once when a text box
@@ -2619,6 +2629,7 @@ export function createWorld(
     textTokensEnabled: options.textTokensEnabled === true,
     textTokens: options.textTokens,
     onFiberStart: options.onFiberStart,
+    onInstruction: options.onInstruction,
     paginateText: options.paginateText,
     anims: animsById,
     extensions: options.extensions ?? createExtensionRuntime(),
@@ -5085,6 +5096,7 @@ function runFiber(
       continue;
     }
     const ins = top.prog[top.pc]!;
+    w.onInstruction?.(f.key, f.pageIndex, ins);
     switch (ins.op) {
       case "if":
         top.pc = evalCondition(
@@ -5816,6 +5828,7 @@ export function stepInterpWithExtensionsInPlace(
 
   const parallelKeys = immutable ? Object.keys(s.parallels) : undefined;
   const canCacheScan = immutable && w.onFiberStart === undefined &&
+    w.onInstruction === undefined &&
     w.extensions.immutableConditions && w.extensions.deterministicConditions &&
     s.pendingBattles.length === 0 &&
     (s.pendingScenes?.length ?? 0) === 0 &&
