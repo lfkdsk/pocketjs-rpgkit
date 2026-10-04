@@ -37,7 +37,7 @@ import { splitProjectMaps } from "../../../tools/lib/map-project.ts";
 import type { UiTextOverrides, UiTextTable } from "../../../src/engine/ui-text.ts";
 import type { GameViewOverlayConfig } from "../../../src/ui/demo-contract.ts";
 import { GAME_ASSETS } from "./assets-game.ts";
-import { fixtureProject, MAP_ID, PARTIAL_UI_TEXT, SAVE_CODE, ZH_UI_TEXT, type Scenario } from "./fixture-data.ts";
+import { fixtureProject, MAP_ID, MAP_ID_2, PARTIAL_UI_TEXT, SAVE_CODE, ZH_UI_TEXT, type Scenario } from "./fixture-data.ts";
 
 type FixtureScenario = Scenario | "demo" | "demo-empty";
 
@@ -125,6 +125,7 @@ const saveOverlay: GameViewOverlayConfig = {
       const next = menuStep(menu(), action, {
         hasFs: true,
         slotNonEmpty: SLOTS.map((slot) => slot !== null),
+        autosaveAvailable: true,
         codePages: 2,
         text,
       });
@@ -154,6 +155,7 @@ const saveOverlay: GameViewOverlayConfig = {
               menu={menu}
               hasFs
               slots={() => SLOTS}
+              autosave={() => ({ slot: 0, map: MAP_ID_2, frame: 7654, checksum: "auto" })}
               saveCode={() => SAVE_CODE}
               osk={osk}
               legend={() => "o x"}

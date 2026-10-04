@@ -463,6 +463,9 @@ export type Command =
    * without a registered host callback they are deterministic no-ops. */
   | { op: "openMenu" }
   | { op: "openSave" }
+  /** Silently write the exact command-tick snapshot to the host's dedicated
+   * read-only autosave slot. This is independent of manual save access. */
+  | { op: "autosave" }
   | { op: "gameOver" }
   | { op: "returnTitle" }
   /** Change the player name used by the `{name}` text token. */

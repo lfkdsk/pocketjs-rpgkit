@@ -90,6 +90,7 @@ const NEW_COMMANDS: Command[] = [
   { op: "inputNumber", variable: "answer", digits: 8 },
   { op: "openMenu" },
   { op: "openSave" },
+  { op: "autosave" },
   { op: "gameOver" },
   { op: "returnTitle" },
   { op: "changeName", name: "Alicia" },
@@ -102,7 +103,7 @@ describe("KRM2 save validation", () => {
     const program = compile(NEW_COMMANDS);
     expect(program.some((ins) => ins.op === "scene" && ins.id === "rpgkit.numberInput")).toBe(true);
     expect(program.filter((ins) => ins.op === "hostAction").map((ins) => ins.action)).toEqual([
-      "menu", "save", "gameOver", "title",
+      "menu", "save", "autosave", "gameOver", "title",
     ]);
     expect(validateSnapshot(snapshotWithProgram(program))).toBeNull();
   });

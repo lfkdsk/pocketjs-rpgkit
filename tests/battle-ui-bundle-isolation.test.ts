@@ -183,7 +183,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // seamless-commit entry-frame fallback, preview source object), the
 // session's left-map snapshot and its save validation, clone and restore
 // bring it to 950,374 (+4,988); the preview itself stays opt-in.
-const EXPECTED_BYTES = 950_374;
+// The autosave command adds its exact-tick snapshot/effect seam and
+// in-flight player validation to the shared runtime path (+4,809 B); the
+// storage adapters remain host-side.
+const EXPECTED_BYTES = 955_183;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

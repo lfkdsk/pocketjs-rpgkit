@@ -15,6 +15,8 @@ import {
 
 const FS_CTX = { hasFs: true, slotNonEmpty: [true, false, true] as readonly boolean[], codePages: 2 };
 const CODE_CTX = { hasFs: false, slotNonEmpty: [false, false, false] as readonly boolean[], codePages: 1 };
+const AUTO_CTX = { ...FS_CTX, autosaveAvailable: true };
+const WEB_AUTO_CTX = { ...CODE_CTX, autosaveAvailable: true };
 
 describe("P1⑤ save menu — root", () => {
   test("fs target lists four rows; down/up wrap and confirm enters pages", () => {
@@ -43,6 +45,21 @@ describe("P1⑤ save menu — root", () => {
     expect(opened.command).toEqual({ op: "open-import" });
     // wrap stays within the two rows
     expect(menuStep({ kind: "root", index: 1 }, "down", CODE_CTX).state).toEqual({ kind: "root", index: 0 });
+  });
+
+  test("a web target with an autosave exposes a load row without manual slots", () => {
+    expect(menuStep({ kind: "root", index: 0 }, "confirm", WEB_AUTO_CTX).state)
+      .toEqual({ kind: "slots-load", index: 0 });
+    expect(menuStep({ kind: "slots-load", index: 0 }, "confirm", WEB_AUTO_CTX).command)
+      .toEqual({ op: "load-autosave" });
+    expect(menuStep({ kind: "slots-load", index: 0 }, "up", WEB_AUTO_CTX).state)
+      .toEqual({ kind: "slots-load", index: 0 });
+    expect(menuStep({ kind: "slots-load", index: 0 }, "back", WEB_AUTO_CTX).state)
+      .toEqual({ kind: "root", index: 0 });
+    expect(menuStep({ kind: "code-export", page: 0 }, "back", WEB_AUTO_CTX).state)
+      .toEqual({ kind: "root", index: 1 });
+    expect(menuStep({ kind: "code-import" }, "back", WEB_AUTO_CTX).state)
+      .toEqual({ kind: "root", index: 2 });
   });
 
   test("closed state ignores all actions", () => {
@@ -77,6 +94,19 @@ describe("P1⑤ save menu — slots", () => {
   test("slot cursor wraps over three rows", () => {
     expect(menuStep({ kind: "slots-save", index: 2 }, "down", FS_CTX).state).toEqual({ kind: "slots-save", index: 0 });
     expect(menuStep({ kind: "slots-load", index: 0 }, "up", FS_CTX).state).toEqual({ kind: "slots-load", index: 2 });
+  });
+
+  test("a reported autosave is the first load row and cannot become a save target", () => {
+    expect(menuStep({ kind: "slots-load", index: 0 }, "confirm", AUTO_CTX)).toEqual({
+      state: { kind: "slots-load", index: 0 },
+      command: { op: "load-autosave" },
+    });
+    expect(menuStep({ kind: "slots-load", index: 0 }, "up", AUTO_CTX).state)
+      .toEqual({ kind: "slots-load", index: 3 });
+    expect(menuStep({ kind: "slots-load", index: 1 }, "confirm", AUTO_CTX).command)
+      .toEqual({ op: "load-slot", slot: 1 });
+    expect(menuStep({ kind: "slots-save", index: 0 }, "confirm", AUTO_CTX).command)
+      .toEqual({ op: "save-slot", slot: 1 });
   });
 });
 

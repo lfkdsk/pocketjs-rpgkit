@@ -495,8 +495,10 @@ simDescribe("sunstone — render budget", () => {
     // share of the connected-world neighbour preview plus the session's
     // left-map snapshot with its save validation, clone and restore bring
     // it to 950,374 B (+4,988). Keep a narrow margin so an accidental
-    // bundle-in still trips it.
-    expect(jsBytes).toBeLessThan(951_000);
+    // bundle-in still trips it. The autosave command's shared exact-tick
+    // snapshot/effect seam and in-flight player validation add 4,809 B,
+    // measuring 955,183 B.
+    expect(jsBytes).toBeLessThan(955_900);
   });
 });
 

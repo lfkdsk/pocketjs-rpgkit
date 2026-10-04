@@ -1032,8 +1032,8 @@ function validateProg(prog: unknown, path: string): string | null {
         }
         break;
       case "hostAction":
-        if (!["menu", "save", "gameOver", "title"].includes(ins.action as string)) {
-          return fail(`${here}.action`, "menu|save|gameOver|title required");
+        if (!["menu", "save", "autosave", "gameOver", "title"].includes(ins.action as string)) {
+          return fail(`${here}.action`, "menu|save|autosave|gameOver|title required");
         }
         break;
       case "changeName":
@@ -2098,30 +2098,34 @@ const STEP_DY = [1, 0, -1, 0] as const;
  *  activeStepConfig) divides the tile into a whole number of ticks. A
  *  pair that fails would land the character somewhere its fields never said,
  *  or make the next tick throw. */
-function charMotionProblem(ch: Record<string, unknown>, at: string): string | null {
+function motionProblem(
+  ch: Record<string, unknown>,
+  at: string,
+  subject: "character" | "player" = "character",
+): string | null {
   const { tx, ty, px, py, phase, stepDir } = ch as Record<string, number>;
   const ox = tx * SAVE_TILE;
   const oy = ty * SAVE_TILE;
   if (ch.moving !== true) {
-    if (phase !== 0) return fail(`${at}.phase`, "a character at rest must have phase 0");
-    if (px !== ox || py !== oy) return fail(at, "a character at rest must sit on its tile origin");
+    if (phase !== 0) return fail(`${at}.phase`, `a ${subject} at rest must have phase 0`);
+    if (px !== ox || py !== oy) return fail(at, `a ${subject} at rest must sit on its tile origin`);
     return null;
   }
-  if (phase < 1) return fail(`${at}.phase`, "a moving character needs phase >= 1");
+  if (phase < 1) return fail(`${at}.phase`, `a moving ${subject} needs phase >= 1`);
   if (tx + STEP_DX[stepDir]! < 0 || ty + STEP_DY[stepDir]! < 0) {
-    return fail(at, "a moving character must step into a cell with non-negative coordinates");
+    return fail(at, `a moving ${subject} must step into a cell with non-negative coordinates`);
   }
   const dx = px - ox;
   const dy = py - oy;
   const along = dx * STEP_DX[stepDir]! + dy * STEP_DY[stepDir]!;
   const across = STEP_DX[stepDir] === 0 ? dx : dy;
   if (across !== 0 || !(along > 0 && along < SAVE_TILE)) {
-    return fail(at, "a moving character's pixel position must lie between its tile and the stepDir neighbour");
+    return fail(at, `a moving ${subject}'s pixel position must lie between its tile and the stepDir neighbour`);
   }
   // along < SAVE_TILE already makes frames > phase.
   const frames = SAVE_TILE / (along / phase);
   if (!Number.isInteger(frames) || frames > MAX_STEP_FRAMES) {
-    return fail(`${at}.phase`, "phase and pixel offset must describe a step the runtime can finish");
+    return fail(`${at}.phase`, `phase and pixel offset must describe a step the runtime can finish (${subject})`);
   }
   return null;
 }
@@ -2168,7 +2172,7 @@ function validateLeftMap(v: unknown, path: string): string | null {
   return null;
 }
 
-function validateMapRuntime(v: unknown, path: string): string | null {
+function validateMapRuntime(v: unknown, path: string, autosave: boolean): string | null {
   if (!isRecord(v)) return fail(path, "object required");
   const chars = v.chars;
   if (!isRecord(chars)) return fail(`${path}.chars`, "character table object required");
@@ -2186,7 +2190,7 @@ function validateMapRuntime(v: unknown, path: string): string | null {
     if (!isBool(ch.moving) || !isBool(ch.visible) || !isBool(ch.blocks)) {
       return fail(at, "moving/visible/blocks booleans required");
     }
-    const motion = charMotionProblem(ch, at);
+    const motion = motionProblem(ch, at);
     if (motion) return motion;
     const route = validateRouteRun(ch.route, `${at}.route`);
     if (route) return route;
@@ -2197,10 +2201,11 @@ function validateMapRuntime(v: unknown, path: string): string | null {
     const r = v.playerRoute;
     const at = `${path}.playerRoute`;
     if (!isRecord(r)) return fail(at, "route object or null required");
-    // A positive phase means the player is mid-step, which is never a save
-    // point; zero is idle and a negative phase counts down a route wait.
-    if (typeof r.phase !== "number" || !Number.isSafeInteger(r.phase) || r.phase > 0) {
-      return fail(`${at}.phase`, "integer <= 0 required (the player rests at a save)");
+    // Manual saves rest at a boundary. An autosave can preserve the exact
+    // positive route phase published by a parallel command while the route
+    // is moving; zero is idle and a negative phase counts down a route wait.
+    if (typeof r.phase !== "number" || !Number.isSafeInteger(r.phase) || (!autosave && r.phase > 0)) {
+      return fail(`${at}.phase`, autosave ? "safe integer required" : "integer <= 0 required (the player rests at a save)");
     }
     if (!isDir4(r.dir)) return fail(`${at}.dir`, "direction 0..3 required");
     if (!isBool(r.takeOver)) return fail(`${at}.takeOver`, "boolean required");
@@ -2225,6 +2230,9 @@ function validateMapRuntime(v: unknown, path: string): string | null {
 
 export function validateSnapshot(snap: unknown): string | null {
   if (!isRecord(snap)) return "state: snapshot must be an object";
+  if (snap.autosave !== undefined && snap.autosave !== true) {
+    return "state.autosave: true or omitted required";
+  }
   if (typeof snap.map !== "string" || snap.map.length === 0) {
     return "state.map: non-empty string required";
   }
@@ -2235,23 +2243,47 @@ export function validateSnapshot(snap: unknown): string | null {
   // player
   const p = snap.player;
   if (!isRecord(p)) return "state.player: object required";
-  const ints = ["tx", "ty", "px", "py", "facing", "phase", "stepDir"] as const;
+  const ints = ["tx", "ty", "facing", "phase", "stepDir"] as const;
   for (const key of ints) {
     if (!isNonNegInt(p[key])) return `state.player.${key}: non-negative integer required`;
   }
+  if (!isFiniteNumber(p.px) || !isFiniteNumber(p.py)) {
+    return "state.player: px/py must be finite numbers";
+  }
   // The loop above proved these are non-negative integers.
-  const { facing, stepDir, tx, ty, px, py } = p as Record<(typeof ints)[number], number>;
+  const { facing, stepDir, tx, ty } = p as Record<(typeof ints)[number], number>;
+  const { px, py } = p as Record<"px" | "py", number>;
   if (facing > 3 || stepDir > 3) return "state.player: facing/stepDir must be 0..3";
   if (typeof p.moving !== "boolean" || typeof p.walking !== "boolean") {
     return "state.player: moving/walking must be booleans";
   }
-  // Safe-point invariant: saves are taken on a tile boundary with the
-  // interpolation finished, so px/py sit exactly on an origin tile.
-  if (p.moving !== false || p.phase !== 0) {
-    return "state.player: a save must rest on a tile boundary (moving=false, phase=0)";
-  }
-  if (px !== tx * 16 || py !== ty * 16) {
-    return "state.player: pixel position must match the tile origin";
+  if (snap.autosave === true) {
+    const route = isRecord(snap.mapRuntime) && isRecord(snap.mapRuntime.playerRoute)
+      ? snap.mapRuntime.playerRoute
+      : null;
+    const routePhase = route && isNonNegInt(route.phase) && route.phase > 0 ? route.phase : null;
+    const routeDir = routePhase !== null && isDir4(route!.dir) ? route!.dir : stepDir;
+    if (routePhase !== null && p.phase !== 0) {
+      return "state.player.phase: must be 0 while an in-flight player route owns interpolation";
+    }
+    if (routePhase !== null && stepDir !== routeDir) {
+      return "state.player.stepDir: must match an in-flight player route";
+    }
+    const motion = motionProblem(
+      { ...p, phase: routePhase ?? p.phase, stepDir: routeDir },
+      "state.player",
+      "player",
+    );
+    if (motion) return motion;
+  } else {
+    // Manual-save safe point: interpolation is finished and px/py sit
+    // exactly on an origin tile.
+    if (p.moving !== false || p.phase !== 0) {
+      return "state.player: a save must rest on a tile boundary (moving=false, phase=0)";
+    }
+    if (px !== tx * 16 || py !== ty * 16) {
+      return "state.player: pixel position must match the tile origin";
+    }
   }
 
   // interp
@@ -2273,7 +2305,7 @@ export function validateSnapshot(snap: unknown): string | null {
   if (it.main !== null) {
     const fe = validateFiber(it.main, "state.interp.main", false, snap.map);
     if (fe) return fe;
-    if (!isRecord(it.main) || it.main.mode !== "screenWait") {
+    if (!isRecord(it.main) || (it.main.mode !== "screenWait" && snap.autosave !== true)) {
       return "state.interp.main: only a waited screen effect may be saved mid-command";
     }
   }
@@ -2365,7 +2397,7 @@ export function validateSnapshot(snap: unknown): string | null {
     return "state.interp.abortedRoutes: route aborts must drain before save";
   }
   if (snap.mapRuntime !== undefined) {
-    const rt = validateMapRuntime(snap.mapRuntime, "state.mapRuntime");
+    const rt = validateMapRuntime(snap.mapRuntime, "state.mapRuntime", snap.autosave === true);
     if (rt) return rt;
     if (isRecord(snap.mapRuntime) && isRecord(snap.mapRuntime.leftMap) && snap.mapRuntime.leftMap.mapId === snap.map) {
       return "state.mapRuntime.leftMap.mapId: must name a map other than the current one";

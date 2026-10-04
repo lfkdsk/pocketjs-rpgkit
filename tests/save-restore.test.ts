@@ -49,6 +49,31 @@ describe("restoreProblem — map identity and player bounds", () => {
     expect(restoreProblem(snapshotAt(20, 0), MAP, TABLE)).toMatch(/outside/);
     expect(restoreProblem(snapshotAt(0, 12), MAP, TABLE)).toMatch(/outside/);
   });
+
+  test("an autosave may be mid-step, but its destination must stay in the map", () => {
+    const x = MAP.width - 1;
+    const y = 7;
+    const passableEdge: MapDef = {
+      ...MAP,
+      passage: [...(MAP.passage ?? []), [y * MAP.width + x, "pass"]],
+    };
+    const passableTable = buildPassage(passableEdge, new Map(project.sheets.map((s) => [s.id, s])));
+    const snap = snapshotAt(x, y);
+    snap.autosave = true;
+    Object.assign(snap.player, {
+      tx: x,
+      ty: y,
+      px: x * 16 + 2,
+      py: y * 16,
+      phase: 1,
+      moving: true,
+      walking: true,
+      facing: 3,
+      stepDir: 3,
+    });
+    expect(decodeEnvelopeText(encodeEnvelope(snap)).player).toEqual(snap.player);
+    expect(restoreProblem(snap, passableEdge, passableTable)).toMatch(/player step target.*outside/);
+  });
 });
 
 describe("restoreProblem — fiber provenance", () => {

@@ -635,6 +635,23 @@ simDescribe("no truncation: battle MessageBand / CommandGrid / ListMenu and Save
     return -1;
   };
 
+  /** Raw RGB cells for adjacent glyphs. Repeated missing-glyph boxes have
+   * identical cells; distinct baked Chinese glyphs do not. */
+  const glyphCells = (fb: Uint8Array, text: string, x: number, y: number): string[] => {
+    const cells: string[] = [];
+    let left = x;
+    for (const glyph of text) {
+      const width = Math.round(measure(glyph, 1));
+      let cell = "";
+      for (let py = y; py < y + 18; py++) {
+        for (let px = Math.round(left); px < Math.round(left) + width; px++) cell += rgbaAt(fb, px, py);
+      }
+      cells.push(cell);
+      left += measure(glyph, 1);
+    }
+    return cells;
+  };
+
   test("SaveMenu wraps the root title onto more rows", () => {
     show({ save: { menu: { kind: "root", index: 0 }, slots: SLOTS, title: SAVE_TITLE } });
     const root = tree();
@@ -664,6 +681,29 @@ simDescribe("no truncation: battle MessageBand / CommandGrid / ListMenu and Save
       expect(dense(shown)).toBe(dense(summary));
     }
     expect(panelTop(world.render().slice())).toBe((H - 232) / 2);
+  });
+
+  test("SaveMenu shows the full Chinese autosave label above read-only load slots", () => {
+    show({
+      save: {
+        menu: { kind: "slots-load", index: 0 },
+        slots: SLOTS,
+        autosave: { slot: 0, map: LONG_MAP, frame: 9876, checksum: "auto" },
+        uiText: { "save.autosave": "自动存档" },
+      },
+    });
+    const root = tree();
+    expectNoEllipsis(root);
+    const row = find(root, "rpgkit-autosave-slot")!;
+    expect(dense(textOf(row))).toContain(dense(`> 自动存档: ${LONG_MAP}  f9876`));
+    expect(find(root, "rpgkit-slot-0")).toBeDefined();
+    const fb = world.render().slice();
+    const top = panelTop(fb);
+    expect(top).toBeGreaterThanOrEqual(8);
+    // 420 px panel: 2 px border + 8 px padding; title is 18 px followed by
+    // a 6 px gap. The four label glyphs must not be one repeated tofu box.
+    const cells = glyphCells(fb, "自动存档", 40 + measure("> ", 1), top + 10 + 18 + 6);
+    expect(new Set(cells).size, "autosave label draws four distinct Chinese glyphs").toBe(4);
   });
 
   test("SaveMenu message title and body wrap, and the panel grows when they need it", () => {

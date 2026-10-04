@@ -64,9 +64,9 @@ export function restoreProblem(
     return `save is for map ${snap.map}, not ${map.id}`;
   }
 
-  // Player tile bounds + standability. The pixel origin (px == 16*tx etc.)
-  // and the tile-boundary safe point are already guaranteed by
-  // save-validate.ts; here we only need the live map's geometry.
+  // Player origin bounds + standability. Manual saves rest on that origin;
+  // autosaves may preserve an in-flight step, whose destination is checked
+  // below as another live-map geometry invariant.
   const { tx, ty } = snap.player;
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) {
     return `player tile (${tx},${ty}) is outside ${map.id} (${map.width}x${map.height})`;
@@ -79,6 +79,15 @@ export function restoreProblem(
   }
   if (!isStandable(effectiveTable, tx, ty)) {
     return `player tile (${tx},${ty}) is not standable on ${map.id}`;
+  }
+  if (snap.player.moving) {
+    const route = snap.mapRuntime?.playerRoute;
+    const dir = route && route.phase > 0 ? route.dir : snap.player.stepDir;
+    const nx = tx + (dir === 3 ? 1 : dir === 1 ? -1 : 0);
+    const ny = ty + (dir === 0 ? 1 : dir === 2 ? -1 : 0);
+    if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) {
+      return `player step target (${nx},${ny}) is outside ${map.id} (${map.width}x${map.height})`;
+    }
   }
 
   // Fiber provenance: each live fiber must belong to an event this map

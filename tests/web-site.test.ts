@@ -56,6 +56,7 @@ function playerConfig(game: WebGame): PlayerConfig {
     rasterDensity: game.plan.viewport.rasterDensity,
     companions: [...game.plan.companions],
     simHz: 60,
+    autosaveStorageKey: `pocket-rpgkit:${game.plan.app.id}:autosave:v1`,
     keys: keyMasks(game.keymap),
     ...(game.documents
       ? {
@@ -341,6 +342,8 @@ describe("pages", () => {
       expect(parsed.bundle).toBe(`${game.plan.app.output}.js`);
       expect(parsed.viewport).toEqual(game.viewport);
       expect(parsed.rasterDensity).toBe(DEFAULT_WEB_RASTER_DENSITY);
+      expect(parsed.autosaveStorageKey).toBe(`pocket-rpgkit:${game.plan.app.id}:autosave:v1`);
+      expect(parsed.autosaveStorageKey).not.toBe(parsed.editor?.storageKey);
       expect(parsed.keys.KeyA).toBe(BTN.CIRCLE);
       expect(html).toContain(`data-viewport="${game.viewport.policy}"`);
       expect(html).toContain('<button type="button" id="audio-mute" aria-label="Mute audio" aria-pressed="false">Mute</button>');

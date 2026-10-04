@@ -14,9 +14,11 @@ import {
 } from "../src/ui/krm2-ui.ts";
 import {
   dispatchGameViewHostActions,
+  dispatchGameViewHostEffects,
   type GameViewHostCallbacks,
 } from "../src/ui/game-host-actions.ts";
 import type { GameViewSessionHost } from "../src/ui/demo-contract.ts";
+import type { SaveSnapshot } from "../src/engine/save.ts";
 
 function picture(id: number, overrides: Partial<PictureState> = {}): PictureState {
   return {
@@ -133,6 +135,28 @@ describe("KRM2 timer, map-name and host presentation", () => {
     dispatchGameViewHostActions(["save", "menu", "save", "gameOver", "title"], callbacks, host);
     expect(seen).toEqual(["save", "menu", "save", "gameOver", "title"]);
     expect(() => dispatchGameViewHostActions(["menu", "save"], undefined, host)).not.toThrow();
+  });
+
+  test("autosave dispatch carries its tick snapshot and ignores manual save access", () => {
+    const snapshot = { autosave: true, held: 0x2000 } as SaveSnapshot;
+    const host = {
+      getState: () => ({ sw: { saveAccess: false } }),
+    } as unknown as GameViewSessionHost;
+    const seen: string[] = [];
+    dispatchGameViewHostEffects([
+      { action: "save" },
+      { action: "autosave", snapshot },
+      { action: "title" },
+    ], {
+      save: () => seen.push("save"),
+      autosave: (receivedHost, receivedSnapshot) => {
+        expect(receivedHost).toBe(host);
+        expect(receivedSnapshot).toBe(snapshot);
+        seen.push("autosave");
+      },
+      title: () => seen.push("title"),
+    }, host);
+    expect(seen).toEqual(["autosave", "title"]);
   });
 
   test("number input engine id is available from the public export", () => {

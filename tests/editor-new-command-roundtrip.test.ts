@@ -39,6 +39,7 @@ const NEWER_COMMAND_CASES: readonly {
   { op: "inputNumber", edits: [["variable", "answer"], ["digits", "4"]] },
   { op: "openMenu", edits: [] },
   { op: "openSave", edits: [] },
+  { op: "autosave", edits: [] },
   { op: "gameOver", edits: [] },
   { op: "returnTitle", edits: [] },
   { op: "changeName", edits: [["name", "Terra"]] },
@@ -129,7 +130,7 @@ describe("newer editor commands roundtrip through the runtime", () => {
       "moveControl", "appearance", "layer", "tileProperty",
       "screenFade", "screenTint", "screenFlash", "screenShake", "camera", "scrollMap", "balloon", "screenBackdrop",
       "showPicture", "movePicture", "rotatePicture", "tintPicture", "erasePicture", "timer", "inputNumber",
-      "openMenu", "openSave", "gameOver", "returnTitle", "changeName", "mapNameDisplay",
+      "openMenu", "openSave", "autosave", "gameOver", "returnTitle", "changeName", "mapNameDisplay",
       "mapAnim", "stopAnim", "shop", "battle", "ext", "extChoice",
       "playBgm", "fadeoutBgm", "stopBgm", "pauseBgm", "resumeBgm",
       "playBgs", "fadeoutBgs", "playMe", "playSe", "stopSe", "saveBgm", "replayBgm",
@@ -149,7 +150,7 @@ describe("newer editor commands roundtrip through the runtime", () => {
       expect(command).toEqual(authored);
       const compiledOp = ["inputNumber", "selectItem"].includes(entry.op)
         ? "scene"
-        : ["openMenu", "openSave", "gameOver", "returnTitle"].includes(entry.op)
+        : ["openMenu", "openSave", "autosave", "gameOver", "returnTitle"].includes(entry.op)
           ? "hostAction"
           : entry.op;
       expect<string | undefined>(compile([command])[0]?.op).toBe(compiledOp);
@@ -197,6 +198,7 @@ describe("newer editor commands roundtrip through the runtime", () => {
       if (entry.op === "timer") expect(state.sw.timer?.running).toBe(true);
       if (entry.op === "openMenu") expect(state.hostActions).toEqual(["menu"]);
       if (entry.op === "openSave") expect(state.hostActions).toEqual(["save"]);
+      if (entry.op === "autosave") expect(state.hostActions).toEqual(["autosave"]);
       if (entry.op === "gameOver") expect(state.hostActions).toEqual(["gameOver"]);
       if (entry.op === "returnTitle") expect(state.hostActions).toEqual(["title"]);
       if (entry.op === "changeName") expect(state.sw.playerName).toBe("Terra");

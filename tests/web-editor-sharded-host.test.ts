@@ -10,11 +10,42 @@ const {
   BrowserEditorHost,
   BrowserMessageReassembler,
   BrowserProjectPack,
+  createBrowserAutosaveBridge,
   EDITOR_CHUNK_MAX_CODE_UNITS,
   EDITOR_CHUNK_MAX_COUNT,
   EDITOR_TRANSFER_MAX_CODE_UNITS,
   SHARDED_PACK_KIND,
 } = browserHost;
+
+describe("browser autosave bridge", () => {
+  test("uses one app-scoped key and quietly reports unavailable storage", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    const bridge = createBrowserAutosaveBridge("app:autosave", storage);
+    expect(bridge.read()).toBeNull();
+    expect(bridge.write("envelope-1")).toBe(true);
+    expect(bridge.read()).toBe("envelope-1");
+    expect(values).toEqual(new Map([["app:autosave", "envelope-1"]]));
+
+    const original = console.debug;
+    const logged: unknown[][] = [];
+    console.debug = (...args: unknown[]) => { logged.push(args); };
+    try {
+      const unavailable = createBrowserAutosaveBridge("app:autosave", {
+        getItem() { throw new Error("denied"); },
+        setItem() { throw new Error("denied"); },
+      });
+      expect(unavailable.read()).toBeNull();
+      expect(unavailable.write("ignored")).toBe(false);
+      expect(logged).toHaveLength(2);
+    } finally {
+      console.debug = original;
+    }
+  });
+});
 
 const digest = (text: string): string => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 

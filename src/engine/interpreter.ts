@@ -118,7 +118,7 @@ export type { TextTokenResolver, TextTokenView } from "./player-name.ts";
 
 export const TICK_HZ = 60;
 
-export type HostAction = "menu" | "save" | "gameOver" | "title";
+export type HostAction = "menu" | "save" | "autosave" | "gameOver" | "title";
 
 export interface TimerState {
   /** Fixed 60 Hz reference ticks remaining. */
@@ -1224,6 +1224,9 @@ function compileScoped(
           break;
         case "openSave":
           emit({ op: "hostAction", action: "save" });
+          break;
+        case "autosave":
+          emit({ op: "hostAction", action: "autosave" });
           break;
         case "gameOver":
           emit({ op: "hostAction", action: "gameOver" });
@@ -5374,6 +5377,11 @@ function runFiber(
       case "hostAction":
         (s.hostActions ??= []).push(ins.action);
         top.pc++;
+        // An autosave is a command boundary: the saved fiber has already
+        // advanced past this instruction, while the following instruction
+        // cannot run until the next reference tick. Other host actions keep
+        // their historical instant-command behaviour.
+        if (ins.action === "autosave") return;
         break;
       case "changeName":
         if (ins.name.length < 1 || ins.name.length > 24) {

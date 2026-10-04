@@ -305,7 +305,9 @@ simDescribe("a game's words replace the kit's", () => {
     tap(world, BTN.DOWN);
     tap(world, BTN.CIRCLE);
     expectWord(world, "rpgkit-slot-title", "save.slotsLoadTitle");
+    expectWord(world, "rpgkit-autosave-slot", "save.autosave");
     // Slot 1 is empty: menuStep words the message from the same table.
+    tap(world, BTN.DOWN);
     tap(world, BTN.CIRCLE);
     expectWord(world, "rpgkit-message-title", "save.emptyTitle", { slot: 1 });
     expectWord(world, "rpgkit-message-body", "save.emptyBody");

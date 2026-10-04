@@ -247,6 +247,7 @@ function collectWrites(
       case "transfer":
       case "openMenu":
       case "openSave":
+      case "autosave":
       case "gameOver":
       case "returnTitle":
         out.opaque = true;

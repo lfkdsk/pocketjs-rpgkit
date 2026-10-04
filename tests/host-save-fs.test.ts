@@ -10,10 +10,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createSimFsHost, type SimFsHost } from "../vendor/pocketjs/hosts/sim/fs.ts";
 import {
+  AUTOSAVE_FS_PATH,
   fsSaveStore,
   hasFsSave,
+  inspectAutosaveFs,
   listSlotsFs,
+  loadAutosaveFs,
   loadSlotFs,
+  saveAutosaveFs,
   saveSlotFs,
 } from "../src/host/save-fs.ts";
 import {
@@ -86,6 +90,19 @@ describe("P1⑤ save — fs slot write/read", () => {
     expect(loadSlotFs(1).interp.sw.gold).toBe(11);
     // slot 2 was never written.
     expect(() => loadSlotFs(2)).toThrow(SaveError);
+  });
+
+  test("autosave uses a dedicated file and never occupies a numbered slot", () => {
+    const h = mount();
+    const first = snap("auto-a", 12, 7);
+    const second = snap("auto-b", 13, 8);
+    saveAutosaveFs(first);
+    expect(h.log.some((line) => line.startsWith(`op write ${AUTOSAVE_FS_PATH}`))).toBe(true);
+    expect(loadAutosaveFs()).toEqual(first);
+    expect(listSlotsFs()).toEqual([null, null, null]);
+    expect(inspectAutosaveFs()).toMatchObject({ slot: 0, map: "auto-a", frame: 7 });
+    saveAutosaveFs(second);
+    expect(loadAutosaveFs()).toEqual(second);
   });
 
   test("files persist across a fresh store handle (one app data root)", () => {

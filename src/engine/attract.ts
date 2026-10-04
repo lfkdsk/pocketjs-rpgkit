@@ -50,6 +50,7 @@ import {
   startSession,
   stepSession,
   type SceneOptions,
+  type SessionEffectSink,
   type Session,
   type SessionState,
 } from "./session.ts";
@@ -684,7 +685,12 @@ export class AttractController {
     else if (timelineFlags & T_HOLD) this.pacingTicks++;
   }
 
-  private reduce(state: SessionState, mask: number, previous: number): SessionState {
+  private reduce(
+    state: SessionState,
+    mask: number,
+    previous: number,
+    effects?: SessionEffectSink,
+  ): SessionState {
     const pressed = mask & ~previous;
     return stepSession(this.session, state, {
       buttons: mask,
@@ -694,15 +700,15 @@ export class AttractController {
       downEdge: !!(pressed & BTN_DOWN),
       leftEdge: !!(pressed & BTN_LEFT),
       rightEdge: !!(pressed & BTN_RIGHT),
-    });
+    }, effects);
   }
 
-  private fold(mask: number, timelineFlags = 0): SessionState {
+  private fold(mask: number, timelineFlags = 0, effects?: SessionEffectSink): SessionState {
     const beforeMap = this.state.mapId;
     const beforeScene = this.state.scene !== null;
     const beforeModal = this.state.interp.modal;
     const beforeModalInstance = this.modalKey(this.state);
-    this.state = this.reduce(this.state, mask, this.lastFolded);
+    this.state = this.reduce(this.state, mask, this.lastFolded, effects);
     if (!beforeScene && this.state.scene === null) {
       this.worldAnimationTickValue = (this.worldAnimationTickValue + 1) >>> 0;
     }
@@ -921,8 +927,8 @@ export class AttractController {
    *  the controller decides whether the tape or the player owns it. A
    *  repository miss rolls the whole host frame back, including low-rate
    *  multi-fold bookkeeping, so a caller can prepare bytes and retry it. */
-  step(liveButtons: number): FoldResult {
-    if (!this.session.repository?.prepare) return this.stepUnchecked(liveButtons);
+  step(liveButtons: number, effects?: SessionEffectSink): FoldResult {
+    if (!this.session.repository?.prepare) return this.stepUnchecked(liveButtons, effects);
     // A repository miss rolls the whole controller back. The checkpoint is
     // one reused record, every field rewritten here, so a demo-enabled game
     // allocates nothing per frame for it.
@@ -957,7 +963,7 @@ export class AttractController {
     cp.residentMaps.length = 0;
     for (const id of this.session.maps.keys()) cp.residentMaps.push(id);
     try {
-      const result = this.stepUnchecked(liveButtons);
+      const result = this.stepUnchecked(liveButtons, effects);
       // The step succeeded, so the rollback snapshot is stale. Resync its
       // heavy references onto the live objects: a keyframe generation this
       // step evicted (or a published state it retired) must not stay alive
@@ -1003,7 +1009,7 @@ export class AttractController {
   }
 
 
-  private stepUnchecked(liveButtons: number): FoldResult {
+  private stepUnchecked(liveButtons: number, effects?: SessionEffectSink): FoldResult {
     this.loopReset = false;
     this.rewound = false;
     const live = liveButtons >>> 0;
@@ -1052,7 +1058,7 @@ export class AttractController {
       } else {
         this.idle = 0;
       }
-      this.foldLive(live);
+      this.foldLive(live, effects);
       return this.result();
     }
 
@@ -1069,7 +1075,7 @@ export class AttractController {
     // drives from the next frame; a one-frame tap is the ownership gesture
     // and is consumed as such.
     if (livePressed & TAKEOVER_KEYS) {
-      this.foldAttract();
+      this.foldAttract(effects);
       this.phase = "play";
       this.controlNotice = Math.min(this.hz * 2, 120);
       this.idle = 0;
@@ -1080,11 +1086,11 @@ export class AttractController {
     // Fold as many source frames as this host frame covers. Because every
     // source frame is retained, the final SessionState — including clocks,
     // NPCs and RNG — is field-identical at 60/30/20/4 Hz.
-    this.foldAttract();
+    this.foldAttract(effects);
     return this.result();
   }
 
-  private foldAttract(): void {
+  private foldAttract(effects?: SessionEffectSink): void {
     this.carry += this.timelineHz * this.playbackSpeed;
     while (this.phase === "attract" && this.carry >= this.hz) {
       this.carry -= this.hz;
@@ -1092,7 +1098,7 @@ export class AttractController {
       const beforeModal = this.presentedModal();
       const beforeModalComplete = beforeModal?.kind === "text" && beforeModal.complete;
       const beforeReadHold = this.readHold;
-      this.foldTapeOrHold();
+      this.foldTapeOrHold(effects);
       const afterModal = this.presentedModal();
       const afterModalComplete = afterModal?.kind === "text" && afterModal.complete;
       // A host presents only the state after all source folds for that host
@@ -1113,7 +1119,7 @@ export class AttractController {
     }
   }
 
-  private foldLive(mask: number): void {
+  private foldLive(mask: number, effects?: SessionEffectSink): void {
     this.carry += this.timelineHz;
     while (this.carry >= this.hz) {
       this.carry -= this.hz;
@@ -1123,10 +1129,10 @@ export class AttractController {
         mask === this.tape[this.demoFrame]
       ) {
         this.demoFrame++;
-        this.fold(mask, T_SOURCE);
+        this.fold(mask, T_SOURCE, effects);
       } else {
         if (this.firstDivergence === Infinity) this.firstDivergence = this.logLength;
-        this.fold(mask);
+        this.fold(mask, 0, effects);
       }
     }
   }
@@ -1155,7 +1161,7 @@ export class AttractController {
   /** Advance one 60 Hz display tick for the current modal. The world remains
    *  unchanged: these entries exist only so rewind and low-rate scheduling
    *  can reproduce the exact presentation position. */
-  private paceModalDisplay(): boolean {
+  private paceModalDisplay(effects?: SessionEffectSink): boolean {
     const modal = this.state.interp.modal;
     if (!modal || !this.modalPaced || this.stage === 4) return false;
 
@@ -1176,7 +1182,7 @@ export class AttractController {
         if (shouldAdvanceSource) {
           const mask = this.tape[this.demoFrame]!;
           this.demoFrame++;
-          this.fold(mask, T_SOURCE | T_TYPE);
+          this.fold(mask, T_SOURCE | T_TYPE, effects);
         }
         if (!shouldAdvanceSource) this.append(0, T_TYPE);
         return true;
@@ -1189,7 +1195,7 @@ export class AttractController {
       if (this.lastFolded !== 0 && this.demoFrame < this.tape.length) {
         const mask = this.tape[this.demoFrame]!;
         this.demoFrame++;
-        this.fold(mask, T_SOURCE);
+        this.fold(mask, T_SOURCE, effects);
         return true;
       }
       this.stage = 3;
@@ -1209,12 +1215,12 @@ export class AttractController {
 
   /** Present a display tick or fold the next source mask. Terminal rest also
    *  freezes the completed world, then starts a clean loop. */
-  private foldTapeOrHold(): void {
+  private foldTapeOrHold(effects?: SessionEffectSink): void {
     if (this.demoFrame < this.tape.length) {
-      if (this.paceModalDisplay()) return;
+      if (this.paceModalDisplay(effects)) return;
       const mask = this.tape[this.demoFrame]!;
       this.demoFrame++;
-      this.fold(mask, T_SOURCE);
+      this.fold(mask, T_SOURCE, effects);
       return;
     }
     this.endHold++;

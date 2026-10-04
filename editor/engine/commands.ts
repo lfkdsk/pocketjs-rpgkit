@@ -123,6 +123,7 @@ export const EDITABLE_COMMAND_OPS = [
   "selectItem",
   "openMenu",
   "openSave",
+  "autosave",
   "gameOver",
   "returnTitle",
   "changeName",
@@ -283,6 +284,7 @@ export function defaultCommand<Op extends EditableCommandOp>(op: Op): CommandOf<
       break;
     case "openMenu":
     case "openSave":
+    case "autosave":
     case "gameOver":
     case "returnTitle":
       command = { op };
@@ -579,6 +581,8 @@ export function commandSummary(command: unknown): string {
       return "Open menu";
     case "openSave":
       return "Open save screen";
+    case "autosave":
+      return "Autosave";
     case "gameOver":
       return "Game over";
     case "returnTitle":

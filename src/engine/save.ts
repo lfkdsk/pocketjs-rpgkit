@@ -57,9 +57,13 @@ export const SLOT_MAX = 3;
 // --- snapshot ---------------------------------------------------------------
 
 export interface SaveSnapshot {
+  /** Present only for the engine-owned autosave command boundary. It permits
+   * the active event fiber whose pc already points after that command. */
+  autosave?: true;
   /** Current map id. */
   map: string;
-  /** Mover state at a tile boundary. */
+  /** Mover state. Manual saves use a tile boundary; an engine autosave may
+   * preserve an in-flight step from the command's exact reference tick. */
   player: MovementState;
   /** BTN mask held on the save frame (host previous-mask seed). */
   held: number;
@@ -122,6 +126,7 @@ export function canSave(
  *  and interpreter state goes through its own hand-written cloner. */
 export function cloneSnapshot(snap: SaveSnapshot): SaveSnapshot {
   const out: SaveSnapshot = {
+    ...(snap.autosave === true ? { autosave: true } : {}),
     map: snap.map,
     player: { ...snap.player },
     held: snap.held >>> 0,
@@ -235,6 +240,45 @@ export function createSessionSnapshot(
     },
     state.handoff,
   );
+}
+
+/** Snapshot the command boundary published by `{op:"autosave"}`. Unlike a
+ * manual save, the owning event fiber is deliberately still active: its
+ * program counter already points after autosave and resumes on the next
+ * reference tick. Full movement/fiber runtime is part of SaveSnapshot, so
+ * only session-owned states that the v1 format cannot represent are barred.
+ */
+export function createAutosaveSessionSnapshot(
+  session: Session,
+  state: SessionState,
+  held: number,
+): SaveSnapshot {
+  if (
+    state.interp.error !== undefined ||
+    state.interp.modal !== null ||
+    state.interp.pendingTransfer !== null ||
+    state.interp.pendingBattles.length > 0 ||
+    (state.interp.pendingScenes?.length ?? 0) > 0 ||
+    state.scene !== null ||
+    state.handoff !== undefined
+  ) {
+    throw new Error("autosave: command tick contains session-owned work that save format v1 cannot resume");
+  }
+  assertJsonValue(state.ext, "save extension state");
+  return normalizeInterp(cloneSnapshot({
+    autosave: true,
+    map: state.mapId,
+    player: state.move,
+    held,
+    interp: state.interp,
+    ext: encodeExtension(session.extensions, state.ext),
+    mapRuntime: {
+      chars: state.chars,
+      playerRoute: state.playerRoute,
+      fade: state.fade,
+      ...(state.leftMap ? { leftMap: state.leftMap } : {}),
+    },
+  }));
 }
 
 /** Drop between-frame transient fields. The battle queue is persistent at

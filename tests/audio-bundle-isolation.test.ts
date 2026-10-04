@@ -181,10 +181,14 @@ const maybeTest = preflight.ok ? test : test.skip;
 // and the WAV fixture; and the save path's left-map validation, clone and
 // restore in sunstone, which links saves. Meadow +1,624, sunstone +4,988,
 // WAV fixture +2,798: 593,199, 950,374 and 749,437.
+// The autosave command's exact-tick snapshot/effect seam, in-flight player
+// validation and narrow host bridge add 4,598 B to Meadow, 4,809 B to
+// Sunstone and 5,183 B to the WAV fixture: 597,797, 955,183 and 754,620.
+// Storage adapters remain host-side.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 593_199;
-const EXPECTED_SUNSTONE_QOA_BYTES = 950_374;
-const EXPECTED_WAV_FIXTURE_BYTES = 749_437;
+const EXPECTED_MEADOW_BYTES = 597_797;
+const EXPECTED_SUNSTONE_QOA_BYTES = 955_183;
+const EXPECTED_WAV_FIXTURE_BYTES = 754_620;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

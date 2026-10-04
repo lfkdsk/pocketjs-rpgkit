@@ -12,11 +12,12 @@ import { View } from "@pocketjs/framework/components";
 import { createOsk } from "@pocketjs/framework/osk";
 import type { MenuState } from "../../../src/engine/save-menu.ts";
 import type { Modal } from "../../../src/engine/interpreter.ts";
+import type { UiTextOverrides } from "../../../src/engine/ui-text.ts";
 import { CommandGrid, type CommandGridProps } from "../../../src/ui/battle/CommandGrid.tsx";
 import { ListMenu, type ListMenuProps } from "../../../src/ui/battle/ListMenu.tsx";
 import { MessageBand, type MessageBandProps } from "../../../src/ui/battle/MessageBand.tsx";
 import { DialogBox } from "../../../src/ui/DialogBox.tsx";
-import { SaveMenu, type SlotInfo } from "../../../src/ui/SaveMenu.tsx";
+import { SaveMenu, type AutosaveSlotInfo, type SlotInfo } from "../../../src/ui/SaveMenu.tsx";
 import { BoundedLine } from "../../../src/ui/BoundedLine.tsx";
 import { fitBounded } from "../../../src/ui/list-window.ts";
 import { slotMeasure } from "../../../src/ui/text-measure.ts";
@@ -25,7 +26,7 @@ export interface NoTruncationScene {
   band?: Pick<MessageBandProps, "lines" | "revealed" | "rows">;
   grid?: Pick<CommandGridProps, "cells" | "index" | "tick">;
   list?: Pick<ListMenuProps, "rows" | "index" | "title" | "description" | "visibleRows" | "width">;
-  save?: { menu: MenuState; slots: SlotInfo; title?: string };
+  save?: { menu: MenuState; slots: SlotInfo; autosave?: AutosaveSlotInfo; title?: string; uiText?: UiTextOverrides };
   bounded?: { text: string; width: number; maxRows: number; tick: number };
   dialog?: { modal: Modal; legend?: string };
 }
@@ -41,7 +42,9 @@ function Fixture() {
   const [list, setList] = createSignal<NoTruncationScene["list"]>(undefined);
   const [menu, setMenu] = createSignal<MenuState>({ kind: "closed" });
   const [slots, setSlots] = createSignal<SlotInfo>([null, null, null]);
+  const [autosave, setAutosave] = createSignal<AutosaveSlotInfo>(null);
   const [title, setTitle] = createSignal<string | undefined>(undefined);
+  const [saveUiText, setSaveUiText] = createSignal<UiTextOverrides | undefined>(undefined);
   const [bounded, setBounded] = createSignal<NoTruncationScene["bounded"]>(undefined);
   const [dialog, setDialog] = createSignal<NoTruncationScene["dialog"]>(undefined);
   const [code, setCode] = createSignal("");
@@ -55,7 +58,9 @@ function Fixture() {
         setList(scene.list);
         setMenu(scene.save?.menu ?? { kind: "closed" });
         setSlots(scene.save?.slots ?? [null, null, null]);
+        setAutosave(scene.save?.autosave ?? null);
         setTitle(scene.save?.title);
+        setSaveUiText(scene.save?.uiText);
         setBounded(scene.bounded);
         setDialog(scene.dialog);
       });
@@ -112,10 +117,12 @@ function Fixture() {
         menu={menu}
         hasFs={true}
         slots={slots}
+        autosave={autosave}
         saveCode={code}
         osk={osk}
         legend={() => "ok  back"}
         title={title()}
+        uiText={saveUiText()}
       />
       <DialogBox
         modal={() => dialog()?.modal ?? null}

@@ -227,6 +227,8 @@ export interface PlayerConfig {
   rasterDensity: number;
   companions: string[];
   simHz: number;
+  /** Dedicated browser-storage key for the game's read-only autosave slot. */
+  autosaveStorageKey: string;
   /** KeyboardEvent.code -> button mask. */
   keys: Record<string, number>;
   /** Browser implementation of the rpgkit-editor companion. */
@@ -1068,6 +1070,7 @@ export async function buildWebSite(options: BuildOptions): Promise<WebGame[]> {
       rasterDensity: game.plan.viewport.rasterDensity,
       companions: [...game.plan.companions],
       simHz: 60,
+      autosaveStorageKey: `pocket-rpgkit:${game.plan.app.id}:autosave:v1`,
       keys: keyMasks(game.keymap),
       ...(game.documents
         ? {

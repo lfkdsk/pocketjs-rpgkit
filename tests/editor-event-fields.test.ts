@@ -82,6 +82,7 @@ const NEWER_COMMAND_FIELDS = [
   ["inputNumber", ["variable", "digits"]],
   ["openMenu", []],
   ["openSave", []],
+  ["autosave", []],
   ["gameOver", []],
   ["returnTitle", []],
   ["changeName", ["name"]],
@@ -113,8 +114,8 @@ const NEWER_COMMAND_FIELDS = [
 ] as const;
 
 describe("event inspector command fields", () => {
-  test("describes every owned command, including all 49 newer operations", () => {
-    expect(NEWER_COMMAND_FIELDS).toHaveLength(49);
+  test("describes every owned command, including all 50 newer operations", () => {
+    expect(NEWER_COMMAND_FIELDS).toHaveLength(50);
     for (const [op, keys] of NEWER_COMMAND_FIELDS) {
       const command = defaultCommand(op);
       expect(commandFields(command).map((entry) => entry.key), op).toEqual([...keys]);
@@ -262,7 +263,7 @@ describe("event inspector command fields", () => {
     edited.push(
       defaultCommand("stopBgm"), defaultCommand("pauseBgm"), defaultCommand("resumeBgm"),
       defaultCommand("saveBgm"), defaultCommand("replayBgm"), defaultCommand("openMenu"),
-      defaultCommand("openSave"), defaultCommand("gameOver"), defaultCommand("returnTitle"),
+      defaultCommand("openSave"), defaultCommand("autosave"), defaultCommand("gameOver"), defaultCommand("returnTitle"),
     );
     expect(validateProject(projectWith(edited))).toEqual([]);
   });
@@ -351,7 +352,7 @@ describe("event inspector command fields", () => {
     }
     for (const op of [
       "stopBgm", "pauseBgm", "resumeBgm", "saveBgm", "replayBgm",
-      "openMenu", "openSave", "gameOver", "returnTitle",
+      "openMenu", "openSave", "autosave", "gameOver", "returnTitle",
     ] as const) {
       expect(commandFields(defaultCommand(op))).toEqual([]);
       expect(editCommandField(defaultCommand(op), "unknown", "x").ok, op).toBe(false);

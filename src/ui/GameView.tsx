@@ -50,6 +50,8 @@ import {
   startSession,
   stepSession,
   type Session,
+  type SessionEffectSink,
+  type SessionHostEffect,
   type SessionInput,
   type SceneOptions,
   type SessionState,
@@ -117,7 +119,7 @@ import {
   ScreenFadeLayer,
 } from "./ScreenEffectsLayer.tsx";
 import {
-  dispatchGameViewHostActions,
+  dispatchGameViewHostEffects,
   type GameViewHostCallbacks,
 } from "./game-host-actions.ts";
 import { ChunkLayer } from "./ChunkLayer.tsx";
@@ -865,7 +867,12 @@ export interface GameScreenPresentation {
   hud?: GameScreenPresentationComponent;
 }
 
-export { dispatchGameViewHostActions, hostActionAllowed, type GameViewHostCallbacks } from "./game-host-actions.ts";
+export {
+  dispatchGameViewHostActions,
+  dispatchGameViewHostEffects,
+  hostActionAllowed,
+  type GameViewHostCallbacks,
+} from "./game-host-actions.ts";
 
 export interface GameViewProps {
   /** Enable identity-based reducer and actor caches. Published snapshots
@@ -1182,6 +1189,12 @@ export function GameView(props: GameViewProps) {
       }
       replaced = true;
     },
+  };
+  // Reused collector: projects without host callbacks pass no sink at all;
+  // configured hosts allocate effect records only on command ticks.
+  const frameHostEffects: SessionHostEffect[] = [];
+  const hostEffectSink: SessionEffectSink = {
+    publish: (effect) => { frameHostEffects.push(effect); },
   };
   const overlayRuntime = props.overlay ? props.overlay.create(sessionHost) : null;
   // An overlay may also load a save while it is created.
@@ -1648,15 +1661,17 @@ export function GameView(props: GameViewProps) {
     };
     try {
       frameProfileMark("reducer:start");
+      frameHostEffects.length = 0;
+      const effects = props.hostActions === undefined ? undefined : hostEffectSink;
       if (attract) {
-        const result = attract.step(frameButtons);
+        const result = attract.step(frameButtons, effects);
         state = result.state;
         status = result.status;
       } else {
-        state = stepSession(session, state, input);
+        state = stepSession(session, state, input, effects);
       }
       frameProfileMark("reducer:end");
-      dispatchGameViewHostActions(state.interp.hostActions, props.hostActions, sessionHost);
+      dispatchGameViewHostEffects(frameHostEffects, props.hostActions, sessionHost);
       prevButtons = frameButtons;
       if (blocked) props.onMapLoading?.(null);
       blocked = null;

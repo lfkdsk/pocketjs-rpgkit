@@ -13,7 +13,7 @@ export {
   type UiTheme,
 } from "./theme.ts";
 export { PlayerSprite, playerImageKey, type PlayerFrames, type PlayerSpriteProps } from "./PlayerSprite.tsx";
-export { SaveMenu, type SlotInfo, type SaveMenuProps } from "./SaveMenu.tsx";
+export { SaveMenu, type AutosaveSlotInfo, type SlotInfo, type SaveMenuProps } from "./SaveMenu.tsx";
 export { ChunkLayer, type ChunkLayerProps } from "./ChunkLayer.tsx";
 export {
   StreamedChunkLayer,
@@ -36,6 +36,7 @@ export {
 } from "./ScreenEffectsLayer.tsx";
 export {
   dispatchGameViewHostActions,
+  dispatchGameViewHostEffects,
   hostActionAllowed,
   type GameViewHostCallbacks,
 } from "./game-host-actions.ts";

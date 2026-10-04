@@ -426,6 +426,32 @@ simDescribe("event editor pointer integration", () => {
     });
   });
 
+  test("inserts autosave and displays its bilingual handheld label", async () => {
+    const inbox: string[] = [];
+    const outbox: string[] = [];
+    const world = await bootSvc(inbox, outbox, 720, 480);
+    const project = JSON.parse(SUNSTONE.json) as Project;
+    const elder = project.maps[0]!.events!.find((event) => event.id === "elder")!;
+    elder.pages[0]!.commands = [];
+    expect(probes().inject(JSON.stringify(project))).toEqual({ ok: true });
+
+    enterEventMode(inbox, world);
+    click(inbox, world, ...cellPoint(720, 480, 9, 5));
+    click(inbox, world, ...eventToolPoint("edit"));
+    const add = inspectorLayout(720, 480).commandActions.find(
+      (control) => control.action.kind === "command-action" && control.action.action === "add",
+    )!;
+    clickInspectorControl(inbox, world, add);
+    typeText(inbox, world, "autosave");
+    key(inbox, world, "Enter");
+
+    expect(selectedEvent().pages[0]!.commands).toEqual([{ op: "autosave" }]);
+    frame(world);
+    const header = findDebugNode(world.getTree() as DebugTreeNode, "event-inspector-command-0");
+    expect(header).not.toBeNull();
+    expect(debugText(header!)).toContain("autosave / 自动存档");
+  });
+
   test("edits newer command fields, shows validation and resource hints, and authors battle branches", async () => {
     const inbox: string[] = [];
     const outbox: string[] = [];

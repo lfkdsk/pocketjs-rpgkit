@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `5f14109a6414a63f6a4eaaa25c586aca61218b3a8e53f4f3776853a9573e7349` | `autosave` command; optional `save.autosave` interface label | additive |
 | `c0e962138a1f12dc5627590869b99f7c9b2ced3040e3d05ed0ebd663142d4857` | optional `system.textTokens` — declaring it is the explicit opt-in that switches `{x:<key>}` text-token expansion on (the allowlist of keys the game's session resolver answers); a document without it keeps the pre-`{x:}` literal behavior | additive |
 | `3315cbf7af3ceb5f6690824bf7fe0d0d7ac90f080fd741c7e24159a2b3e99ddb` | optional label `ord` (the label's position in the original flat RPG Maker source list, so a `jumpLabel` resolves the first label in source order even when the importer reordered branches) | additive |
 | `1b66bce2dff2f3f8476a9dcc3212ee826053447c5a7683c9942adbcfd122fc12` | optional map `tiles` (four raw RPG Maker tile layers for Get Location Info), optional item `kind` (weapon/armor), `locationInfo` layer 0..3 | additive |

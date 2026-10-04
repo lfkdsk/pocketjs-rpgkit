@@ -23,7 +23,7 @@ import { Text, View } from "@pocketjs/framework/components";
 import { Osk } from "@pocketjs/framework/osk";
 import type { OskController } from "@pocketjs/framework/osk";
 import type { FsSlotInfo } from "../host/save-fs.ts";
-import { ROOT_CODE, ROOT_FS, SAVE_MENU_UI_TEXT, type MenuState } from "../engine/save-menu.ts";
+import { SAVE_MENU_UI_TEXT, saveMenuRootRows, type MenuState } from "../engine/save-menu.ts";
 import { fitBounded, marqueeOffset, type BoundedCell } from "./list-window.ts";
 import { useMarqueeTick } from "./use-marquee-tick.ts";
 import { BoundedLine } from "./BoundedLine.tsx";
@@ -35,11 +35,15 @@ import { formatUiText, withUiText, type UiTextOverrides } from "../engine/ui-tex
 type SaveMenuText = { readonly [K in keyof typeof SAVE_MENU_UI_TEXT]: string };
 
 export type SlotInfo = (FsSlotInfo | { slot: number; error: string } | null)[];
+export type AutosaveSlotInfo = FsSlotInfo | { slot: number; error: string } | null;
 
 export interface SaveMenuProps {
   menu: Accessor<MenuState>;
   hasFs: boolean;
   slots: Accessor<SlotInfo>;
+  /** A present value adds a read-only autosave row above manual slots on
+   * the load page. It is never rendered on the save page. */
+  autosave?: Accessor<AutosaveSlotInfo>;
   saveCode: Accessor<string>;
   osk: OskController;
   legend: Accessor<string>;
@@ -151,7 +155,8 @@ export function SaveMenu(props: SaveMenuProps) {
   const sameCell = (a: BoundedCell, b: BoundedCell): boolean =>
     a.kind === b.kind && a.overflow === b.overflow && sameStrings(a.rows, b.rows);
   const rootTitle = createMemo(() => boundSm(rawTitle(), CONTENT_W, TITLE_MAX_ROWS), undefined, { equals: sameCell });
-  const rootRows = () => (props.hasFs ? ROOT_FS : ROOT_CODE);
+  const hasAutosave = () => (props.autosave?.() ?? null) !== null;
+  const rootRows = () => saveMenuRootRows(props.hasFs, hasAutosave());
   // Each root row's label, bounded after the cursor prefix.
   const rootLabels = createMemo(
     () => {
@@ -194,6 +199,21 @@ export function SaveMenu(props: SaveMenuProps) {
       return boundSm(rawSummary(), CONTENT_W - prefix, SLOT_ROW_MAX_ROWS);
     }, undefined, { equals: sameCell });
   });
+  const autosaveCell = createMemo(
+    () => {
+      const info = props.autosave?.() ?? null;
+      if (info === null) return { kind: "wrap", rows: [], overflow: 0 } as BoundedCell;
+      const menu = props.menu();
+      const selected = menu.kind === "slots-load" && menu.index === 0;
+      return boundSm(
+        `${selected ? SELECTED_PREFIX : IDLE_PREFIX}${text()["save.autosave"]}: ${slotLabel(info, text())}`,
+        CONTENT_W,
+        SLOT_ROW_MAX_ROWS,
+      );
+    },
+    undefined,
+    { equals: sameCell },
+  );
   const messageRows = createMemo(
     () => {
       const m = props.menu();
@@ -219,6 +239,7 @@ export function SaveMenu(props: SaveMenuProps) {
         codeHint().kind === "marquee" || importTitle().kind === "marquee" || importHint().kind === "marquee") return true;
     if (rootLabels().some((cell) => cell.kind === "marquee")) return true;
     if (slotRows.some((cell) => cell().kind === "marquee")) return true;
+    if (autosaveCell().kind === "marquee") return true;
     const msg = messageRows();
     return msg.title.kind === "marquee" || msg.body.kind === "marquee";
   }));
@@ -232,7 +253,12 @@ export function SaveMenu(props: SaveMenuProps) {
       for (const cell of rootLabels()) content += rootRowHeight(cell.rows.length);
     } else if (m.kind === "slots-save" || m.kind === "slots-load") {
       content = slotTitle().rows.length * TITLE_ROW_H + TITLE_GAP + legendH();
-      for (const cell of slotRows) content += slotRowHeight(cell().rows.length);
+      if (m.kind === "slots-load" && hasAutosave()) {
+        content += slotRowHeight(autosaveCell().rows.length);
+      }
+      if (m.kind === "slots-save" || props.hasFs) {
+        for (const cell of slotRows) content += slotRowHeight(cell().rows.length);
+      }
     } else if (m.kind === "code-export") {
       content = (codeTitle().rows.length + CODE_ROWS + codeHint().rows.length) * XS_ROW_H + 4 + 14 - XS_ROW_H;
     } else if (m.kind === "code-import") {
@@ -337,15 +363,27 @@ export function SaveMenu(props: SaveMenuProps) {
                     debugName="rpgkit-slot-title"
                   />
                   <View style={{ height: 6 }} />
-                  <For each={[0, 1, 2]}>
+                  <Show when={m.kind === "slots-load" && hasAutosave()}>
+                    <BoundedLine
+                      cell={autosaveCell()}
+                      tick={marqueeTick}
+                      textColor={m.index === 0 ? theme().accent : theme().dim}
+                      rowH={SLOT_WRAP_ROW_H}
+                      width={CONTENT_W}
+                      sizeClass="text-sm"
+                      debugName="rpgkit-autosave-slot"
+                    />
+                  </Show>
+                  <For each={m.kind === "slots-save" || props.hasFs ? [0, 1, 2] : []}>
                     {(row) => {
                       // The summary (a map id may be CJK) on one row as
                       // before, or wrapped: its rows stack in one Text
                       // beside the prefix and slot number, so every row
                       // starts under the first.
                       const summary = slotRows[row]!;
-                      const colour = () => (m.index === row ? theme().accent : theme().ink);
-                      const lead = () => `${m.index === row ? SELECTED_PREFIX : IDLE_PREFIX}${row + 1}. `;
+                      const index = () => row + (m.kind === "slots-load" && hasAutosave() ? 1 : 0);
+                      const colour = () => (m.index === index() ? theme().accent : theme().ink);
+                      const lead = () => `${m.index === index() ? SELECTED_PREFIX : IDLE_PREFIX}${row + 1}. `;
                       const measure = slotMeasure(TEXT_SM_SLOT);
                       const labelW = CONTENT_W - Math.max(measure(SELECTED_PREFIX), measure(IDLE_PREFIX)) - measure(`${row + 1}. `);
                       return (

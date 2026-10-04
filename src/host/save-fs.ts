@@ -11,6 +11,8 @@
 import { file, fsHost, write } from "@pocketjs/framework/fs";
 import type { MapContentIdentity } from "../engine/map-repository.ts";
 import {
+  decodeEnvelopeText,
+  encodeEnvelope,
   loadFromStore,
   saveToStore,
   slotPath,
@@ -23,6 +25,10 @@ import {
 export interface FsSlotInfo extends SlotSummary {
   checksum: string;
 }
+
+/** Dedicated desktop autosave file. It is intentionally outside slotPath's
+ * 1..3 namespace, so no save-menu command can overwrite it. */
+export const AUTOSAVE_FS_PATH = "save/autosave.json";
 
 /** True when a host mounted the fs module (desktop linux-app/macos-app). */
 export function hasFsSave(): boolean {
@@ -72,7 +78,36 @@ export function loadSlotFs(
   return loadFromStore(s, slot, content);
 }
 
-/** Summaries of the three fixed slots; null entries are empty slots.
+export function saveAutosaveFs(
+  snapshot: SaveSnapshot,
+  content?: MapContentIdentity | null,
+): void {
+  if (!hasFsSave()) throw new Error("autosave: fs module is not mounted on this target");
+  write(AUTOSAVE_FS_PATH, encodeEnvelope(snapshot, content));
+}
+
+export function loadAutosaveFs(
+  content?: MapContentIdentity | null,
+): SaveSnapshot | null {
+  if (!hasFsSave()) return null;
+  const autosave = file(AUTOSAVE_FS_PATH);
+  return autosave.exists() ? decodeEnvelopeText(autosave.text(), content) : null;
+}
+
+export function inspectAutosaveFs(
+  content?: MapContentIdentity | null,
+): FsSlotInfo | { slot: 0; error: string } | null {
+  if (!hasFsSave()) return null;
+  const autosave = file(AUTOSAVE_FS_PATH);
+  if (!autosave.exists()) return null;
+  try {
+    return { ...summarizeEnvelope(0, autosave.text(), content), slot: 0 };
+  } catch (error) {
+    return { slot: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Summaries of the three fixed manual slots; null entries are empty slots.
  *  A file that fails checksum/version is listed as a slot with an error
  *  code so the menu can show it as corrupt rather than silently empty. */
 export function listSlotsFs(

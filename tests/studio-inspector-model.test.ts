@@ -87,7 +87,7 @@ describe("command categories and picker", () => {
   });
 
   test("category groups", () => {
-    expect(["if", "battle", "scene", "wait", "exit", "common", "openMenu", "openSave", "gameOver", "returnTitle"].map(commandCategory)).toEqual(Array(10).fill("flow"));
+    expect(["if", "battle", "scene", "wait", "exit", "common", "openMenu", "openSave", "autosave", "gameOver", "returnTitle"].map(commandCategory)).toEqual(Array(11).fill("flow"));
     expect(["text", "choices", "balloon", "inputNumber"].map(commandCategory)).toEqual(Array(4).fill("message"));
     expect(["switch", "variable", "selfSwitch", "item", "gold", "timer", "changeName"].map(commandCategory)).toEqual(Array(7).fill("state"));
     expect(["moveRoute", "transfer", "moveControl", "place"].map(commandCategory)).toEqual(Array(4).fill("move"));
@@ -102,6 +102,7 @@ describe("command categories and picker", () => {
     expect(opLabel("screenFade")).toBe("Screen fade");
     expect(opLabel("playBgm")).toBe("Play BGM");
     expect(opLabel("openSave")).toBe("Open save screen");
+    expect(opLabel("autosave")).toBe("Autosave / 自动存档");
     expect(opLabel("mapNameDisplay")).toBe("Map name display");
     expect(fieldLabel("MOVE TYPE")).toBe("Move type");
   });
@@ -115,6 +116,7 @@ describe("command categories and picker", () => {
     expect(fade.indexOf("fadeoutBgm")).toBeLessThan(fade.indexOf("screenFade"));
     expect(filterPickerEntries("audio").map((entry) => entry.op)).toContain("playSe");
     expect(filterPickerEntries("picture").map((entry) => entry.op)).toContain("showPicture");
+    expect(filterPickerEntries("自动存档").map((entry) => entry.op)).toEqual(["autosave"]);
     expect(filterPickerEntries("zzz-no-such")).toEqual([]);
   });
 });

@@ -288,7 +288,13 @@ Conventions:
   nothing. Unlike RPG Maker 351/352, menu/save requests do not park their
   event fiber; the game-owned host screen must provide any pause. Host actions
   are drained before a save and never enter snapshot or
-  replay hashes.
+  replay hashes. `autosave` instead advances its fiber and yields at a
+  reference-tick boundary; its effect carries that tick's normalized snapshot
+  directly to `hostActions.autosave`. Attract forward folds preserve it, while
+  rewind/refold omits the effect, so replay reconstruction cannot rewrite host
+  storage. A parallel autosave preserves an in-flight player step; manual saves
+  keep their tile-boundary gate. Autosave is independent of the player-facing
+  `saveAccess` flag.
 - **Names and map banners:** `changeName` writes the saved player name used by
   later `{name}` expansion. `system.mapNameDisplay:true` seeds a persistent
   flag; each map entry starts a saved 180-tick banner from `MapDef.name`.

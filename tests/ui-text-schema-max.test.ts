@@ -64,6 +64,7 @@ const CASES = {
   "save.codeImport": { route: "save-root", target: "rpgkit-save-root-3", panel: "rpgkit-save-panel", control: "rpgkit-save-root-0" },
   "save.slotsSaveTitle": { route: "save-slots-save", target: "rpgkit-slot-title", panel: "rpgkit-save-panel", control: "rpgkit-slot-0" },
   "save.slotsLoadTitle": { route: "save-slots-load", target: "rpgkit-slot-title", panel: "rpgkit-save-panel", control: "rpgkit-slot-0" },
+  "save.autosave": { route: "save-slots-load", target: "rpgkit-autosave-slot", panel: "rpgkit-save-panel", control: "rpgkit-slot-0" },
   "save.slotEmpty": { route: "save-slots-save", target: "rpgkit-slot-0", panel: "rpgkit-save-panel", control: "rpgkit-slot-0" },
   "save.slotDamaged": { route: "save-slots-save", target: "rpgkit-slot-1", panel: "rpgkit-save-panel", control: "rpgkit-slot-0" },
   "save.slotSummary": { route: "save-slots-save", target: "rpgkit-slot-2", panel: "rpgkit-save-panel", control: "rpgkit-slot-0", params: { map: MAP_ID, frame: 4321 } },
@@ -387,8 +388,8 @@ function verifyRoute(world: BoundGameWorld, recording: Recording, route: Route):
 }
 
 simDescribe("all schema uiText values render at maxLength", () => {
-  test("the schema iteration and exhaustive screen map cover exactly all 57 keys", () => {
-    expect(SCHEMA_KEYS).toHaveLength(57);
+  test("the schema iteration and exhaustive screen map cover exactly all 58 keys", () => {
+    expect(SCHEMA_KEYS).toHaveLength(58);
     expect(new Set(SCHEMA_KEYS)).toEqual(new Set(Object.keys(CASES) as UiTextKey[]));
     for (const key of SCHEMA_KEYS) {
       expect(Number.isSafeInteger(UI_TEXT_SCHEMA[key].maxLength), `${key} maxLength is an integer`).toBe(true);
@@ -427,6 +428,9 @@ simDescribe("all schema uiText values render at maxLength", () => {
       [world, recording] = await boot("idle");
       tap(world, BTN.START); tap(world, BTN.DOWN); tap(world, BTN.CIRCLE);
       setMarker(world, key, marker(key));
+      // The read-only autosave is the first load row; move to empty manual
+      // slot 1 before asserting the empty-slot message templates.
+      tap(world, BTN.DOWN);
       tap(world, BTN.CIRCLE);
       verify(world, recording, key, true);
     }

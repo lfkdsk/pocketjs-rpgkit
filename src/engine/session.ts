@@ -32,6 +32,7 @@
 // No host imports, no wall clock, no Math.random (docs/SIMULATION.md).
 
 import { deepClone, keyedRecord } from "./clone.ts";
+import { createAutosaveSessionSnapshot, type SaveSnapshot } from "./save.ts";
 import { beginStateMetadata, endStateMetadata, RecentStateMetadata } from "./state-metadata.ts";
 import { startupProfileMark } from "../startup-profile.ts";
 import { cloneAudioState, type AudioState } from "./audio.ts";
@@ -346,6 +347,21 @@ export function isSessionWorldIdle(state: SessionState, menuOpen = false): boole
 }
 
 export interface SessionInput extends BattleInput {}
+
+/** A host lifecycle request observed at the reference tick that emitted it.
+ * Autosave alone carries data: a fully normalized SaveSnapshot detached from
+ * the working reducer state. */
+export type SessionHostEffect =
+  | { action: Exclude<HostAction, "autosave"> }
+  | { action: "autosave"; snapshot: SaveSnapshot };
+
+/** Optional, synchronous collector for host effects. Callers must buffer
+ * effects until the surrounding fold commits: a streamed-map miss may roll
+ * back the attempted frame and retry it later. Omit the sink for the normal
+ * zero-allocation reducer path. */
+export interface SessionEffectSink {
+  publish(effect: SessionHostEffect): void;
+}
 
 interface SessionMapPreparation {
   id: string;
@@ -1864,11 +1880,12 @@ export function stepSession(
   sess: Session,
   s0: SessionState,
   input: SessionInput,
+  effects?: SessionEffectSink,
 ): SessionState {
-  if (!sess.immutableState) return foldSession(sess, s0, input);
+  if (!sess.immutableState) return foldSession(sess, s0, input, effects);
   const metadata = beginStateMetadata();
   try {
-    return foldSession(sess, s0, input);
+    return foldSession(sess, s0, input, effects);
   } finally {
     endStateMetadata(metadata);
   }
@@ -1878,6 +1895,7 @@ function foldSession(
   sess: Session,
   s0: SessionState,
   input: SessionInput,
+  effects?: SessionEffectSink,
 ): SessionState {
   // One working copy per frame. The reference ticks below advance it in
   // place; characters and switch records stay shared with s0 until written.
@@ -1949,6 +1967,18 @@ function foldSession(
     if (tickResult.hostActions) {
       if (frameHostActions === undefined) frameHostActions = tickResult.hostActions;
       else frameHostActions.push(...tickResult.hostActions);
+      if (effects) {
+        for (const action of tickResult.hostActions) {
+          if (action === "autosave") {
+            effects.publish({
+              action,
+              snapshot: createAutosaveSessionSnapshot(sess, s, tickInput.buttons),
+            });
+          } else {
+            effects.publish({ action });
+          }
+        }
+      }
     }
     if (!hadScene && s.scene !== null && sceneStartedAt < 0) sceneStartedAt = tick + 1;
     // A fatalized interpreter freezes the playfield for the rest of the

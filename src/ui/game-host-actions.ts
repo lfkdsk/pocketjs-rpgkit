@@ -3,12 +3,17 @@
 // title requests without importing numbered-picture or HUD code.
 
 import type { HostAction } from "../engine/interpreter.ts";
+import type { SaveSnapshot } from "../engine/save.ts";
+import type { SessionHostEffect } from "../engine/session.ts";
 import type { GameViewSessionHost } from "./demo-contract.ts";
 
 /** Each callback receives the same session facade used by opt-in overlays. */
 export interface GameViewHostCallbacks {
   menu?: (host: GameViewSessionHost) => void;
   save?: (host: GameViewSessionHost) => void;
+  /** Receives the normalized snapshot captured after autosave and before the
+   * next authored command. The live host may already be on a later tick. */
+  autosave?: (host: GameViewSessionHost, snapshot: Readonly<SaveSnapshot>) => void;
   gameOver?: (host: GameViewSessionHost) => void;
   title?: (host: GameViewSessionHost) => void;
 }
@@ -38,6 +43,26 @@ export function dispatchGameViewHostActions(
   if (!callbacks) return;
   for (const action of actions ?? []) {
     if (!hostActionAllowed(action, host)) continue;
+    // A bare reducer marker has no tick snapshot. GameView uses the effect
+    // dispatcher below; this legacy helper deliberately cannot substitute
+    // the later live state for an autosave checkpoint.
+    if (action === "autosave") continue;
     callbacks[action]?.(host);
+  }
+}
+
+/** Dispatch committed reference-tick effects in authored order. This is the
+ * GameView path: streamed-map retries discard their uncommitted collector,
+ * and attract rewind/refold never receives a collector in the first place. */
+export function dispatchGameViewHostEffects(
+  effects: readonly SessionHostEffect[],
+  callbacks: Readonly<GameViewHostCallbacks> | undefined,
+  host: GameViewSessionHost,
+): void {
+  if (!callbacks) return;
+  for (const effect of effects) {
+    if (!hostActionAllowed(effect.action, host)) continue;
+    if (effect.action === "autosave") callbacks.autosave?.(host, effect.snapshot);
+    else callbacks[effect.action]?.(host);
   }
 }

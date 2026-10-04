@@ -146,7 +146,7 @@ describe("Project.uiText in the schema", () => {
 
 test("every UiTextKey used by the kit is a key of the table (type-level, here for the record)", () => {
   const keys: UiTextKey[] = Object.keys(ENGLISH) as UiTextKey[];
-  expect(keys.length).toBe(57);
+  expect(keys.length).toBe(58);
 });
 
 describe("editing uiText through editor/api", () => {

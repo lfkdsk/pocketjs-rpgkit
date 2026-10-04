@@ -256,7 +256,8 @@ field rules are the same ones the PocketJS editor and `update-command` use
 ([`editor/engine/event-fields.ts`](../editor/engine/event-fields.ts)), so
 every command and condition in the current schema is editable. **Add
 command** opens a searchable list of every command kind and inserts after
-the selection or into a chosen branch.
+the selection or into a chosen branch. The autosave command is searchable
+and displayed as **Autosave / 自动存档**.
 
 Pause over an event on the canvas to see its sprite, id/name, first-page
 trigger and the first three meaningful command summaries. The card compares

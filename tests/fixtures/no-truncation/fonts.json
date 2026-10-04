@@ -1,8 +1,10 @@
 {
   "fallback": [
-    "../cjk-text/fonts/NotoSansCJKsc-subset.otf"
+    "../cjk-text/fonts/NotoSansCJKsc-subset.otf",
+    "../ui-text/fonts/NotoSansCJKsc-subset.otf"
   ],
   "characterFiles": [
-    "../cjk-text/fonts/cjk-charset.txt"
+    "../cjk-text/fonts/cjk-charset.txt",
+    "autosave-charset.txt"
   ]
 }

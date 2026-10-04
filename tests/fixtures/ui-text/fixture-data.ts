@@ -40,6 +40,7 @@ export const ZH_UI_TEXT: UiTextTable = {
   "save.codeImport": "输入存档码读取",
   "save.slotsSaveTitle": "选择要存入的存档位",
   "save.slotsLoadTitle": "选择要读取的存档位",
+  "save.autosave": "自动存档",
   "save.slotEmpty": "（空）",
   "save.slotDamaged": "！存档已损坏",
   "save.slotSummary": "地图 {map} · 第{frame}帧",

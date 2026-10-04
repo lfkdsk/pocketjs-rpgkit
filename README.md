@@ -5,7 +5,7 @@ built on [PocketJS](https://github.com/pocket-nexus/pocketjs). It contains
 the parts an RPG-Maker-style game needs without any specific game:
 
 - **pure-TS engine** (`src/engine/`) — tile movement and collision, the
-  event interpreter (pages, triggers, 64 commands), map-character motion,
+  event interpreter (pages, triggers, 72 commands), map-character motion,
   multi-map sessions, deterministic extension state and battle scenes,
   deterministic save snapshots. No host imports, no
   wall clock, no `Math.random`: a session is one pure fold per virtual
@@ -25,8 +25,8 @@ the parts an RPG-Maker-style game needs without any specific game:
   the session back to the demo (or opens the optional demo menu). Demo and player input are one u16 stream,
   so rewind undoes the player's moves exactly like the tape's. Runtime-only,
   bounded keyframes make a long-tape rewind fold only a short suffix;
-- **host adapters** (`src/host/`) — the `data.fs` save slot store and the
-  attract-tape override loader;
+- **host adapters** (`src/host/`) — the `data.fs` save slot store, dedicated
+  browser/sim/desktop autosave bridges, and the attract-tape override loader;
 - **build-time asset pipelines** (`tools/lib/`) — tile sheets to baked
   512px PSM_4444 canvases and chunks, or 256px CLUT8+RLE streamed chunks,
   one-image CLUT8+PackBits entries loaded only when shown, native animated-tile
@@ -956,7 +956,7 @@ are translated by the shared `worldNode`. Both sit inside the renderer's
 band adds the origin itself. The coordinate spaces and the single
 conversion point are documented in `src/ui/world-contract.ts`.
 
-### The 64 commands
+### The 72 commands
 
 | op | purpose |
 | --- | --- |
@@ -990,6 +990,7 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `inputNumber` | open the built-in 1–8 digit editor and write the confirmed non-negative integer to a variable |
 | `selectItem` | open the built-in item picker (regular/key/hidden A/hidden B) and write the chosen item's numeric id to a variable, 0 on cancel |
 | `openMenu` / `openSave` | request a game-owned menu or save screen through `GameView.hostActions` |
+| `autosave` | publish a normalized snapshot from this exact reference tick to the optional host autosave callback; the fiber resumes at the next command on the next tick |
 | `gameOver` / `returnTitle` | request a game-owned game-over or title transition through `GameView.hostActions` |
 | `changeName` | replace the player name used by the `{name}` text token |
 | `mapNameDisplay` | enable or disable the automatic three-second banner on subsequent map entries |
@@ -1235,6 +1236,19 @@ frame before host callbacks are dispatched. Unlike RPG Maker commands 351/352,
 `openMenu` and `openSave` do not park the fiber while a host screen is open;
 the host owns any input or scene pause.
 The RPG Maker importer adds `exit` after its terminal game-over/title commands.
+
+`autosave` is the silent persistence counterpart. It advances its event fiber,
+ends the current reference tick, and gives `hostActions.autosave(host,
+snapshot)` a detached, normalized snapshot from that boundary. Thus 20, 30
+and 60 Hz hosts receive byte-identical save data even when one host frame folds
+several reference ticks; loading resumes at the command after `autosave`.
+If a parallel event reaches the command while the player is between tiles,
+the automatic snapshot preserves that exact interpolation phase and resumes
+the committed step after loading; manual saves retain their tile-boundary gate.
+Missing callbacks are deterministic no-ops, and `saveAccess:false` affects only
+the player-facing save entry and `openSave`, not authored autosaves. Normal
+forward attract playback forwards the request, while rewind's internal refold
+does not repeat host writes.
 
 `changeName` immediately changes subsequent `{name}` expansion.
 `project.system.mapNameDisplay:true` opts into a three-second banner on each
@@ -2078,9 +2092,10 @@ Chapter snapshots and save codes are the same data as ordinary saves; see
 
 ### Saves and save codes
 
-A save is an FNV-checksummed `rpgkit-save/v1` envelope over a safe-point
+A manual save is an FNV-checksummed `rpgkit-save/v1` envelope over a safe-point
 snapshot: the player rests on a tile boundary, no message, menu or scene is
-open, and no transfer, battle or other event request is waiting. The snapshot
+open, and no transfer, battle or other event request is waiting. An authored
+autosave uses the same envelope but may preserve a player step in flight. The snapshot
 holds the map id, the player, the full interpreter state, the game's
 extension state and the current map's runtime: every character's cell,
 facing and step in progress, its running move route and how far along it is
@@ -2091,8 +2106,10 @@ stopped, at every host rate, even in the middle of a scripted scene. Saves
 written before the map runtime was recorded still load; their characters
 start again from the map, as they always did.
 
-Hosts with `data.fs` write three slots through `src/host/save-fs.ts`; other
-hosts exchange the save code, the envelope as text a player can copy or
+Hosts with `data.fs` write three manual slots through `src/host/save-fs.ts`.
+The same module keeps its automatic save in the separate
+`save/autosave.json` file, never in numbered slot 1–3. Other hosts exchange
+the save code, the envelope as text a player can copy or
 type on the on-screen keyboard (`A-Z a-z 0-9 - _` only). `encodeSaveCode`
 deflates the envelope first and prefixes `z1`; `decodeSaveCode` reads that
 and the older uncompressed codes (they start with `e`). Pass
@@ -2100,6 +2117,18 @@ and the older uncompressed codes (they start with `e`). Pass
 sharded project, pass `session.content` to the encoders, `saveSlotFs`,
 `loadSlotFs` and `listSlotsFs`; this writes the build identity and rejects
 saves from another map manifest or schema.
+
+The web player installs a narrow `__rpgkitAutosave` bridge backed by the
+app-scoped `pocket-rpgkit:<app-id>:autosave:v1` browser-storage key; a storage
+denial or quota failure leaves play running and emits only a development
+`console.debug` diagnostic. Import `autosaveHostCallbacks` from
+`pocket-rpgkit/host` and pass it to `GameView.hostActions` to use that bridge.
+The same module exports `createSimAutosaveBridge()` for a sim host's
+`extraGlobals`, plus read/write/inspect helpers. `SaveMenu` accepts an
+`autosave` accessor: when it reports a value, the load list puts the localized
+read-only automatic slot above numbered slots. It never appears on the save
+list and cannot be overwritten; a web host with no `data.fs` still gets the
+automatic-load row above its save-code entries.
 
 | Save | Plain code | Compressed code |
 | --- | --- | --- |
@@ -2726,7 +2755,7 @@ player-name token of message text is separate and not used here.
 | `legend.talk` `legend.next` `legend.ok` `legend.back` | Button legend labels (the shell adds the glyph) | |
 | `shop.buy` `shop.sell` `shop.gold` `shop.rowSell` `shop.rowLeave` `shop.rowBack` `shop.price` `shop.priceStock` | Shop box header, control rows, price column | `{gold}`, `{price}`, `{stock}` |
 | `save.title` `save.toSlot` `save.fromSlot` `save.codeExport` `save.codeImport` | Save menu root page | |
-| `save.slotsSaveTitle` `save.slotsLoadTitle` `save.slotEmpty` `save.slotDamaged` `save.slotSummary` | Slot pages | `{map}`, `{frame}` |
+| `save.slotsSaveTitle` `save.slotsLoadTitle` `save.autosave` `save.slotEmpty` `save.slotDamaged` `save.slotSummary` | Slot pages | `{map}`, `{frame}` |
 | `save.emptyTitle` `save.emptyBody` | `menuStep`'s empty-slot message | `{slot}` |
 | `save.codeTitle` `save.codeHint` `save.importTitle` `save.importHint` | Save code export and import pages | `{page}`, `{pages}` |
 | `nameInput.title` `nameInput.back` `nameInput.ok` `nameInput.cancel` | Name input caption (when the `scene` sets no `title`) and its three action cells | |

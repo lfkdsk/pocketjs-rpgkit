@@ -447,6 +447,7 @@ describe("selectWorldMapPreview: entry-time writers", () => {
       { op: "battle", setup: null },
       { op: "transfer", map: "west", x: 0, y: 0 },
       { op: "common", id: "missing" },
+      { op: "autosave" },
     ] as Command[]) {
       const result = preview([
         autorunEvent("opaque", [command]),

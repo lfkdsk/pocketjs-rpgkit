@@ -105,6 +105,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "save.codeImport": {"type": "string", "maxLength": 200, "description": "Default: \"Load code (import)\""},
         "save.slotsSaveTitle": {"type": "string", "maxLength": 200, "description": "Default: \"SAVE TO SLOT\""},
         "save.slotsLoadTitle": {"type": "string", "maxLength": 200, "description": "Default: \"LOAD FROM SLOT\""},
+        "save.autosave": {"type": "string", "maxLength": 200, "description": "Default: \"AUTOSAVE\""},
         "save.slotEmpty": {"type": "string", "maxLength": 200, "description": "Default: \"- empty\""},
         "save.slotDamaged": {"type": "string", "maxLength": 200, "description": "Default: \"! damaged save\""},
         "save.slotSummary": {"type": "string", "maxLength": 200, "description": "Default: \"{map}  f{frame}\""},
@@ -1148,6 +1149,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         },
         { "type": "object", "additionalProperties": false, "required": ["op"], "properties": { "op": { "const": "openMenu" } } },
         { "type": "object", "additionalProperties": false, "required": ["op"], "properties": { "op": { "const": "openSave" } } },
+        { "type": "object", "additionalProperties": false, "required": ["op"], "properties": { "op": { "const": "autosave" } }, "description": "Silently publish an exact-tick snapshot for the host's dedicated autosave slot." },
         { "type": "object", "additionalProperties": false, "required": ["op"], "properties": { "op": { "const": "gameOver" } } },
         { "type": "object", "additionalProperties": false, "required": ["op"], "properties": { "op": { "const": "returnTitle" } } },
         {

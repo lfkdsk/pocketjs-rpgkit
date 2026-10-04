@@ -25,6 +25,7 @@ import {
   startSession,
   stepSession,
   type Session,
+  type SessionHostEffect,
   type SessionState,
 } from "../src/engine/session.ts";
 import type { Command, MapDef, Project } from "../src/engine/types.ts";
@@ -297,6 +298,110 @@ describe("KRM2 timer and host lifecycle", () => {
     expect(state.sw.switches.done).toBe(true);
     state = stepSession(session, state, { buttons: 0 });
     expect(state.interp.hostActions).toBeUndefined();
+  });
+
+  test("autosave captures its exact reference tick and resumes after the command at every host rate", () => {
+    const p = project([
+      { op: "variable", id: "before", set: { op: "set", value: 1 } },
+      { op: "autosave" },
+      { op: "variable", id: "after", set: { op: "set", value: 2 } },
+      { op: "switch", id: "done", value: true },
+    ]);
+    const envelopes = [60, 30, 20].map((hz) => {
+      const session = createSession(p, hz);
+      const effects: SessionHostEffect[] = [];
+      const state = stepSession(
+        session,
+        startSession(p, session),
+        { buttons: BTN.CIRCLE },
+        { publish: (effect) => effects.push(effect) },
+      );
+      expect(effects).toHaveLength(1);
+      expect(effects[0]!.action).toBe("autosave");
+      if (effects[0]!.action !== "autosave") throw new Error("expected autosave effect");
+      const snapshot = effects[0]!.snapshot;
+      expect(snapshot.autosave).toBe(true);
+      expect(snapshot.held).toBe(BTN.CIRCLE);
+      expect(snapshot.interp.frame).toBe(1);
+      expect(snapshot.interp.sw.variables).toEqual({ before: 1 });
+      expect(snapshot.interp.main?.mode).toBe("run");
+
+      // At 30/20 Hz the host frame has already folded later reference ticks;
+      // mutating that live state must not alter the captured checkpoint.
+      if (hz !== 60) expect(state.sw.variables.after).toBe(2);
+      expect(snapshot.interp.sw.variables.after).toBeUndefined();
+
+      let restored = restoreSessionEnvelope(session, encodeEnvelope(snapshot));
+      const replayEffects: SessionHostEffect[] = [];
+      restored = stepSession(session, restored, { buttons: BTN.CIRCLE }, {
+        publish: (effect) => replayEffects.push(effect),
+      });
+      expect(restored.sw.variables.after).toBe(2);
+      expect(restored.sw.switches.done).toBe(true);
+      expect(replayEffects).toEqual([]);
+      return encodeEnvelope(snapshot);
+    });
+    expect(envelopes[1]).toBe(envelopes[0]);
+    expect(envelopes[2]).toBe(envelopes[0]);
+  });
+
+  test("a parallel autosave preserves an in-flight player step", () => {
+    const p = project([]);
+    p.maps[0]!.events!.push({
+      id: "checkpoint",
+      x: 1,
+      y: 1,
+      pages: [
+        {
+          trigger: "parallel",
+          commands: [
+            { op: "autosave" },
+            { op: "switch", id: "checkpointDone", value: true },
+          ],
+        },
+        { condition: { switch: "checkpointDone" }, trigger: "action", commands: [] },
+      ],
+    });
+    const session = createSession(p, 60);
+    const effects: SessionHostEffect[] = [];
+    let live = stepSession(session, startSession(p, session), { buttons: BTN.RIGHT }, {
+      publish: (effect) => effects.push(effect),
+    });
+    expect(live.move).toMatchObject({ moving: true, phase: 1, px: 50 });
+    expect(effects).toHaveLength(1);
+    const effect = effects[0]!;
+    if (effect.action !== "autosave") throw new Error("expected autosave effect");
+    expect(effect.snapshot.player).toEqual(live.move);
+
+    let restored = restoreSessionEnvelope(session, encodeEnvelope(effect.snapshot));
+    expect(restored.move).toEqual(live.move);
+    for (let i = 0; i < 8; i++) {
+      live = stepSession(session, live, { buttons: 0 });
+      restored = stepSession(session, restored, { buttons: 0 });
+    }
+    expect(restored).toEqual(live);
+    expect(restored.sw.switches.checkpointDone).toBe(true);
+  });
+
+  test("attract rewind refolds autosave without republishing the host effect", () => {
+    const p = project([
+      { op: "autosave" },
+      { op: "wait", seconds: 20 },
+      { op: "switch", id: "done", value: true },
+    ]);
+    const controller = new AttractController(p, [], {
+      hz: 60,
+      attractEnabled: false,
+      rewindSeconds: 3,
+      keyframeMaxBytes: 0,
+    });
+    const effects: SessionHostEffect[] = [];
+    const sink = { publish: (effect: SessionHostEffect) => effects.push(effect) };
+    controller.step(0, sink);
+    expect(effects.map((effect) => effect.action)).toEqual(["autosave"]);
+    for (let i = 0; i < 239; i++) controller.step(0, sink);
+    controller.step(BTN.LTRIGGER, sink);
+    expect(effects.map((effect) => effect.action)).toEqual(["autosave"]);
   });
 });
 

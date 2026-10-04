@@ -697,7 +697,7 @@ content error rather than falling back to zero.
 Audio fields are `id`, `volume`, and `pitch` for `playBgm`, `playBgs`, and
 `playSe`; `playMe` also has `duration`; `fadeoutBgm` and `fadeoutBgs` have
 `duration`. `stopBgm`, `pauseBgm`, `resumeBgm`, `saveBgm`, `replayBgm`,
-`erase`, `exit`, `openMenu`, `openSave`, `gameOver`, `returnTitle`,
+`erase`, `exit`, `openMenu`, `openSave`, `autosave`, `gameOver`, `returnTitle`,
 `lockInput`, `unlockInput`, `break`, and `stopSe` are supported but have no
 parameter fields. `loop` has no parameter fields either: its only
 payload is its `commands` body, edited with `insert-command`/`delete-command`

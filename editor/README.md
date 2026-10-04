@@ -49,7 +49,8 @@ a guard test.
   It can add, delete, copy and reorder commands, and edit every command kind
   in the current project schema, including movement control, presentation,
   shops, map animations, audio, extensions, battle processing and game
-  scenes. In the add prompt, type an op such as `text`; with a selected
+  scenes. The `autosave` entry is shown as `autosave / 自动存档` and inserts
+  the parameterless command directly. In the add prompt, type an op such as `text`; with a selected
   parent, `text@then`, `text@else`, `text@option1`, `text@cancel`,
   `text@win`/`text@lose`/`text@escape` (battle), or `text@done`/`text@cancel`
   (scene), or `break@body` (a selected `loop`) inserts directly into that

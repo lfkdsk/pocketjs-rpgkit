@@ -501,6 +501,7 @@ export function commandFields(
     case "exit":
     case "openMenu":
     case "openSave":
+    case "autosave":
     case "gameOver":
     case "returnTitle":
     case "lockInput":
@@ -1671,6 +1672,7 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
     case "exit":
     case "openMenu":
     case "openSave":
+    case "autosave":
     case "gameOver":
     case "returnTitle":
     case "lockInput":

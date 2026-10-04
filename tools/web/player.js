@@ -98,6 +98,39 @@ export const EDITOR_CHUNK_MAX_CODE_UNITS = 1024;
 export const EDITOR_TRANSFER_MAX_CODE_UNITS = 8 * 1024 * 1024;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
+/** A deliberately tiny storage capability exposed to game bundles. The
+ * browser owns the app-scoped key; guests can only replace/read one
+ * autosave envelope and never receive the general localStorage object. */
+export function createBrowserAutosaveBridge(storageKey, storage) {
+  const target = () => {
+    const value = storage ?? globalThis.localStorage;
+    if (!value) throw new Error("localStorage is unavailable");
+    return value;
+  };
+  const failed = (operation, error) => {
+    globalThis.console?.debug?.(`pocket-rpgkit: browser autosave ${operation} failed`, error);
+  };
+  return {
+    read() {
+      try {
+        return target().getItem(storageKey);
+      } catch (error) {
+        failed("read", error);
+        return null;
+      }
+    },
+    write(envelope) {
+      try {
+        target().setItem(storageKey, envelope);
+        return true;
+      } catch (error) {
+        failed("write", error);
+        return false;
+      }
+    },
+  };
+}
+
 /** Browser KeyboardEvent.key -> the desktop companion's named-key dialect. */
 const NAMED_KEYS = {
   Backspace: "Backspace",
@@ -923,6 +956,9 @@ class Player {
     globalThis.audio = this.audio.ns;
     globalThis.__simHz = config.simHz ?? 60;
     globalThis.__pocketApp = config.app;
+    globalThis.__rpgkitAutosave = createBrowserAutosaveBridge(
+      config.autosaveStorageKey ?? `pocket-rpgkit:${config.app}:autosave:v1`,
+    );
     globalThis.__rpgkitBoot = rpgkitBootFromSearch(location.search);
     globalThis.__rpgkitDemo = undefined;
     globalThis.frame = undefined;

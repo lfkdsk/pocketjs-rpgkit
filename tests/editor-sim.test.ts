@@ -774,7 +774,10 @@ simDescribe("editor budget", () => {
     // PocketJS upstream #514's packed touch-recorder pages add 2,020 B of
     // shared DevTools code (1,603,532 B), and GameView's share of the
     // connected-world neighbour preview plus the session's left-map snapshot
-    // bring it to 1,606,330 B (+2,798). Keep a narrow margin.
-    expect(js).toBeLessThan(1_609_000);
+    // bring it to 1,606,330 B (+2,798). Autosave's embedded schema, bilingual
+    // picker/summary, in-flight validation and shared snapshot seam add
+    // 5,813 B: 1,612,143 B.
+    // Keep a narrow margin.
+    expect(js).toBeLessThan(1_615_000);
   });
 });

@@ -60,6 +60,7 @@ export interface UiTextTable {
   "save.codeImport": string;
   "save.slotsSaveTitle": string;
   "save.slotsLoadTitle": string;
+  "save.autosave": string;
   "save.slotEmpty": string;
   "save.slotDamaged": string;
   /** {map} {frame} */

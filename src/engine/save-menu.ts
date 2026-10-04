@@ -19,6 +19,7 @@ export const SAVE_MENU_UI_TEXT = {
   "save.codeImport": "Load code (import)",
   "save.slotsSaveTitle": "SAVE TO SLOT",
   "save.slotsLoadTitle": "LOAD FROM SLOT",
+  "save.autosave": "AUTOSAVE",
   "save.slotEmpty": "- empty",
   "save.slotDamaged": "! damaged save",
   "save.slotSummary": "{map}  f{frame}",
@@ -49,6 +50,7 @@ export type MenuAction = "up" | "down" | "confirm" | "back";
 export type MenuCommand =
   | { op: "save-slot"; slot: number }
   | { op: "load-slot"; slot: number }
+  | { op: "load-autosave" }
   | { op: "open-export" }
   | { op: "open-import" };
 
@@ -78,6 +80,21 @@ export const ROOT_CODE: readonly RootRow<"code-export" | "code-import">[] = [
   { id: "code-import", label: "Load code (import)", textKey: "save.codeImport" },
 ];
 
+/** Web/sim hosts can expose a readable autosave without mounting data.fs. */
+export const ROOT_AUTOSAVE: readonly RootRow<"slots-load" | "code-export" | "code-import">[] = [
+  { id: "slots-load", label: "Load from slot", textKey: "save.fromSlot" },
+  { id: "code-export", label: "Save code (export)", textKey: "save.codeExport" },
+  { id: "code-import", label: "Load code (import)", textKey: "save.codeImport" },
+];
+
+export function saveMenuRootRows(hasFs: boolean, autosaveAvailable = false): readonly RootRow<string>[] {
+  return hasFs ? ROOT_FS : autosaveAvailable ? ROOT_AUTOSAVE : ROOT_CODE;
+}
+
+function rootIndex(hasFs: boolean, autosaveAvailable: boolean, id: string): number {
+  return Math.max(0, saveMenuRootRows(hasFs, autosaveAvailable).findIndex((row) => row.id === id));
+}
+
 const SLOT_MIN = 1;
 const SLOT_MAX = 3;
 
@@ -94,19 +111,27 @@ function cycle(index: number, len: number, delta: number): number {
 export function menuStep(
   state: MenuState,
   action: MenuAction,
-  ctx: { hasFs: boolean; slotNonEmpty: readonly boolean[]; codePages: number; text?: UiTextOverrides },
+  ctx: {
+    hasFs: boolean;
+    slotNonEmpty: readonly boolean[];
+    /** Show a read-only row above the numbered slots on the load page. */
+    autosaveAvailable?: boolean;
+    codePages: number;
+    text?: UiTextOverrides;
+  },
 ): MenuStepResult {
   switch (state.kind) {
     case "closed":
       return { state };
 
     case "root": {
-      const rows = ctx.hasFs ? ROOT_FS : ROOT_CODE;
-      if (action === "up") return { state: { ...state, index: cycle(state.index, rows.length, -1) } };
-      if (action === "down") return { state: { ...state, index: cycle(state.index, rows.length, 1) } };
+      const rows = saveMenuRootRows(ctx.hasFs, ctx.autosaveAvailable === true);
+      const index = Math.min(state.index, rows.length - 1);
+      if (action === "up") return { state: { ...state, index: cycle(index, rows.length, -1) } };
+      if (action === "down") return { state: { ...state, index: cycle(index, rows.length, 1) } };
       if (action === "back") return { state: { kind: "closed" } };
       if (action === "confirm") {
-        const id = rows[state.index]!.id;
+        const id = rows[index]!.id;
         if (id === "slots-save") return { state: { kind: "slots-save", index: 0 } };
         if (id === "slots-load") return { state: { kind: "slots-load", index: 0 } };
         if (id === "code-export") return { state: { kind: "code-export", page: 0 }, command: { op: "open-export" } };
@@ -118,7 +143,9 @@ export function menuStep(
     case "slots-save": {
       if (action === "up") return { state: { ...state, index: cycle(state.index, 3, -1) } };
       if (action === "down") return { state: { ...state, index: cycle(state.index, 3, 1) } };
-      if (action === "back") return { state: { kind: "root", index: 0 } };
+      if (action === "back") {
+        return { state: { kind: "root", index: rootIndex(ctx.hasFs, ctx.autosaveAvailable === true, "slots-save") } };
+      }
       if (action === "confirm") {
         return {
           state: { kind: "slots-save", index: state.index },
@@ -129,24 +156,34 @@ export function menuStep(
     }
 
     case "slots-load": {
-      if (action === "up") return { state: { ...state, index: cycle(state.index, 3, -1) } };
-      if (action === "down") return { state: { ...state, index: cycle(state.index, 3, 1) } };
-      if (action === "back") return { state: { kind: "root", index: 1 } };
+      const offset = ctx.autosaveAvailable ? 1 : 0;
+      const rowCount = (ctx.hasFs ? 3 : 0) + offset;
+      if (rowCount === 0) return { state: { kind: "root", index: 0 } };
+      const index = Math.min(state.index, rowCount - 1);
+      if (action === "up") return { state: { ...state, index: cycle(index, rowCount, -1) } };
+      if (action === "down") return { state: { ...state, index: cycle(index, rowCount, 1) } };
+      if (action === "back") {
+        return { state: { kind: "root", index: rootIndex(ctx.hasFs, ctx.autosaveAvailable === true, "slots-load") } };
+      }
       if (action === "confirm") {
-        const slot = SLOT_MIN + state.index;
-        if (!ctx.slotNonEmpty[state.index]) {
+        if (offset === 1 && index === 0) {
+          return { state: { kind: "slots-load", index }, command: { op: "load-autosave" } };
+        }
+        const manualIndex = index - offset;
+        const slot = SLOT_MIN + manualIndex;
+        if (!ctx.slotNonEmpty[manualIndex]) {
           const text = withUiText(SAVE_MENU_UI_TEXT, ctx.text);
           return {
             state: {
               kind: "message",
               title: formatUiText(text["save.emptyTitle"], { slot }),
               body: text["save.emptyBody"],
-              back: { kind: "slots-load", index: state.index },
+              back: { kind: "slots-load", index },
             },
           };
         }
         return {
-          state: { kind: "slots-load", index: state.index },
+          state: { kind: "slots-load", index },
           command: { op: "load-slot", slot },
         };
       }
@@ -158,7 +195,12 @@ export function menuStep(
       if (action === "up") return { state: { ...state, page: exportPage(state.page, ctx.codePages, -1) } };
       if (action === "down") return { state: { ...state, page: exportPage(state.page, ctx.codePages, 1) } };
       if (action === "confirm" || action === "back") {
-        return { state: { kind: "root", index: ctx.hasFs ? 2 : 0 } };
+        return {
+          state: {
+            kind: "root",
+            index: rootIndex(ctx.hasFs, ctx.autosaveAvailable === true, "code-export"),
+          },
+        };
       }
       return { state };
     }
@@ -166,7 +208,14 @@ export function menuStep(
     case "code-import":
       // The OSK owns confirm/back while open; only an explicit host back
       // reaches here.
-      if (action === "back") return { state: { kind: "root", index: ctx.hasFs ? 3 : 1 } };
+      if (action === "back") {
+        return {
+          state: {
+            kind: "root",
+            index: rootIndex(ctx.hasFs, ctx.autosaveAvailable === true, "code-import"),
+          },
+        };
+      }
       return { state };
 
     case "message":
