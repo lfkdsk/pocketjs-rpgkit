@@ -451,7 +451,8 @@ state = stepSession(session, state, {          // once per virtual frame
 5. **external requests** — a `transfer` swaps map/fresh-interp/characters
    while keeping `state.sw`; an eligible connected-world transfer instead
    starts a source-owned one-tile handoff and performs that same swap
-   atomically at its boundary; `moveRoute` installs on an NPC (or the player)
+   atomically at its boundary, recording the left map's painted characters
+   in the sparse, presentation-only `state.leftMap`; `moveRoute` installs on an NPC (or the player)
    and resumes its fiber when the route lands; `battle` derives one seed from
    `state.sw.rng` and parks its fiber in `state.scene`.
 

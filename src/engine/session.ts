@@ -48,6 +48,7 @@ import {
   createInterpState,
   eventPageAt,
   createWorld,
+  effectiveEventAppearance,
   fiberIsExternal,
   isBusy,
   isWorldIdle,
@@ -136,8 +137,10 @@ import {
   stepMovement,
   stepMovementLegacy,
   stepPixels,
+  walkPose,
   type MovementConfig,
   type MovementState,
+  type WalkPose,
 } from "./movement.ts";
 import {
   applyMoveControl,
@@ -253,6 +256,45 @@ export interface SeamlessHandoffState {
   totalTicks: number;
 }
 
+/** One character of the map the player just left through a seamless
+ * handoff, exactly as the active-map actor pool painted it on the commit
+ * tick. Presentation only: it never collides, interacts or runs. */
+export interface LeftMapActor {
+  eventId: string;
+  /** Pixels in the left map's own local space (CharState.px/py). */
+  px: number;
+  py: number;
+  facing: Facing;
+  pose: WalkPose;
+  /** Effective appearance sprite key (page sprite or appearance override). */
+  sprite: string;
+  /** 0..255. */
+  opacity: number;
+}
+
+/** Frozen display snapshot of the map left by the latest seamless handoff,
+ * so its characters stay where they were instead of snapping back to their
+ * map-entry cells. Immutable once created; at most one exists. */
+export interface LeftMapSnapshot {
+  mapId: string;
+  /** The left map's top-left tile in the active map's tile space. */
+  originX: number;
+  originY: number;
+  width: number;
+  height: number;
+  /** Painted characters in authored event order. */
+  actors: readonly LeftMapActor[];
+}
+
+/** How far (Chebyshev distance in tiles from the player's tile to the left
+ * map's rectangle) the player may move before the frozen snapshot of the
+ * map just left is dropped. A fixed reducer constant, so the drop happens on
+ * the same reference tick at every rate, viewport and after any load. It
+ * covers the visible ring of a 960×544 viewport with up to 3 tiles of
+ * stream margin even when the camera is clamped against a world edge, so
+ * the switch back to the map-entry preview happens off screen. */
+export const LEFT_MAP_RING_TILES = 64;
+
 export interface SessionState {
   frame: number;
   mapId: string;
@@ -270,6 +312,10 @@ export interface SessionState {
   /** Sparse in-flight world crossing. Absent in legacy projects and after
    * the atomic target entry, preserving the legacy serialized state shape. */
   handoff?: SeamlessHandoffState;
+  /** Sparse frozen snapshot of the map left by the latest seamless commit.
+   * Every other map entry removes it, as does moving more than
+   * LEFT_MAP_RING_TILES away from that map. Legacy projects never set it. */
+  leftMap?: LeftMapSnapshot;
 }
 
 function sessionWorldIdleBlockers(
@@ -968,6 +1014,7 @@ function enterMap(
   s.sw = s.interp.sw;
   s.playerRoute = null;
   delete s.handoff;
+  delete s.leftMap;
 }
 
 /** The effective terrain for this exact reducer branch. The authored table
@@ -1876,6 +1923,8 @@ function foldSession(
     scene: cloneScene(s0.scene, sess.battle?.immutableState),
   };
   if (s0.handoff !== undefined) s.handoff = { ...s0.handoff };
+  // Immutable once created: shared by reference across folds.
+  if (s0.leftMap !== undefined) s.leftMap = s0.leftMap;
   s.frame++;
   const ticks = sess.ticksPerFrame;
   const sceneAtFrameStart = s.scene !== null;
@@ -2299,8 +2348,57 @@ function abortSeamlessHandoff(sess: Session, s: SessionState): void {
   delete s.handoff;
 }
 
+const STEP_DX: readonly number[] = [0, -1, 0, 1];
+const STEP_DY: readonly number[] = [1, 0, -1, 0];
+
+/** Freeze the source map's painted characters on the commit tick, before
+ * entry discards them. Mirrors the actor pool's choice of position, facing,
+ * walk pose and effective appearance for a spawned character. */
+function freezeLeftMap(
+  s: Readonly<SessionState>,
+  source: Readonly<MapDef>,
+  handoff: Readonly<SeamlessHandoffState>,
+): LeftMapSnapshot {
+  const actors: LeftMapActor[] = [];
+  for (const ev of source.events ?? []) {
+    const ch = s.chars.chars[ev.id];
+    if (!ch) continue;
+    const appearance = effectiveEventAppearance(
+      { pageIndex: ch.pageIndex, sprite: ev.pages[ch.pageIndex]?.sprite ?? null },
+      s.interp.eventAppearances?.[ev.id],
+    );
+    if (!appearance.visible || appearance.sprite === null) continue;
+    actors.push({
+      eventId: ev.id,
+      px: ch.px,
+      py: ch.py,
+      facing: ch.facing,
+      pose: walkPose(ch.phase),
+      sprite: appearance.sprite,
+      opacity: appearance.opacity,
+    });
+  }
+  // The crossing step joins the source edge cell to the target edge cell,
+  // which places the source origin in target-local tiles.
+  return {
+    mapId: source.id,
+    originX: handoff.targetX - STEP_DX[handoff.direction]! - handoff.sourceX,
+    originY: handoff.targetY - STEP_DY[handoff.direction]! - handoff.sourceY,
+    width: source.width,
+    height: source.height,
+    actors,
+  };
+}
+
+function outsideLeftMapRing(left: Readonly<LeftMapSnapshot>, x: number, y: number): boolean {
+  const dx = Math.max(left.originX - x, 0, x - (left.originX + left.width - 1));
+  const dy = Math.max(left.originY - y, 0, y - (left.originY + left.height - 1));
+  return Math.max(dx, dy) > LEFT_MAP_RING_TILES;
+}
+
 function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: number } {
   const handoff = s.handoff!;
+  const left = freezeLeftMap(s, sess.maps.get(handoff.sourceMapId)!, handoff);
   // Re-acquire on the commit tick: rewind keyframes retain reducer state,
   // not derived cache residency. The already-prepared fast path is one map
   // lookup; an async miss rolls this entire host frame back for retry.
@@ -2314,6 +2412,9 @@ function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: 
     sess.cfg,
   );
   showMapNameBanner(s, target);
+  // Entry dropped any older snapshot (including the target's own, when the
+  // player walks back into the map it froze).
+  s.leftMap = left;
   // Do not run the legacy single-map eviction here. A connected-world cache
   // driver owns the active/visible/imminent keep-sets and converges them on
   // this presented frame; flattening the cache first would discard warm
@@ -2336,6 +2437,7 @@ function stepReferenceTick(
   // fatalized map interpreter do not pause it. Omitted state keeps the
   // unused hot path to one predictable branch.
   if (s.sw.timer !== undefined) advanceTimer(s.sw);
+  if (s.leftMap !== undefined && outsideLeftMapRing(s.leftMap, s.move.tx, s.move.ty)) delete s.leftMap;
 
   // A handoff owns the source map through its final interpolation tick. Move
   // the player first, like an ordinary step, then let only that source map's

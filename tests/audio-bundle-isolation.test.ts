@@ -172,10 +172,19 @@ const maybeTest = preflight.ok ? test : test.skip;
 // PocketJS upstream #514 replaces sparse touch-recorder arrays with packed,
 // releasable pages in the always-reachable DevTools wrapper. That shared host
 // code adds 2,020 bytes to each bundle: 591,575, 945,386 and 746,639.
+// The connected-world neighbour preview keeps its rules and painter behind
+// pocket-rpgkit/ui/world. On top of the PocketJS bytes above, the base path
+// gains: the session's left-map snapshot (frozen on a seamless commit,
+// dropped by a per-tick ring check that is one untaken branch without it)
+// in every bundle; GameView's share of the preview (npc-art helper,
+// seamless-commit entry-frame fallback, preview source object) in sunstone
+// and the WAV fixture; and the save path's left-map validation, clone and
+// restore in sunstone, which links saves. Meadow +1,624, sunstone +4,988,
+// WAV fixture +2,798: 593,199, 950,374 and 749,437.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 591_575;
-const EXPECTED_SUNSTONE_QOA_BYTES = 945_386;
-const EXPECTED_WAV_FIXTURE_BYTES = 746_639;
+const EXPECTED_MEADOW_BYTES = 593_199;
+const EXPECTED_SUNSTONE_QOA_BYTES = 950_374;
+const EXPECTED_WAV_FIXTURE_BYTES = 749_437;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

@@ -1,0 +1,22 @@
+[
+  {
+    "key": "ui:tile.preview-east-ground",
+    "file": "assets/stream/preview-east-ground.pkts"
+  },
+  {
+    "key": "ui:tile.preview-east-upper",
+    "file": "assets/stream/preview-east-upper.pkts"
+  },
+  {
+    "key": "ui:tile.preview-north-ground",
+    "file": "assets/stream/preview-north-ground.pkts"
+  },
+  {
+    "key": "ui:tile.preview-south-ground",
+    "file": "assets/stream/preview-south-ground.pkts"
+  },
+  {
+    "key": "ui:tile.preview-west-ground",
+    "file": "assets/stream/preview-west-ground.pkts"
+  }
+]

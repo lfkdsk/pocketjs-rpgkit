@@ -178,8 +178,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // stable extension condition keys, deferred seamless eviction) brings it to
 // 940,938 (+6,971). The opt-in {x:} text-token wiring brings it to
 // 943,366 (+2,428). PocketJS upstream #514's packed, releasable touch-recorder
-// pages add 2,020 shared DevTools bytes, bringing it to 945,386.
-const EXPECTED_BYTES = 945_386;
+// pages add 2,020 shared DevTools bytes, bringing it to 945,386. GameView's
+// share of the connected-world neighbour preview (npc-art helper,
+// seamless-commit entry-frame fallback, preview source object), the
+// session's left-map snapshot and its save validation, clone and restore
+// bring it to 950,374 (+4,988); the preview itself stays opt-in.
+const EXPECTED_BYTES = 950_374;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

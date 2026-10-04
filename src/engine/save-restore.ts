@@ -29,6 +29,7 @@ import {
   SAVE_MAX_DEPTH,
   SaveError,
   canSave,
+  cloneLeftMap,
   cloneSnapshot,
   createSessionSnapshot,
   decodeEnvelopeText,
@@ -217,6 +218,8 @@ export function restoreSessionSnapshot(
     ext,
     scene: null,
   };
+  // Older saves have no left-map snapshot: that map shows its entry preview.
+  if (runtime?.leftMap) state.leftMap = cloneLeftMap(runtime.leftMap);
   releaseSessionMapsExcept(session, [snap.map]);
   return state;
 }

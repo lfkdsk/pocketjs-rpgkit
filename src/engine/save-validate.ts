@@ -2146,6 +2146,28 @@ function savedRouteWaiters(v: unknown): Set<string> {
 /** The map runtime a session save records beside the interpreter
  *  (save.ts SaveMapRuntime). Map-specific checks (event ids, pages, map
  *  bounds) happen in save-restore.ts. */
+function validateLeftMap(v: unknown, path: string): string | null {
+  if (!isRecord(v)) return fail(path, "object required");
+  if (typeof v.mapId !== "string" || v.mapId.length === 0) return fail(`${path}.mapId`, "non-empty string required");
+  if (!isSafeInt(v.originX) || !isSafeInt(v.originY)) return fail(path, "integer originX/originY required");
+  if (!isNonNegInt(v.width) || v.width < 1 || !isNonNegInt(v.height) || v.height < 1) {
+    return fail(path, "positive integer width/height required");
+  }
+  if (!Array.isArray(v.actors)) return fail(`${path}.actors`, "array required");
+  for (let i = 0; i < v.actors.length; i++) {
+    const a: unknown = v.actors[i];
+    const at = `${path}.actors[${i}]`;
+    if (!isRecord(a)) return fail(at, "object required");
+    if (typeof a.eventId !== "string" || a.eventId.length === 0) return fail(`${at}.eventId`, "non-empty string required");
+    if (!isFiniteNumber(a.px) || !isFiniteNumber(a.py)) return fail(at, "finite px/py required");
+    if (!isDir4(a.facing)) return fail(`${at}.facing`, "direction 0..3 required");
+    if (a.pose !== 0 && a.pose !== 1 && a.pose !== 2) return fail(`${at}.pose`, "walk pose 0..2 required");
+    if (typeof a.sprite !== "string" || a.sprite.length === 0) return fail(`${at}.sprite`, "non-empty string required");
+    if (!isNonNegInt(a.opacity) || a.opacity > 255) return fail(`${at}.opacity`, "integer 0..255 required");
+  }
+  return null;
+}
+
 function validateMapRuntime(v: unknown, path: string): string | null {
   if (!isRecord(v)) return fail(path, "object required");
   const chars = v.chars;
@@ -2183,6 +2205,10 @@ function validateMapRuntime(v: unknown, path: string): string | null {
     if (!isDir4(r.dir)) return fail(`${at}.dir`, "direction 0..3 required");
     if (!isBool(r.takeOver)) return fail(`${at}.takeOver`, "boolean required");
     const e = validateRouteCommon(r, at);
+    if (e) return e;
+  }
+  if (v.leftMap !== undefined) {
+    const e = validateLeftMap(v.leftMap, `${path}.leftMap`);
     if (e) return e;
   }
   if (v.fade !== null) {
@@ -2341,6 +2367,9 @@ export function validateSnapshot(snap: unknown): string | null {
   if (snap.mapRuntime !== undefined) {
     const rt = validateMapRuntime(snap.mapRuntime, "state.mapRuntime");
     if (rt) return rt;
+    if (isRecord(snap.mapRuntime) && isRecord(snap.mapRuntime.leftMap) && snap.mapRuntime.leftMap.mapId === snap.map) {
+      return "state.mapRuntime.leftMap.mapId: must name a map other than the current one";
+    }
   }
   return null;
 }

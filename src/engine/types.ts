@@ -749,6 +749,34 @@ export interface MapDef {
   events?: GameEvent[];
 }
 
+/** Why an event that could paint a character is not previewed. Stable codes
+ * for coverage reports; each event reports the first applicable reason in
+ * this declaration order. */
+export type WorldPreviewRejectReason =
+  /** Two events share one id and therefore one runtime character. */
+  | "duplicate-id"
+  /** An entry-time autorun/parallel program contains a command whose effect
+   * cannot be bounded statically (extension command or choice, battle,
+   * scene, shop, transfer, host menu), so no event on the map is previewed. */
+  | "entry-opaque-command"
+  /** A page that could be selected reads the live player facing, which on
+   * entry depends on the opening used. */
+  | "facing-condition"
+  /** A page that could be selected reads a time- or activity-derived value
+   * (worldIdle, bgmPlaying, timer). */
+  | "runtime-condition"
+  /** A page that could be selected reads a game extension predicate. */
+  | "extension-condition"
+  /** A page that could be selected reads per-visit map state (another
+   * event's appearance, a runtime tile property, a region cell). */
+  | "visit-condition"
+  /** An entry-time autorun/parallel program moves, relocates, re-skins or
+   * erases this event's character. */
+  | "entry-actor-command"
+  /** An entry-time autorun/parallel program writes state that this event's
+   * page selection reads. */
+  | "entry-state-write";
+
 /** One map's immutable placement in a world/component tile coordinate space.
  * Origins may be negative; width and height are the authoritative MapDef
  * dimensions rather than metadata copied from an external layout editor. */

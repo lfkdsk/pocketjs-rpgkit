@@ -14,6 +14,7 @@ import {
   type VisibleWorldMapsReader,
 } from "../../engine/world-layout.ts";
 import { WorldAnimatedTiles } from "../WorldAnimatedTiles.tsx";
+import { WorldNpcPreview } from "../WorldNpcPreview.tsx";
 import { WorldStreamedTerrain } from "../WorldStreamedTerrain.tsx";
 import type {
   GameViewWorldConfig,
@@ -91,7 +92,13 @@ function createWorldRenderIndex(
   return byMap;
 }
 
-function createRuntime(host: GameViewWorldFactoryHost): GameViewWorldRuntime {
+export interface WorldRendererOptions {
+  /** Paint the read-only map-entry characters of visible neighbour maps
+   * (default true). The active map's simulation is unaffected either way. */
+  npcPreview?: boolean;
+}
+
+function createRuntime(host: GameViewWorldFactoryHost, options: WorldRendererOptions): GameViewWorldRuntime {
   const index = createWorldRenderIndex(host.layout.components, host.tileSize);
   const localCamera: CameraState = { x: 0, y: 0, facing: 0 };
 
@@ -178,17 +185,24 @@ function createRuntime(host: GameViewWorldFactoryHost): GameViewWorldRuntime {
             <ActiveMapPlane debugName="rpgkit-world-active-below">{props.below}</ActiveMapPlane>
           </>
         )}
-        actors={(
-          <ActiveMapPlane debugName="rpgkit-world-active-actors">
-            <View
-              class="absolute"
-              nodeRef={props.actorHost}
-              debugName="rpgkit-world-actors"
-            >
-              {props.actors}
-            </View>
-          </ActiveMapPlane>
-        )}
+        actors={(() => {
+          const actors = (
+            <ActiveMapPlane debugName="rpgkit-world-active-actors">
+              <View
+                class="absolute"
+                nodeRef={props.actorHost}
+                debugName="rpgkit-world-actors"
+              >
+                {props.actors}
+              </View>
+            </ActiveMapPlane>
+          );
+          return props.preview && options.npcPreview !== false ? (
+            <WorldNpcPreview source={props.preview} component={component} placements={visibleMaps}>
+              {actors}
+            </WorldNpcPreview>
+          ) : actors;
+        })()}
         above={(
           <>
             {props.animated ? (
@@ -286,6 +300,6 @@ function createRuntime(host: GameViewWorldFactoryHost): GameViewWorldRuntime {
 
 /** Create the explicit GameView connected-world integration. Import this
  * from `pocket-rpgkit/ui/world` and pass it as `world={createWorldRenderer()}`. */
-export function createWorldRenderer(): GameViewWorldConfig {
-  return { create: createRuntime };
+export function createWorldRenderer(options: WorldRendererOptions = {}): GameViewWorldConfig {
+  return { create: (host) => createRuntime(host, options) };
 }

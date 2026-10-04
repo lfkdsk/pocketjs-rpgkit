@@ -29,11 +29,18 @@
 import type { Accessor, Component, JSX } from "solid-js";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import type { SessionState } from "../engine/session.ts";
-import type { CameraState, WorldLayout } from "../engine/types.ts";
+import type {
+  CameraState,
+  CommonEvent,
+  MapDef,
+  SpriteDef,
+  WorldLayout,
+  WorldPreviewRejectReason,
+} from "../engine/types.ts";
 import type { WorldHandoffResolver } from "../engine/world-handoff-contract.ts";
 import type { AnimatedTilesStats } from "./AnimatedTiles.tsx";
 import type { StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
-import type { AnimatedTile, StreamedGameAssets } from "./game-assets.ts";
+import type { AnimatedTile, GameAssets, StreamedGameAssets } from "./game-assets.ts";
 
 export type GameViewWorldBand = "ground" | "upper";
 
@@ -51,6 +58,46 @@ export interface GameViewWorldBandSource {
   loadBudget: Accessor<number | undefined>;
 }
 
+/** Reported after every repaint of the preview layer. */
+export interface WorldNpcPreviewStats {
+  /** The active (simulated) map, never previewed. */
+  activeMapId: string;
+  /** Visible non-active maps that were painted (entry preview or frozen
+   * snapshot), in placement order. */
+  maps: readonly string[];
+  /** Visible non-active maps whose MapDef was not resident yet. */
+  unavailable: readonly string[];
+  /** The visible map painted from the frozen snapshot of the map the last
+   * seamless handoff left (`SessionState.leftMap`), or null. */
+  frozen: string | null;
+  /** Painted preview characters (`front` + `behind`). */
+  painted: number;
+  /** Painted characters ordered behind / in front of the active map's actors. */
+  behind: number;
+  front: number;
+  /** Event ids painted, as `mapId/eventId`, in paint order: the behind band
+   * then the front band, each by world (y, x) depth. */
+  actors: readonly string[];
+  /** Entry-preview rejections and hidden events (the frozen map has none). */
+  rejected: number;
+  hidden: number;
+  reasons: Readonly<Record<WorldPreviewRejectReason, number>>;
+  /** Image nodes owned by the layer; grows to the high-water mark only. */
+  pooled: number;
+}
+
+/** Read-only inputs for the neighbour-map character preview. `map` must only
+ * look up already-resident MapDefs; it never acquires or loads a map. */
+export interface GameViewWorldPreviewSource {
+  state: Accessor<SessionState>;
+  map(mapId: string): Readonly<MapDef> | undefined;
+  commonEvents: readonly CommonEvent[];
+  sprites: Readonly<Record<string, SpriteDef>>;
+  npcSrc: GameAssets["npcSrc"];
+  active: Accessor<boolean>;
+  onStats?: (stats: WorldNpcPreviewStats) => void;
+}
+
 /** Read-only values and map-local slots supplied by GameView to an opted-in
  * connected-world renderer. The renderer owns only presentation state. */
 export interface GameViewWorldRenderProps {
@@ -66,6 +113,8 @@ export interface GameViewWorldRenderProps {
   actors?: JSX.Element;
   above?: JSX.Element;
   actorHost?: (node: NodeMirror) => void;
+  /** Inputs for the read-only character preview of visible neighbour maps. */
+  preview?: GameViewWorldPreviewSource;
   onStreamStats?: (layer: GameViewWorldBand, stats: StreamedChunkLayerStats) => void;
   onAnimatedStats?: (layer: "below" | "above", stats: AnimatedTilesStats) => void;
 }

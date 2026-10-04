@@ -760,5 +760,31 @@ No format change. Behavior fix in the session fold:
   alive by a stale rollback snapshot.
 - The project format and `schema.json` are unchanged.
 
+## v1 amendment — 2026-10-03 (frozen snapshot of the map a seamless handoff left)
+
+- `SessionState` gains the sparse `leftMap`: on the tick a `seamless-v1`
+  handoff commits, the session records the characters of the map it leaves
+  as the actor pool painted them (pixel position, facing, walk pose,
+  effective sprite and opacity; erased and invisible characters are left
+  out) plus that map's rectangle in the new map's tile space. The connected
+  world renderer paints it instead of that map's map-entry preview. It is
+  presentation only: no collision, trigger or condition reads it.
+- Every other map entry removes it (an ordinary transfer with or without
+  fade, and the next seamless commit, including one back into that map,
+  which records the map it leaves instead), and so does the player standing more than
+  `LEFT_MAP_RING_TILES` (64) tiles from that map's rectangle, checked on
+  every reference tick. Projects that never commit a seamless handoff never
+  hold the field, so their states, saves and checksums are unchanged.
+- Save snapshots carry it as the optional `mapRuntime.leftMap`, validated on
+  load (a non-empty map id other than the save's map, integer origin,
+  positive size, and per character an event id, finite pixels, facing 0..3,
+  walk pose 0..2, a sprite key and an integer opacity 0..255). A save
+  without it loads as before and shows that map's map-entry preview. The
+  envelope stays `rpgkit-save/v1`; an older runtime ignores the field.
+- `sessionStateFingerprint` leaves it out, like character positions.
+- The project format and `schema.json` are unchanged, so the schema identity
+  (`MAP_SCHEMA_HASH`) is unchanged and no row is added to
+  [Schema identities](#schema-identities).
+
 Breaking changes to any of the above require a new marker
 (`rpgkit-project/v2`) and a new entry here.

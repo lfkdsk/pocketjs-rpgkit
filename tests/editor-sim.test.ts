@@ -771,7 +771,10 @@ simDescribe("editor budget", () => {
     // cold-path performance work (entry-page dependency cache, stable
     // extension condition keys, deferred seamless eviction) brings it to
     // 1,598,588 B, and the {x:} text-token wiring brings it to 1,601,512 B.
-    // Keep a narrow margin.
-    expect(js).toBeLessThan(1_605_000);
+    // PocketJS upstream #514's packed touch-recorder pages add 2,020 B of
+    // shared DevTools code (1,603,532 B), and GameView's share of the
+    // connected-world neighbour preview plus the session's left-map snapshot
+    // bring it to 1,606,330 B (+2,798). Keep a narrow margin.
+    expect(js).toBeLessThan(1_609_000);
   });
 });

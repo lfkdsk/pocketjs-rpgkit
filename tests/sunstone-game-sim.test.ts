@@ -490,9 +490,13 @@ simDescribe("sunstone — render budget", () => {
     // 934,069 B (+1,128), and the fix-6 completion rules bring it to
     // 933,967 B (-102), and the cold-path performance work brings it to
     // 940,938 B (+6,971), and the opt-in {x:} text-token wiring brings it
-    // to 943,366 B (+2,428). Keep a narrow margin so an accidental bundle-in
-    // still trips it.
-    expect(jsBytes).toBeLessThan(946_000);
+    // to 943,366 B (+2,428). PocketJS upstream #514's packed touch-recorder
+    // pages add 2,020 B of shared DevTools code (945,386 B), and GameView's
+    // share of the connected-world neighbour preview plus the session's
+    // left-map snapshot with its save validation, clone and restore bring
+    // it to 950,374 B (+4,988). Keep a narrow margin so an accidental
+    // bundle-in still trips it.
+    expect(jsBytes).toBeLessThan(951_000);
   });
 });
 

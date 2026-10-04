@@ -781,6 +781,126 @@ every visible placement. Actors, events and other dynamic map bands remain
 owned by the active map. The upper layer is currently one component-wide band
 above actors rather than row-interleaved outdoor canopies.
 
+#### Neighbour character preview
+
+The renderer also paints a read-only preview of the characters on the other
+visible maps, so the people across a seam are already standing there when a
+seamless handoff makes their map active. The preview is the map-entry
+snapshot: for each event, the page map entry would select from the durable
+switch bank (with `local.*` switches and variables cleared, as entry clears
+them), drawn at its authored cell, facing the page's `dir`, with the page
+sprite. It never moves, collides, responds to input or writes state, and the
+neighbour's autorun/parallel pages do not run before the handoff. It is drawn
+in the same component-world coordinates as the active actors and below the
+upper band; characters whose feet are above the active map are ordered behind
+the active actors and the rest in front, so a 32-pixel sprite overlapping a
+horizontal seam keeps the usual y order. Only already-resident maps are
+previewed — the preview never loads a map (the left-map snapshot below needs
+no MapDef at all).
+
+An event is previewed only when its entry snapshot is provable. The rules
+(`selectWorldMapPreview` in `src/engine/world-preview.ts`) are conservative.
+Each event that could paint but is not previewed collects every reason that
+applies to it and reports the first one in the order of this table, so the
+order of clauses in `condition.all`, or of equally undecidable pages, never
+changes the reported reason:
+
+| reason | rule |
+| --- | --- |
+| `duplicate-id` | two events share one id and therefore one runtime character |
+| `entry-opaque-command` | an autorun/parallel that may run on entry uses a command whose writes the kit cannot bound (`ext`, `extChoice`, `battle`, `scene`, `shop`, `transfer`, host menu/save/title/game over) or calls a common event that does not exist; no event on that map is previewed |
+| `facing-condition` | a page at or above the winning page reads the player facing, which depends on the opening used |
+| `runtime-condition` | such a page reads `worldIdle`, `bgmPlaying` or `timer` |
+| `extension-condition` | such a page reads a game `ext` predicate |
+| `visit-condition` | such a page reads another event's appearance, a runtime tile property or a region |
+| `entry-actor-command` | an entry-time autorun/parallel moves, relocates, re-skins or erases this character |
+| `entry-state-write` | an entry-time autorun/parallel writes a switch, variable, self switch, item, gold or player appearance this event's pages read |
+
+Entry-time writers are every autorun/parallel page that may be selected on
+entry; their writes are closed over the pages they could switch on, and
+`common` calls are followed. Two choices are deliberately more cautious than
+the runtime:
+
+- A `common` call to a missing common event does nothing at runtime, but the
+  preview treats it as unbounded (`entry-opaque-command`).
+- The session never starts a `trigger: "parallel"` common event by itself
+  (common events run only through `common` calls). The preview still counts
+  each one whose `conditionSwitch` is absent, on or written on entry as an
+  entry-time writer, so content imported with such events is never
+  previewed wrongly if a game drives them.
+
+Both can only reject an event that would have been safe; neither can show a
+wrong character. Events that paint nothing on entry are counted as hidden,
+not rejected. Moving characters (random, approach, patrol routes) are
+previewed in their spawn pose and start moving on the first target tick,
+exactly as after any map entry.
+
+At the handoff the active-map actor pool takes over in the same presented
+frame: the target's characters are spawned from the same entry pages on the
+next reference tick, and on the seamless commit frame itself the pool paints
+each not-yet-spawned character from its placement or authored cell with the
+page facing, so the preview and the authoritative character agree in
+position, facing and sprite and are never drawn twice. An ordinary transfer
+keeps its historical first frame (not-yet-spawned characters at their
+authored cells, facing down).
+
+The map just left is the one exception to the map-entry snapshot. On the
+commit tick the session freezes its characters as they were painted —
+position (also mid-step), facing, walk pose, sprite or appearance override,
+opacity; erased and invisible ones are left out — into the sparse
+`SessionState.leftMap`, and the renderer paints that snapshot, with the same
+coordinates and occlusion rules, whenever that map is visible. So a
+wanderer that walked away from its spawn cell stays where the player last
+saw it. At most one snapshot exists. It is dropped:
+
+- when the player stands more than `LEFT_MAP_RING_TILES` (64) tiles from
+  that map's rectangle, checked on every reference tick. The distance is a
+  fixed constant rather than the viewport so the drop happens on the same
+  tick for every rate, viewport and load; it covers a 960×544 viewport with
+  a few tiles of stream margin even against a world edge, so there the
+  switch back to the map-entry snapshot happens off screen (a wider viewport
+  can see it). Within that distance the snapshot reappears unchanged if the
+  map comes back into view;
+- when the player walks back into that map: on the commit frame its
+  authoritative characters take over in their map-entry positions (a
+  character that had wandered off is drawn back on its spawn cell, which is
+  what re-entering a map means in the kit), never drawn twice and never
+  missing for a frame, and the map now left is frozen instead;
+- when a seamless handoff into a third map commits: that map's snapshot
+  replaces it, and the older map shows its map-entry snapshot from then on
+  (at a corner where both stay visible, its characters return to their
+  entry cells on that frame);
+- on any other map entry (an ordinary or faded transfer).
+
+Every other non-active map shows its map-entry snapshot, which is exactly
+what entering it produces, because the kit rebuilds a map's characters on
+every entry. The preview is a pure function of the presented reducer state,
+including the left-map snapshot, so saves, loads, rewinds and every
+simulation rate show the same characters. Saves carry the snapshot; a save
+written before it existed loads without error and shows that map's
+map-entry snapshot.
+
+Games can compute the same preview offline (it is pure engine code, also
+exported from `pocket-rpgkit/engine`) to report coverage:
+
+```ts
+import {
+  createSwitchState,
+  selectWorldMapPreview,
+  summarizeWorldPreviewCoverage,
+} from "pocket-rpgkit/engine";
+
+const previews = outdoorMaps.map((map) =>
+  selectWorldMapPreview(map, createSwitchState(), { commonEvents: project.commonEvents }));
+const coverage = summarizeWorldPreviewCoverage(previews);
+// { maps, events, previewed, hidden, rejected, reasons: { "entry-state-write": n, ... } }
+```
+
+`createWorldRenderer({ npcPreview: false })` turns the layer off, and
+`GameView`'s `onWorldPreviewStats` reports each repaint (painted maps, the
+map painted from the left-map snapshot, painted characters in paint order,
+rejections by reason, pooled nodes).
+
 A project opts into opening handoff with `worldTraversal: "seamless-v1"` and
 marks an eligible player transfer with stable provenance:
 

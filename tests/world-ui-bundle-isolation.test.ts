@@ -40,6 +40,8 @@ function worldModules(file: string): string[] {
     path.includes("/src/ui/world/") ||
     path.endsWith("/src/ui/WorldStreamedTerrain.tsx") ||
     path.endsWith("/src/ui/WorldAnimatedTiles.tsx") ||
+    path.endsWith("/src/ui/WorldNpcPreview.tsx") ||
+    path.endsWith("/src/engine/world-preview.ts") ||
     path.endsWith("/src/engine/world-handoff.ts") ||
     path.endsWith("/src/engine/world-layout.ts")
   );
@@ -59,6 +61,7 @@ describe("ui/world bundle isolation", () => {
       const bundle = readFileSync(js, "utf8");
       expect(bundle).not.toContain("rpgkit-world-terrain");
       expect(bundle).not.toContain("visible world maps:");
+      expect(bundle).not.toContain("rpgkit-world-preview-front");
     }
   });
 
@@ -68,12 +71,16 @@ describe("ui/world bundle isolation", () => {
       .sort();
     expect(names).toEqual([
       "WorldAnimatedTiles.tsx",
+      "WorldNpcPreview.tsx",
       "WorldStreamedTerrain.tsx",
       "index.ts",
       "renderer.tsx",
       "world-handoff.ts",
       "world-layout.ts",
+      "world-preview.ts",
     ]);
-    expect(readFileSync(WORLD_JS, "utf8")).toContain("rpgkit-world-terrain");
+    const world = readFileSync(WORLD_JS, "utf8");
+    expect(world).toContain("rpgkit-world-terrain");
+    expect(world).toContain("rpgkit-world-preview-front");
   });
 });

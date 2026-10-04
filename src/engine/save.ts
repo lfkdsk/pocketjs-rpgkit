@@ -45,7 +45,7 @@ import { utf8BytesWithin } from "./utf8.ts";
 import type { MapContentIdentity } from "./map-repository.ts";
 import { MAP_SCHEMA_HASH, describeMapSchemaRefusal, isCompatibleMapSchemaHash } from "./schema-identity.ts";
 import type { JsonValue } from "./types.ts";
-import type { FadeState, PlayerRoute, Session, SessionState } from "./session.ts";
+import type { FadeState, LeftMapSnapshot, PlayerRoute, Session, SessionState } from "./session.ts";
 
 export const SAVE_FORMAT = "rpgkit-save/v1" as const;
 export const SAVE_VERSION = 1 as const;
@@ -83,6 +83,10 @@ export interface SaveMapRuntime {
   chars: CharsState;
   playerRoute: PlayerRoute | null;
   fade: FadeState | null;
+  /** The frozen snapshot of the map left by the latest seamless handoff.
+   *  Present only in seamless-world saves taken while it is held; a save
+   *  without it shows that map's map-entry preview instead. */
+  leftMap?: LeftMapSnapshot;
 }
 
 /** A save is only valid at a safe point: the mover rests on a tile and no
@@ -147,7 +151,12 @@ export function cloneMapRuntime(rt: SaveMapRuntime): SaveMapRuntime {
         }
       : null,
     fade: rt.fade ? { ...rt.fade } : null,
+    ...(rt.leftMap ? { leftMap: cloneLeftMap(rt.leftMap) } : {}),
   };
+}
+
+export function cloneLeftMap(left: Readonly<LeftMapSnapshot>): LeftMapSnapshot {
+  return { ...left, actors: left.actors.map((actor) => ({ ...actor })) };
 }
 
 function jsonRoute(route: RouteRun | null): RouteRun | null {
@@ -218,7 +227,12 @@ export function createSessionSnapshot(
     held,
     encodeExtension(session.extensions, state.ext),
     state.scene,
-    { chars: state.chars, playerRoute: state.playerRoute, fade: state.fade },
+    {
+      chars: state.chars,
+      playerRoute: state.playerRoute,
+      fade: state.fade,
+      ...(state.leftMap ? { leftMap: state.leftMap } : {}),
+    },
     state.handoff,
   );
 }
@@ -325,7 +339,8 @@ function tileLevelMovement(move: MovementState): { tx: number; ty: number; facin
  *  snapshot payload apart from the map runtime (map, player, the FULL
  *  interpreter state, ext), normalized so two states that fold the same
  *  reducer future hash equal. Character positions and routes stay out, as
- *  they always have: the reach search plans at the level of story state and
+ *  they always have (and so does the frozen display snapshot of the map
+ *  left by a seamless handoff, which only presentation reads): the reach search plans at the level of story state and
  *  the player's tile, and would otherwise split one state per NPC step:
  *
  *  - between-fold transients are dropped exactly as a save snapshot drops

@@ -1,0 +1,56 @@
+{
+  "assets/player.png": {
+    "psm": 3
+  },
+  "assets/npc/wander.png": {
+    "psm": 3
+  },
+  "assets/npc/gated.png": {
+    "psm": 3
+  },
+  "assets/npc/removed.png": {
+    "psm": 3
+  },
+  "assets/npc/rejected.png": {
+    "psm": 3
+  },
+  "assets/npc/facing.png": {
+    "psm": 3
+  },
+  "assets/npc/under.png": {
+    "psm": 3
+  },
+  "assets/npc/row.png": {
+    "psm": 3
+  },
+  "assets/npc/tall.png": {
+    "psm": 3
+  },
+  "assets/npc/nrow.png": {
+    "psm": 3
+  },
+  "assets/npc/wtall.png": {
+    "psm": 3
+  },
+  "assets/npc/atall.png": {
+    "psm": 3
+  },
+  "assets/npc/zshort.png": {
+    "psm": 3
+  },
+  "assets/npc/ghost.png": {
+    "psm": 3
+  },
+  "assets/npc/facer-down.png": {
+    "psm": 3
+  },
+  "assets/npc/facer-left.png": {
+    "psm": 3
+  },
+  "assets/npc/facer-up.png": {
+    "psm": 3
+  },
+  "assets/npc/facer-right.png": {
+    "psm": 3
+  }
+}

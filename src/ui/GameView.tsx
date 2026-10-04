@@ -72,6 +72,7 @@ import {
 } from "../engine/interpreter.ts";
 import type {
   CameraState,
+  Dir,
   Facing,
   GameEvent,
   MapDef,
@@ -120,12 +121,17 @@ import {
   type GameViewHostCallbacks,
 } from "./game-host-actions.ts";
 import { ChunkLayer } from "./ChunkLayer.tsx";
+import { npcArt, npcArtHeight, npcArtKey, spritePaints } from "./npc-art.ts";
 import { StreamedChunkLayer, type StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
 import { actorDepth, OccludingUpperLayer } from "./OccludingUpperLayer.tsx";
 import { startupProfileMark } from "../startup-profile.ts";
 import { frameProfileMark } from "../frame-profile.ts";
 import { attractRewindOptions, type GameViewDemoConfig, type GameViewOverlayConfig, type GameViewSessionHost } from "./demo-contract.ts";
-import type { GameViewWorldConfig } from "./world-contract.ts";
+import type {
+  GameViewWorldConfig,
+  GameViewWorldPreviewSource,
+  WorldNpcPreviewStats,
+} from "./world-contract.ts";
 
 type Sprites = Record<string, SpriteDef>;
 
@@ -142,10 +148,6 @@ function describeMapPrepareRejection(reason: unknown): string {
   return String(reason);
 }
 
-/** Whether a project SpriteDef ever paints a character (static or walker). */
-function spritePaints(def: SpriteDef | undefined): boolean {
-  return !!def && (def.kind === "walker" || !!def.src);
-}
 
 /** Events that ever show a character image, indexed in stable mount order. */
 function collectMapSlots(map: MapDef): GameEvent[] {
@@ -206,19 +208,46 @@ function npcFrame(
     { pageIndex: active?.index ?? -1, sprite: active?.page.sprite ?? null },
     state.interp.eventAppearances?.[event.id],
   );
-  const name = appearance.sprite;
-  const art: NpcArt | "" = name && spritePaints(sprites[name]) ? (npcSrc[name] ?? "") : "";
+  const art = npcArt(appearance.sprite, sprites, npcSrc);
+  if (ch) {
+    return [
+      ch.px,
+      ch.py,
+      npcArtKey(art, walkPose(ch.phase), ch.facing),
+      npcArtHeight(art),
+      appearance.opacity / 255,
+      appearance.visible && art !== "",
+    ];
+  }
+  // Not spawned yet (the map-entry frame before page sync). Ordinary
+  // transfers keep the historical authored-cell, facing-down frame.
+  if (state.leftMap === undefined) {
+    return [
+      event.x * TILE,
+      event.y * TILE,
+      npcArtKey(art, 0, 0),
+      npcArtHeight(art),
+      appearance.opacity / 255,
+      appearance.visible && art !== "",
+    ];
+  }
+  // A seamless commit frame (it always records the map it left): paint the
+  // character exactly as syncPages will create it, from the durable
+  // placement or the authored cell, facing the placement/page direction, so
+  // it matches the neighbour preview it replaces.
+  const placed = state.interp.placements[event.id];
+  const dir = placed?.dir ?? active?.page.dir;
   return [
-    ch ? ch.px : event.x * TILE,
-    ch ? ch.py : event.y * TILE,
-    art === "" || typeof art === "string"
-      ? art
-      : playerImageKey(walkPose(ch ? ch.phase : 0), ch ? ch.facing : 0, art),
-    typeof art === "string" ? 16 : art.h,
+    (placed ? placed.x : event.x) * TILE,
+    (placed ? placed.y : event.y) * TILE,
+    npcArtKey(art, 0, dir ? FACING_OF[dir] : 0),
+    npcArtHeight(art),
     appearance.opacity / 255,
     appearance.visible && art !== "",
   ];
 }
+
+const FACING_OF: Readonly<Record<Dir, Facing>> = { down: 0, left: 1, up: 2, right: 3 };
 
 function npcStyle(height: 16 | 32, depth: number, opacity: number, visible: boolean) {
   return {
@@ -920,6 +949,9 @@ export interface GameViewProps {
   onMapAnimStats?: (layer: "below" | "above", stats: MapAnimStats) => void;
   /** Optional diagnostics for the per-map actor pool and immutable render cache. */
   onActorStats?: (stats: ActorPoolStats) => void;
+  /** Optional diagnostics for the connected-world renderer's read-only
+   *  neighbour-map character preview (fired after each repaint). */
+  onWorldPreviewStats?: (stats: WorldNpcPreviewStats) => void;
   /** Per-frame heartbeat from each world layer's sync hook, fired only on
    *  frames the hook actually runs — so it stays silent while a scene gates
    *  the world. Tests use it to prove the hooks paused; omit in production. */
@@ -1228,6 +1260,20 @@ export function GameView(props: GameViewProps) {
    *  foreground. The world and dialog subtrees stay mounted and hidden
    *  while this is true, matching the battle keep-alive contract. */
   const sceneActive = (): boolean => scene() !== null;
+  // Read-only inputs for the world renderer's neighbour-map preview; built
+  // once so the renderer reads a stable object.
+  const worldPreview: GameViewWorldPreviewSource | undefined = WorldRendererView
+    ? {
+        state: () => state,
+        // Resident MapDefs only: the preview never loads a map.
+        map: (id) => session.maps.get(id) ?? session.preparingMaps.get(id)?.map,
+        commonEvents: session.commonEvents,
+        sprites,
+        npcSrc: assets.npcSrc,
+        active: () => !sceneActive(),
+        onStats: props.onWorldPreviewStats,
+      }
+    : undefined;
   /** Id of the active game scene, or null when the active slot is a battle
    *  or no scene is open. */
   const activeSceneId = (): string | null => {
@@ -1917,6 +1963,7 @@ export function GameView(props: GameViewProps) {
                 actors={<ActiveActors />}
                 above={<ActiveAbove />}
                 actorHost={(node) => { actorHost = node; }}
+                preview={worldPreview}
                 onStreamStats={props.onStreamStats}
                 onAnimatedStats={props.onAnimatedStats}
               />
