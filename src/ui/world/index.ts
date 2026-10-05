@@ -1,7 +1,31 @@
 // Separate opt-in entry. Deliberately not re-exported as runtime values from
 // ../index.ts, so ordinary GameView bundles cannot reach connected-world code.
 export { createWorldRenderer, type WorldRendererOptions } from "./renderer.tsx";
-export { WorldNpcPreview, type WorldNpcPreviewStats } from "../WorldNpcPreview.tsx";
+export { WorldNpcPreview, type WorldNpcPreviewOptions, type WorldNpcPreviewStats } from "../WorldNpcPreview.tsx";
+export {
+  createSandboxPreviewReader,
+  createSandboxSession,
+  compileSandboxMap,
+  defaultSandboxProbes,
+  holdSandboxMap,
+  runSandboxEntry,
+  SANDBOX_PREVIEW_REJECT_REASONS,
+  sandboxWorldMapPreview,
+  summarizeSandboxPreviewCoverage,
+  trimSandboxMaps,
+  type SandboxActor,
+  type SandboxMapPreview,
+  type SandboxPreviewActor,
+  type SandboxPreviewCoverage,
+  type SandboxPreviewHooks,
+  type SandboxPreviewOptions,
+  type SandboxPreviewReader,
+  type SandboxPreviewReaderOptions,
+  type SandboxPreviewReaderStats,
+  type SandboxPreviewRejectReason,
+  type SandboxRejection,
+  type SandboxRun,
+} from "../../engine/world-preview-sandbox.ts";
 export {
   createWorldPreviewReader,
   selectWorldMapPreview,
@@ -34,4 +58,7 @@ export type {
   GameViewWorldRenderProps,
   GameViewWorldRuntime,
   GameViewWorldViewport,
+  WorldNpcSandboxStats,
+  WorldPreviewHandover,
+  WorldPreviewHandoverActor,
 } from "../world-contract.ts";

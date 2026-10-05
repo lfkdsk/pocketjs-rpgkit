@@ -198,10 +198,14 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 2,358 B to Sunstone, whose save validator also accepts tagged live modals.
 // The three now measure 607,007, 966,340 and 764,036 B; full save validation
 // remains outside bundles that do not otherwise decode saves.
+// The sandboxed neighbour preview stays behind pocket-rpgkit/ui/world;
+// building a World in bounded steps (beginWorld/stepWorld) adds 1,697 B to
+// each bundle, and GameView's seamless commit-frame preview handover adds
+// 673 B to Sunstone and the WAV fixture: 608,704, 968,710 and 766,406.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 607_007;
-const EXPECTED_SUNSTONE_QOA_BYTES = 966_340;
-const EXPECTED_WAV_FIXTURE_BYTES = 764_036;
+const EXPECTED_MEADOW_BYTES = 608_704;
+const EXPECTED_SUNSTONE_QOA_BYTES = 968_710;
+const EXPECTED_WAV_FIXTURE_BYTES = 766_406;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

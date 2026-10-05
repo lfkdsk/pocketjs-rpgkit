@@ -503,7 +503,9 @@ simDescribe("sunstone — render budget", () => {
     // measuring 963,811 B. Deferred autosaves add the sparse pending bit,
     // resumability predicate, coalesced effect dispatch and tagged-modal
     // save validation: measured 966,169 B. Keep a narrow margin.
-    expect(jsBytes).toBeLessThan(967_000);
+    // The seamless commit-frame preview handover (+673) and the stepped
+    // World build (+1,697) measure 968,710 B.
+    expect(jsBytes).toBeLessThan(969_500);
   });
 });
 

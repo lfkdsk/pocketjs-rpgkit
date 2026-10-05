@@ -194,7 +194,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Deferred autosaves add the sparse pending bit, resumability predicate and
 // coalesced effect dispatch; accepting a tagged live modal in the already-
 // linked save validator brings the measured bundle to 966,340 (+2,358).
-const EXPECTED_BYTES = 966_340;
+// The sandboxed neighbour preview stays behind pocket-rpgkit/ui/world;
+// GameView's seamless commit-frame handover (+673) and the stepped World
+// build (+1,697) bring it to 968,710.
+const EXPECTED_BYTES = 968_710;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

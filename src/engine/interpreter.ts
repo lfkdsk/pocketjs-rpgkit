@@ -2535,63 +2535,157 @@ function programNeedsMovementControlPath(program: readonly Instr[]): boolean {
   return false;
 }
 
-export function createWorld(
+/** Work units for indexing one event cell in a stepped World build,
+ * relative to one compiled instruction (QuickJS: a cell's Map update costs
+ * several instructions' compilation). */
+const WORLD_CELL_WORK = 4;
+
+/** A World compiled in bounded steps: beginWorld, then stepWorld until it
+ * returns the World. Each step spends a work budget: first compiling whole
+ * common events, then whole map events (all pages), in authored order (one
+ * unit per compiled instruction); then indexing the events' cells in id
+ * order, a row of one event's footprint at a time (WORLD_CELL_WORK units per
+ * cell). The step that finishes indexing builds the remaining small indexes
+ * and returns the World. createWorld is the same build in one step, so a
+ * stepped World is identical to it. Nothing outside the build sees a
+ * partial World. */
+export interface WorldBuild {
+  readonly map: MapDef;
+  readonly common: readonly CommonEvent[];
+  readonly hz: number;
+  readonly options: WorldOptions;
+  readonly commonPrograms: Map<string, Prog>;
+  readonly pagePrograms: Map<string, readonly Prog[]>;
+  contextFlags: number;
+  needsMovementControlPath: boolean;
+  /** Next item to compile: common events first, then map events. */
+  next: number;
+  /** Map events by id, once compilation is done. */
+  orderedEvents: GameEvent[] | null;
+  readonly cellEvents: Map<number, GameEvent[]>;
+  readonly alwaysScanEvents: GameEvent[];
+  hasEventTouch: boolean;
+  /** Next ordered event to index, and the next row of its footprint
+   * (0: not started). */
+  indexed: number;
+  row: number;
+}
+
+export function beginWorld(
   map: MapDef,
-  common: CommonEvent[] = [],
+  common: readonly CommonEvent[] = [],
   hz: number = TICK_HZ,
   options: WorldOptions = {},
-): World {
-  const commonPrograms = new Map<string, Prog>();
-  let contextFlags = 0;
-  let needsMovementControlPath = false;
-  for (const event of common) {
-    const program = compile(event.commands, hz);
-    commonPrograms.set(event.id, program);
-    contextFlags |= programContextFlags(program);
-    needsMovementControlPath ||= programNeedsMovementControlPath(program);
-  }
-  const pagePrograms = new Map<string, readonly Prog[]>();
-  for (const event of map.events ?? []) {
+): WorldBuild {
+  return {
+    map,
+    common,
+    hz,
+    options,
+    commonPrograms: new Map(),
+    pagePrograms: new Map(),
+    contextFlags: 0,
+    needsMovementControlPath: false,
+    next: 0,
+    orderedEvents: null,
+    cellEvents: new Map(),
+    alwaysScanEvents: [],
+    hasEventTouch: false,
+    indexed: 0,
+    row: 0,
+  };
+}
+
+/** Do at least one piece of work and then stop once `budget` work units
+ * are spent, returning null; or, with nothing left, return the World. */
+export function stepWorld(build: WorldBuild, budget = Infinity): World | null {
+  const { map, common, hz } = build;
+  const events = map.events ?? [];
+  const total = common.length + events.length;
+  let spent = 0;
+  while (build.next < total) {
+    if (spent >= budget) return null;
+    const index = build.next++;
+    if (index < common.length) {
+      const event = common[index]!;
+      const program = compile(event.commands, hz);
+      build.commonPrograms.set(event.id, program);
+      build.contextFlags |= programContextFlags(program);
+      build.needsMovementControlPath ||= programNeedsMovementControlPath(program);
+      spent += program.length;
+      continue;
+    }
+    const event = events[index - common.length]!;
     const programs = event.pages.map((page) => compile(page.commands, hz));
-    pagePrograms.set(eventKey(map.id, event.id), programs);
-    for (let index = 0; index < event.pages.length; index++) {
-      const page = event.pages[index]!;
-      contextFlags |= pageConditionContextFlags(page.condition);
-      contextFlags |= programContextFlags(programs[index]!);
-      needsMovementControlPath ||=
-        page.moveSpeed !== undefined || page.moveFrequency !== undefined ||
-        page.directionFix !== undefined || page.through !== undefined ||
-        page.facingMode !== undefined ||
-        (page.moveRoute !== undefined && routeUsesMovementControl(page.moveRoute)) ||
-        programNeedsMovementControlPath(programs[index]!);
+    build.pagePrograms.set(eventKey(map.id, event.id), programs);
+    for (let page = 0; page < event.pages.length; page++) {
+      spent += programs[page]!.length;
+      build.contextFlags |= compiledPageFlags(event.pages[page]!, programs[page]!);
+      build.needsMovementControlPath ||= pageNeedsMovementControlPath(event.pages[page]!, programs[page]!);
     }
   }
-  const orderedEvents = [...(map.events ?? [])]
+  const ordered = build.orderedEvents ??= [...events]
     .sort((a, b) => (eventIdLess(a.id, b.id) ? -1 : a.id === b.id ? 0 : 1));
-  const eventsById = new Map(orderedEvents.map((ev) => [ev.id, ev]));
-  const cellEvents = new Map<number, GameEvent[]>();
-  const alwaysScanEvents: GameEvent[] = [];
-  let hasEventTouch = false;
-  for (const ev of orderedEvents) {
-    if (ev.pages.some((page) => page.trigger === "autorun" || page.trigger === "parallel")) {
-      alwaysScanEvents.push(ev);
+  const { cellEvents } = build;
+  while (build.indexed < ordered.length) {
+    const ev = ordered[build.indexed]!;
+    if (build.row === 0) {
+      if (spent >= budget) return null;
+      if (ev.pages.some((page) => page.trigger === "autorun" || page.trigger === "parallel")) {
+        build.alwaysScanEvents.push(ev);
+      }
+      build.hasEventTouch ||= ev.pages.some((page) => page.trigger === "eventTouch");
     }
-    hasEventTouch ||= ev.pages.some((page) => page.trigger === "eventTouch");
     const w = ev.w ?? 1;
     const h = ev.h ?? 1;
     const x0 = Math.max(0, ev.x);
     const y0 = Math.max(0, ev.y);
     const x1 = Math.min(map.width, ev.x + w);
     const y1 = Math.min(map.height, ev.y + h);
-    for (let y = y0; y < y1; y++) {
+    for (let y = y0 + build.row; y < y1; y++) {
+      if (y > y0 && spent >= budget) return null;
       for (let x = x0; x < x1; x++) {
         const cell = y * map.width + x;
-        const events = cellEvents.get(cell);
-        if (events) events.push(ev);
+        const list = cellEvents.get(cell);
+        if (list) list.push(ev);
         else cellEvents.set(cell, [ev]);
       }
+      spent += (x1 - x0) * WORLD_CELL_WORK;
+      build.row++;
     }
+    build.indexed++;
+    build.row = 0;
   }
+  return finishWorld(build, ordered);
+}
+
+function compiledPageFlags(page: Page, program: Prog): number {
+  return pageConditionContextFlags(page.condition) | programContextFlags(program);
+}
+
+function pageNeedsMovementControlPath(page: Page, program: Prog): boolean {
+  return page.moveSpeed !== undefined || page.moveFrequency !== undefined ||
+    page.directionFix !== undefined || page.through !== undefined ||
+    page.facingMode !== undefined ||
+    (page.moveRoute !== undefined && routeUsesMovementControl(page.moveRoute)) ||
+    programNeedsMovementControlPath(program);
+}
+
+export function createWorld(
+  map: MapDef,
+  common: readonly CommonEvent[] = [],
+  hz: number = TICK_HZ,
+  options: WorldOptions = {},
+): World {
+  return stepWorld(beginWorld(map, common, hz, options))!;
+}
+
+function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): World {
+  const {
+    map, hz, options, commonPrograms, pagePrograms, contextFlags, needsMovementControlPath,
+    cellEvents, alwaysScanEvents, hasEventTouch,
+  } = build;
+  const eventsById = new Map(orderedEvents.map((ev) => [ev.id, ev]));
   const items = options.items ?? [];
   const itemsById = items.length > 0 ? new Map(items.map((it) => [it.id, it])) : undefined;
   const resolvedInventory = {

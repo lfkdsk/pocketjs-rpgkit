@@ -806,6 +806,38 @@ export type WorldPreviewRejectReason =
    * page selection reads. */
   | "entry-state-write";
 
+/** Why the sandboxed-entry preview (world-preview-sandbox.ts) does not show
+ * an event that paints in at least one probe run. Stable codes for coverage
+ * reports; each event reports the first applicable reason in this
+ * declaration order. Map-wide reasons reject every event on the map that
+ * could paint. */
+export type SandboxPreviewRejectReason =
+  /** Event: two events share one id and therefore one runtime character. */
+  | "duplicate-id"
+  /** Map: the base entry transferred away (or began a seamless handoff or a
+   * transfer fade) before the snapshot tick. */
+  | "entry-transfer"
+  /** Map: the base entry started (or queued) a battle or a game scene. */
+  | "entry-scene"
+  /** Map: the base entry raised an interpreter error or threw. */
+  | "entry-error"
+  /** Map: an autorun/parallel page, or a common event it calls, branches on
+   * the player's facing, the timer or the playing BGM, which the probes
+   * cannot vary completely. */
+  | "entry-runtime-branch"
+  /** Event: the winning page or a page above it reads the player's facing. */
+  | "facing-condition"
+  /** Event: the winning page or a page above it reads the timer or BGM. */
+  | "runtime-condition"
+  /** Probe: the snapshot changes when the player arrives elsewhere and faces
+   * the other way. */
+  | "player-dependent"
+  /** Probe: the snapshot changes with the random cursor. */
+  | "random-dependent"
+  /** Probe: the snapshot changes when the game's `perturbExt` hook moves its
+   * volatile extension state (a clock, the weather). */
+  | "volatile-dependent";
+
 /** One map's immutable placement in a world/component tile coordinate space.
  * Origins may be negative; width and height are the authoritative MapDef
  * dimensions rather than metadata copied from an external layout editor. */

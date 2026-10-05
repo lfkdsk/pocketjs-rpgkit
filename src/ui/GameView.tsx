@@ -133,6 +133,7 @@ import type {
   GameViewWorldConfig,
   GameViewWorldPreviewSource,
   WorldNpcPreviewStats,
+  WorldPreviewHandover,
 } from "./world-contract.ts";
 
 type Sprites = Record<string, SpriteDef>;
@@ -192,6 +193,7 @@ function npcFrame(
   sprites: Sprites,
   npcSrc: GameAssets["npcSrc"],
   extensions: ExtensionRuntime,
+  handover?: WorldPreviewHandover,
 ): NpcFrame {
   const ch = state.chars.chars[event.id];
   // An erased event has no character; without this its active page would
@@ -233,10 +235,28 @@ function npcFrame(
       appearance.visible && art !== "",
     ];
   }
-  // A seamless commit frame (it always records the map it left): paint the
-  // character exactly as syncPages will create it, from the durable
-  // placement or the authored cell, facing the placement/page direction, so
-  // it matches the neighbour preview it replaces.
+  // A seamless commit frame (it always records the map it left). With a
+  // sandboxed neighbour preview, paint the snapshot it showed a frame ago:
+  // it is the first target tick, which entry-time programs may already have
+  // changed (a spawned character is not on its entry page yet here).
+  if (handover?.lookup && state.interp.frame === 0) {
+    const snapshot = handover.lookup(state.mapId, event.id);
+    if (snapshot === null) return HIDDEN_NPC_FRAME;
+    if (snapshot !== undefined) {
+      const shown = npcArt(snapshot.sprite, sprites, npcSrc);
+      return [
+        snapshot.px,
+        snapshot.py,
+        npcArtKey(shown, snapshot.pose, snapshot.facing),
+        npcArtHeight(shown),
+        snapshot.opacity / 255,
+        shown !== "",
+      ];
+    }
+  }
+  // Otherwise paint the character exactly as syncPages will create it, from
+  // the durable placement or the authored cell, facing the placement/page
+  // direction, so it matches the static neighbour preview it replaces.
   const placed = state.interp.placements[event.id];
   const dir = placed?.dir ?? active?.page.dir;
   return [
@@ -344,6 +364,8 @@ function CurrentMapActors(props: {
   sprites: Sprites;
   npcSrc: GameAssets["npcSrc"];
   extensions: ExtensionRuntime;
+  /** Commit-frame snapshots from the neighbour preview (world renderer). */
+  handover?: WorldPreviewHandover;
   player: GameAssets["player"];
   playerHeight: 16 | 32;
   pose: Accessor<WalkPose>;
@@ -371,7 +393,7 @@ function CurrentMapActors(props: {
   const newSlot = (index: number, hidden = false): NpcRenderSlot => {
     const source = hidden ? undefined : slots[index];
     const frame = source
-      ? npcFrame(initial, source, props.sprites, props.npcSrc, props.extensions)
+      ? npcFrame(initial, source, props.sprites, props.npcSrc, props.extensions, props.handover)
       : HIDDEN_NPC_FRAME;
     const node = createElement("image");
     setProp(node, "style", npcStyle(
@@ -537,7 +559,7 @@ function CurrentMapActors(props: {
       const computed: NpcFrame = cached
         ? npc.frame
         : source
-          ? npcFrame(state, source, props.sprites, props.npcSrc, props.extensions)
+          ? npcFrame(state, source, props.sprites, props.npcSrc, props.extensions, props.handover)
           : HIDDEN_NPC_FRAME;
       if (!cached && source) recomputed?.push(source.id);
       const frame = sameNpcFrame(npc.frame, computed) ? npc.frame : computed;
@@ -1275,6 +1297,7 @@ export function GameView(props: GameViewProps) {
   const sceneActive = (): boolean => scene() !== null;
   // Read-only inputs for the world renderer's neighbour-map preview; built
   // once so the renderer reads a stable object.
+  const worldHandover: WorldPreviewHandover | undefined = WorldRendererView ? { lookup: null } : undefined;
   const worldPreview: GameViewWorldPreviewSource | undefined = WorldRendererView
     ? {
         state: () => state,
@@ -1285,6 +1308,8 @@ export function GameView(props: GameViewProps) {
         npcSrc: assets.npcSrc,
         active: () => !sceneActive(),
         onStats: props.onWorldPreviewStats,
+        session,
+        handover: worldHandover!,
       }
     : undefined;
   /** Id of the active game scene, or null when the active slot is a battle
@@ -1799,6 +1824,7 @@ export function GameView(props: GameViewProps) {
                 sprites={sprites}
                 npcSrc={assets.npcSrc}
                 extensions={session.extensions}
+                handover={worldHandover}
                 player={assets.player}
                 playerHeight={assets.playerHeight ?? 16}
                 pose={pose}

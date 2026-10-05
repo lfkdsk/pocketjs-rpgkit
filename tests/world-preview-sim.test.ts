@@ -14,6 +14,9 @@ import {
   MAP_W,
   PLACED,
   PLAYER_COLOUR,
+  SPAWNED_AUTHORED,
+  SPAWNED_CELL,
+  WEST_SPAWNED_CELL,
   type Rgba,
 } from "./fixtures/world-preview/fixture-data.ts";
 import type { WorldPreviewFixtureProbe } from "./fixtures/world-preview/world-preview.tsx";
@@ -78,7 +81,7 @@ function lastPreview(): WorldNpcPreviewStats {
 async function boot(
   viewport: Viewport,
   hz = 60,
-  mode: "preview" | "off" | "legacy" = "preview",
+  mode: "preview" | "sandbox" | "spawn-static" | "off" | "legacy" = "preview",
 ): Promise<BoundGameWorld> {
   return bootGameWorld(appBundle("world-preview"), hz, { __worldPreviewMode: mode }, undefined, viewport);
 }
@@ -556,4 +559,125 @@ simDescribe("world renderer neighbour preview", () => {
     expect(countColour(legacyFrame, FACER_LEFT)).toBe(0);
     expect(countColour(legacyFrame, COLOURS.tall)).toBe(0);
   });
+});
+
+/** Pixels of the spawned character's colour (the "row" sprite; west's own
+ * w-row on the last row shares it, so probe cells, not counts). */
+const SPAWNED = COLOURS.row;
+
+async function dump(name: string, viewport: Viewport, frame: Uint8Array): Promise<void> {
+  const dir = process.env.WORLD_PREVIEW_DUMP;
+  if (dir) await Bun.write(`${dir}/${name}.${viewport.width}x${viewport.height}.png`, encodePNG(frame, viewport.width, viewport.height));
+}
+
+simDescribe("world renderer sandboxed neighbour preview", () => {
+  for (const viewport of VIEWPORTS) {
+    const size = `${viewport.width}x${viewport.height}`;
+
+    test(`${size}: an entry-spawned character is painted before, on and after the commit frame`, async () => {
+      const world = await boot(viewport, 60, "sandbox");
+      // Three neighbours, three sandbox runs each, one run per frame; the
+      // west script's switch at 0.25 s invalidates them once.
+      const warmup = 40;
+      step(world, 0, warmup);
+      const stats = lastPreview();
+      expect(stats.sandbox).toBeDefined();
+      expect(stats.sandbox!.staticMaps).toEqual([]);
+      expect(stats.sandbox!.maps).toEqual(["east", "north", "south"]);
+      expect(stats.sandbox!.pending).toBe(0);
+      expect(stats.sandbox!.invalidations).toBe(2);
+      expect(stats.sandbox!.probes + stats.sandbox!.compiles).toBeLessThanOrEqual(warmup + 1);
+      expect(stats.actors).toContain("east/e-npc");
+      // The static rules reject what the sandbox proves; nothing is rejected.
+      expect(stats.rejected).toBe(0);
+      const spawnedAt = (frame: Uint8Array): number[] => tilePixel(world, frame, viewport, east(...SPAWNED_CELL));
+      const authoredAt = (frame: Uint8Array): number[] => tilePixel(world, frame, viewport, east(...SPAWNED_AUTHORED));
+      const before = world.render().slice();
+      await dump("sandbox-before", viewport, before);
+      // Selected by a switch east's own entry program writes: its character
+      // is created a tick later, but the first target tick already paints its
+      // page at the authored cell, and so does the preview.
+      const rejectedPixels = countColour(before, COLOURS.rejected);
+      expect(rejectedPixels).toBe(256);
+      const observe = (label: string, frame: Uint8Array): void => {
+        expect(spawnedAt(frame), `${label} spawned cell`).toEqual([...SPAWNED]);
+        expect(authoredAt(frame), `${label} authored cell`).toEqual([...ground("east")]);
+        expect(countColour(frame, COLOURS.rejected), `${label} entry-written`).toBe(rejectedPixels);
+        expect(countColour(frame, FACER_LEFT), `${label} static`).toBe(256);
+        expect(countColour(frame, COLOURS.wander), `${label} wanderer`).toBe(256);
+        expect(countColour(frame, COLOURS.gated), `${label} gated`).toBe(256);
+      };
+      observe("before", before);
+      let frames = 0;
+      while (world.probes().state.mapId === "west") {
+        step(world, RIGHT);
+        if (world.probes().state.mapId === "west") observe(`walk ${frames}`, world.render().slice());
+        expect(++frames).toBeLessThan(120);
+      }
+      const committed = world.probes().state;
+      expect(committed.leftMap?.mapId).toBe("west");
+      expect(committed.interp.frame).toBe(0);
+      expect(Object.keys(committed.chars.chars)).toHaveLength(0);
+      const commit = world.render().slice();
+      await dump("sandbox-commit", viewport, commit);
+      // East is active: the actor pool paints the handed-over snapshot.
+      expect(lastPreview().actors.filter((id) => id.startsWith("east/"))).toEqual([]);
+      observe("commit", commit);
+      // The first target tick: live characters, the same picture.
+      step(world);
+      const after = world.render().slice();
+      await dump("sandbox-after", viewport, after);
+      observe("commit+1", after);
+      expect(world.probes().state.chars.chars["e-npc"]).toMatchObject({ tx: SPAWNED_CELL[0], ty: SPAWNED_CELL[1], pageIndex: 1 });
+      step(world, 0, 2);
+      const later = world.render().slice();
+      expect(spawnedAt(later)).toEqual([...SPAWNED]);
+      expect(world.probes().state.chars.chars["e-rejected"]).toMatchObject({ tx: 1, ty: 3, pageIndex: 0 });
+      expect(countColour(later, COLOURS.rejected)).toBe(256);
+    });
+
+    test(`${size}: walking back into the map just left hands over its sandbox snapshot`, async () => {
+      const world = await boot(viewport, 60, "sandbox");
+      step(world, 0, 40);
+      const westAt = (frame: Uint8Array): number[] => tilePixel(world, frame, viewport, WEST_SPAWNED_CELL as [number, number]);
+      expect(westAt(world.render().slice())).toEqual([...COLOURS.nrow]);
+      walkTo(world, RIGHT, "east", 0, 6);
+      walkTo(world, RIGHT, "east", 1, 6);
+      walkTo(world, DOWN, "east", 1, 7);
+      // West is the frozen left map now; its spawned character stays.
+      expect(lastPreview().frozen).toBe("west");
+      let frames = 0;
+      while (world.probes().state.mapId === "east") {
+        expect(westAt(world.render().slice()), `frozen ${frames}`).toEqual([...COLOURS.nrow]);
+        step(world, LEFT);
+        expect(++frames).toBeLessThan(120);
+      }
+      const committed = world.probes().state;
+      expect(committed.interp.frame).toBe(0);
+      expect(committed.leftMap?.mapId).toBe("east");
+      expect(Object.keys(committed.chars.chars)).toHaveLength(0);
+      const commit = world.render().slice();
+      await dump("sandbox-reentry-commit", viewport, commit);
+      expect(westAt(commit)).toEqual([...COLOURS.nrow]);
+      step(world);
+      expect(westAt(world.render().slice())).toEqual([...COLOURS.nrow]);
+      expect(world.probes().state.chars.chars["w-npc"]).toMatchObject({ tx: WEST_SPAWNED_CELL[0], ty: WEST_SPAWNED_CELL[1] });
+    });
+
+    test(`${size}: the static preview of the same content loses the spawned character on the commit frame`, async () => {
+      const world = await boot(viewport, 60, "spawn-static");
+      step(world, 0, 40);
+      expect(lastPreview().sandbox).toBeUndefined();
+      expect(lastPreview().actors).not.toContain("east/e-npc");
+      let frames = 0;
+      while (world.probes().state.mapId === "west") {
+        step(world, RIGHT);
+        expect(++frames).toBeLessThan(120);
+      }
+      const commit = world.render().slice();
+      expect(tilePixel(world, commit, viewport, east(...SPAWNED_CELL))).toEqual([...ground("east")]);
+      step(world);
+      expect(tilePixel(world, world.render().slice(), viewport, east(...SPAWNED_CELL))).toEqual([...SPAWNED]);
+    });
+  }
 });

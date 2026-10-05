@@ -785,7 +785,13 @@ above actors rather than row-interleaved outdoor canopies.
 
 The renderer also paints a read-only preview of the characters on the other
 visible maps, so the people across a seam are already standing there when a
-seamless handoff makes their map active. The preview is the map-entry
+seamless handoff makes their map active. There are two sources for it: the
+default static preview described first, which proves each event's entry page
+without running anything, and the opt-in [sandboxed-entry
+preview](#sandboxed-entry-preview), which enters the neighbouring map in a
+private copy of the state and paints its first target tick (needed when
+content places its characters from entry-time programs, as imported
+`create_npc` events do). The static preview is the map-entry
 snapshot: for each event, the page map entry would select from the durable
 switch bank (with `local.*` switches and variables cleared, as entry clears
 them), drawn at its authored cell, facing the page's `dir`, with the page
@@ -840,7 +846,8 @@ frame: the target's characters are spawned from the same entry pages on the
 next reference tick, and on the seamless commit frame itself the pool paints
 each not-yet-spawned character from its placement or authored cell with the
 page facing, so the preview and the authoritative character agree in
-position, facing and sprite and are never drawn twice. An ordinary transfer
+position, facing and sprite and are never drawn twice. (With the sandboxed
+preview the commit frame paints the sandbox snapshot instead; see below.) An ordinary transfer
 keeps its historical first frame (not-yet-spawned characters at their
 authored cells, facing down).
 
@@ -900,6 +907,151 @@ const coverage = summarizeWorldPreviewCoverage(previews);
 `GameView`'s `onWorldPreviewStats` reports each repaint (painted maps, the
 map painted from the left-map snapshot, painted characters in paint order,
 rejections by reason, pooled nodes).
+
+##### Sandboxed-entry preview
+
+Content that creates its characters on entry — an autorun or parallel page
+that sets a per-visit `local.*` variable selecting the visible page and
+`place`s the character, or calls the game's `ext` commands — is rejected by
+every static rule above, so its neighbours look empty. A game can instead let
+the renderer run the entry:
+
+```ts
+import { createWorldRenderer } from "pocket-rpgkit/ui/world";
+
+const world = createWorldRenderer({
+  npcPreview: {
+    sandbox: {
+      // What a map entry can observe of the extension state (compared with
+      // Object.is). Leave out what changes every step without deciding who
+      // stands where (step counters) and what perturbExt moves.
+      previewKey: (ext) => coreWithoutCountersAndClock(ext),
+      // The volatile part moved: the clock half a day on, other weather.
+      perturbExt: (ext) => shiftClockAndWeather(ext),
+    },
+  },
+});
+```
+
+`sandbox: true` uses no hooks. For each visible neighbour the sandbox
+(`src/engine/world-preview-sandbox.ts`) builds a private working state from
+the live durable state through the same entry path a transfer uses — `local.*`
+cleared, fresh interpreter and characters, entry-time autorun/parallel pages
+started, `ext` calls going to the game's registered handlers — folds one
+reference tick with no input, and reads the characters: the first target
+tick, which is what the active actor pool paints on the first frame after a
+handoff. Events without a runtime character yet are read by the actor pool's
+own rule (active page at the placement or authored cell). The live state is
+never written: entry takes the interpreter state through the reducer's
+copy-on-write path (a bank is copied only if entry clears `local.*` ids from
+it), the sandbox session has its own map caches and a repository that refuses
+every load and release, and later ticks go through `stepSession`, which never
+mutates its input. Extension handlers are called with sandbox states, so they
+must be pure, as the reducer already requires. `previewKey` and `perturbExt`
+receive a private deep copy of the extension state, and entry copies the
+extension state it starts from (a `perturbExt` result included), so a hook
+that writes its argument in place, or returns an object it shares with the
+live state, changes nothing outside the sandbox.
+
+A snapshot is trusted only where it cannot depend on the real crossing. The
+player stands off the map (16 tiles beyond the top-left corner, facing down)
+so no character is blocked, touched or approached, and the same entry runs
+again under differential probes: the player beyond the opposite corner facing
+up, the random cursor salted, and — when the game passes `perturbExt` — its
+volatile extension state moved. Each event that paints in some run collects
+every reason that applies and reports the first in this order
+(`SANDBOX_PREVIEW_REJECT_REASONS`):
+
+| reason | scope | rule |
+| --- | --- | --- |
+| `duplicate-id` | event | two events share one id and therefore one runtime character |
+| `entry-transfer` | map | the base entry transferred away (or began a seamless handoff or a transfer fade) before the snapshot tick, including an instant transfer to a map the sandbox does not hold |
+| `entry-scene` | map | the base entry started or queued a battle or a game scene |
+| `entry-error` | map | the base entry raised an interpreter error or threw |
+| `entry-runtime-branch` | map | an autorun/parallel page, or a common event it calls, branches on the player's facing, the timer or the playing BGM |
+| `facing-condition` | event | the winning page or a page above it reads the player's facing |
+| `runtime-condition` | event | the winning page or a page above it reads the timer or BGM |
+| `player-dependent` | event | the snapshot differs with the player beyond the other corner, facing the other way |
+| `random-dependent` | event | the snapshot differs with the random cursor salted |
+| `volatile-dependent` | event | the snapshot differs after `perturbExt` |
+
+Snapshots compare page, cell, pixel position, facing, walk pose, sprite and
+opacity. Events that paint in no run are hidden. An event the sandbox rejects
+but the static rules prove is still shown from the static preview, and a map
+whose sandbox preview is not ready yet is painted from the static preview, so
+opting in never shows fewer characters. Known blind spots: the player's real
+arrival cell next to a wandering character (the probe player is off the map),
+left/right facings (covered only by the static facing rules), and volatile
+state the game does not declare in `perturbExt`.
+
+Cost and scheduling. Previews are cached per map. Each presented frame the
+layer compares the durable entry inputs with the previous frame's —
+switches, variables, items and self switches by record identity first and by
+value (ignoring `local.*`) only when an identity changed, gold, the player's
+name, the player's sprite, and `previewKey(ext)` — and any change marks every
+cached preview stale. This covers every field an extension condition can read
+(`ExtensionReadContext`); `SANDBOX_PREVIEW_STAMPED_CONTEXT` maps each one to
+how it is compared, and is typed so that a new context field does not compile
+until it is part of the fingerprint. The random cursor and the timer are not
+part of it (the probes and the static rules cover them). A stale preview
+stays on screen until its replacement is complete; recomputation is queued
+and runs at most one unit per frame (`unitsPerFrame`, default 1): one probe
+entry, or one slice of compiling a map the live session holds parsed only.
+Compilation is sliced by work (`stepWorld`): whole events' programs up to
+about 1,500 compiled instructions per unit, then the event-cell index a
+footprint row at a time, then the passage table, so a small map takes two
+units and a 40×40 map with about 200 events a dozen; compilation the live
+session or its prefetcher already did is reused. A map therefore refreshes
+over 3–6 frames (more when it has to be compiled), and a durable change in
+the middle restarts its job so no preview mixes two states. The layer does no sandbox
+work while a scene covers the world. Unlike the static preview, what a
+neighbour shows during the few frames after a durable change (or after a
+load or rewind) depends on this schedule, not only on the presented state;
+the active map and the reducer are unaffected.
+
+Commit-frame handover. On a seamless commit frame the target's characters do
+not exist yet, and entry-spawned ones are still on their entry page. The
+layer hands the sandbox snapshot it last read for each visible map (including
+the frozen map just left) to the actor pool, which paints a not-yet-spawned
+character from it — or hides it when the snapshot proves it paints nothing —
+so that frame equals the neighbour preview before it and the first target
+tick after it. Events the snapshot does not cover keep the static commit-frame
+rule. The alternative, folding the first target tick inside the commit tick,
+would change reducer timing and every recorded seamless tape; the handover is
+presentation only.
+
+`onWorldPreviewStats` adds a `sandbox` record in this mode (sandbox-painted
+and static-painted maps, sandbox reasons, static fallbacks, pending maps,
+invalidations, probes, compiles). For coverage reports, `sandboxWorldMapPreview`
+runs the complete verdict for one map at once and
+`summarizeSandboxPreviewCoverage` aggregates it (both exported from
+`pocket-rpgkit/ui/world`):
+
+```ts
+import {
+  createSandboxSession,
+  holdSandboxMap,
+  compileSandboxMap,
+  sandboxWorldMapPreview,
+  summarizeSandboxPreviewCoverage,
+} from "pocket-rpgkit/ui/world";
+
+const sandbox = createSandboxSession(session);
+const previews = mapIds.map((id) => {
+  if (holdSandboxMap(sandbox, session, session.maps.get(id)!)) {
+    while (!compileSandboxMap(sandbox, id)) {}
+  }
+  return sandboxWorldMapPreview(sandbox, state, id, { perturbExt });
+});
+const coverage = summarizeSandboxPreviewCoverage(previews);
+```
+
+Games that do not pass `sandbox` pay nothing for it at run time: no reader
+is created, and GameView's only addition is one untaken check on the seamless
+commit frame. Games without a world renderer do not bundle the sandbox; a
+game that uses `createWorldRenderer` does bundle it (about 18 KB of
+JavaScript) even without the option, because the preview layer imports it
+statically.
 
 A project opts into opening handoff with `worldTraversal: "seamless-v1"` and
 marks an eligible player transfer with stable provenance:

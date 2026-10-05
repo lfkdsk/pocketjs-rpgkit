@@ -287,3 +287,52 @@ export const WORLD_PREVIEW_LEGACY_PROJECT: Project = {
     ],
   }),
 };
+
+/** The sandboxed-entry preview's project: east also places a character from
+ * an entry-time parallel, the way an importer's `create_npc` does — a
+ * per-visit variable selects its visible page and the same program moves it
+ * off its authored cell. The static preview must reject it; the sandbox shows
+ * it where the first target tick puts it. */
+export const SPAWNED_AUTHORED: readonly [number, number] = [6, 8];
+export const SPAWNED_CELL: readonly [number, number] = [7, 10];
+/** West spawns one the same way, for re-entering the map just left. */
+export const WEST_SPAWNED_CELL: readonly [number, number] = [10, 9];
+const spawnedPair = (prefix: string, authored: readonly [number, number], cell: readonly [number, number], sprite: string) => [
+  {
+    id: `${prefix}-npc`,
+    x: authored[0],
+    y: authored[1],
+    pages: [
+      { trigger: "action" as const, commands: [] },
+      {
+        condition: { variable: { id: `local.npc.${prefix}-npc`, op: "==" as const, value: 1 } },
+        trigger: "action" as const,
+        sprite,
+        commands: [],
+      },
+    ],
+  },
+  {
+    id: `${prefix}-spawner`,
+    x: 0,
+    y: 1,
+    pages: [{
+      condition: { variable: { id: `local.npc.${prefix}-npc`, op: "==" as const, value: 0 } },
+      trigger: "parallel" as const,
+      commands: [
+        { op: "variable" as const, id: `local.npc.${prefix}-npc`, set: { op: "set" as const, value: 1 } },
+        { op: "place" as const, target: { event: `${prefix}-npc` }, x: cell[0], y: cell[1] },
+      ],
+    }],
+  },
+] satisfies GameEvent[];
+
+export const WORLD_PREVIEW_SANDBOX_PROJECT: Project = {
+  ...WORLD_PREVIEW_PROJECT,
+  maps: WORLD_PREVIEW_PROJECT.maps.map((map) => map.id === "west"
+    ? { ...map, events: [...map.events!, ...spawnedPair("w", [10, 3], WEST_SPAWNED_CELL, "nrow")] }
+    : map.id !== "east" ? map : {
+    ...map,
+    events: [...map.events!, ...spawnedPair("e", SPAWNED_AUTHORED, SPAWNED_CELL, "row")],
+  }),
+};

@@ -28,11 +28,13 @@
 
 import type { Accessor, Component, JSX } from "solid-js";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
-import type { SessionState } from "../engine/session.ts";
+import type { Session, SessionState } from "../engine/session.ts";
 import type {
   CameraState,
   CommonEvent,
+  Facing,
   MapDef,
+  SandboxPreviewRejectReason,
   SpriteDef,
   WorldLayout,
   WorldPreviewRejectReason,
@@ -84,6 +86,48 @@ export interface WorldNpcPreviewStats {
   reasons: Readonly<Record<WorldPreviewRejectReason, number>>;
   /** Image nodes owned by the layer; grows to the high-water mark only. */
   pooled: number;
+  /** Present when the layer previews by sandboxed entry. `maps` above then
+   * splits into sandbox-painted maps and maps still painted from the static
+   * preview while their sandbox preview is computed. */
+  sandbox?: WorldNpcSandboxStats;
+}
+
+export interface WorldNpcSandboxStats {
+  /** Visible maps painted from a (possibly stale) sandbox preview. */
+  maps: readonly string[];
+  /** Visible maps painted from the static preview (no sandbox preview yet). */
+  staticMaps: readonly string[];
+  /** Sandbox rejections by reason (static-map rejections are in `reasons`). */
+  reasons: Readonly<Record<SandboxPreviewRejectReason, number>>;
+  /** Painted characters taken from the static fallback. */
+  fallback: number;
+  /** Maps queued or in progress, and reader totals since mount. */
+  pending: number;
+  invalidations: number;
+  probes: number;
+  compiles: number;
+}
+
+/** One character of the snapshot a seamless commit frame paints for a
+ * target-map event that has no runtime character yet (map-local pixels). */
+export interface WorldPreviewHandoverActor {
+  px: number;
+  py: number;
+  facing: Facing;
+  pose: 0 | 1 | 2;
+  sprite: string;
+  /** 0–255. */
+  opacity: number;
+}
+
+/** Filled by the neighbour preview layer, read by GameView's actor pool on a
+ * seamless commit frame. `lookup` answers for the snapshot last painted for
+ * `mapId`: the actor to paint, null when the snapshot proves the event paints
+ * nothing on the first target tick, or undefined when it does not cover the
+ * event (GameView then keeps its static entry-page rule). Null `lookup` (no
+ * sandbox preview) leaves the static rule everywhere. */
+export interface WorldPreviewHandover {
+  lookup: ((mapId: string, eventId: string) => WorldPreviewHandoverActor | null | undefined) | null;
 }
 
 /** Read-only inputs for the neighbour-map character preview. `map` must only
@@ -96,6 +140,11 @@ export interface GameViewWorldPreviewSource {
   npcSrc: GameAssets["npcSrc"];
   active: Accessor<boolean>;
   onStats?: (stats: WorldNpcPreviewStats) => void;
+  /** The live session, for the sandboxed-entry preview only: it is never
+   * stepped, and its caches and repository are never written. */
+  session: Session;
+  /** Commit-frame snapshot channel (see WorldPreviewHandover). */
+  handover: WorldPreviewHandover;
 }
 
 /** Read-only values and map-local slots supplied by GameView to an opted-in

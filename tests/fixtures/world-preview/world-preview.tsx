@@ -6,7 +6,11 @@ import type { SessionState } from "../../../src/engine/session.ts";
 import { loadIntoView } from "../../../src/ui/session-saves.ts";
 import { createWorldRenderer, type WorldNpcPreviewStats } from "../../../src/ui/world/index.ts";
 import { GAME_ASSETS } from "./assets-game.ts";
-import { WORLD_PREVIEW_LEGACY_PROJECT, WORLD_PREVIEW_PROJECT } from "./fixture-data.ts";
+import {
+  WORLD_PREVIEW_LEGACY_PROJECT,
+  WORLD_PREVIEW_PROJECT,
+  WORLD_PREVIEW_SANDBOX_PROJECT,
+} from "./fixture-data.ts";
 
 /** Queued for the next host frame: "save" captures a v1 save and the live
  * reducer state; "load" restores the save through the normal loader;
@@ -26,10 +30,12 @@ export interface WorldPreviewFixtureProbe {
 declare global {
   // eslint-disable-next-line no-var
   var __worldPreviewProbe: WorldPreviewFixtureProbe | undefined;
-  /** "preview" (default), "off" (renderer with npcPreview: false) or
-   * "legacy" (no connected-world renderer at all). */
+  /** "preview" (default), "sandbox" (sandboxed-entry preview of the
+   * spawning project), "spawn-static" (static preview of that project),
+   * "off" (renderer with npcPreview: false) or "legacy" (no connected-world
+   * renderer at all). */
   // eslint-disable-next-line no-var
-  var __worldPreviewMode: "preview" | "off" | "legacy" | undefined;
+  var __worldPreviewMode: "preview" | "sandbox" | "spawn-static" | "off" | "legacy" | undefined;
 }
 
 const probe: WorldPreviewFixtureProbe = { queue: [], error: null, previews: [] };
@@ -39,7 +45,9 @@ globalThis.__worldPreviewMode = undefined;
 
 const world = mode === "legacy"
   ? undefined
-  : createWorldRenderer(mode === "off" ? { npcPreview: false } : {});
+  : createWorldRenderer(
+    mode === "off" ? { npcPreview: false } : mode === "sandbox" ? { npcPreview: { sandbox: true } } : {},
+  );
 
 let saved: SaveSnapshot | undefined;
 let kept: SessionState | undefined;
@@ -75,7 +83,9 @@ const overlay: GameViewOverlayConfig = {
 
 mount(() => (
   <GameView
-    project={mode === "legacy" ? WORLD_PREVIEW_LEGACY_PROJECT : WORLD_PREVIEW_PROJECT}
+    project={mode === "legacy"
+      ? WORLD_PREVIEW_LEGACY_PROJECT
+      : mode === "sandbox" || mode === "spawn-static" ? WORLD_PREVIEW_SANDBOX_PROJECT : WORLD_PREVIEW_PROJECT}
     assets={GAME_ASSETS}
     world={world}
     overlay={overlay}

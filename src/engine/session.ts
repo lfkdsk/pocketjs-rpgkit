@@ -52,7 +52,10 @@ import {
   continueExternal,
   createInterpState,
   eventPageAt,
+  beginWorld,
   createWorld,
+  stepWorld,
+  type WorldBuild,
   effectiveEventAppearance,
   fiberIsExternal,
   isBusy,
@@ -1047,6 +1050,158 @@ function enterMap(
   s.playerRoute = null;
   delete s.handoff;
   delete s.leftMap;
+}
+
+/** Neighbour preview sandbox (world-preview-sandbox.ts): a private working
+ * state that has just entered `mapId` with the player at (x, y, facing),
+ * built from `s0`'s durable banks through the same `enterMap` a transfer or
+ * seamless commit uses. Nothing is copied up front: the interpreter state is
+ * taken through the per-frame copy-on-write path (shared switch records are
+ * copied on their first write, so only a bank that holds `local.*` ids is
+ * copied by the entry reset), and `s0` and everything it shares stay
+ * untouched. `sess` must be a sandbox session (createSandboxSession) holding
+ * `mapId`; entry compiles the map into that session's private caches. */
+export function enterSessionMapIsolated(
+  sess: Session,
+  s0: Readonly<SessionState>,
+  mapId: string,
+  x: number,
+  y: number,
+  facing: Facing,
+): SessionState {
+  const map = acquireSessionMap(sess, mapId);
+  const metadata = sess.immutableState ? beginStateMetadata() : undefined;
+  try {
+    const interp = shareInterp(s0.interp as InterpState, sess.immutableState);
+    const s: SessionState = {
+      frame: s0.frame,
+      mapId: s0.mapId,
+      sw: interp.sw,
+      move: { ...s0.move },
+      chars: createChars(),
+      interp,
+      fade: null,
+      playerRoute: null,
+      ext: cloneExtension(sess.extensions, s0.ext),
+      scene: null,
+    };
+    enterMap(s, map, x, y, facing, sess.cfg);
+    showMapNameBanner(s, map);
+    return s;
+  } finally {
+    if (metadata) endStateMetadata(metadata);
+  }
+}
+
+/** Thrown inside a sandbox session when its entry reaches for a map the
+ * sandbox does not hold (an instant transfer away). The sandbox reports the
+ * entry as transferring; the live repository is never touched. */
+export class SandboxMapUnavailable extends Error {
+  constructor(readonly mapId: string) {
+    super(`sandbox: map ${mapId} is not held by the sandbox`);
+  }
+}
+
+const SANDBOX_REPOSITORY: MapRepository = {
+  meta: (id) => {
+    throw new SandboxMapUnavailable(id);
+  },
+  acquire: (id) => {
+    throw new SandboxMapUnavailable(id);
+  },
+  releaseExcept: () => {},
+};
+
+/** A session for sandboxed map entry. It shares `sess`'s compiled rules,
+ * extension handlers and options, runs one reference tick per fold, and owns
+ * private derived caches that start empty: the caller hands it each map with
+ * holdSandboxMap. Its repository refuses every load and release, so neither
+ * an entry that transfers away nor a cache trim can change what the live
+ * session or its repository holds. */
+export function createSandboxSession(sess: Session): Session {
+  return {
+    ...sess,
+    hz: MOTION_HZ,
+    ticksPerFrame: 1,
+    maps: new Map(),
+    worlds: new Map(),
+    tables: new Map(),
+    runtimeTables: new Map(),
+    preparingMaps: new Map(),
+    repository: SANDBOX_REPOSITORY,
+    // Known ids stay known (a transfer to one is a transfer, not a content
+    // error); an inline project indexes its resident maps by dimensions.
+    mapIndex: sess.mapIndex ?? new Map(
+      [...sess.maps.values()].map((map) => [map.id, { id: map.id, width: map.width, height: map.height }] as const),
+    ) as unknown as ReadonlyMap<string, MapIndexEntry>,
+  };
+}
+
+/** Hand a resident MapDef to a sandbox session, adopting the live session's
+ * compiled (or prefetch-staged) World and passage table for that MapDef.
+ * Returns whether the map still needs compiling (compileSandboxMap). */
+export function holdSandboxMap(sandbox: Session, live: Session, map: Readonly<MapDef>): boolean {
+  const id = map.id;
+  if (sandbox.maps.get(id) !== map) {
+    sandbox.maps.set(id, map as MapDef);
+    sandbox.worlds.delete(id);
+    sandbox.tables.delete(id);
+  }
+  const staged = live.preparingMaps.get(id);
+  const liveMap = live.maps.get(id) ?? staged?.map;
+  if (liveMap === map) {
+    // Compiled or staged by the live session (its world prefetcher).
+    const world = live.worlds.get(id) ?? staged?.world;
+    const table = live.tables.get(id) ?? staged?.table;
+    if (world && !sandbox.worlds.has(id)) sandbox.worlds.set(id, world);
+    if (table && !sandbox.tables.has(id)) sandbox.tables.set(id, table);
+  }
+  if (sandbox.worlds.has(id)) sandboxWorldBuilds.get(sandbox)?.delete(id);
+  return !sandbox.worlds.has(id) || !sandbox.tables.has(id);
+}
+
+/** Compiled instructions per sandbox World unit (stepWorld's budget). */
+export const SANDBOX_WORLD_UNIT_INSTRUCTIONS = 1500;
+
+/** In-progress World builds per sandbox session, by map id. */
+const sandboxWorldBuilds = /* @__PURE__ */ new WeakMap<Session, Map<string, WorldBuild>>();
+
+/** One compilation unit for a map held by the sandbox: a bounded slice of
+ * its World (whole events, about SANDBOX_WORLD_UNIT_INSTRUCTIONS compiled
+ * instructions; a small map's World is one unit), then its passage table,
+ * so no single unit compiles a whole large map. Returns true once both are
+ * present. */
+export function compileSandboxMap(sandbox: Session, mapId: string): boolean {
+  const map = sandbox.maps.get(mapId);
+  if (!map) throw new Error(`sandbox: map ${mapId} is not held by the sandbox`);
+  if (!sandbox.worlds.has(mapId)) {
+    let builds = sandboxWorldBuilds.get(sandbox);
+    if (!builds) {
+      builds = new Map();
+      sandboxWorldBuilds.set(sandbox, builds);
+    }
+    let build = builds.get(mapId);
+    if (!build || build.map !== map) {
+      build = beginWorld(map, sandbox.commonEvents, MOTION_HZ, sandbox.worldOptions);
+      builds.set(mapId, build);
+    }
+    const world = stepWorld(build, SANDBOX_WORLD_UNIT_INSTRUCTIONS);
+    if (!world) return false;
+    builds.delete(mapId);
+    sandbox.worlds.set(mapId, world);
+    return sandbox.tables.has(mapId);
+  }
+  if (!sandbox.tables.has(mapId)) sandbox.tables.set(mapId, buildPassage(map, sandbox.sheets));
+  return true;
+}
+
+/** Drop every sandbox-held map outside `keep`. */
+export function trimSandboxMaps(sandbox: Session, keep: ReadonlySet<string>): void {
+  const builds = sandboxWorldBuilds.get(sandbox);
+  for (const cache of [sandbox.maps, sandbox.worlds, sandbox.tables, sandbox.runtimeTables, builds]) {
+    if (!cache) continue;
+    for (const id of [...cache.keys()]) if (!keep.has(id)) cache.delete(id);
+  }
 }
 
 /** The effective terrain for this exact reducer branch. The authored table

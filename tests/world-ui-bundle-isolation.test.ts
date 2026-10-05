@@ -42,6 +42,7 @@ function worldModules(file: string): string[] {
     path.endsWith("/src/ui/WorldAnimatedTiles.tsx") ||
     path.endsWith("/src/ui/WorldNpcPreview.tsx") ||
     path.endsWith("/src/engine/world-preview.ts") ||
+    path.endsWith("/src/engine/world-preview-sandbox.ts") ||
     path.endsWith("/src/engine/world-handoff.ts") ||
     path.endsWith("/src/engine/world-layout.ts")
   );
@@ -62,6 +63,7 @@ describe("ui/world bundle isolation", () => {
       expect(bundle).not.toContain("rpgkit-world-terrain");
       expect(bundle).not.toContain("visible world maps:");
       expect(bundle).not.toContain("rpgkit-world-preview-front");
+      expect(bundle).not.toContain("createSandboxPreviewReader");
     }
   });
 
@@ -77,10 +79,15 @@ describe("ui/world bundle isolation", () => {
       "renderer.tsx",
       "world-handoff.ts",
       "world-layout.ts",
+      "world-preview-sandbox.ts",
       "world-preview.ts",
     ]);
     const world = readFileSync(WORLD_JS, "utf8");
     expect(world).toContain("rpgkit-world-terrain");
     expect(world).toContain("rpgkit-world-preview-front");
+    // The preview layer imports the sandbox statically, so a world app
+    // carries it even without `npcPreview: { sandbox }` (README, "Sandboxed-
+    // entry preview").
+    expect(world).toContain("createSandboxPreviewReader");
   });
 });

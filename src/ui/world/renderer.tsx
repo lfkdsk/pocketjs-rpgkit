@@ -14,7 +14,7 @@ import {
   type VisibleWorldMapsReader,
 } from "../../engine/world-layout.ts";
 import { WorldAnimatedTiles } from "../WorldAnimatedTiles.tsx";
-import { WorldNpcPreview } from "../WorldNpcPreview.tsx";
+import { WorldNpcPreview, type WorldNpcPreviewOptions } from "../WorldNpcPreview.tsx";
 import { WorldStreamedTerrain } from "../WorldStreamedTerrain.tsx";
 import type {
   GameViewWorldConfig,
@@ -94,8 +94,10 @@ function createWorldRenderIndex(
 
 export interface WorldRendererOptions {
   /** Paint the read-only map-entry characters of visible neighbour maps
-   * (default true). The active map's simulation is unaffected either way. */
-  npcPreview?: boolean;
+   * (default true: the static preview). Pass `{ sandbox: hooks }` to preview
+   * by sandboxed map entry instead (WorldNpcPreviewOptions). The active
+   * map's simulation is unaffected either way. */
+  npcPreview?: boolean | WorldNpcPreviewOptions;
 }
 
 function createRuntime(host: GameViewWorldFactoryHost, options: WorldRendererOptions): GameViewWorldRuntime {
@@ -198,7 +200,12 @@ function createRuntime(host: GameViewWorldFactoryHost, options: WorldRendererOpt
             </ActiveMapPlane>
           );
           return props.preview && options.npcPreview !== false ? (
-            <WorldNpcPreview source={props.preview} component={component} placements={visibleMaps}>
+            <WorldNpcPreview
+              source={props.preview}
+              component={component}
+              placements={visibleMaps}
+              options={typeof options.npcPreview === "object" ? options.npcPreview : undefined}
+            >
               {actors}
             </WorldNpcPreview>
           ) : actors;
