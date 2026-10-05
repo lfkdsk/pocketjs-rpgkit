@@ -15,11 +15,12 @@
 //              transfer fade-in. Older v1 saves omit it; their restore
 //              rebuilds the characters from the map as before.
 //
-// Nothing here is host-derived: a save point is a SAFE POINT — mover at a
-// tile boundary, no blocking fiber except a resumable waited screen effect,
-// no modal, no parked external request —
-// so the restored state folds the same future tape into the same states
-// and the same pixels (docs/SIMULATION.md). The envelope carries a format
+// Nothing here is host-derived: a manual save point is a SAFE POINT — mover
+// at a tile boundary, no blocking fiber except a resumable waited screen
+// effect, no modal, no parked external request. An engine autosave may also
+// retain the in-flight movement, fibers and modal that its tagged snapshot
+// can restore. In either case, the restored state folds the same future tape
+// into the same states and the same pixels (docs/SIMULATION.md). The envelope carries a format
 // id, a version number and an FNV-1a checksum over canonicalized JSON;
 // truncation, a pasted typo, or a future-version file is refused with a
 // typed code instead of loading garbage.
@@ -225,6 +226,9 @@ export function createSessionSnapshot(
   state: SessionState,
   held: number,
 ): SaveSnapshot {
+  if (state.pendingAutosave === true) {
+    throw new Error("save: a deferred autosave request must resolve before a manual snapshot");
+  }
   return createSnapshot(
     state.mapId,
     state.move,
@@ -242,43 +246,61 @@ export function createSessionSnapshot(
   );
 }
 
-/** Snapshot the command boundary published by `{op:"autosave"}`. Unlike a
- * manual save, the owning event fiber is deliberately still active: its
- * program counter already points after autosave and resumes on the next
- * reference tick. Full movement/fiber runtime is part of SaveSnapshot, so
- * only session-owned states that the v1 format cannot represent are barred.
+/** Can rpgkit-save/v1 resume every piece of work owned by this tick?
+ *
+ * The snapshot already carries movement, every fiber and modal, extension
+ * state, characters/routes, fade-in and persistent presentation/audio state.
+ * The remaining blockers are exactly the state omitted or deliberately
+ * drained by normalizeInterpInPlace: fatal execution, an uncommitted external
+ * transfer/battle/scene request, an active full-screen scene, or a seamless
+ * handoff. Fade-out depends on its pending transfer and is named explicitly
+ * as a defensive invariant check. */
+export function canAutosaveSessionSnapshot(state: Readonly<SessionState>): boolean {
+  return state.interp.error === undefined &&
+    state.interp.pendingTransfer === null &&
+    state.interp.pendingBattles.length === 0 &&
+    (state.interp.pendingScenes?.length ?? 0) === 0 &&
+    state.scene === null &&
+    state.handoff === undefined &&
+    state.fade?.phase !== "out";
+}
+
+/** Snapshot the first resumable reference-tick boundary at or after an
+ * `{op:"autosave"}` request. The owning event fiber already points after the
+ * command; any other running fiber or open modal is retained in full. null
+ * asks Session to keep the sparse pending request and try the next tick.
  */
 export function createAutosaveSessionSnapshot(
   session: Session,
   state: SessionState,
   held: number,
-): SaveSnapshot {
-  if (
-    state.interp.error !== undefined ||
-    state.interp.modal !== null ||
-    state.interp.pendingTransfer !== null ||
-    state.interp.pendingBattles.length > 0 ||
-    (state.interp.pendingScenes?.length ?? 0) > 0 ||
-    state.scene !== null ||
-    state.handoff !== undefined
-  ) {
-    throw new Error("autosave: command tick contains session-owned work that save format v1 cannot resume");
+): SaveSnapshot | null {
+  if (!canAutosaveSessionSnapshot(state)) return null;
+  try {
+    assertJsonValue(state.ext, "save extension state");
+    const snapshot = normalizeInterp(cloneSnapshot({
+      autosave: true,
+      map: state.mapId,
+      player: state.move,
+      held,
+      interp: state.interp,
+      ext: encodeExtension(session.extensions, state.ext),
+      mapRuntime: {
+        chars: state.chars,
+        playerRoute: state.playerRoute,
+        fade: state.fade,
+        ...(state.leftMap ? { leftMap: state.leftMap } : {}),
+      },
+    }));
+    // Autosave is a reducer effect and must never throw through stepSession.
+    // The state was produced by the reducer rather than decoded from an
+    // untrusted save, so its explicit resumability predicate plus JSON/depth
+    // checks are sufficient here. Full validation remains at the decode/load
+    // boundary and must not be pulled into every GameView bundle.
+    return saveDepthExceeded(snapshot) ? null : snapshot;
+  } catch {
+    return null;
   }
-  assertJsonValue(state.ext, "save extension state");
-  return normalizeInterp(cloneSnapshot({
-    autosave: true,
-    map: state.mapId,
-    player: state.move,
-    held,
-    interp: state.interp,
-    ext: encodeExtension(session.extensions, state.ext),
-    mapRuntime: {
-      chars: state.chars,
-      playerRoute: state.playerRoute,
-      fade: state.fade,
-      ...(state.leftMap ? { leftMap: state.leftMap } : {}),
-    },
-  }));
 }
 
 /** Drop between-frame transient fields. The battle queue is persistent at

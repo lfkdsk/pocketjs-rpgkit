@@ -990,7 +990,7 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `inputNumber` | open the built-in 1–8 digit editor and write the confirmed non-negative integer to a variable |
 | `selectItem` | open the built-in item picker (regular/key/hidden A/hidden B) and write the chosen item's numeric id to a variable, 0 on cancel |
 | `openMenu` / `openSave` | request a game-owned menu or save screen through `GameView.hostActions` |
-| `autosave` | publish a normalized snapshot from this exact reference tick to the optional host autosave callback; the fiber resumes at the next command on the next tick |
+| `autosave` | publish a normalized snapshot from this reference tick when v1 can resume it; otherwise coalesce requests and publish at the first resumable reference tick while the fiber keeps running |
 | `gameOver` / `returnTitle` | request a game-owned game-over or title transition through `GameView.hostActions` |
 | `changeName` | replace the player name used by the `{name}` text token |
 | `mapNameDisplay` | enable or disable the automatic three-second banner on subsequent map entries |
@@ -1238,13 +1238,27 @@ the host owns any input or scene pause.
 The RPG Maker importer adds `exit` after its terminal game-over/title commands.
 
 `autosave` is the silent persistence counterpart. It advances its event fiber,
-ends the current reference tick, and gives `hostActions.autosave(host,
-snapshot)` a detached, normalized snapshot from that boundary. Thus 20, 30
-and 60 Hz hosts receive byte-identical save data even when one host frame folds
-several reference ticks; loading resumes at the command after `autosave`.
-If a parallel event reaches the command while the player is between tiles,
-the automatic snapshot preserves that exact interpolation phase and resumes
-the committed step after loading; manual saves retain their tile-boundary gate.
+ends the current reference tick, and—when that complete reducer state is
+resumable by `rpgkit-save/v1`—gives `hostActions.autosave(host, snapshot)` a
+detached, normalized snapshot from that boundary. Open text, choices and shop
+modals, running event fibers, player/character movement and waited move routes
+are all carried by v1, so they do not delay the save. Loading preserves the
+modal and resumes its owner, or resumes the route waiter, exactly where the
+uninterrupted session would.
+
+An active battle or game scene, seamless handoff, fade-out, fatal interpreter
+state, or an unconsumed transfer/battle/scene request is not resumable by v1.
+An autosave requested there stays pending while its issuing fiber continues;
+all further autosave commands coalesce into the same request. The host receives
+one snapshot at the first resumable reference-tick boundary. That boundary and
+the encoded bytes agree at 20, 30 and 60 Hz even when one host frame folds
+several reference ticks. The pending bit is session scheduling state, not save
+data: a manual save reports `not-safe-point` until the automatic request is
+fulfilled, so the bit never has to cross a save/load boundary. Autosave codec
+or validation failures also stay contained in this retry path and never throw
+through the reducer.
+
+Manual saves retain their tile-boundary gate.
 Missing callbacks are deterministic no-ops, and `saveAccess:false` affects only
 the player-facing save entry and `openSave`, not authored autosaves. Normal
 forward attract playback forwards the request, while rewind's internal refold
@@ -2095,7 +2109,13 @@ Chapter snapshots and save codes are the same data as ordinary saves; see
 A manual save is an FNV-checksummed `rpgkit-save/v1` envelope over a safe-point
 snapshot: the player rests on a tile boundary, no message, menu or scene is
 open, and no transfer, battle or other event request is waiting. An authored
-autosave uses the same envelope but may preserve a player step in flight. The snapshot
+autosave uses the same envelope but may preserve a player step in flight, an
+open text/choices/shop modal, and its owning or concurrent event fibers. If v1
+cannot resume the current state, the request is coalesced and deferred to the
+first resumable reference tick; active battle/game scenes, seamless handoffs,
+fade-out, fatal interpreter state and unconsumed transfer/battle/scene requests
+are the blockers. A pending automatic request is not serialized, and manual
+save attempts report `not-safe-point` until it has been fulfilled. The snapshot
 holds the map id, the player, the full interpreter state, the game's
 extension state and the current map's runtime: every character's cell,
 facing and step in progress, its running move route and how far along it is

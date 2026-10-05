@@ -11,8 +11,9 @@ import type { GameViewSessionHost } from "./demo-contract.ts";
 export interface GameViewHostCallbacks {
   menu?: (host: GameViewSessionHost) => void;
   save?: (host: GameViewSessionHost) => void;
-  /** Receives the normalized snapshot captured after autosave and before the
-   * next authored command. The live host may already be on a later tick. */
+  /** Receives the normalized snapshot captured at the request tick, or at
+   * the first later reference tick whose complete state v1 can resume. The
+   * live host may already be on a later tick. */
   autosave?: (host: GameViewSessionHost, snapshot: Readonly<SaveSnapshot>) => void;
   gameOver?: (host: GameViewSessionHost) => void;
   title?: (host: GameViewSessionHost) => void;

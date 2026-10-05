@@ -190,8 +190,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // portrait-in-box scaling, the sparse `box`, its page cuts in the visible
 // modal identity and its save validation) brings it to 963,811 (+8,628).
 // The opt-in onInstruction execution trace (one optional dispatch in the
-// interpreter run loop) adds 171 B: 963,982.
-const EXPECTED_BYTES = 963_982;
+// interpreter run loop) adds 171 B, bringing the shared graph to 963,982.
+// Deferred autosaves add the sparse pending bit, resumability predicate and
+// coalesced effect dispatch; accepting a tagged live modal in the already-
+// linked save validator brings the measured bundle to 966,340 (+2,358).
+const EXPECTED_BYTES = 966_340;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { AttractController } from "../src/engine/attract.ts";
 import type { BattleRules } from "../src/engine/battle.ts";
+import type { SceneRules } from "../src/engine/scene.ts";
 import {
   evalCondition,
   scrollMapFrames,
@@ -16,10 +17,11 @@ import {
   type NumberInputState,
 } from "../src/engine/number-input.ts";
 import {
+  canonicalJson,
   createSessionSnapshot,
   encodeEnvelope,
 } from "../src/engine/save.ts";
-import { restoreSessionEnvelope } from "../src/engine/save-restore.ts";
+import { restoreSessionEnvelope, saveSession } from "../src/engine/save-restore.ts";
 import {
   createSession,
   startSession,
@@ -75,6 +77,72 @@ function run(session: Session, state: SessionState, frames: number): SessionStat
   let next = state;
   for (let i = 0; i < frames; i++) next = stepSession(session, next, { buttons: 0 });
   return next;
+}
+
+const AUTOSAVE_DELAY_SCENE = "test.autosaveDelay";
+const autosaveDelayRules: SceneRules = {
+  start(ext) {
+    return { ext, state: { ticks: 0 } };
+  },
+  step(raw, _input, ticks) {
+    return { ticks: (raw as { ticks: number }).ticks + ticks };
+  },
+  done(raw) {
+    return (raw as { ticks: number }).ticks >= 5 ? {} : null;
+  },
+};
+
+function deferredAutosaveProject(): Project {
+  const p = project([]);
+  p.maps[0]!.events!.push(
+    {
+      id: "a-scene",
+      x: 1,
+      y: 1,
+      pages: [
+        {
+          trigger: "parallel",
+          commands: [
+            { op: "scene", id: AUTOSAVE_DELAY_SCENE },
+            { op: "switch", id: "scene.done", value: true },
+          ],
+        },
+        { condition: { switch: "scene.done" }, trigger: "action", commands: [] },
+      ],
+    },
+    {
+      id: "b-autosave-now",
+      x: 2,
+      y: 1,
+      pages: [
+        {
+          trigger: "parallel",
+          commands: [
+            { op: "autosave" },
+            { op: "switch", id: "autosave.now.done", value: true },
+          ],
+        },
+        { condition: { switch: "autosave.now.done" }, trigger: "action", commands: [] },
+      ],
+    },
+    {
+      id: "c-autosave-later",
+      x: 3,
+      y: 1,
+      pages: [
+        {
+          trigger: "parallel",
+          commands: [
+            { op: "wait", seconds: 1 / 60 },
+            { op: "autosave" },
+            { op: "switch", id: "autosave.later.done", value: true },
+          ],
+        },
+        { condition: { switch: "autosave.later.done" }, trigger: "action", commands: [] },
+      ],
+    },
+  );
+  return p;
 }
 
 function screenTimeline(): Command[] {
@@ -381,6 +449,184 @@ describe("KRM2 timer and host lifecycle", () => {
     }
     expect(restored).toEqual(live);
     expect(restored.sw.switches.checkpointDone).toBe(true);
+  });
+
+  test("a parallel autosave round-trips a main fiber waiting on a player route", () => {
+    const p = project([
+      {
+        op: "moveRoute",
+        target: "player",
+        wait: true,
+        route: {
+          steps: ["moveRight", "moveRight"],
+          repeat: false,
+          skippable: false,
+        },
+      },
+      { op: "switch", id: "route.done", value: true },
+    ]);
+    p.maps[0]!.events!.push({
+      id: "checkpoint",
+      x: 1,
+      y: 2,
+      pages: [
+        {
+          trigger: "parallel",
+          commands: [
+            { op: "autosave" },
+            { op: "switch", id: "checkpoint.done", value: true },
+          ],
+        },
+        { condition: { switch: "checkpoint.done" }, trigger: "action", commands: [] },
+      ],
+    });
+
+    const session = createSession(p, 60);
+    const effects: SessionHostEffect[] = [];
+    let live = stepSession(session, startSession(p, session), { buttons: 0 }, {
+      publish: (effect) => effects.push(effect),
+    });
+    expect(live.interp.main?.mode).toBe("external");
+    expect(live.playerRoute?.waiter).toBe("start/director");
+    expect(effects).toHaveLength(1);
+    const effect = effects[0]!;
+    if (effect.action !== "autosave") throw new Error("expected autosave effect");
+    expect(effect.snapshot.interp.main?.mode).toBe("external");
+    expect(effect.snapshot.mapRuntime?.playerRoute?.waiter).toBe("start/director");
+
+    let restored = restoreSessionEnvelope(session, encodeEnvelope(effect.snapshot));
+    for (let i = 0; i < 20; i++) {
+      live = stepSession(session, live, { buttons: 0 });
+      restored = stepSession(session, restored, { buttons: 0 });
+    }
+    expect(restored.sw.switches).toMatchObject({
+      "route.done": true,
+      "checkpoint.done": true,
+    });
+    expect(canonicalJson(restored)).toBe(canonicalJson(live));
+  });
+
+  test("autosave round-trips another parallel fiber's open choices modal", () => {
+    const p = project([]);
+    p.maps[0]!.events!.push(
+      {
+        id: "a-evolution",
+        x: 1,
+        y: 1,
+        pages: [
+          {
+            trigger: "parallel",
+            commands: [
+              {
+                op: "choices",
+                prompt: "Allow evolution?",
+                options: [
+                  { text: "Yes", commands: [{ op: "switch", id: "evolution.allowed", value: true }] },
+                  { text: "No", commands: [{ op: "switch", id: "evolution.allowed", value: false }] },
+                ],
+              },
+              { op: "switch", id: "evolution.done", value: true },
+            ],
+          },
+          { condition: { switch: "evolution.done" }, trigger: "action", commands: [] },
+        ],
+      },
+      {
+        id: "b-checkpoint",
+        x: 2,
+        y: 1,
+        pages: [
+          {
+            trigger: "parallel",
+            commands: [
+              { op: "autosave" },
+              { op: "switch", id: "checkpoint.done", value: true },
+            ],
+          },
+          { condition: { switch: "checkpoint.done" }, trigger: "action", commands: [] },
+        ],
+      },
+    );
+    const session = createSession(p, 60);
+    const effects: SessionHostEffect[] = [];
+    let live = stepSession(session, startSession(p, session), { buttons: 0 }, {
+      publish: (effect) => effects.push(effect),
+    });
+    expect(effects).toHaveLength(1);
+    const effect = effects[0]!;
+    if (effect.action !== "autosave") throw new Error("expected autosave effect");
+    expect(effect.snapshot.interp.modal).toMatchObject({
+      kind: "choices",
+      fiber: "start/a-evolution",
+      prompt: "Allow evolution?",
+    });
+
+    let restored = restoreSessionEnvelope(session, encodeEnvelope(effect.snapshot));
+    expect(restored.interp.modal).toEqual(effect.snapshot.interp.modal);
+    const tail = [
+      { buttons: BTN.CIRCLE, confirmEdge: true },
+      { buttons: 0 },
+      { buttons: 0 },
+    ];
+    for (const input of tail) {
+      live = stepSession(session, live, input);
+      restored = stepSession(session, restored, input);
+    }
+    expect(restored.interp.modal).toBeNull();
+    expect(restored.sw.switches).toMatchObject({
+      "evolution.allowed": true,
+      "evolution.done": true,
+      "checkpoint.done": true,
+    });
+    expect(canonicalJson(restored)).toBe(canonicalJson(live));
+  });
+
+  test("an unsafe autosave waits, merges later requests, and publishes on one reference tick at every rate", () => {
+    const envelopes = [60, 30, 20].map((hz) => {
+      const p = deferredAutosaveProject();
+      const options = {
+        scenes: { [AUTOSAVE_DELAY_SCENE]: autosaveDelayRules },
+        scene: { worldContinues: true },
+      } as const;
+      const session = createSession(p, hz, options);
+      const hostlessSession = createSession(p, hz, options);
+      const effects: SessionHostEffect[] = [];
+      let state = startSession(p, session);
+      let hostless = startSession(p, hostlessSession);
+      let authoredRequests = 0;
+      for (let frame = 0; frame < 12 && effects.length === 0; frame++) {
+        state = stepSession(session, state, { buttons: 0 }, {
+          publish: (effect) => effects.push(effect),
+        });
+        hostless = stepSession(hostlessSession, hostless, { buttons: 0 });
+        authoredRequests += state.interp.hostActions?.filter((action) => action === "autosave").length ?? 0;
+        expect(hostless).toEqual(state);
+        if (state.scene !== null) expect(state.pendingAutosave).toBe(true);
+      }
+      expect(authoredRequests).toBeGreaterThanOrEqual(2);
+      expect(effects).toHaveLength(1);
+      const effect = effects[0]!;
+      if (effect.action !== "autosave") throw new Error("expected autosave effect");
+      expect(effect.snapshot.interp.frame).toBe(7);
+      expect(effect.snapshot.autosave).toBe(true);
+      expect("pendingAutosave" in effect.snapshot).toBe(false);
+      expect(state.pendingAutosave).toBeUndefined();
+      return encodeEnvelope(effect.snapshot);
+    });
+    expect(envelopes[1]).toBe(envelopes[0]);
+    expect(envelopes[2]).toBe(envelopes[0]);
+  });
+
+  test("a deferred autosave cannot be lost through a manual save point", () => {
+    const p = project([]);
+    const session = createSession(p, 60);
+    const state = startSession(p, session);
+    state.pendingAutosave = true;
+    const result = saveSession(session, state, 0);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refused manual save");
+    expect(result.error.code).toBe("not-safe-point");
+    expect(() => createSessionSnapshot(session, state, 0)).toThrow(/deferred autosave request/);
   });
 
   test("attract rewind refolds autosave without republishing the host effect", () => {

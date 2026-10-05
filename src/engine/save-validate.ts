@@ -1259,6 +1259,8 @@ function validateFiber(
   wantParallel: boolean,
   mapId: string,
   routeWaiters: ReadonlySet<string> = new Set(),
+  autosave = false,
+  modal: unknown = null,
 ): string | null {
   if (!isRecord(v)) return fail(path, "fiber must be an object");
   if (typeof v.key !== "string" || !v.key.includes("/")) {
@@ -1353,11 +1355,17 @@ function validateFiber(
     }
     case "text":
     case "choices":
-    case "shop":
-      // A safe point carries no open modal and no parked external request,
-      // so a fiber suspended in one of these modes cannot be resumed: the
-      // modal/pending fields it would read back are absent by construction.
-      return fail(`${path}.mode`, `a save cannot park a fiber in ${v.mode as string} mode`);
+    case "shop": {
+      const ins = top.pc < top.prog.length ? top.prog[top.pc] : undefined;
+      const instructionMatches = isRecord(ins) && (
+        v.mode === "text" ? ins.op === "text" :
+        v.mode === "choices" ? ins.op === "choices" || ins.op === "extChoice" :
+        ins.op === "shop"
+      );
+      if (autosave && isRecord(modal) && modal.fiber === v.key &&
+          modal.kind === v.mode && instructionMatches) break;
+      return fail(`${path}.mode`, `a save cannot park a fiber in ${v.mode as string} mode without its autosave modal`);
+    }
   }
   return null;
 }
@@ -2328,15 +2336,15 @@ export function validateSnapshot(snap: unknown): string | null {
   // it has no modal/external owner and its remaining reducer state is fully
   // serializable. Other blocking fibers remain forbidden. Parallel fibers
   // serialize live, including one parked mid-wait.
+  const routeWaiters = savedRouteWaiters(snap.mapRuntime);
   if (it.main !== null) {
-    const fe = validateFiber(it.main, "state.interp.main", false, snap.map);
+    const fe = validateFiber(it.main, "state.interp.main", false, snap.map, routeWaiters, snap.autosave === true, it.modal);
     if (fe) return fe;
     if (!isRecord(it.main) || (it.main.mode !== "screenWait" && snap.autosave !== true)) {
       return "state.interp.main: only a waited screen effect may be saved mid-command";
     }
   }
   if (!isRecord(it.parallels)) return "state.interp.parallels: record required";
-  const routeWaiters = savedRouteWaiters(snap.mapRuntime);
   for (const [key, fiber] of Object.entries(it.parallels)) {
     if (typeof key !== "string") return "state.interp.parallels: string keys required";
     // The reducer resolves modal ownership, erasure and page state through
@@ -2346,14 +2354,25 @@ export function validateSnapshot(snap: unknown): string | null {
     if (isRecord(fiber) && fiber.key !== key) {
       return "state.interp.parallels: fiber key must match its dictionary key";
     }
-    const fe = validateFiber(fiber, `state.interp.parallels.${key}`, true, snap.map, routeWaiters);
+    const fe = validateFiber(
+      fiber,
+      `state.interp.parallels.${key}`,
+      true,
+      snap.map,
+      routeWaiters,
+      snap.autosave === true,
+      it.modal,
+    );
     if (fe) return fe;
   }
 
   const liveKeys = new Set(Object.keys(it.parallels));
+  if (isRecord(it.main) && typeof it.main.key === "string") liveKeys.add(it.main.key);
   const me = validateModal(it.modal, "state.interp.modal", liveKeys);
   if (me) return me;
-  if (it.modal !== null) return "state.interp.modal: a save cannot hold an open modal";
+  if (it.modal !== null && snap.autosave !== true) {
+    return "state.interp.modal: a save cannot hold an open modal";
+  }
 
   const er = validateLatchRecord(it.erased, "state.interp.erased");
   if (er) return er;

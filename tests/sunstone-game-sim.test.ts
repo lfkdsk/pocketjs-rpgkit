@@ -500,8 +500,10 @@ simDescribe("sunstone — render budget", () => {
     // measuring 955,183 B. The text command's optional layout (box
     // geometry, DialogBox placement/alignment/background, portrait-in-box
     // scaling, the sparse `box` and its save validation) adds 8,628 B,
-    // measuring 963,811 B.
-    expect(jsBytes).toBeLessThan(964_500);
+    // measuring 963,811 B. Deferred autosaves add the sparse pending bit,
+    // resumability predicate, coalesced effect dispatch and tagged-modal
+    // save validation: measured 966,169 B. Keep a narrow margin.
+    expect(jsBytes).toBeLessThan(967_000);
   });
 });
 

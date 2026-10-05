@@ -191,12 +191,17 @@ const maybeTest = preflight.ok ? test : test.skip;
 // in the visible modal identity, the saved instruction's box validation)
 // adds 7,325 B to Meadow, 8,628 B to Sunstone and 7,531 B to the WAV
 // fixture: 605,122, 963,811 and 762,151.
-// Re-measure after every shared-path change.
 // The opt-in onInstruction execution trace (one optional dispatch in the
 // interpreter run loop) adds 171 B to each bundle: 605,293, 963,982 and 762,322.
-const EXPECTED_MEADOW_BYTES = 605_293;
-const EXPECTED_SUNSTONE_QOA_BYTES = 963_982;
-const EXPECTED_WAV_FIXTURE_BYTES = 762_322;
+// Deferred autosaves add the sparse pending bit, first-resumable-tick check
+// and coalesced effect dispatch: 1,714 B to Meadow and the WAV fixture and
+// 2,358 B to Sunstone, whose save validator also accepts tagged live modals.
+// The three now measure 607,007, 966,340 and 764,036 B; full save validation
+// remains outside bundles that do not otherwise decode saves.
+// Re-measure after every shared-path change.
+const EXPECTED_MEADOW_BYTES = 607_007;
+const EXPECTED_SUNSTONE_QOA_BYTES = 966_340;
+const EXPECTED_WAV_FIXTURE_BYTES = 764_036;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

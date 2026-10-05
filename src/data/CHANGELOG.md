@@ -804,5 +804,26 @@ No format change. Behavior fix in the session fold:
 - `TextPaginator` receives the layout as an optional second argument; a
   corner or side box is narrower, so its pages are cut at its own width.
 
+## v1 amendment — 2026-10-04 (autosave resumability boundary)
+
+- An automatic save now accepts every state the existing v1 payload can
+  resume, including an open text/choices/shop modal with its owning fiber,
+  other running fibers, movement in progress and waited move routes. The
+  modal owner and parked instruction/route still pass structural validation
+  when the envelope is loaded.
+- A request made during state v1 omits or cannot resume—an active battle/game
+  scene, seamless handoff, fade-out, fatal interpreter state, or an
+  unconsumed transfer/battle/scene request—is retained until the first
+  resumable reference tick. Further requests coalesce and the host receives
+  one snapshot. Snapshot encoding or validation failure remains pending and
+  cannot throw through the reducer.
+- The pending bit belongs to the live session and is not serialized. Manual
+  saves return `not-safe-point` while it is present, so it cannot be lost
+  across a save/load boundary. Hostless and rewind/refold execution performs
+  no host write.
+- The project format and `schema.json` are unchanged, so the schema identity
+  (`MAP_SCHEMA_HASH`) is unchanged and no row is added to
+  [Schema identities](#schema-identities).
+
 Breaking changes to any of the above require a new marker
 (`rpgkit-project/v2`) and a new entry here.

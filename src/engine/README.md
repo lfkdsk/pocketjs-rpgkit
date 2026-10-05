@@ -289,12 +289,18 @@ Conventions:
   event fiber; the game-owned host screen must provide any pause. Host actions
   are drained before a save and never enter snapshot or
   replay hashes. `autosave` instead advances its fiber and yields at a
-  reference-tick boundary; its effect carries that tick's normalized snapshot
-  directly to `hostActions.autosave`. Attract forward folds preserve it, while
-  rewind/refold omits the effect, so replay reconstruction cannot rewrite host
-  storage. A parallel autosave preserves an in-flight player step; manual saves
-  keep their tile-boundary gate. Autosave is independent of the player-facing
-  `saveAccess` flag.
+  reference-tick boundary. If v1 can resume the whole reducer state, its effect
+  carries that tick's normalized snapshot directly to `hostActions.autosave`.
+  Open text/choices/shop modals, running fibers, movement and waited routes are
+  resumable. Active battle/game scenes, seamless handoffs, fade-out, fatal
+  interpreter state and unconsumed transfer/battle/scene requests are not: the
+  sparse session request stays pending, further autosaves coalesce, and one
+  effect is published at the first resumable reference tick. The pending bit is
+  not save data; manual save returns `not-safe-point` until it clears. Attract
+  forward folds preserve the effect, while rewind/refold and a hostless session
+  perform no write. The selected reference tick and bytes agree at 20/30/60 Hz.
+  Manual saves keep their tile-boundary gate. Autosave is independent of the
+  player-facing `saveAccess` flag.
 - **Names and map banners:** `changeName` writes the saved player name used by
   later `{name}` expansion. `system.mapNameDisplay:true` seeds a persistent
   flag; each map entry starts a saved 180-tick banner from `MapDef.name`.
@@ -660,12 +666,13 @@ same reference tick.
 
 The dynamic list reuses the authored-choice modal and four-row scroll window,
 so it captures the d-pad, blocks its owning fiber, and makes `worldIdle` false.
-Existing safe-point policy deliberately rejects a save while it is open.
-Modal state remains plain JSON and rewind rebuilds it through the ordinary
-pure fold; reference-tick option refresh and input edges therefore remain
-identical across supported host rates. Unknown choice calls are rejected with
-other missing extension registrations, or become immediate no-ops only under
-the explicit preview `allowUnknown` option.
+Manual saves reject it while it is open; an automatic save carries both the
+modal and its owning fiber and can resume it. Modal state remains plain JSON
+and rewind rebuilds it through the ordinary pure fold; reference-tick option
+refresh and input edges therefore remain identical across supported host
+rates. Unknown choice calls are rejected with other missing extension
+registrations, or become immediate no-ops only under the explicit preview
+`allowUnknown` option.
 
 A `battle` command parks its fiber and publishes a setup JSON value. General
 interpreter execution remains parallel fibers (ascending event key) before the

@@ -32,7 +32,11 @@
 // No host imports, no wall clock, no Math.random (docs/SIMULATION.md).
 
 import { deepClone, keyedRecord } from "./clone.ts";
-import { createAutosaveSessionSnapshot, type SaveSnapshot } from "./save.ts";
+import {
+  canAutosaveSessionSnapshot,
+  createAutosaveSessionSnapshot,
+  type SaveSnapshot,
+} from "./save.ts";
 import { beginStateMetadata, endStateMetadata, RecentStateMetadata } from "./state-metadata.ts";
 import { startupProfileMark } from "../startup-profile.ts";
 import { cloneAudioState, type AudioState } from "./audio.ts";
@@ -318,6 +322,12 @@ export interface SessionState {
    * Every other map entry removes it, as does moving more than
    * LEFT_MAP_RING_TILES away from that map. Legacy projects never set it. */
   leftMap?: LeftMapSnapshot;
+  /** A host autosave request waiting for the first reference tick whose
+   * complete reducer state is representable by rpgkit-save/v1. Multiple
+   * requests coalesce into this one bit. It is host scheduling state, not
+   * save data: manual snapshots reject it, and an automatic snapshot clears
+   * it atomically when that snapshot is published. */
+  pendingAutosave?: true;
 }
 
 function sessionWorldIdleBlockers(
@@ -1949,6 +1959,9 @@ function foldSession(
   if (s0.handoff !== undefined) s.handoff = { ...s0.handoff };
   // Immutable once created: shared by reference across folds.
   if (s0.leftMap !== undefined) s.leftMap = s0.leftMap;
+  // Sparse: projects that never defer an autosave retain their historical
+  // SessionState shape. Rewind keyframes keep the bit with the reducer state.
+  if (s0.pendingAutosave === true) s.pendingAutosave = true;
   s.frame++;
   const ticks = sess.ticksPerFrame;
   const sceneAtFrameStart = s.scene !== null;
@@ -1970,19 +1983,43 @@ function foldSession(
       if (frameCues === undefined) frameCues = tickResult.cues;
       else frameCues.push(...tickResult.cues);
     }
-    if (tickResult.hostActions) {
-      if (frameHostActions === undefined) frameHostActions = tickResult.hostActions;
-      else frameHostActions.push(...tickResult.hostActions);
-      if (effects) {
-        for (const action of tickResult.hostActions) {
-          if (action === "autosave") {
-            effects.publish({
-              action,
-              snapshot: createAutosaveSessionSnapshot(sess, s, tickInput.buttons),
-            });
-          } else {
-            effects.publish({ action });
+    const pendingBeforeTick = s.pendingAutosave === true;
+    const tickHostActions = tickResult.hostActions;
+    const requestedAutosave = tickHostActions?.includes("autosave") === true;
+    if (requestedAutosave) s.pendingAutosave = true;
+    let autosaveSnapshot: SaveSnapshot | null = null;
+    if (s.pendingAutosave === true) {
+      if (effects === undefined) {
+        // A hostless fold (including attract rewind/refold) performs no I/O.
+        // Drop the request only when this reference tick could have fulfilled
+        // it, so the reducer timeline remains independent of host rate.
+        if (canAutosaveSessionSnapshot(s)) delete s.pendingAutosave;
+      } else {
+        autosaveSnapshot = createAutosaveSessionSnapshot(sess, s, tickInput.buttons);
+        if (autosaveSnapshot !== null) delete s.pendingAutosave;
+      }
+    }
+    if (tickHostActions) {
+      if (frameHostActions === undefined) frameHostActions = tickHostActions;
+      else frameHostActions.push(...tickHostActions);
+    }
+    if (effects) {
+      let autosavePublished = false;
+      // A request from an earlier tick precedes this tick's authored effects.
+      if (pendingBeforeTick && autosaveSnapshot !== null) {
+        effects.publish({ action: "autosave", snapshot: autosaveSnapshot });
+        autosavePublished = true;
+      }
+      for (const action of tickHostActions ?? []) {
+        if (action === "autosave") {
+          // A delayed request and every request encountered while it waited
+          // coalesce into one host write at the first resumable tick.
+          if (!autosavePublished && autosaveSnapshot !== null) {
+            effects.publish({ action, snapshot: autosaveSnapshot });
+            autosavePublished = true;
           }
+        } else {
+          effects.publish({ action });
         }
       }
     }

@@ -782,6 +782,8 @@ simDescribe("editor budget", () => {
     // geometry and DialogBox, the four select fields with wrapped bilingual
     // hints in the event inspector, the embedded schema, interpreter, theme
     // and list summary, portrait-in-box scaling) adds 13,223 B: 1,625,366 B.
+    // Deferred autosave scheduling adds 1,714 shared runtime bytes: the
+    // measured editor bundle is 1,627,080 B.
     // Keep a narrow margin.
     expect(js).toBeLessThan(1_628_000);
   });
