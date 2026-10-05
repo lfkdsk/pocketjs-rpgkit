@@ -834,8 +834,8 @@ export type SandboxPreviewRejectReason =
   | "player-dependent"
   /** Probe: the snapshot changes with the random cursor. */
   | "random-dependent"
-  /** Probe: the snapshot changes when the game's `perturbExt` hook moves its
-   * volatile extension state (a clock, the weather). */
+  /** Probe: the snapshot changes when the game's `perturbExt` hook moves the
+   * extension state its preview key leaves out. */
   | "volatile-dependent";
 
 /** One map's immutable placement in a world/component tile coordinate space.

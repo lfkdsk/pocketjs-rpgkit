@@ -922,12 +922,15 @@ import { createWorldRenderer } from "pocket-rpgkit/ui/world";
 const world = createWorldRenderer({
   npcPreview: {
     sandbox: {
-      // What a map entry can observe of the extension state (compared with
-      // Object.is). Leave out what changes every step without deciding who
-      // stands where (step counters) and what perturbExt moves.
-      previewKey: (ext) => coreWithoutCountersAndClock(ext),
-      // The volatile part moved: the clock half a day on, other weather.
-      perturbExt: (ext) => shiftClockAndWeather(ext),
+      // Everything a map entry can read of the extension state, at the
+      // granularity its conditions read it (compared with Object.is): the
+      // clock as day + hour when conditions test the hour, the weather.
+      // Leave out only what changes every step without deciding who stands
+      // where (step counters) and finer state no condition reads.
+      previewKey: (ext) => entryVisibleState(ext),
+      // Move only what the key leaves out (here: the minute within the hour),
+      // as a check that nothing reads it.
+      perturbExt: (ext) => shiftMinuteWithinHour(ext),
     },
   },
 });
@@ -982,7 +985,15 @@ whose sandbox preview is not ready yet is painted from the static preview, so
 opting in never shows fewer characters. Known blind spots: the player's real
 arrival cell next to a wandering character (the probe player is off the map),
 left/right facings (covered only by the static facing rules), and volatile
-state the game does not declare in `perturbExt`.
+state that neither `previewKey` nor `perturbExt` covers.
+
+Put what entry can read in `previewKey`, not in `perturbExt`. A probe moves
+the state to one other value and compares, so it misses any condition that
+happens to agree on both values: a clock shifted by half a day still matches
+"day == 3", and two different hours can both pass "hour < 18". A key holding
+the clock at the granularity conditions read recomputes the preview whenever
+that value changes, which is exact; `perturbExt` is then a safety net for the
+state the key deliberately leaves out.
 
 Cost and scheduling. Previews are cached per map. Each presented frame the
 layer compares the durable entry inputs with the previous frame's —

@@ -104,14 +104,18 @@ export interface SandboxActor {
  * extension state (writing it changes nothing else); entry copies a
  * perturbExt result before using it. */
 export interface SandboxPreviewHooks {
-  /** The part of the extension state a map entry can observe, as a value
-   * compared with Object.is (a string or number). Leave out what changes on
-   * its own every step and does not decide who stands where on entry (step
-   * counters), and the volatile parts `perturbExt` covers. Default: the
-   * state itself when it is a primitive, else its JSON text. */
+  /** Everything a map entry can observe of the extension state, at the
+   * granularity its conditions read it (a clock as day + hour when conditions
+   * test the hour), as a value compared with Object.is (a string or number).
+   * Leave out only what changes on its own every step and does not decide who
+   * stands where on entry (step counters), and finer state no condition
+   * reads. Default: the state itself when it is a primitive, else its JSON
+   * text. */
   previewKey?(ext: JsonValue): unknown;
-  /** The extension state with its volatile parts moved (a clock shifted by
-   * half a day, the weather flipped). Adds the `volatile-dependent` probe. */
+  /** The extension state with the parts `previewKey` leaves out moved (the
+   * minute within the hour). Adds the `volatile-dependent` probe. One moved
+   * value cannot show that a condition ignores the state, since the condition
+   * may agree on both values, so readable state belongs in the key. */
   perturbExt?(ext: JsonValue): JsonValue;
 }
 
