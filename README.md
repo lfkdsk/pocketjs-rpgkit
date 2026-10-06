@@ -151,6 +151,53 @@ terrain: it points at grow's PNGs in place (`../grow/assets/...`) and adds
 only whole-stamp and 64 px fill composites of them
 (`bun examples/wander/gen-assets.ts`).
 
+### `examples/wander-online` — local multiplayer with prediction and interpolation
+
+A local multiplayer demo: the wander world shared by a small authoritative
+server, with client-side prediction and remote interpolation. Two desktop
+windows and a browser tab on the same machine see each other walk around
+the same frozen window. **Localhost only** — the server binds `127.0.0.1`
+and never listens on a non-loopback interface; there are no accounts, no
+persistence and no anti-cheat.
+
+```sh
+bun run examples/wander-online/server/server.ts     # 20 Hz authoritative, 10 Hz AOI snapshots
+bun tools/desktop.ts wander-online                  # a desktop client (run twice for two windows)
+bun tools/web.ts wander-online                      # a browser tab (serve dist/web)
+```
+
+`bun run web` with no game named leaves wander-online out
+(`LOCAL_ONLY_APPS` in `tools/build-example.ts`), so the published site
+never lists a page that has no server to reach; the command above builds it
+on purpose.
+
+- **Prediction.** The client builds the same frozen window from the
+  WELCOME seed and folds every held input through the kit's `stepSession`
+  locally, one reference tick per INPUT. Pressing a key moves the local
+  player on the same frame — no input latency, even with 150 ms of injected
+  one-way latency (the server is 300 ms round-trip away; the client is not).
+- **Reconciliation.** Every snapshot carries `ackSeq`, the last INPUT
+  sequence the server applied for the recipient. The client keeps a
+  128-entry ring of predicted states; on a snapshot it compares the
+  predicted mover at `ackSeq` with the authoritative one. A mismatch
+  rolls the whole movement state (position, phase, walking, stepDir) back
+  and replays the unacked inputs. With a reliable in-order transport and
+  no server underflow, corrections stay at zero after the join.
+- **Interpolation.** Remote players render 100 ms behind real time,
+  interpolated between the two snapshots bracketing that time. One dropped
+  packet costs nothing; snapshots are idempotent.
+- **Recovery.** A socket close reconnects with exponential backoff and
+  re-joins; a server restart looks the same. Two seconds without a snapshot
+  freezes local gameplay and starts a fresh join.
+
+The wire format is a single source in
+[`examples/wander-online/net/protocol.ts`](examples/wander-online/net/protocol.ts):
+INPUT is 7 bytes (sequence + buttons), STATE is a 10-byte header plus
+12 bytes per entity (id, tile, pixel offset, facing, phase, stepDir, flags),
+capped at 255 entities per snapshot. See
+[`examples/wander-online/README.md`](examples/wander-online/README.md) for
+the architecture and the test list.
+
 **`examples/meadow`** is the minimal example: one 20×12 map and four
 events proving the package boots, renders, replays deterministically,
 and round-trips on the PocketJS wasm sim host.

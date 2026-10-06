@@ -61,7 +61,7 @@ import {
   POCKET_TARGETS,
   type PlatformContractRegistry,
 } from "../vendor/pocketjs/contracts/spec/platforms.ts";
-import { APPS } from "./build-example.ts";
+import { APPS, LOCAL_ONLY_APPS } from "./build-example.ts";
 import { appDirOf, fontLicenseFiles } from "./lib/font-licenses.ts";
 import type { Size, ViewportConfig } from "./web/fit.ts";
 import { writeSiteIcons } from "./web/icon.ts";
@@ -575,7 +575,9 @@ export const PREVIEW_APP_ID = "preview";
 
 /** The games to build when none are named. */
 export function defaultGameIds(projectRoot: string): string[] {
-  if (sameDir(projectRoot, KIT_ROOT)) return [...APPS, PREVIEW_APP_ID];
+  if (sameDir(projectRoot, KIT_ROOT)) {
+    return [...APPS.filter((id) => !LOCAL_ONLY_APPS.includes(id)), PREVIEW_APP_ID];
+  }
   const examples = join(projectRoot, "examples");
   if (existsSync(examples)) {
     const ids = readdirSync(examples)

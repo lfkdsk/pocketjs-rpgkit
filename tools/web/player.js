@@ -49,6 +49,7 @@
 
 import { createWasmUi } from "../../vendor/pocketjs/hosts/web/wasm-ops.js";
 import { createAudioHost } from "../../vendor/pocketjs/hosts/web/audio.js";
+import { createSocketHost } from "../../vendor/pocketjs/hosts/web/socket.js";
 import {
   __packTouch,
   __packTouchWide,
@@ -93,6 +94,8 @@ const PAD_HIDDEN_KEY = "pocket-rpgkit:web:pad-hidden";
 const EDITOR_REQUEST_TIMEOUT = 300;
 /** Room under the screen for the caption line. */
 const RESERVE_PX = 56;
+
+let socketHost = null; // hosts/web/socket.js — browser WebSocket behind the SOCKET contract
 const EDITOR_COMPANION = "rpgkit-editor";
 export { SHARDED_PACK_KIND };
 export const EDITOR_CHUNK_MAX_COUNT = 8192;
@@ -970,6 +973,9 @@ class Player {
     globalThis.__pak = pak;
     this.audio.reset();
     globalThis.audio = this.audio.ns;
+    if (!socketHost) socketHost = createSocketHost();
+    socketHost.reset();
+    globalThis.socket = socketHost.ns;
     globalThis.__simHz = config.simHz ?? 60;
     globalThis.__pocketApp = config.app;
     globalThis.__rpgkitAutosave = createBrowserAutosaveBridge(
@@ -1057,6 +1063,7 @@ class Player {
     const packed = this.pool.pack();
     const hits = this.hitFacts(packed);
     this.audio.beginFrame();
+    if (socketHost) socketHost.beginFrame();
     this.frameFn(this.buttons(), ANALOG_CENTER, packed, hits);
     this.wasm.tick();
     this.frames++;

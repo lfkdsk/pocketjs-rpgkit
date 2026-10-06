@@ -20,9 +20,14 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-export const EXAMPLES = ["showcase", "meadow", "sunstone", "grow", "wander"] as const;
+export const EXAMPLES = ["showcase", "meadow", "sunstone", "grow", "wander", "wander-online"] as const;
 /** The examples plus the editor app. */
 export const APPS = [...EXAMPLES, "editor"] as const;
+/** Apps that need a server on this machine (wander-online talks to a
+ *  loopback-only multiplayer server). `bun run web` with no game named
+ *  leaves them out, so the published site never lists a page that cannot
+ *  connect; name one explicitly to build it. */
+export const LOCAL_ONLY_APPS: readonly string[] = ["wander-online"];
 /** Small apps that exist only for the sim suites. */
 export const FIXTURES = ["ui-theme", "streamed", "world-streamed", "world-bounded", "world-preview", "event-model", "r2-ui", "kb4-battle", "rpgkit-shot", "km1-move-control", "ka1-anim", "kg1-name-input", "krm2-ui", "krm3-select", "kau1-audio", "ks2-save", "rmi-play", "cjk-text", "no-truncation", "map-blocked", "ui-text", "text-tokens", "text-layout"] as const;
 /** Kit tools that are apps too: the project preview host (tools/preview),

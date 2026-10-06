@@ -183,3 +183,9 @@ Two editors share the `editor/api` edit protocol. **Studio** (a web page, packag
 | Web (wasm) | Done | Per-game 1×–4× raster density with a 2× default, native-density text and integer device-pixel presentation. Static player pages mount host audio after a user gesture and provide mute/master-volume controls. [Play in the browser](../README.md#play-in-the-browser) |
 | Headless simulator for tests | Done | |
 | PSP | Partial | This repository does not gate it; a consuming app is admitted through PocketJS's `pocket check --target psp` |
+
+## Networking
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Local multiplayer demo (`examples/wander-online`) | Partial | A frozen wander window shared by a Bun authoritative server (20 Hz, 10 Hz AOI snapshots, loopback-only) with client-side prediction (rollback-and-replay against `ackSeq` watermarks) and 100 ms remote interpolation. Two desktop hosts and a browser tab see each other walk (state-verified by `demo.sh`, 3×); transport-drop reconnect and server-restart rejoin are covered by `tests/wander-online-client.test.ts` and the demo's restart phase, with a fresh epoch on every join (predictor ring and interpolator reset so sessions do not mix); 100 bots hold 60 fps on QuickJS in the demo's load phase. Limits: localhost only, no accounts, no persistence, no anti-cheat, one frozen window (no streaming world). See [the example README](../examples/wander-online/README.md) |
