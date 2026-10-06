@@ -121,8 +121,11 @@ The links point to where each feature is described in detail.
 
 ## Editor
 
+Two editors share the `editor/api` edit protocol. **Studio** (a web page, packaged for the desktop with Electron by `studio-desktop/`) is the editor that receives new features. The **PocketJS editor** (`editor/`, the rows below that do not name Studio) is frozen: it gets fixes but no new features, and it has no bundle budget, only a loose guard against accidental growth. The rows below describe what both editors already do unless a row says otherwise.
+
 | Feature | Status | Notes |
 | --- | --- | --- |
+| PocketJS editor (`editor/`) | Frozen | Builds and passes its tests; receives fixes only. New editing features go to Studio and `editor/api` (CLI and MCP). See [Editor](../editor/README.md) |
 | Tile painting, passage overrides, one-way edges, undo/redo | Done | Tile layers and per-map passage work for inline and sharded maps; passage-only maps count as authored content instead of showing the empty-map guide. Global sheet-edge editing is inline-only. [Editor](../editor/README.md) |
 | Editing events, pages, conditions and command trees | Done | Every command and condition kind in the current project schema is editable; see [event command and condition editing](../editor/README.md#event-command-and-condition-editing) |
 | Map properties; new, duplicate and delete maps | Done | Inline projects; a sharded session keeps the map-index structure fixed |

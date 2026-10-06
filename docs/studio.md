@@ -1,7 +1,9 @@
 # Studio
 
 Studio is a map and event editor for `rpgkit-project/v1` projects that runs
-as an ordinary web page (DOM and canvas). It has no PocketJS bundle budget,
+as an ordinary web page (DOM and canvas), and as a desktop app through
+Electron (`studio-desktop/`). It is the editor that receives new features;
+the PocketJS editor in `editor/` is frozen. It has no PocketJS bundle budget,
 so it can afford a full desktop-style layout: a command palette, zoomable
 canvas with a minimap and layer controls, searchable patterned tile palette,
 inspector forms, history panel and a problems list.

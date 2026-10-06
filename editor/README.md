@@ -1,5 +1,12 @@
 # Pocket RPG Kit — Editor (preview)
 
+> **Frozen.** This PocketJS editor receives fixes but no new features. New
+> editing work goes to [Studio](../docs/studio.md), which runs in the browser
+> and as a desktop app through Electron (`studio-desktop/`), and to the shared
+> `editor/api` protocol that Studio, `rpgkit-edit` and its MCP server use.
+> Shared `editor/api` code still lands in this editor's bundle; it has no
+> size budget, only a loose guard against accidental growth.
+
 A tile-map editor for `rpgkit-project/v1` documents, running as a PocketJS
 app on the portable desktop host and in the browser. It opens the kit's
 example projects (`examples/sunstone`, `examples/meadow`) and paints them

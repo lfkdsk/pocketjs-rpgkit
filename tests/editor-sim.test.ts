@@ -695,109 +695,19 @@ simDescribe("editor data.fs project store", () => {
   });
 });
 
-// --- budget -----------------------------------------------------------------
+// --- size guard ---------------------------------------------------------------
 
-simDescribe("editor budget", () => {
-  test("bundle sizes stay in the editor budget", () => {
+// The PocketJS editor is frozen: it receives fixes but no new features, and
+// it is not shipped to a size-constrained device. New editor features go to
+// Studio (browser and Electron) through editor/api. Shared editor/api code
+// still lands in this bundle, so the only check left is a loose guard against
+// an accidental blow-up (a whole library pulled in by mistake), not a budget.
+// Measured at the freeze: editor.js 1,680,231 B, editor.pak 541,152 B.
+simDescribe("editor size guard", () => {
+  test("bundles stay below the accidental-growth guard", () => {
     const pak = statSync(appBundle("editor") + ".pak").size;
     const js = statSync(appBundle("editor") + ".js").size;
-    // E3 adds two 16px raw TILESET entries (37,836 B), 25 preview actor
-    // images, and the larger text slots used by the play/debug chrome.
-    // The playtest-art fixture adds its icon sheet's 3 cells, 4 animation
-    // frames, one 128x64 parallax and a sheet-icons TILESET: measured
-    // complete editor pak 522,384 B. The Chinese names of the text layout
-    // fields bake a 12-character CJK subset into the editor's font atlases
-    // and carry the Noto Sans CJK license (4,560 B): measured 541,152 B.
-    expect(pak).toBeLessThan(545_000);
-    // Shared framework + tile editor + structured event inspector, the map
-    // inspector/passage mode/transfer picking (E2), the two bundled documents,
-    // and KS1's embedded command schema/read-only summaries.
-    // E3 intentionally adds the production GameView/session renderer to the
-    // editor-only entry plus its debug adapter, and KAU1 adds the audio schema
-    // plus read-only audio command/condition summaries. The PocketJS upstream
-    // rebase adds the same 10,219 shared bytes as Sunstone, and DEMO1's shared
-    // GameView demo seam adds a little more. Together with the proposal queue,
-    // portable validation/apply model, review panel, ghost overlays, the
-    // exact-revision host SAVE handshake, and E5's editable fields for every
-    // current command/condition with schema gates and resource hints (about
-    // 43,650 B), and KG1's scene branch ADD dispatch, scene fields and
-    // play-test scene placeholder, the merged editor is 1,195,808 B. Large
-    // (sharded) project editing adds the lazy shard workspace, chunked
-    // companion transport and virtual map catalog: 1,232,242 B. ED-UI1's
-    // measured text fitting and responsive chrome baseline is 1,242,030 B;
-    // AI4's local-agent protocol/request UI and responsive integration add
-    // 16,949 B, for 1,258,979 B. The shared immutable-session engine/UI
-    // paths add 31,070 B: measured 1,290,049 B; 1,304,853 B before the
-    // PocketJS editor moved onto editor/api. Every edit now runs through the
-    // shared protocol: editor/api/operations.ts joins the bundle (66,881 B:
-    // argument checks, addresses, diff/patch-v1, in-memory revisions), the
-    // edit rules move out of the model (edit-rules.ts 33,258 B, model.ts
-    // 42,405 -> 25,393 B for the operation/history layer), plus the
-    // validation memo (1,632 B) and refusal reporting in the app (1,225 B):
-    // measured 1,391,375 B.
-    // CJK-aware text layout in the shared dialog/battle/save-menu boxes
-    // (9,416 B) and dialog pages and wrapped list labels that never cut
-    // text (5,252 B) join it, with Studio's move-map
-    // operation: measured 1,412,949 B.
-    // The editor's embedded WorldLayout schema and project support add
-    // 5,620 B: measured 1,418,569 B. Runtime consumers only pay for the
-    // compatible schema identity recorded by the isolation tests.
-    // The loop/break commands, the eventTouch trigger and the {v:} text
-    // token (shared engine code, the embedded schema, and the editor's
-    // loop-body paths, picker entries and token scan) join it: measured
-    // 1,430,125 B.
-    // The editor does not opt into connected-world rendering. Integer
-    // chunk-window reuse plus GameView's generic factory seam bring the
-    // measured bundle to 1,436,638 B; the 30,507 B concrete renderer portion
-    // formerly pulled through the preview is absent. Keep a narrow margin.
-    // KRM2 engine/schema/editor support and the editor's intentional
-    // krm2ScreenPresentation registration measure 1,492,592 bytes. Ordinary
-    // GameView apps keep the picture/HUD implementation isolated. The merged
-    // Studio command palette, minimap, layers and canvas polish add 3,595 B;
-    // timer-aware immutable cache keys add 317 B: measured 1,496,504 B.
-    // The W3 cache driver's editor-visible types and the world-bounded
-    // fixture's shared paths: measured 1,498,456 B. The interface-text merge
-    // adds the bundled schema's uiText keys, BoundedLine and the bounded
-    // editor paths: the merged editor measures 1,522,089 B. Seamless-v1's
-    // schema/editor preservation, traversal identity, transfer provenance and
-    // sparse reducer state bring it to 1,528,850 B; the editor still does not
-    // opt into the concrete world handoff resolver. KRM3V's embedded schema,
-    // parallax/animation Studio preview and shared reducer support add 15,006
-    // B, measuring 1,543,856 B. The in-editor playtest now registers the
-    // opt-in ItemIconRow and ParallaxLayer renderers so shops draw the baked
-    // item-icon cells, adding 10,076 B: measured 1,553,932 B. The bundled
-    // playtest-art fixture (its 11.7 KB document plus the three-kind art
-    // manifest) brings the merged editor to 1,566,916 B. KRM3's label/
-    // select-item/access/locationInfo/stop-se commands and the fix-4 engine
-    // changes land on top, bringing the merged editor to 1,591,111 B. The
-    // cold-path performance work (entry-page dependency cache, stable
-    // extension condition keys, deferred seamless eviction) brings it to
-    // 1,598,588 B, and the {x:} text-token wiring brings it to 1,601,512 B.
-    // PocketJS upstream #514's packed touch-recorder pages add 2,020 B of
-    // shared DevTools code (1,603,532 B), and GameView's share of the
-    // connected-world neighbour preview plus the session's left-map snapshot
-    // bring it to 1,606,330 B (+2,798). Autosave's embedded schema, bilingual
-    // picker/summary, in-flight validation and shared snapshot seam add
-    // 5,813 B: 1,612,143 B. The text command's optional layout (shared box
-    // geometry and DialogBox, the four select fields with wrapped bilingual
-    // hints in the event inspector, the embedded schema, interpreter, theme
-    // and list summary, portrait-in-box scaling) adds 13,223 B: 1,625,366 B.
-    // Deferred autosave scheduling adds 1,714 shared runtime bytes: the
-    // measured editor bundle is 1,627,080 B. The seamless commit-frame
-    // preview handover and the stepped World build bring it to 1,629,994 B.
-    // GameView tap-to-walk adds 7,298 B (the editor playtest passes
-    // tapToWalk=false, so only the shared GameView/drain path ships):
-    // measured 1,637,292 B. The per-reference-tick route resolver (the
-    // session/attract hook that keeps a turn from overshooting at 4 Hz)
-    // adds 977 shared bytes: measured 1,638,269 B. Project catalog CRUD
-    // (six catalogs, typed reference discovery and the optional
-    // switch/variable declarations in the embedded schema) and the
-    // transactional proposal workflow (QA gate, sharded accept, PNG
-    // publication, shared Studio acceptance path) add 35,685 B combined:
-    // the measured editor bundle is 1,673,954 B. The passage rectangle and
-    // room-template brushes, `validate --map` and the caller-relative
-    // `@path` resolution add 6,277 B: measured 1,680,231 B. Keep a narrow
-    // margin.
-    expect(js).toBeLessThan(1_684_000);
+    expect(pak).toBeLessThan(1_000_000);
+    expect(js).toBeLessThan(3_000_000);
   });
 });
