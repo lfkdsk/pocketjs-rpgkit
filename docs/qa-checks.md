@@ -247,13 +247,77 @@ makes no claim about other host frame rates: a witness is verified at
 
 Args: `file`, `start` (optional object: `{ map?, x?, y?, dir?, switches?,
 variables?, items?, gold? }`; defaults to the project start with a fresh
-bank), and the budgets `maxFrames` / `maxStates` / `maxSeconds`.
+bank), the budgets `maxFrames` / `maxStates` / `maxSeconds`, and the state
+goals `goals` / `goalMode` (below).
 `battle` (registered `BattleRules` plus an optional auto-input callback) is
 available on the TypeScript API. The CLI can load function-bearing battle
 rules through `--session`; MCP JSON cannot. Without either form the search
 uses the default `encounters-declined` policy, so a map gated on a battle
 outcome is notFound. A `--session` battle uses zero input; the TypeScript API
 is the route when a reducer needs custom auto-input.
+
+**State goals.** `goals` is a list of predicate strings; `goalMode` is `all`
+(default) or `any`. The search stops as soon as the combined predicate holds
+at one observed state (`endedReason: "goals-met"`) — a goal is evaluated at
+every tick the search observes, so a state the game only passes through (a
+tile crossed on the way to a transfer, a switch set between dialogs) is
+witnessed too. With no goals the implicit goal is every map, so the search
+stops as soon as each map has a witness instead of spending the rest of the
+budget. The predicate grammar:
+
+| Goal | Meaning |
+| --- | --- |
+| `switch:<id>[=<bool>]` | a switch holds (default `true`) |
+| `variable:<id><op><n>` | a variable compares (`==` `!=` `>=` `<=` `>` `<`) |
+| `item:<id>[<op><n>]` | item count (default `>=1`) |
+| `gold<op><n>` | the party's gold |
+| `selfSwitch:<map>/<event>/<key>[=<bool>]` | an event's held self switch |
+| `event-page:<map>/<event>=<page>` | the event's active page index |
+| `map:<id>[@<x>,<y>]` | the player is on the map (optionally on the tile) |
+| `all(<goal>, …)` / `any(<goal>, …)` | combinators, nestable |
+
+Evaluation mirrors the engine's own condition semantics: a missing switch is
+false, a missing variable or item count is 0. A goal that names a map or
+event the document does not have (or a tile outside the map, or a page index
+out of range) is a `reach/goal-unknown-target` **error**. The grammar is
+strict: an empty comparator operand (`gold>=`), unbalanced parentheses
+(`all(switch:done), any(switch:x)`), and a self-switch key outside `A`–`D`
+are parse errors, not silent misses.
+
+When the goals are met the report's `goals` section carries the combined
+witness (`witness`, `expectedHash`, `final` state summary), the canonical
+`expr` string (the exact expression a replay re-evaluates), and a per-goal
+`results` list, each with its own replayable witness. When they are not met
+within budget, `goals.status` is `unmet` and the section carries `closest`
+(the explored state that satisfied the most goals, with its own witness and
+`satisfied` / `unsatisfied` goal lists) and `suggestedBudget` (a larger
+budget worth retrying with) when a budget stopped the search.
+
+**Replay.** `reach --replay <file>` (and the `rpgkit-reach-replay` MCP tool)
+independently re-verifies a saved witness: the tape is replayed in a fresh
+session and must land on the recorded state hash (and target map, when
+named), and the goal expression the witness carries must re-evaluate on the
+replayed final state — with the same `all`/`any`/nested semantics the search
+used (the report's `goals.expr` is the faithful source; `mode`/`results` are
+the display view). The file is a bare `{hz, masks, expectedHash?, goals?,
+expr?, …}` object or a **full reach report** whose `goals` section carries a
+witness (save a run's JSON output and pass it here — a goals section alone
+is not a replay file); a no-goal report's top-level `closest` state also
+replays (it carries its own `expectedHash` and start). Exit code is 0 when the witness re-verifies, 1 when
+it does not (the report says why, with a per-goal breakdown), 2 for usage
+errors. `--replay` reads only `--file`, `--replay`, `--goal`/`--goal-mode`
+(which override the witness's own goals) and `--session`; other flags
+(`--json`, the budgets) are ignored. The MCP tool's `witness` path is
+confined to the server root (symlink-safe): a path that resolves outside it
+is rejected with `PATH_OUTSIDE_ROOT` before the file is read.
+
+**Failing a CI gate on unmet goals.** `--fail-unmet` exits 1 when a reach
+run's goals were not met within budget (the JSON report is still printed),
+so a gate can fail on an unmet goal without parsing JSON:
+
+```sh
+bun run rpgkit-check reach --file my-game.json --goal 'switch:rewarded=true' --fail-unmet
+```
 
 **Budgets are execution limits, not hints.** The frame budget counts the
 ticks the search really executes: a choices fan-out's shared walk/dialog
@@ -265,29 +329,38 @@ spent at that check), so the whole search runs at most one block past the
 limit: `framesRun <= maxFrames + 6`. The block-constant tape makes one
 block (6 ticks) the minimum unit of work, so `maxFrames=1` runs one
 block. `endedReason` is one of
-`exhausted`, `frame-budget`, `state-budget`, `time-budget`.
+`exhausted`, `frame-budget`, `state-budget`, `time-budget`, `goals-met`.
 `maxFrames` and `maxStates` are non-negative integers; `maxSeconds` is a
 non-negative number (fractional allowed). The CLI exposes the budgets as
-`--max-frames <n>`, `--max-states <n>`, `--max-seconds <n>` (space and
-`=` forms); CLI flags win over the same keys in `--json`.
+`--max-frames <n>`, `--max-states <n>`, `--max-seconds <n>`, the goals as
+`--goal <expr>` (repeatable) and `--goal-mode <all|any>`, replay as
+`--replay <file>` (space and `=` forms), and `--fail-unmet` (exit 1 when
+goals were not met within budget); CLI flags win over the same keys
+in `--json`.
 
 `summary`: `maps`, `reached`, `notFound`, `statesExplored`, `statesQueued`,
-`framesRun`, `endedReason`. The report also carries `start` (`"map@x,y"`),
-`battlePolicy`, `budgets`, `maps` (per-map `status`, `frames`,
-`witness`, `stateHash`, or `frontier`), `reachableMaps`, `notFoundMaps`, and
-`assumptions`. A missing or unstandable start is a `reach/start-unreachable`
-error. Structural checks run alongside the search: a transfer to a map the
-project does not define is a `reach/transfer-target-missing` **error**; a
-transfer landing on a blocked tile is a `reach/transfer-landing-blocked`
-**warning**; maps no literal transfer points at and dynamic-target transfers
-are listed as `reach/map-orphan` / `reach/dynamic-transfer` **info**.
+`framesRun`, `endedReason`, and `goals` (`met`/`unmet`) when goals were
+given. The report also carries `start` (`"map@x,y"`), `battlePolicy`,
+`budgets`, `maps` (per-map `status`, `frames`, `witness`, `stateHash`, or
+`frontier`), `reachableMaps`, `notFoundMaps`, the optional `goals` section,
+and `assumptions`. With no goals, a run that a budget stopped with maps
+still unfound also carries `closest` (the deepest explored state, with its
+own replayable witness) and `suggestedBudget` (a larger budget worth
+retrying with) — the same lead the goals section gives a goals run. A
+missing or unstandable start is a
+`reach/start-unreachable` error. Structural checks run alongside the
+search: a transfer to a map the project does not define is a
+`reach/transfer-target-missing` **error**; a transfer landing on a blocked
+tile is a `reach/transfer-landing-blocked` **warning**; maps no literal
+transfer points at and dynamic-target transfers are listed as
+`reach/map-orphan` / `reach/dynamic-transfer` **info**.
 
 ```sh
 $ bun run rpgkit-check reach --file examples/sunstone/data/sunstone.json
 {
   "check": "reach",
   "findings": [],
-  "summary": { "maps": 3, "reached": 3, "notFound": 0, "statesExplored": 112, "framesRun": 120000, "endedReason": "frame-budget" },
+  "summary": { "maps": 3, "reached": 3, "notFound": 0, "statesExplored": 105, "statesQueued": 49, "framesRun": 112878, "endedReason": "goals-met" },
   "start": "village@9,9",
   "battlePolicy": "encounters-declined",
   "budgets": { "maxFrames": 120000, "maxStates": 3000, "maxSeconds": 60 },
@@ -299,6 +372,29 @@ $ bun run rpgkit-check reach --file examples/sunstone/data/sunstone.json
     { "map": "cave", "status": "reached", "frames": 696, "witness": { "hz": 60, "masks": ["… 696 masks …"] }, "stateHash": "…" }
   ],
   "assumptions": ["… the search's known imprecisions …"]
+}
+```
+
+With goals the search stops the moment they hold, well inside the budget:
+
+```sh
+$ bun run rpgkit-check reach --file my-game.json --goal 'switch:rewarded=true' --goal 'gold>=80'
+{
+  "check": "reach",
+  "findings": [],
+  "summary": { "maps": 4, "reached": 2, "notFound": 2, "statesExplored": 31, "statesQueued": 12, "framesRun": 488, "endedReason": "goals-met", "goals": "met" },
+  "goals": {
+    "mode": "all",
+    "status": "met",
+    "results": [
+      { "goal": "switch:rewarded=true", "status": "met", "witness": { "hz": 60, "masks": ["…"] }, "final": { "map": "village", "x": 5, "y": 2, "facing": "up", "gold": 80, "switches": { "rewarded": true }, "variables": {}, "items": {}, "selfSwitches": {} } },
+      { "goal": "gold>=80", "status": "met", "witness": { "hz": 60, "masks": ["…"] }, "final": { "…" } }
+    ],
+    "witness": { "hz": 60, "masks": ["… 488 masks …"] },
+    "expectedHash": "…",
+    "final": { "map": "village", "x": 5, "y": 2, "facing": "up", "gold": 80, "switches": { "rewarded": true }, "variables": {}, "items": {}, "selfSwitches": {} }
+  },
+  "…"
 }
 ```
 
@@ -435,12 +531,19 @@ build:wasm`); a missing wasm is a thrown error (exit 2).
 | code | severity | meaning | typical fix |
 | --- | --- | --- | --- |
 | `reach/start-unreachable` | error | the start map is missing, or the start tile is not standable | fix `start.map` or move the start to a standable tile |
+| `reach/goal-unknown-target` | error | a goal names a map or event the document does not have, a tile outside the map, or a page index out of range | fix the goal expression |
 | `reach/map-not-found` | warning | no replayable witness to the map was found within budget | a lead, not a proof; puzzles, shops, extensions, dynamic transfers, and battle outcomes under non-default rules may still reach it — the frontier names the inbound pages that never ran |
 | `reach/witness-replay-failed` | error | a recorded witness did not replay to its map and state in a fresh session | a check-tool bug; report it with the project |
 | `reach/transfer-target-missing` | error | a literal transfer targets a map the project does not define | fix the transfer's `map` |
 | `reach/transfer-landing-blocked` | warning | a transfer lands on a non-standable tile | move the landing or make the tile standable |
 | `reach/map-orphan` | info | no literal transfer points at the map | expected for a map only reached by a dynamic transfer or extension; remove it otherwise |
 | `reach/dynamic-transfer` | info | a transfer's target is a variable/expression, not a literal map id | the search does not follow it; ensure the target is reachable another way |
+
+### `reach-replay`
+
+| code | severity | meaning | typical fix |
+| --- | --- | --- | --- |
+| `reach-replay/failed` | error | the witness did not replay to the recorded state hash, or a goal did not re-evaluate on the replayed final state | re-run reach to record a fresh witness |
 
 ### `explore`
 
@@ -452,9 +555,10 @@ build:wasm`); a missing wasm is a thrown error (exit 2).
 ## MCP tools
 
 `rpgkit-check` starts no server of its own; the editing server mounts the
-six checks as MCP tools (see [edit-api.md](edit-api.md)). The tool names are
+checks as MCP tools (see [edit-api.md](edit-api.md)). The tool names are
 `rpgkit-lint`, `rpgkit-locks`, `rpgkit-freeze`, `rpgkit-reach`,
-`rpgkit-explore`, and `rpgkit-shot`, each taking the same arguments as the
-CLI `--json` object plus `file`. Only `rpgkit-shot` writes files; the rest
-are read-only. MCP inputs are JSON-only and therefore use the default session
-fallbacks; `--session` is a CLI-only trusted-code facility.
+`rpgkit-reach-replay`, `rpgkit-explore`, and `rpgkit-shot`, each taking the
+same arguments as the CLI `--json` object plus `file`. Only `rpgkit-shot`
+writes files; the rest are read-only. MCP inputs are JSON-only and therefore
+use the default session fallbacks; `--session` is a CLI-only trusted-code
+facility.

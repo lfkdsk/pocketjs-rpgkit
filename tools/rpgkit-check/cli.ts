@@ -28,9 +28,12 @@ function usage(): never {
     `usage: bun tools/rpgkit-check/cli.ts <check> --file <doc.json> [--json '<args>'] [--out <dir>]\n` +
       `  [--session <module>]\n` +
       `  [--max-frames <n>] [--max-states <n>] [--max-seconds <n>] [--map <id>] [--incremental]\n` +
+      `  [--goal <expr>]... [--goal-mode all|any] [--replay <witness-file>] [--fail-unmet]\n` +
       `checks: ${CHECK_TOOLS.map((t) => t.name.replace(/^rpgkit-/, "")).join(", ")}\n` +
       `note: reach reports a replayable witness for every reached map; a notFound map is a lead, not a proof.\n` +
-      `note: reach budgets are execution limits: the search may run at most one 6-tick block past --max-frames.`,
+      `note: reach budgets are execution limits: the search may run at most one 6-tick block past --max-frames.\n` +
+      `note: reach --goal stops the search when the goals are met; --replay re-verifies a saved witness.\n` +
+      `note: --fail-unmet exits 1 when a reach run's goals were not met within budget (for CI gates).`,
   );
   process.exit(2);
 }
@@ -61,6 +64,10 @@ let maxStates: number | undefined;
 let maxSeconds: number | undefined;
 let map: string | undefined;
 let incremental = false;
+const goals: string[] = [];
+let goalMode: "all" | "any" | undefined;
+let replayFile: string | undefined;
+let failUnmet = false;
 for (let i = 1; i < argv.length; i++) {
   const arg = argv[i]!;
   // A flag must be followed by its value; a missing or empty value is a
@@ -93,6 +100,17 @@ for (let i = 1; i < argv.length; i++) {
   else if (arg === "--max-seconds") maxSeconds = parseBudget("--max-seconds", takeValue("--max-seconds"));
   else if (arg === "--map") map = takeValue("--map");
   else if (arg === "--incremental") incremental = true;
+  else if (arg === "--goal") goals.push(takeValue("--goal"));
+  else if (arg === "--goal-mode") {
+    const value = takeValue("--goal-mode");
+    if (value !== "all" && value !== "any") {
+      console.error(`--goal-mode must be all or any, got ${JSON.stringify(value)}`);
+      usage();
+    }
+    goalMode = value;
+  }
+  else if (arg === "--replay") replayFile = takeValue("--replay");
+  else if (arg === "--fail-unmet") failUnmet = true;
   else if (arg.startsWith("--file=")) file = takeEquals("--file", arg);
   else if (arg.startsWith("--json=") || arg.startsWith("--args=")) {
     argsJson = takeEquals(arg.startsWith("--json=") ? "--json" : "--args", arg);
@@ -102,6 +120,16 @@ for (let i = 1; i < argv.length; i++) {
   else if (arg.startsWith("--max-states=")) maxStates = parseBudget("--max-states", takeEquals("--max-states", arg), true);
   else if (arg.startsWith("--max-seconds=")) maxSeconds = parseBudget("--max-seconds", takeEquals("--max-seconds", arg));
   else if (arg.startsWith("--map=")) map = takeEquals("--map", arg);
+  else if (arg.startsWith("--goal=")) goals.push(takeEquals("--goal", arg));
+  else if (arg.startsWith("--goal-mode=")) {
+    const value = takeEquals("--goal-mode", arg);
+    if (value !== "all" && value !== "any") {
+      console.error(`--goal-mode must be all or any, got ${JSON.stringify(value)}`);
+      usage();
+    }
+    goalMode = value;
+  }
+  else if (arg.startsWith("--replay=")) replayFile = takeEquals("--replay", arg);
   else {
     console.error(`unknown argument: ${arg}`);
     usage();
@@ -113,7 +141,20 @@ if (!file) {
   usage();
 }
 
-const tool = checkTool(checkName);
+if (replayFile && checkName !== "reach" && checkName !== "reach-replay") {
+  console.error("--replay only applies to reach");
+  usage();
+}
+if ((goals.length > 0 || goalMode !== undefined) && checkName !== "reach" && checkName !== "reach-replay") {
+  console.error("--goal/--goal-mode only apply to reach");
+  usage();
+}
+if (failUnmet && checkName !== "reach") {
+  console.error("--fail-unmet only applies to reach");
+  usage();
+}
+
+const tool = checkTool(replayFile ? "reach-replay" : checkName);
 if (!tool) {
   console.error(`unknown check: ${checkName}`);
   usage();
@@ -139,16 +180,25 @@ if (argsJson) {
 
 // Explicit CLI flags win over the JSON args object: a --file on the command
 // line can never be overridden by a "file" key inside --json.
-const callArgs = {
-  ...extraArgs,
-  ...(out ? { out } : {}),
-  ...(maxFrames !== undefined ? { maxFrames } : {}),
-  ...(maxStates !== undefined ? { maxStates } : {}),
-  ...(maxSeconds !== undefined ? { maxSeconds } : {}),
-  ...(map !== undefined ? { map } : {}),
-  ...(incremental ? { incremental: true } : {}),
-  file,
-};
+const callArgs = replayFile
+  ? {
+      ...(goals.length > 0 ? { goals } : {}),
+      ...(goalMode !== undefined ? { goalMode } : {}),
+      file,
+      witness: replayFile,
+    }
+  : {
+      ...extraArgs,
+      ...(out ? { out } : {}),
+      ...(maxFrames !== undefined ? { maxFrames } : {}),
+      ...(maxStates !== undefined ? { maxStates } : {}),
+      ...(maxSeconds !== undefined ? { maxSeconds } : {}),
+      ...(map !== undefined ? { map } : {}),
+      ...(incremental ? { incremental: true } : {}),
+      ...(goals.length > 0 ? { goals } : {}),
+      ...(goalMode !== undefined ? { goalMode } : {}),
+      file,
+    };
 
 async function loadSessionOptions(file: string): Promise<SessionOptions> {
   const href = pathToFileURL(resolve(process.cwd(), file)).href;
@@ -189,6 +239,12 @@ try {
   const result = await tool.run(callArgs, sessionOptions ? { sessionOptions } : undefined);
   console.log(JSON.stringify(result, null, 2));
   const report = result as Partial<CheckReport>;
+  // --fail-unmet: a goals run that spent its budget without meeting the goals
+  // exits 1 so a CI gate can fail on an unmet goal without parsing JSON.
+  if (failUnmet && (result as { goals?: { status?: string } }).goals?.status === "unmet") {
+    console.error("reach goals were not met within budget (--fail-unmet)");
+    process.exit(1);
+  }
   if (Array.isArray(report.findings)) {
     const { error } = countBySeverity(report.findings);
     process.exit(error > 0 ? 1 : 0);

@@ -31,7 +31,7 @@
 // with it.
 
 import type { BattleInput, BattleRules } from "../../../../src/engine/battle.ts";
-import { activePage, createSwitchState, type ExtensionScope, type SwitchState } from "../../../../src/engine/interpreter.ts";
+import { activePage, type ExtensionScope } from "../../../../src/engine/interpreter.ts";
 import { deepClone } from "../../../../src/engine/clone.ts";
 import { isStandable } from "../../../../src/engine/passability.ts";
 import {
@@ -52,6 +52,7 @@ import {
   NOOP_BATTLE_RULES,
   checkConditionContext,
   projectWithStart,
+  reachStartSwitchState,
   startFresh,
 } from "./sim.ts";
 import {
@@ -70,6 +71,19 @@ import {
   verifyWitness,
   type ReachWitness,
 } from "./reach-witness.ts";
+import {
+  evalGoal,
+  evalGoalExpr,
+  formatGoal,
+  formatGoalExpr,
+  leafGoals,
+  parseGoals,
+  summarizeState,
+  validateGoalsAgainstProject,
+  type ReachGoal,
+  type ReachGoalExpr,
+  type ReachStateSummary,
+} from "./reach-goal.ts";
 
 /** The search limitations every verdict is reported under. */
 const REACH_ASSUMPTIONS: readonly string[] = [
@@ -126,6 +140,14 @@ export interface ReachOptions {
     rules: BattleRules;
     input?: (state: unknown) => BattleInput;
   };
+  /** State goals: predicate strings (reach-goal.ts grammar). With goals,
+   *  the search stops as soon as the combined predicate holds at one
+   *  observed state ("goals-met") and reports the witness to that state;
+   *  without goals the implicit goal is every map and the search stops as
+   *  soon as every map has a witness. */
+  goals?: string[];
+  /** How multiple goals combine (default "all"). */
+  goalMode?: "all" | "any";
   /** Game-owned registrations loaded by the CLI's --session module. */
   sessionOptions?: SessionOptions;
 }
@@ -158,18 +180,94 @@ export type ReachMapResult =
       frontier: ReachFrontier;
     };
 
+/** One leaf goal's outcome, with its own replayable witness when met. */
+export interface ReachGoalResult {
+  goal: string;
+  status: "met" | "unmet";
+  witness?: ReachWitness;
+  final?: ReachStateSummary;
+}
+
+/** The explored state that satisfied the most goals, with a replayable
+ *  witness, so a budget-exhausted run still shows how far the search got. */
+export interface ReachClosest {
+  final: ReachStateSummary;
+  satisfied: string[];
+  unsatisfied: string[];
+  frames: number;
+  witness?: ReachWitness;
+}
+
+export interface ReachGoalsReport {
+  mode: "all" | "any";
+  status: "met" | "unmet";
+  /** The canonical goal expression (formatGoalExpr) the search evaluated —
+   *  the faithful source for a replay, which evaluates it with the same
+   *  any/all/nested semantics. `mode`/`results` are the display view. */
+  expr: string;
+  results: ReachGoalResult[];
+  /** The witness that satisfied the combined predicate (status "met"). */
+  witness?: ReachWitness;
+  expectedHash?: string;
+  final?: ReachStateSummary;
+  /** The start the search ran from, when it was not the project start, so a
+   *  replay can reconstruct the same origin (map, position, bank). */
+  start?: {
+    map: string;
+    x: number;
+    y: number;
+    dir?: string;
+    switches?: Record<string, boolean>;
+    variables?: Record<string, number>;
+    items?: Record<string, number>;
+    gold?: number;
+  };
+  /** The closest state when the goals were not all met. */
+  closest?: ReachClosest;
+  /** When a budget stopped the search before the goals were met: a larger
+   *  budget worth retrying with (a heuristic, not a promise). */
+  suggestedBudget?: { maxFrames?: number; maxStates?: number; maxSeconds?: number };
+}
+
 export interface ReachReport extends CheckReport {
   check: "reach";
   findings: Finding[];
   start: string;
   battlePolicy: "encounters-declined" | "registered-rules";
-  endedReason: "exhausted" | "frame-budget" | "state-budget" | "time-budget";
+  endedReason: "exhausted" | "frame-budget" | "state-budget" | "time-budget" | "goals-met";
   budgets: { maxFrames: number; maxStates: number; maxSeconds: number };
   maps: ReachMapResult[];
   /** Convenience: maps with a replayed witness, in document order. */
   reachableMaps: string[];
   /** Convenience: maps no witness was found for, in document order. */
   notFoundMaps: string[];
+  /** Present when the run had explicit state goals. */
+  goals?: ReachGoalsReport;
+  /** When a NO-GOAL run stopped on a budget with maps still unfound: the
+   *  deepest explored state (the farthest story progress the search made),
+   *  with its own replayable witness — the same lead the goals section's
+   *  `closest` gives a goals run. `expectedHash` and `start` let a fresh
+   *  `reach --replay` re-verify the lead from the same origin. */
+  closest?: {
+    final: ReachStateSummary;
+    depth: number;
+    frames: number;
+    witness: ReachWitness;
+    expectedHash?: string;
+    start?: {
+      map: string;
+      x: number;
+      y: number;
+      dir?: string;
+      switches?: Record<string, boolean>;
+      variables?: Record<string, number>;
+      items?: Record<string, number>;
+      gold?: number;
+    };
+  };
+  /** When a NO-GOAL run stopped on a budget with maps still unfound: a
+   *  larger budget worth retrying with (a heuristic, not a promise). */
+  suggestedBudget?: { maxFrames?: number; maxStates?: number; maxSeconds?: number };
   assumptions: string[];
 }
 
@@ -299,14 +397,10 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
       triggeredPages.add(`${key}#${pageIndex}`);
     },
   });
-  const sw0: SwitchState | undefined = options.start
-    ? createSwitchState({
-        switches: options.start.switches,
-        variables: options.start.variables,
-        items: options.start.items,
-        gold: options.start.gold ?? project.initialGold ?? 0,
-      })
-    : undefined;
+  // The search and a witness replay build the custom start's bank from the
+  // same helper (sim.ts reachStartSwitchState), so a recorded witness always
+  // replays from the same origin state.
+  const sw0 = reachStartSwitchState(project, options.start);
 
   const findings: Finding[] = [];
 
@@ -331,6 +425,36 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
       maxSeconds,
       options.sessionOptions,
     );
+  }
+
+  // State goals. A grammar error is a usage error (the registry wraps it as
+  // a CheckArgsError); a goal that names a map/event the document does not
+  // have is an error finding with an early return, the same shape as a bad
+  // start.
+  const goalMode: "all" | "any" = options.goalMode === "any" ? "any" : "all";
+  const goalExpr: ReachGoalExpr | undefined = options.goals && options.goals.length > 0
+    ? parseGoals(options.goals, goalMode)
+    : undefined;
+  const goalLeaves: ReachGoal[] = goalExpr ? leafGoals(goalExpr) : [];
+  if (goalExpr) {
+    const goalErrors = validateGoalsAgainstProject(goalExpr, proj);
+    if (goalErrors.length > 0) {
+      for (const message of goalErrors) {
+        findings.push(makeFinding("reach/goal-unknown-target", "error", message, "fix the goal expression", {}));
+      }
+      return emptyReport(
+        proj,
+        findings,
+        start,
+        battlePolicy,
+        maxFrames,
+        maxStates,
+        maxSeconds,
+        options.sessionOptions,
+        goalExpr,
+        goalMode,
+      );
+    }
   }
 
   // --- BFS over real engine states ---------------------------------------
@@ -387,6 +511,56 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
     return 1;
   };
 
+  // --- goal tracking ------------------------------------------------------
+  // Every observed state (the root, every node, and every mid-ride tick the
+  // driver's hook reports) is considered against the goals: the first state
+  // that satisfies the whole expression ends the search ("goals-met"); the
+  // state with the most leaf goals satisfied is kept as the closest state
+  // for a budget-exhausted run.
+
+  /** A recorded state: the node it branched from (null = the root), the tape
+   *  suffix from that node, and the recorded state hash. */
+  interface GoalHit {
+    parent: SearchNode | null;
+    suffix: number[];
+    hash: string;
+    state: SessionState;
+    depth: number;
+  }
+  const leafHits: (GoalHit | undefined)[] = goalLeaves.map(() => undefined);
+  let combinedHit: GoalHit | undefined;
+  let best: { hit: GoalHit; satisfied: boolean[]; count: number } | undefined;
+  let goalsMet = false;
+
+  const consider = (state: SessionState, parent: SearchNode | null, suffix: readonly number[]): void => {
+    if (!goalExpr) return;
+    const ctx = { state, session };
+    const satisfied = goalLeaves.map((g) => evalGoal(g, ctx));
+    const count = satisfied.reduce<number>((acc, ok) => acc + (ok ? 1 : 0), 0);
+    const depth = (parent?.depth ?? -1) + 1;
+    satisfied.forEach((ok, i) => {
+      if (ok && !leafHits[i]) {
+        leafHits[i] = { parent, suffix: [...suffix], hash: stateHash(state), state: deepClone(state), depth };
+      }
+    });
+    // Strict improvement only: the closest state is the one that satisfied
+    // the most goals (first one at that count), so a budget-exhausted run
+    // clones at most one state per leaf goal.
+    if (!best || count > best.count) {
+      best = {
+        hit: { parent, suffix: [...suffix], hash: stateHash(state), state: deepClone(state), depth },
+        satisfied,
+        count,
+      };
+    }
+    if (!combinedHit && evalGoalExpr(goalExpr, ctx)) {
+      combinedHit = { parent, suffix: [...suffix], hash: stateHash(state), state: deepClone(state), depth };
+      goalsMet = true;
+    }
+  };
+
+  consider(rootState, null, []);
+
   const queue = new NodeQueue(mapScore);
   queue.push(root);
   const seen = new Set<string>([root.key]);
@@ -401,6 +575,10 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
   let framesRun = 0;
   let endedReason: ReachReport["endedReason"] = "exhausted";
   const t0 = Date.now();
+  // The deepest explored node (macros from the root): the farthest story
+  // progress the search made, reported as the closest state when a no-goal
+  // run stops on a budget with maps still unfound.
+  let deepest: SearchNode = root;
 
   /** Sample the active page of every event on the node's map, so the
    *  frontier can distinguish "condition never held" from "never confirmed". */
@@ -423,6 +601,7 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
 
   const addLeaf = (leaf: MacroLeaf, parent: SearchNode, isWait: boolean): void => {
     if (leaf.error || leaf.battleTimeout || leaf.rideBudget || leaf.budget) return; // dead end
+    consider(leaf.state, parent, leaf.tapeSuffix);
     for (const pageKey of leaf.pagesObserved) {
       observePage(leaf.state.mapId, pageKey);
     }
@@ -442,10 +621,12 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
       seq: seq++,
     };
     if (!reached.has(leaf.state.mapId)) reached.set(leaf.state.mapId, { kind: "node", node });
+    if (node.depth > deepest.depth) deepest = node;
     queue.push(node);
   };
 
   const addSnapshot = (snap: TransientSnapshot, parent: SearchNode): void => {
+    consider(snap.state, parent, snap.tapeSuffix);
     observePage(snap.state.mapId, snap.pageKey);
     const key = stateKey(snap.state);
     if (seen.has(key)) return;
@@ -462,6 +643,7 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
       seq: seq++,
     };
     if (!reached.has(snap.state.mapId)) reached.set(snap.state.mapId, { kind: "node", node });
+    if (node.depth > deepest.depth) deepest = node;
     queue.push(node);
   };
 
@@ -469,6 +651,14 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
     battleInput: options.battle?.input as MacroContext["battleInput"],
     knownPages: observedPages,
     onTransient: (snap) => addSnapshot(snap, node),
+    // State goals: every observed tick is considered; a met expression parks
+    // the macro at the witnessing tick.
+    onGoalHit: goalExpr
+      ? (state, suffix) => {
+          consider(state, node, suffix);
+          return goalsMet;
+        }
+      : undefined,
     // Live remaining frame budget (the search updates framesRun between
     // macros) and the wall-clock deadline, so a macro parks inside its own
     // ride-out/battle/wait loop instead of a full macro past the limit.
@@ -476,7 +666,22 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
     deadline: t0 + maxSeconds * 1000,
   });
 
-  while (queue.size > 0) {
+  // The goal checks run before the queue-empty check: a macro that meets the
+  // goals parks without producing a leaf, so the queue can be empty while
+  // goalsMet is set.
+  for (;;) {
+    if (goalsMet) {
+      endedReason = "goals-met";
+      break;
+    }
+    // With no explicit goals the implicit goal is every map: stop as soon as
+    // each one has a witness instead of spending the rest of the budget
+    // re-exploring (the old run-to-budget behavior).
+    if (!goalExpr && reached.size >= proj.maps.length) {
+      endedReason = "goals-met";
+      break;
+    }
+    if (queue.size === 0) break;
     if (framesRun >= maxFrames) {
       endedReason = "frame-budget";
       break;
@@ -525,6 +730,19 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
     if (framesRun >= maxFrames) endedReason = "frame-budget";
     else if (statesExplored >= maxStates) endedReason = "state-budget";
     else if (Date.now() - t0 > maxSeconds * 1000) endedReason = "time-budget";
+  }
+
+  // A goal hit mid-macro can land on a map the driver never reported as a
+  // map entry: the witness to that state IS a witness to the map (it replays
+  // there with the recorded hash), so count it as reached — the report must
+  // not prove a goal on a map it also lists as notFound.
+  if (combinedHit && !reached.has(combinedHit.state.mapId)) {
+    reached.set(combinedHit.state.mapId, {
+      kind: "entry",
+      parent: combinedHit.parent ?? root,
+      suffix: combinedHit.suffix,
+      hash: combinedHit.hash,
+    });
   }
 
   // --- witness verification ----------------------------------------------
@@ -593,6 +811,172 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
     ));
   }
 
+  // --- goals report --------------------------------------------------------
+  // Every met goal (and the combined witness) is replayed in a fresh session
+  // and re-evaluated against the replayed final state: a witness that does
+  // not replay is a tool bug (an error finding), never a "met". An unmet run
+  // reports the closest state (the most goals satisfied at one state) with
+  // its own replayable witness, and when a budget stopped the search, a
+  // larger budget worth retrying with.
+  /** A larger budget worth retrying with when a budget stopped the search
+   *  (a heuristic, not a promise). Shared by the goals section and the
+   *  no-goal "every map" hint. */
+  const suggestedBudget = (): ReachGoalsReport["suggestedBudget"] => {
+    if (endedReason === "frame-budget") return { maxFrames: Math.max(framesRun, 1) * 2 };
+    if (endedReason === "state-budget") return { maxStates: Math.max(statesExplored, 1) * 2 };
+    if (endedReason === "time-budget") return { maxSeconds: Math.max(maxSeconds, 0.001) * 2 };
+    return undefined;
+  };
+  // The start the search ran from, when it was not the project start, so a
+  // replay can reconstruct the same origin (map, position, bank). Shared by
+  // the goals report and the no-goal closest.
+  const startInfo = options.start
+    ? {
+        map: start.map,
+        x: start.x,
+        y: start.y,
+        ...(start.dir ? { dir: start.dir } : {}),
+        ...(start.switches ? { switches: start.switches } : {}),
+        ...(start.variables ? { variables: start.variables } : {}),
+        ...(start.items ? { items: start.items } : {}),
+        ...(start.gold !== undefined ? { gold: start.gold } : {}),
+      }
+    : undefined;
+  let goalsReport: ReachGoalsReport | undefined;
+  if (goalExpr) {
+    // The effective combinator is the expression's own: a single `any(...)`
+    // goal string is an any-expression even when the --goal-mode option was
+    // left at all. The canonical expr string is what a replay re-evaluates.
+    const effectiveMode: "all" | "any" =
+      "op" in goalExpr && (goalExpr.op === "all" || goalExpr.op === "any") ? goalExpr.op : goalMode;
+    const exprText = formatGoalExpr(goalExpr);
+    const materializeHit = (hit: GoalHit): ReachWitness => ({
+      hz: CHECK_HZ as 60,
+      masks: [...(hit.parent ? materialize(hit.parent).masks : []), ...hit.suffix],
+    });
+    const closestFromBest = (): ReachClosest => {
+      const b = best!;
+      const satisfiedNames = goalLeaves.filter((_, i) => b.satisfied[i]).map((g) => formatGoal(g));
+      const unsatisfiedNames = goalLeaves.filter((_, i) => !b.satisfied[i]).map((g) => formatGoal(g));
+      const base = {
+        final: summarizeState(b.hit.state),
+        satisfied: satisfiedNames,
+        unsatisfied: unsatisfiedNames,
+        frames: 0,
+      };
+      const witness = materializeHit(b.hit);
+      base.frames = witness.masks.length;
+      const verdict = verifyWitness(verifySession, proj, witness, b.hit.state.mapId, b.hit.hash, sw0);
+      if (!verdict.ok) {
+        findings.push(makeFinding(
+          "reach/witness-replay-failed",
+          "error",
+          `the recorded witness for the closest goal state failed replay: ${verdict.reason}`,
+          "this is a check-tool bug; please report it with the project",
+          {},
+        ));
+        return base;
+      }
+      return { ...base, final: summarizeState(verdict.replay.state), witness };
+    };
+    const results: ReachGoalResult[] = goalLeaves.map((g, i) => {
+      const hit = leafHits[i];
+      if (!hit) return { goal: formatGoal(g), status: "unmet" };
+      const witness = materializeHit(hit);
+      const verdict = verifyWitness(verifySession, proj, witness, hit.state.mapId, hit.hash, sw0);
+      if (!verdict.ok) {
+        findings.push(makeFinding(
+          "reach/witness-replay-failed",
+          "error",
+          `the recorded witness for goal ${formatGoal(g)} failed replay: ${verdict.reason}`,
+          "this is a check-tool bug; please report it with the project",
+          {},
+        ));
+        return { goal: formatGoal(g), status: "unmet" };
+      }
+      return { goal: formatGoal(g), status: "met", witness, final: summarizeState(verdict.replay.state) };
+    });
+    if (combinedHit) {
+      const witness = materializeHit(combinedHit);
+      const verdict = verifyWitness(verifySession, proj, witness, combinedHit.state.mapId, combinedHit.hash, sw0);
+      if (verdict.ok && evalGoalExpr(goalExpr, { state: verdict.replay.state, session: verifySession })) {
+        goalsReport = {
+          mode: effectiveMode,
+          status: "met",
+          expr: exprText,
+          results,
+          witness,
+          expectedHash: combinedHit.hash,
+          final: summarizeState(verdict.replay.state),
+          ...(startInfo ? { start: startInfo } : {}),
+        };
+      } else {
+        if (!verdict.ok) {
+          findings.push(makeFinding(
+            "reach/witness-replay-failed",
+            "error",
+            `the recorded goal witness failed replay: ${verdict.reason}`,
+            "this is a check-tool bug; please report it with the project",
+            {},
+          ));
+        }
+        goalsReport = {
+          mode: effectiveMode,
+          status: "unmet",
+          expr: exprText,
+          results,
+          closest: closestFromBest(),
+          ...(startInfo ? { start: startInfo } : {}),
+          ...(suggestedBudget() ? { suggestedBudget: suggestedBudget() } : {}),
+        };
+      }
+    } else {
+      goalsReport = {
+        mode: effectiveMode,
+        status: "unmet",
+        expr: exprText,
+        results,
+        closest: closestFromBest(),
+        ...(startInfo ? { start: startInfo } : {}),
+        ...(suggestedBudget() ? { suggestedBudget: suggestedBudget() } : {}),
+      };
+    }
+  }
+
+  // No goals, budget stop, maps still unfound: the implicit "every map" goal
+  // was not met. Give the same lead a goals run gives — the deepest explored
+  // state (the farthest story progress the search made) with its own
+  // replayable witness, and a larger budget worth retrying with.
+  let closestState: ReachReport["closest"];
+  let noGoalBudgetHint: ReachReport["suggestedBudget"];
+  if (
+    !goalExpr &&
+    notFoundMaps.length > 0 &&
+    (endedReason === "frame-budget" || endedReason === "state-budget" || endedReason === "time-budget")
+  ) {
+    const witness = materialize(deepest);
+    const verdict = verifyWitness(verifySession, proj, witness, deepest.state.mapId, deepest.stateHash, sw0);
+    if (!verdict.ok) {
+      findings.push(makeFinding(
+        "reach/witness-replay-failed",
+        "error",
+        `the recorded witness for the closest explored state failed replay: ${verdict.reason}`,
+        "this is a check-tool bug; please report it with the project",
+        {},
+      ));
+    } else {
+      closestState = {
+        final: summarizeState(verdict.replay.state),
+        depth: deepest.depth,
+        frames: witness.masks.length,
+        witness,
+        expectedHash: deepest.stateHash,
+        ...(startInfo ? { start: startInfo } : {}),
+      };
+      noGoalBudgetHint = suggestedBudget();
+    }
+  }
+
   return {
     check: "reach",
     findings,
@@ -604,6 +988,7 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
       statesQueued: queue.size,
       framesRun,
       endedReason,
+      ...(goalExpr ? { goals: goalsMet ? "met" : "unmet" } : {}),
     },
     start: `${start.map}@${start.x},${start.y}`,
     battlePolicy,
@@ -612,6 +997,9 @@ export function checkReach(project: Project, options: ReachOptions = {}): ReachR
     maps,
     reachableMaps,
     notFoundMaps,
+    ...(goalsReport ? { goals: goalsReport } : {}),
+    ...(closestState ? { closest: closestState } : {}),
+    ...(noGoalBudgetHint ? { suggestedBudget: noGoalBudgetHint } : {}),
     assumptions: reachAssumptions(options.sessionOptions),
   };
 }
@@ -719,11 +1107,22 @@ function emptyReport(
   maxStates: number,
   maxSeconds: number,
   sessionOptions?: SessionOptions,
+  goalExpr?: ReachGoalExpr,
+  goalMode: "all" | "any" = "all",
 ): ReachReport {
   return {
     check: "reach",
     findings,
-    summary: { maps: project.maps.length, reached: 0, notFound: project.maps.length, statesExplored: 0, statesQueued: 0, framesRun: 0, endedReason: "exhausted" },
+    summary: {
+      maps: project.maps.length,
+      reached: 0,
+      notFound: project.maps.length,
+      statesExplored: 0,
+      statesQueued: 0,
+      framesRun: 0,
+      endedReason: "exhausted",
+      ...(goalExpr ? { goals: "unmet" } : {}),
+    },
     start: `${start.map}@${start.x},${start.y}`,
     battlePolicy,
     endedReason: "exhausted",
@@ -731,6 +1130,16 @@ function emptyReport(
     maps: project.maps.map((m) => ({ map: m.id, status: "notFound" as const, frontier: { inbound: [] } })),
     reachableMaps: [],
     notFoundMaps: project.maps.map((m) => m.id),
+    ...(goalExpr
+      ? {
+          goals: {
+            mode: goalMode,
+            status: "unmet" as const,
+            expr: formatGoalExpr(goalExpr),
+            results: leafGoals(goalExpr).map((g) => ({ goal: formatGoal(g), status: "unmet" as const })),
+          },
+        }
+      : {}),
     assumptions: reachAssumptions(sessionOptions),
   };
 }

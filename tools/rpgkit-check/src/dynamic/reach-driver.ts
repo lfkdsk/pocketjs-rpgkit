@@ -455,6 +455,13 @@ export interface MacroContext {
    *  produce transient snapshots. */
   knownPages: ReadonlySet<string>;
   onTransient: (snap: TransientSnapshot) => void;
+  /** State-goal hook: called for EVERY observed tick state (so a goal a
+   *  state only passes through mid-ride — a tile crossed on the way to a
+   *  transfer, a switch set between dialogs — is still witnessed). Return
+   *  true to park the macro: the search's goals are met and the recorded
+   *  suffix is the witness. Absent when the search has no goals (zero
+   *  per-tick cost). */
+  onGoalHit?: (state: SessionState, suffix: number[]) => boolean;
   /** Remaining reference ticks before the search's frame budget is spent
    *  (live: the search updates its frame counter between macros). A macro
    *  parks (budget leaf) once its own spend reaches this. */
@@ -475,6 +482,9 @@ interface MacroRun {
   transient: TransientSnapshot[];
   /** Reference ticks this macro has stepped (its frame-budget spend). */
   framesSpent: number;
+  /** Set by onGoalHit when the search's goals are met: every loop bails
+   *  out so the macro stops at the witnessing tick. */
+  parked: boolean;
 }
 
 function makeLeaf(run: MacroRun, extra: Partial<MacroLeaf> = {}): MacroLeaf {
@@ -576,9 +586,16 @@ function observe(run: MacroRun, s: SessionState, idle: boolean, mark: number, bl
       run.ctx.onTransient(snap);
     }
   }
+  // State goals are evaluated per tick (not just at block ends): a tile the
+  // player crosses mid-block or a switch a dialog sets between blocks is
+  // only observable at its tick. A true return parks the macro at the
+  // witnessing tick.
+  if (!run.parked && run.ctx.onGoalHit?.(s, run.driver.range(run.startMark, mark)) === true) {
+    run.parked = true;
+  }
 }
 
-function stepBattle(run: MacroRun): "done" | "timeout" | "budget" {
+function stepBattle(run: MacroRun): "done" | "timeout" | "budget" | "parked" {
   let b = 0;
   while (run.driver.state.scene?.kind === "battle") {
     if (b++ >= BATTLE_BUDGET) return "timeout";
@@ -592,6 +609,7 @@ function stepBattle(run: MacroRun): "done" | "timeout" | "budget" {
     });
     if (states === "budget") return "budget";
     for (const { state: s, mark, blockEnd } of states) observe(run, s, false, mark, blockEnd);
+    if (run.parked) return "parked";
   }
   return "done";
 }
@@ -611,6 +629,7 @@ function rideOut(run: MacroRun, depth: number): void {
         return;
       }
       if (battleResult === "budget") return; // stepBattle parked a budget leaf
+      if (battleResult === "parked") return;
       continue;
     }
     const modal = s.interp.modal;
@@ -618,12 +637,14 @@ function rideOut(run: MacroRun, depth: number): void {
       const states = step(run, { hold: 0, confirm: true });
       if (states === "budget") return;
       for (const { state: st, mark, blockEnd } of states) observe(run, st, false, mark, blockEnd);
+      if (run.parked) return;
       continue;
     }
     if (modal?.kind === "shop") {
       const states = step(run, { hold: 0, cancel: true });
       if (states === "budget") return;
       for (const { state: st, mark, blockEnd } of states) observe(run, st, false, mark, blockEnd);
+      if (run.parked) return;
       continue;
     }
     if (modal?.kind === "choices") {
@@ -650,6 +671,7 @@ function rideOut(run: MacroRun, depth: number): void {
     const states = step(run, { hold: 0 });
     if (states === "budget") return;
     for (const { state: st, mark, blockEnd } of states) observe(run, st, false, mark, blockEnd);
+    if (run.parked) return;
   }
   run.leaves.push(makeLeaf(run, { rideBudget: true }));
 }
@@ -669,17 +691,21 @@ function branchChoices(run: MacroRun, depth: number): void {
       const down = step(run, { hold: 0, down: true });
       if (down === "budget") return;
       for (const { state: st, mark, blockEnd } of down) observe(run, st, false, mark, blockEnd);
+      if (run.parked) return;
     }
     const confirm = step(run, { hold: 0, confirm: true });
     if (confirm === "budget") return;
     for (const { state: st, mark, blockEnd } of confirm) observe(run, st, false, mark, blockEnd);
+    if (run.parked) return;
     rideOut(run, depth);
+    if (run.parked) return;
   }
   if (modal.cancellable) {
     run.driver.restore(deepClone(snapshot), snapMark);
     const cancel = step(run, { hold: 0, cancel: true });
     if (cancel === "budget") return;
     for (const { state: st, mark, blockEnd } of cancel) observe(run, st, false, mark, blockEnd);
+    if (run.parked) return;
     rideOut(run, depth);
   }
 }
@@ -709,6 +735,7 @@ export function executeMacro(
     leaves: [],
     transient: [],
     framesSpent: 0,
+    parked: false,
   };
   run.startMark = run.driver.mark();
 
@@ -736,6 +763,7 @@ export function executeMacro(
       blocks++;
       for (const { state: s, mark, blockEnd } of states) {
         observe(run, s, isSessionWorldIdle(s), mark, blockEnd);
+        if (run.parked) return finishEarly();
         if (s.interp.error) {
           run.leaves.push(makeLeaf(run, { error: s.interp.error.message }));
           return finishEarly();
@@ -766,16 +794,19 @@ export function executeMacro(
       const face = step(run, { hold: DIR_BUTTON[target.face]! });
       if (face === "budget") return finishEarly();
       for (const { state: st, mark, blockEnd } of face) observe(run, st, false, mark, blockEnd);
+      if (run.parked) return finishEarly();
     }
     const confirm = step(run, { hold: 0, confirm: true });
     if (confirm === "budget") return finishEarly();
     for (const { state: st, mark, blockEnd } of confirm) observe(run, st, false, mark, blockEnd);
+    if (run.parked) return finishEarly();
   } else if (target.kind === "bump") {
     // Walk into the blocking body for one block: the step is refused and
     // the eventTouch page fires (the ride-out below picks it up).
     const bump = step(run, { hold: DIR_BUTTON[target.face ?? 0]! });
     if (bump === "budget") return finishEarly();
     for (const { state: st, mark, blockEnd } of bump) observe(run, st, false, mark, blockEnd);
+    if (run.parked) return finishEarly();
   }
   // playerTouch: the entry fired during the walk.
 
@@ -806,6 +837,7 @@ export function executeWait(
     leaves: [],
     transient: [],
     framesSpent: 0,
+    parked: false,
   };
   run.startMark = run.driver.mark();
   const startMap = run.driver.session.maps.get(run.driver.state.mapId);
@@ -821,6 +853,10 @@ export function executeWait(
     for (const { state: s, mark, blockEnd } of states) {
       const idle = isSessionWorldIdle(s);
       observe(run, s, idle, mark, blockEnd);
+      if (run.parked) {
+        run.leaves.push(makeLeaf(run));
+        return { leaves: run.leaves, transient: run.transient, framesSpent: run.framesSpent };
+      }
       if (!idle) {
         // An autorun/parallel took the world busy: ride out to idle.
         rideOut(run, 0);

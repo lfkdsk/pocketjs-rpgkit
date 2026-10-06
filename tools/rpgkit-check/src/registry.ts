@@ -14,9 +14,11 @@ import { lintShellIncremental } from "./incremental.ts";
 import { checkLocks, type LockReport } from "./dynamic/locks.ts";
 import { checkFreeze, type FreezeReport } from "./dynamic/freeze.ts";
 import { checkReach, type ReachReport } from "./dynamic/reach.ts";
+import { GoalParseError, formatGoalExpr, parseGoals } from "./dynamic/reach-goal.ts";
+import { loadReplayFile, replayReachWitness } from "./dynamic/reach-replay.ts";
 import { checkExplore, type ExploreReport } from "./dynamic/explore.ts";
 import { renderShots, type ShotOutput, type RenderShotsOptions } from "./shot/render.ts";
-import type { CheckReport, Finding } from "./finding.ts";
+import { makeFinding, type CheckReport, type Finding } from "./finding.ts";
 import type { Dir, Project } from "../../../src/engine/types.ts";
 import type { SessionOptions } from "../../../src/engine/session.ts";
 import { validateSchema, type Schema, type VError } from "../../../src/engine/schema-validate.ts";
@@ -208,7 +210,11 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
       "means the search spent its budgets without finding a witness (a lead, not a proof) and the report " +
       "lists the frontier (which inbound transfers' source pages never ran). Also runs deterministic " +
       "structural checks: transfer target missing, landing on a non-standable tile, orphan maps, and " +
-      "dynamic (variable-target) transfers.",
+      "dynamic (variable-target) transfers. Optional state goals (switch:/variable:/item:/gold</>=/ " +
+      "selfSwitch:/event-page:/map:@x,y, combined with all()/any()) stop the search as soon as the " +
+      "combined predicate holds at one observed state; the report carries the replayable witness to that " +
+      "state, or the closest state and a suggested budget when the goals were not met. With no goals the " +
+      "search stops as soon as every map has a witness.",
     inputSchema: {
       type: "object",
       properties: {
@@ -227,6 +233,16 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
             gold: { type: "number" },
           },
         },
+        goals: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "State goals that stop the search when met: switch:<id>[=<bool>], variable:<id><op><n>, " +
+            "item:<id>[<op><n>] (default >=1), gold<op><n>, selfSwitch:<map>/<event>/<key>[=<bool>], " +
+            "event-page:<map>/<event>=<page>, map:<id>[@<x>,<y>]; combine with all(...) / any(...). " +
+            "Comparators: == != >= <= > <. Multiple goals combine per goalMode.",
+        },
+        goalMode: { type: "string", enum: ["all", "any"], description: "How multiple goals combine (default all)." },
         maxFrames: { type: "number", description: "Total engine tick budget for the search (default 120000). Non-negative integer; the search may run at most one 6-tick block past it." },
         maxStates: { type: "number", description: "Max states expanded (default 3000). Non-negative integer." },
         maxSeconds: { type: "number", description: "Wall-clock budget in seconds (default 60; a safety valve, not deterministic). Non-negative number." },
@@ -237,13 +253,78 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
     run: async (args, context) => {
       const { project } = loadProject(args.file, context?.root);
       const start = args.start as Parameters<typeof checkReach>[1] extends { start?: infer S } ? S : never;
-      return checkReach(project, {
-        start,
-        maxFrames: budgetArg(args, "maxFrames", true),
-        maxStates: budgetArg(args, "maxStates", true),
-        maxSeconds: budgetArg(args, "maxSeconds", false),
-        sessionOptions: context?.sessionOptions,
-      }) satisfies ReachReport;
+      try {
+        return checkReach(project, {
+          start,
+          goals: Array.isArray(args.goals) ? (args.goals as string[]) : undefined,
+          goalMode: args.goalMode === "any" ? "any" : undefined,
+          maxFrames: budgetArg(args, "maxFrames", true),
+          maxStates: budgetArg(args, "maxStates", true),
+          maxSeconds: budgetArg(args, "maxSeconds", false),
+          sessionOptions: context?.sessionOptions,
+        }) satisfies ReachReport;
+      } catch (err) {
+        if (err instanceof GoalParseError) throw new CheckArgsError(err.message, []);
+        throw err;
+      }
+    },
+  },
+  {
+    name: "rpgkit-reach-replay",
+    description:
+      "Independently re-verify a reach witness: replays a recorded 60 Hz button-mask tape in a fresh " +
+      "session and checks the replay ends on the recorded state hash (and target map, when named) and " +
+      "that every goal the witness carries re-evaluates on the replayed final state. The witness file " +
+      "is either a bare {hz, masks, ...} object or a reach report whose goals section carries one " +
+      "(save a reach run's JSON output and pass it here). Returns ok=false with the reason and a " +
+      "per-goal breakdown when the verification fails.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file: FILE_PROP,
+        witness: { type: "string", description: "Path to the witness file: a bare witness object or a saved reach report." },
+        goals: { type: "array", items: { type: "string" }, description: "Goal expressions to re-evaluate (overrides goals stored in the witness file)." },
+        goalMode: { type: "string", enum: ["all", "any"] },
+      },
+      required: ["file", "witness"],
+      additionalProperties: false,
+    },
+    run: async (args, context) => {
+      const { project } = loadProject(args.file, context?.root);
+      let replayFile;
+      try {
+        replayFile = loadReplayFile(String(args.witness));
+      } catch (err) {
+        throw new CheckArgsError(String(err instanceof Error ? err.message : err), []);
+      }
+      if (Array.isArray(args.goals) && args.goals.length > 0) {
+        const mode = args.goalMode === "any" ? "any" as const : "all" as const;
+        replayFile.goals = args.goals as string[];
+        replayFile.goalMode = mode;
+        // Rebuild the canonical expression so the override is evaluated with
+        // the same any/all/nested semantics as a recorded expr.
+        try {
+          replayFile.goalExprText = formatGoalExpr(parseGoals(args.goals as string[], mode));
+        } catch (err) {
+          if (err instanceof GoalParseError) throw new CheckArgsError(err.message, []);
+          throw err;
+        }
+      }
+      const verdict = replayReachWitness(project, replayFile, context?.sessionOptions);
+      return {
+        check: "reach-replay",
+        findings: verdict.ok
+          ? []
+          : [makeFinding(
+              "reach-replay/failed",
+              "error",
+              verdict.reason ?? "the witness did not re-verify",
+              "the recorded tape does not reproduce the recorded state; re-run reach to record a fresh witness",
+              {},
+            )],
+        verdict,
+        summary: { ok: verdict.ok ? 1 : 0, frames: verdict.frames },
+      };
     },
   },
   {

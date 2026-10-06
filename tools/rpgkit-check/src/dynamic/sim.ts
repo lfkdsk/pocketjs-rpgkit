@@ -157,6 +157,38 @@ export function startFresh(
   return startSession(project, session, sw0);
 }
 
+/** The switch state a reach search AND a witness replay both start from for
+ *  a custom start. A fresh playthrough seeds `playerName` from
+ *  `project.playerName` and `mapNameDisplay` from `system.mapNameDisplay`
+ *  (session.ts startSession); a custom start must carry the same fields or a
+ *  recorded witness replays to a different state hash (the search built a
+ *  bank without them, the replay took the fresh-playthrough path with them).
+ *  Both sides MUST go through this helper so the origin is constructed once,
+ *  in one place. Returns undefined for the project's own start (the engine's
+ *  fresh path is the reference). */
+export function reachStartSwitchState(
+  project: Project,
+  start?: {
+    switches?: Record<string, boolean>;
+    variables?: Record<string, number>;
+    items?: Record<string, number>;
+    gold?: number;
+  },
+): SwitchState | undefined {
+  if (!start) return undefined;
+  const sw = createSwitchState({
+    switches: start.switches,
+    variables: start.variables,
+    items: start.items,
+    // Match the engine's fresh-playthrough seeding: an unspecified gold
+    // falls back to the project's initialGold, not 0.
+    gold: start.gold ?? project.initialGold ?? 0,
+  });
+  if (project.playerName) sw.playerName = project.playerName;
+  if (project.system?.mapNameDisplay === true) sw.mapNameDisplay = true;
+  return sw;
+}
+
 /** A project copy whose start lands elsewhere — the engine's own entry
  *  path (local-bank clear, page sync, character spawn) then runs for that
  *  map, exactly as a transfer would. */

@@ -163,6 +163,16 @@ async function callCheckTool(id: JsonRpcId, name: string, args: Record<string, u
     if ("error" in out) return errorResponse(id, -32602, `Invalid params: ${out.error}`);
     callArgs.out = out.path;
   }
+  // rpgkit-reach-replay reads a witness file: confine it to the root exactly
+  // like file/out (symlink-safe), so a proposal-only server cannot read files
+  // outside the configured project root through it.
+  if (typeof callArgs.witness === "string") {
+    const witness = confinePath(root, callArgs.witness);
+    if ("error" in witness) {
+      return errorResponse(id, -32602, `Invalid params: ${witness.error}`, { code: "PATH_OUTSIDE_ROOT" });
+    }
+    callArgs.witness = witness.path;
+  }
   const tool = CHECK_TOOL_BY_NAME.get(name)!;
   try {
     const result = await tool.run(callArgs, { root, writable });

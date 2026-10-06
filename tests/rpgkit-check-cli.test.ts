@@ -2,7 +2,7 @@
 // MCP registry descriptors.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHECK_TOOLS, checkTool } from "../tools/rpgkit-check/src/registry.ts";
 
@@ -279,8 +279,12 @@ describe("rpgkit-check CLI", () => {
 });
 
 describe("rpgkit-check CLI reach budget flags", () => {
+  // Sunstone has more than one map, so the all-maps early stop does not trip
+  // first: the budget under test is what ends the search. (A single-map
+  // project reaches its one map from the root and ends "goals-met" before
+  // any budget can bind.)
   test("--max-frames 1 ends on the frame budget", async () => {
-    const { code, stdout } = await runCli(["reach", "--file", MEADOW, "--max-frames", "1"]);
+    const { code, stdout } = await runCli(["reach", "--file", SUNSTONE, "--max-frames", "1"]);
     expect(code).toBe(0);
     const report = JSON.parse(stdout);
     expect(report.endedReason).toBe("frame-budget");
@@ -290,21 +294,23 @@ describe("rpgkit-check CLI reach budget flags", () => {
   });
 
   test("--max-seconds 0.001 ends on the time budget", async () => {
-    const { code, stdout } = await runCli(["reach", "--file", MEADOW, "--max-seconds", "0.001"]);
+    const { code, stdout } = await runCli(["reach", "--file", SUNSTONE, "--max-seconds", "0.001"]);
     expect(code).toBe(0);
     const report = JSON.parse(stdout);
     expect(report.endedReason).toBe("time-budget");
   });
 
   test("--max-states 1 ends on the state budget", async () => {
-    const { code, stdout } = await runCli(["reach", "--file", MEADOW, "--max-states", "1"]);
+    // Sunstone has more than one map, so the all-maps early stop does not
+    // trip first: the state budget is what ends the search.
+    const { code, stdout } = await runCli(["reach", "--file", SUNSTONE, "--max-states", "1"]);
     expect(code).toBe(0);
     const report = JSON.parse(stdout);
     expect(report.endedReason).toBe("state-budget");
   });
 
   test("--max-frames=1 (= form) is parsed", async () => {
-    const { code, stdout } = await runCli(["reach", "--file", MEADOW, "--max-frames=1"]);
+    const { code, stdout } = await runCli(["reach", "--file", SUNSTONE, "--max-frames=1"]);
     expect(code).toBe(0);
     const report = JSON.parse(stdout);
     expect(report.endedReason).toBe("frame-budget");
@@ -324,7 +330,7 @@ describe("rpgkit-check CLI reach budget flags", () => {
 
   test("a CLI budget flag wins over the same key in --json", async () => {
     const { code, stdout } = await runCli([
-      "reach", "--file", MEADOW,
+      "reach", "--file", SUNSTONE,
       "--json", JSON.stringify({ maxFrames: 100000 }),
       "--max-frames", "1",
     ]);
@@ -357,7 +363,7 @@ describe("rpgkit-check CLI reach --json value domains", () => {
   });
 
   test("--json maxSeconds fractional is accepted", async () => {
-    const { code, stdout } = await runCli(["reach", "--file", MEADOW, "--json", JSON.stringify({ maxSeconds: 0.001 })]);
+    const { code, stdout } = await runCli(["reach", "--file", SUNSTONE, "--json", JSON.stringify({ maxSeconds: 0.001 })]);
     expect(code).toBe(0);
     const report = JSON.parse(stdout);
     expect(report.endedReason).toBe("time-budget");
@@ -398,5 +404,199 @@ describe("rpgkit-check MCP registry", () => {
     const lint = checkTool("lint")!;
     await expect(lint.run({ file: SUNSTONE, bogus: 1 } as never)).rejects.toThrow(/invalid args|bogus/);
     await expect(lint.run({} as never)).rejects.toThrow();
+  });
+});
+
+// --- reach goals and replay -----------------------------------------------------------
+
+const GOAL_PROJECT = join(import.meta.dir, "fixtures", "rpgkit-check", "goal-project.json");
+
+function tmpFile(name: string): string {
+  const dir = join(import.meta.dir, "..", "node_modules", ".tmp");
+  mkdirSync(dir, { recursive: true });
+  return join(dir, name);
+}
+
+describe("rpgkit-check CLI reach goals", () => {
+  test("--goal stops the search when the goal is met", async () => {
+    const { code, stdout } = await runCli([
+      "reach", "--file", GOAL_PROJECT,
+      "--goal", "switch:done=true", "--goal", "gold>=10",
+    ]);
+    expect(code).toBe(0);
+    const report = JSON.parse(stdout);
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals.status).toBe("met");
+    expect(report.goals.mode).toBe("all");
+    expect(report.goals.results.every((r: { status: string }) => r.status === "met")).toBe(true);
+    // The combined witness is a 60 Hz tape.
+    expect(report.goals.witness.hz).toBe(60);
+    expect(report.goals.witness.masks.length).toBeGreaterThan(0);
+  });
+
+  test("--goal-mode any is accepted and reported", async () => {
+    const { code, stdout } = await runCli([
+      "reach", "--file", GOAL_PROJECT,
+      "--goal", "switch:nope=true", "--goal", "gold>=10",
+      "--goal-mode", "any",
+    ]);
+    expect(code).toBe(0);
+    const report = JSON.parse(stdout);
+    expect(report.goals.mode).toBe("any");
+    expect(report.goals.status).toBe("met");
+  });
+
+  test("a bad --goal grammar exits 2", async () => {
+    const { code, stderr } = await runCli(["reach", "--file", GOAL_PROJECT, "--goal", "switch:done=maybe"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("true or false");
+  });
+
+  test("--goal on a non-reach check is a usage error", async () => {
+    const { code, stderr } = await runCli(["lint", "--file", GOAL_PROJECT, "--goal", "switch:done=true"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("only apply to reach");
+  });
+
+  test("--goal-mode other than all|any exits 2", async () => {
+    const { code, stderr } = await runCli(["reach", "--file", GOAL_PROJECT, "--goal-mode", "every"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("all or any");
+  });
+
+  test("--fail-unmet exits 0 when the goals are met", async () => {
+    const { code } = await runCli([
+      "reach", "--file", GOAL_PROJECT,
+      "--goal", "switch:done=true", "--fail-unmet",
+    ]);
+    expect(code).toBe(0);
+  });
+
+  test("--fail-unmet exits 1 when the goals are not met within budget", async () => {
+    const { code, stderr } = await runCli([
+      "reach", "--file", GOAL_PROJECT,
+      "--goal", "switch:never=true", "--json", '{"maxFrames":60}', "--fail-unmet",
+    ]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("not met");
+  });
+
+  test("--fail-unmet on a non-reach check is a usage error", async () => {
+    const { code, stderr } = await runCli(["lint", "--file", GOAL_PROJECT, "--fail-unmet"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("only applies to reach");
+  });
+});
+
+describe("rpgkit-check CLI reach --replay", () => {
+  async function runReach(args: string[]): Promise<Record<string, unknown>> {
+    const { code, stdout } = await runCli(["reach", "--file", GOAL_PROJECT, ...args]);
+    expect(code).toBe(0);
+    return JSON.parse(stdout) as Record<string, unknown>;
+  }
+
+  test("a saved report replays and re-verifies its goals", async () => {
+    const report = await runReach(["--goal", "switch:done=true"]);
+    const path = tmpFile("reach-report.json");
+    await Bun.write(path, JSON.stringify(report));
+    try {
+      const { code, stdout } = await runCli(["reach", "--file", GOAL_PROJECT, "--replay", path]);
+      expect(code).toBe(0);
+      const verdict = JSON.parse(stdout);
+      expect(verdict.check).toBe("reach-replay");
+      expect(verdict.verdict.ok).toBe(true);
+      expect(verdict.verdict.goals).toEqual([{ goal: "switch:done=true", ok: true }]);
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  test("an any-mode report replays and re-verifies under any semantics", async () => {
+    // The review's B1 repro: a legal any-mode witness (one leaf impossible,
+    // the other met) must replay exit 0, not "goals not all met".
+    const report = await runReach(["--goal", "switch:nope=true", "--goal", "gold>=10", "--goal-mode", "any"]);
+    expect((report as { goals: { status: string } }).goals.status).toBe("met");
+    const path = tmpFile("reach-any-report.json");
+    await Bun.write(path, JSON.stringify(report));
+    try {
+      const { code, stdout } = await runCli(["reach", "--file", GOAL_PROJECT, "--replay", path]);
+      expect(code).toBe(0);
+      const verdict = JSON.parse(stdout);
+      expect(verdict.verdict.ok).toBe(true);
+      expect(verdict.verdict.goals).toEqual([
+        { goal: "switch:nope=true", ok: false },
+        { goal: "gold>=10", ok: true },
+      ]);
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  test("a tampered report fails replay with exit 1", async () => {
+    const report = await runReach(["--goal", "switch:done=true"]);
+    const witness = (report as { goals: { witness: { masks: number[] } } }).goals.witness;
+    witness.masks.push(...new Array<number>(60).fill(0x0080));
+    const path = tmpFile("reach-tampered.json");
+    await Bun.write(path, JSON.stringify(report));
+    try {
+      const { code, stdout } = await runCli(["reach", "--file", GOAL_PROJECT, "--replay", path]);
+      expect(code).toBe(1);
+      const verdict = JSON.parse(stdout);
+      expect(verdict.verdict.ok).toBe(false);
+      expect(verdict.findings.length).toBeGreaterThan(0);
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  test("--replay on a report without goals exits 2", async () => {
+    const report = await runReach([]);
+    const path = tmpFile("reach-plain.json");
+    await Bun.write(path, JSON.stringify(report));
+    try {
+      const { code, stderr } = await runCli(["reach", "--file", GOAL_PROJECT, "--replay", path]);
+      expect(code).toBe(2);
+      expect(stderr).toContain("no goals section");
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  test("a map@x,y goal combined with others replays (the N1 regression)", async () => {
+    // The review's N1 repro: a witness combining map@x,y with another goal
+    // recorded an expr whose coordinate comma the replay parser split, so
+    // --replay exited 2. The search and replay must agree on the grammar.
+    const report = await runReach(["--goal", "map:A@1,2", "--goal", "switch:done=true"]);
+    expect((report as { goals: { status: string; expr: string } }).goals.status).toBe("met");
+    expect((report as { goals: { expr: string } }).goals.expr).toContain("map:A@1,2");
+    const path = tmpFile("reach-map-tile.json");
+    await Bun.write(path, JSON.stringify(report));
+    try {
+      const { code, stdout } = await runCli(["reach", "--file", GOAL_PROJECT, "--replay", path]);
+      expect(code).toBe(0);
+      const verdict = JSON.parse(stdout);
+      expect(verdict.verdict.ok).toBe(true);
+      expect(verdict.verdict.goals).toEqual([
+        { goal: "map:A@1,2", ok: true },
+        { goal: "switch:done=true", ok: true },
+      ]);
+    } finally {
+      unlinkSync(path);
+    }
+  });
+
+  test("a nested combinator with map@x,y replays", async () => {
+    const report = await runReach(["--goal", "all(any(map:A@1,2, switch:nope=true), switch:done=true)"]);
+    expect((report as { goals: { status: string } }).goals.status).toBe("met");
+    const path = tmpFile("reach-map-tile-nested.json");
+    await Bun.write(path, JSON.stringify(report));
+    try {
+      const { code, stdout } = await runCli(["reach", "--file", GOAL_PROJECT, "--replay", path]);
+      expect(code).toBe(0);
+      const verdict = JSON.parse(stdout);
+      expect(verdict.verdict.ok).toBe(true);
+    } finally {
+      unlinkSync(path);
+    }
   });
 });

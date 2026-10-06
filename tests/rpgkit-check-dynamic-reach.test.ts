@@ -12,11 +12,15 @@ import {
   verifyWitness,
   type ReachWitness,
 } from "../tools/rpgkit-check/src/dynamic/reach-witness.ts";
-import { checkSessionOptions } from "../tools/rpgkit-check/src/dynamic/sim.ts";
+import { checkSessionOptions, reachStartSwitchState } from "../tools/rpgkit-check/src/dynamic/sim.ts";
+import { loadReplayFile, replayReachWitness } from "../tools/rpgkit-check/src/dynamic/reach-replay.ts";
 import { loadProjectFile } from "../tools/rpgkit-check/src/doc.ts";
 import { createSession, startSession } from "../src/engine/session.ts";
 import type { BattleRules } from "../src/engine/battle.ts";
 import type { Command, GameEvent, MapDef, PageCondition, Project } from "../src/engine/types.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function grassMap(id: string, events: GameEvent[] = []): MapDef {
   return {
@@ -672,9 +676,12 @@ describe("rpgkit-check reach: budgets are execution limits", () => {
   });
 
   test("maxStates stops the search after exploring that many states", () => {
+    // C is unreachable, so the all-maps early stop never trips and the state
+    // budget is what ends the search.
     const project = fixtureProject([
       grassMap("A", [touchEvent("door", 2, 2, "B")]),
       grassMap("B"),
+      grassMap("C"),
     ]);
     const report = checkReach(project, { maxStates: 1 });
     expect(report.endedReason).toBe("state-budget");
@@ -717,9 +724,10 @@ describe("rpgkit-check reach: budgets are execution limits", () => {
       grassMap("C"),
     ]);
     const report = checkReach(project, { maxFrames: 1000 });
-    // The fan-out's real spend is well under the budget; the search finishes.
+    // The fan-out's real spend is well under the budget; every map is
+    // reached, so the all-maps early stop ends the search ("goals-met").
     expect(Number(report.summary.framesRun)).toBeLessThan(1000);
-    expect(report.endedReason).toBe("exhausted");
+    expect(report.endedReason).toBe("goals-met");
     // C is reached: B0 was explored and its onward door triggered.
     expect(report.reachableMaps).toContain("C");
     expect(report.notFoundMaps).toEqual([]);
@@ -972,8 +980,578 @@ describe("rpgkit-check reach: example documents", () => {
         expect(m.witness.hz).toBe(60);
         expect(m.witness.masks.length % 6).toBe(0);
       }
-      // The search explores more than one state on a real project.
-      expect(Number(report.summary.statesExplored)).toBeGreaterThan(1);
+      // The search explores more than one state on a real multi-map project.
+      // A single-map project already reaches its one map from the root, so
+      // the all-maps early stop ends it before any expansion.
+      if (loaded.project!.maps.length > 1) {
+        expect(Number(report.summary.statesExplored)).toBeGreaterThan(1);
+      } else {
+        expect(report.endedReason).toBe("goals-met");
+      }
     }, 60_000);
   }
+});
+
+// --- state goals -------------------------------------------------------------------
+//
+// With goals the search stops as soon as the combined predicate holds at one
+// observed state ("goals-met"), reporting a replayable witness to that state;
+// an unmet run reports the closest state and a suggested budget. With no
+// goals the implicit goal is every map, so the search stops as soon as each
+// map has a witness instead of spending the rest of the budget.
+
+describe("rpgkit-check reach: state goals", () => {
+  test("a switch goal stops the search early with a replayable witness", () => {
+    const project = fixtureProject([
+      grassMap("A", [
+        actionEvent("chest", 2, 2, [
+          { op: "switch", id: "done", value: true },
+          { op: "text", lines: ["Done."] },
+        ]),
+      ]),
+      grassMap("B"),
+    ]);
+    const report = checkReach(project, { goals: ["switch:done=true"], maxFrames: 120000 });
+    expect(report.endedReason).toBe("goals-met");
+    // Early stop: the search spent a few hundred frames, not the budget.
+    expect(Number(report.summary.framesRun)).toBeLessThan(5000);
+    expect(report.goals?.status).toBe("met");
+    expect(report.goals?.results).toEqual([
+      expect.objectContaining({ goal: "switch:done=true", status: "met" }),
+    ]);
+    const witness = report.goals!.witness!;
+    expect(witness.hz).toBe(60);
+    // The witness replays in a fresh session and the goal holds on replay.
+    const replay = replayWitness(freshSession(project), project, witness);
+    expect(replay.finalHash).toBe(report.goals!.expectedHash!);
+    expect(replay.state.sw.switches["done"]).toBe(true);
+    // The terminal state summary says where the tape ends and what changed.
+    expect(report.goals!.final?.map).toBe("A");
+    expect(report.goals!.final?.switches).toMatchObject({ done: true });
+  });
+
+  test("all-mode: every goal must hold at the same state", () => {
+    const project = fixtureProject([
+      grassMap("A", [
+        actionEvent("chest", 2, 2, [
+          { op: "switch", id: "done", value: true },
+          { op: "gold", set: "add", amount: 10 },
+          { op: "text", lines: ["Loot."] },
+        ]),
+      ]),
+    ]);
+    const report = checkReach(project, {
+      goals: ["switch:done=true", "gold>=10"],
+      maxFrames: 120000,
+    });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals?.status).toBe("met");
+    expect(report.goals?.mode).toBe("all");
+    expect(report.goals?.results.every((r) => r.status === "met")).toBe(true);
+    const replay = replayWitness(freshSession(project), project, report.goals!.witness!);
+    expect(replay.state.sw.switches["done"]).toBe(true);
+    expect(replay.state.sw.gold).toBe(10);
+  });
+
+  test("any-mode: one satisfied goal is enough", () => {
+    const project = fixtureProject([
+      grassMap("A", [
+        actionEvent("chest", 2, 2, [
+          { op: "gold", set: "add", amount: 10 },
+          { op: "text", lines: ["Loot."] },
+        ]),
+      ]),
+    ]);
+    const report = checkReach(project, {
+      goals: ["switch:impossible=true", "gold>=10"],
+      goalMode: "any",
+      maxFrames: 120000,
+    });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals?.status).toBe("met");
+    const met = report.goals!.results!.filter((r) => r.status === "met").map((r) => r.goal);
+    expect(met).toEqual(["gold>=10"]);
+  });
+
+  test("an unmet goal reports the closest state and a suggested budget", () => {
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B"),
+    ]);
+    const report = checkReach(project, { goals: ["switch:never=true"], maxFrames: 60 });
+    expect(report.endedReason).toBe("frame-budget");
+    expect(report.goals?.status).toBe("unmet");
+    expect(report.goals?.closest).toBeDefined();
+    expect(report.goals!.closest!.unsatisfied).toEqual(["switch:never=true"]);
+    expect(report.goals!.closest!.satisfied).toEqual([]);
+    // The closest state carries its own replayable witness.
+    const closest = report.goals!.closest!;
+    expect(closest.witness).toBeDefined();
+    const replay = replayWitness(freshSession(project), project, closest.witness!);
+    expect(replay.state.mapId).toBe(closest.final.map);
+    // A budget stop suggests a larger budget worth retrying with.
+    expect(report.goals!.suggestedBudget?.maxFrames).toBeGreaterThan(60);
+  });
+
+  test("a map@x,y goal is witnessed at the tile, including a pass-through", () => {
+    // BFS from (0,0) to the door at (2,2) walks (0,1),(0,2),(1,2),(2,2)
+    // (down is the first dir tried): (0,1) is only passed through mid-walk,
+    // never an idle node.
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B"),
+    ]);
+    const passThrough = checkReach(project, { goals: ["map:A@0,1"], maxFrames: 120000 });
+    expect(passThrough.endedReason).toBe("goals-met");
+    const replay1 = replayWitness(freshSession(project), project, passThrough.goals!.witness!);
+    expect(replay1.state.mapId).toBe("A");
+    expect(replay1.state.move.tx).toBe(0);
+    expect(replay1.state.move.ty).toBe(1);
+    // The landing tile of a transfer is an idle state.
+    const landing = checkReach(project, { goals: ["map:B@0,0"], maxFrames: 120000 });
+    expect(landing.endedReason).toBe("goals-met");
+    const replay2 = replayWitness(freshSession(project), project, landing.goals!.witness!);
+    expect(replay2.state.mapId).toBe("B");
+    expect(replay2.state.move.tx).toBe(0);
+    expect(replay2.state.move.ty).toBe(0);
+  });
+
+  test("event-page and selfSwitch goals", () => {
+    const project = fixtureProject([
+      grassMap("A", [
+        {
+          id: "door",
+          x: 4,
+          y: 0,
+          pages: [
+            { trigger: "action", commands: [{ op: "text", lines: ["Locked."] }] },
+            { trigger: "action", condition: { switch: "opened" }, commands: [{ op: "text", lines: ["Open."] }] },
+          ],
+        },
+        actionEvent("lever", 2, 2, [
+          { op: "switch", id: "opened", value: true },
+          { op: "text", lines: ["Click."] },
+        ]),
+        actionEvent("chest", 0, 4, [
+          { op: "selfSwitch", key: "A", value: true },
+          { op: "text", lines: ["Opened."] },
+        ]),
+      ]),
+    ]);
+    const page = checkReach(project, { goals: ["event-page:A/door=1"], maxFrames: 120000 });
+    expect(page.endedReason).toBe("goals-met");
+    expect(page.goals?.status).toBe("met");
+    const self = checkReach(project, { goals: ["selfSwitch:A/chest/A"], maxFrames: 120000 });
+    expect(self.endedReason).toBe("goals-met");
+    const replay = replayWitness(freshSession(project), project, self.goals!.witness!);
+    expect(replay.state.sw.self["A/chest"]).toBe("A");
+  });
+
+  test("goals already holding at the start give a zero-frame witness", () => {
+    const project = fixtureProject([grassMap("A"), grassMap("B")]);
+    const report = checkReach(project, {
+      start: { map: "A", x: 0, y: 0, switches: { done: true } },
+      goals: ["switch:done=true"],
+    });
+    expect(report.endedReason).toBe("goals-met");
+    expect(Number(report.summary.framesRun)).toBe(0);
+    expect(report.goals!.witness!.masks).toEqual([]);
+  });
+
+  test("a goal naming an unknown map is an error finding", () => {
+    const project = fixtureProject([grassMap("A")]);
+    const report = checkReach(project, { goals: ["map:NOPE@0,0"] });
+    expect(report.findings.some((f) => f.check === "reach/goal-unknown-target" && f.severity === "error")).toBe(true);
+    expect(report.goals?.status).toBe("unmet");
+  });
+
+  test("with no goals the search stops as soon as every map is reached", () => {
+    // The retest complaint: an all-maps run spent its whole 800004-frame
+    // budget after finding the last map. The implicit goal is every map, so
+    // the search now stops the moment each one has a witness.
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B", [touchEvent("door", 2, 2, "C")]),
+      grassMap("C"),
+    ]);
+    const report = checkReach(project, { maxFrames: 120000 });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.reachableMaps).toEqual(["A", "B", "C"]);
+    expect(Number(report.summary.framesRun)).toBeLessThan(120000);
+  });
+
+  test("a no-goal state-budget stop with unfound maps reports a closest state and a suggested budget", () => {
+    // The retest complaint: a default reach run that only found some maps
+    // gave no hint what to try next. With no goals the implicit goal is
+    // every map; a budget stop with maps unfound now carries the same
+    // closest-state and suggested-budget lead a goals run gives.
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B", [touchEvent("door", 2, 2, "C")]),
+      grassMap("C"),
+    ]);
+    const report = checkReach(project, { maxStates: 1 });
+    expect(report.endedReason).toBe("state-budget");
+    expect(report.notFoundMaps).toEqual(["C"]);
+    expect(report.suggestedBudget?.maxStates).toBeGreaterThan(1);
+    expect(report.closest).toBeDefined();
+    // The closest state is the deepest the search got (B, one macro in).
+    expect(report.closest!.depth).toBeGreaterThanOrEqual(1);
+    expect(report.closest!.final.map).toBe("B");
+    // It carries its own replayable witness.
+    const replay = replayWitness(freshSession(project), project, report.closest!.witness);
+    expect(replay.state.mapId).toBe("B");
+    expect(Number(report.closest!.frames)).toBeGreaterThan(0);
+  });
+
+  test("a no-goal report's closest state replays through loadReplayFile", () => {
+    // S1: a no-goal report's top-level closest is a lead worth re-verifying,
+    // but --replay on the whole report used to exit 2 ("no goals section").
+    // The closest now carries expectedHash/start so a fresh replay re-verifies
+    // the lead from the same origin.
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B", [touchEvent("door", 2, 2, "C")]),
+      grassMap("C"),
+    ]);
+    const report = checkReach(project, { maxStates: 1 });
+    expect(report.closest).toBeDefined();
+    const closest = report.closest!;
+    expect(closest.expectedHash).toBeDefined();
+    const expectedHash = closest.expectedHash!;
+    const dir = mkdtempSync(join(tmpdir(), "reach-closest-"));
+    const path = join(dir, "report.json");
+    writeFileSync(path, JSON.stringify(report));
+    const file = loadReplayFile(path);
+    expect(file.witness.masks.length).toBe(closest.witness.masks.length);
+    expect(file.expectedHash).toBe(expectedHash);
+    expect(file.targetMap).toBe("B");
+    const verdict = replayReachWitness(project, file);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.finalHash).toBe(expectedHash);
+    expect(verdict.final.map).toBe("B");
+  });
+
+  test("a no-goal frame-budget stop with unfound maps reports a suggested budget", () => {
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B"),
+    ]);
+    const report = checkReach(project, { maxFrames: 1 });
+    expect(report.endedReason).toBe("frame-budget");
+    expect(report.notFoundMaps).toEqual(["B"]);
+    expect(report.suggestedBudget?.maxFrames).toBeGreaterThan(1);
+    expect(report.closest).toBeDefined();
+    const replay = replayWitness(freshSession(project), project, report.closest!.witness);
+    expect(replay.state.mapId).toBe(report.closest!.final.map);
+  });
+
+  test("a no-goal run that finds every map carries no budget hint", () => {
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B"),
+    ]);
+    const report = checkReach(project, { maxFrames: 120000 });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.suggestedBudget).toBeUndefined();
+    expect(report.closest).toBeUndefined();
+  });
+
+  test("a goal met on a map entered mid-macro counts that map as reached", () => {
+    // S1: the goal parks the macro mid-ride (no leaf is produced), so the map
+    // entry the driver observed was never flushed to the search — the report
+    // proved a goal on a map it also listed as notFound. The combined witness
+    // lands on that map, so the map counts as reached with that witness.
+    const project = fixtureProject([
+      grassMap("A", [touchEvent("door", 2, 2, "B")]),
+      grassMap("B"),
+    ]);
+    const report = checkReach(project, { goals: ["map:B@0,0"], maxFrames: 120000 });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals?.status).toBe("met");
+    expect(report.reachableMaps).toContain("B");
+    expect(report.notFoundMaps).not.toContain("B");
+    expect(
+      report.findings.some((f) => f.check === "reach/map-not-found" && f.message.includes('"B"')),
+    ).toBe(false);
+    // The map's witness is the goal witness and replays onto B.
+    const b = report.maps.find((m) => m.map === "B");
+    expect(b?.status).toBe("reached");
+    if (b && b.status === "reached") {
+      const replay = replayWitness(freshSession(project), project, b.witness);
+      expect(replay.state.mapId).toBe("B");
+      expect(replay.finalHash).toBe(b.stateHash);
+    }
+  });
+
+  test("a custom start's bank seeds the same fields as the engine's fresh playthrough", () => {
+    // S2: reachStartSwitchState and the engine's startSession are two pieces
+    // of code that must seed the same session fields. If the engine adds a
+    // new seeded field, the helper must pick it up or a recorded witness
+    // replays to a different hash. Compare the full SwitchState for a
+    // project with every seedable field set.
+    const project: Project = {
+      ...fixtureProject([grassMap("A")]),
+      playerName: "Red",
+      initialGold: 42,
+      system: { mapNameDisplay: true },
+    };
+    const engineSw = startSession(project, freshSession(project)).sw;
+    // A custom start with no bank fields must seed exactly what the engine's
+    // fresh playthrough does.
+    const helperSw = reachStartSwitchState(project, {});
+    expect(helperSw).toBeDefined();
+    expect(helperSw!).toEqual(engineSw);
+    // A custom start with bank fields keeps them and still carries the
+    // project seeds.
+    const banked = reachStartSwitchState(project, {
+      switches: { done: true },
+      variables: { count: 3 },
+      items: { key: 1 },
+      gold: 7,
+    })!;
+    expect(banked.switches).toEqual({ done: true });
+    expect(banked.variables).toEqual({ count: 3 });
+    expect(banked.items).toEqual({ key: 1 });
+    expect(banked.gold).toBe(7);
+    expect(banked.playerName).toBe("Red");
+    expect(banked.mapNameDisplay).toBe(true);
+  });
+});
+
+// --- witness replay ----------------------------------------------------------------
+//
+// `reach --replay` (and the rpgkit-reach-replay tool) independently re-verifies
+// a recorded witness: the tape is replayed in a fresh session and must land on
+// the recorded state hash, and every goal the witness carries must re-evaluate
+// on the replayed final state.
+
+describe("rpgkit-check reach: witness replay", () => {
+  const goalProject = (): Project => fixtureProject([
+    grassMap("A", [
+      actionEvent("chest", 2, 2, [
+        { op: "switch", id: "done", value: true },
+        { op: "text", lines: ["Done."] },
+      ]),
+    ]),
+  ]);
+
+  function writeTmp(name: string, body: unknown): string {
+    const dir = mkdtempSync(join(tmpdir(), "reach-replay-"));
+    const path = join(dir, name);
+    writeFileSync(path, JSON.stringify(body));
+    return path;
+  }
+
+  test("a met report replays and re-verifies its goals", () => {
+    const project = goalProject();
+    const report = checkReach(project, { goals: ["switch:done=true"] });
+    expect(report.goals?.status).toBe("met");
+    const path = writeTmp("report.json", report);
+    const file = loadReplayFile(path);
+    const verdict = replayReachWitness(project, file);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.final.switches).toMatchObject({ done: true });
+    expect(verdict.goals).toEqual([{ goal: "switch:done=true", ok: true }]);
+  });
+
+  test("a tampered witness fails the hash check", () => {
+    const project = goalProject();
+    const report = checkReach(project, { goals: ["switch:done=true"] });
+    // Append a second of held LEFT: the replay walks off the recorded final
+    // tile and lands on a different state.
+    const masks = [...report.goals!.witness!.masks, ...new Array<number>(60).fill(0x0080)];
+    const path = writeTmp("bare.json", {
+      hz: 60,
+      masks,
+      expectedHash: report.goals!.expectedHash,
+      goals: ["switch:done=true"],
+    });
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain("hash");
+  });
+
+  test("a witness whose goal no longer holds fails the goal check", () => {
+    const project = goalProject();
+    const report = checkReach(project, { goals: ["switch:done=true"] });
+    // Re-verify against a DIFFERENT goal the recorded state does not satisfy.
+    const path = writeTmp("bare.json", {
+      hz: 60,
+      masks: report.goals!.witness!.masks,
+      expectedHash: report.goals!.expectedHash,
+      goals: ["switch:other=true"],
+    });
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain("switch:other=true");
+    expect(verdict.goals).toEqual([{ goal: "switch:other=true", ok: false }]);
+  });
+
+  test("a report without a goals section is a usage error", () => {
+    const project = goalProject();
+    const report = checkReach(project); // no goals
+    const path = writeTmp("plain.json", report);
+    expect(() => loadReplayFile(path)).toThrow(/no goals section/);
+  });
+
+  test("a witness recorded from a custom start replays from that start", () => {
+    // The goal holds at the custom start itself (a switch in the start bank);
+    // the witness is empty, but the replay must still seed the bank and the
+    // start position, not the project's default start. The project carries
+    // initialGold, which the replay must also seed (an unspecified gold
+    // falls back to the project's initialGold, not 0).
+    const project = { ...goalProject(), initialGold: 500 };
+    const report = checkReach(project, {
+      start: { map: "A", x: 3, y: 3, dir: "up", switches: { done: true } },
+      goals: ["switch:done=true"],
+    });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals!.start).toMatchObject({ map: "A", x: 3, y: 3, switches: { done: true } });
+    const path = writeTmp("report.json", report);
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(true);
+    expect(verdict.final.map).toBe("A");
+    expect(verdict.final.x).toBe(3);
+    expect(verdict.final.y).toBe(3);
+    expect(verdict.final.switches).toMatchObject({ done: true });
+    expect(verdict.final.gold).toBe(500);
+  });
+
+  // B1: the replay evaluates the SAME goal expression the search did —
+  // any/all and nested combinators included. The old replay required every
+  // leaf goal to hold, so a legal any-mode witness was judged a failure.
+  const lootProject = (): Project => fixtureProject([
+    grassMap("A", [
+      actionEvent("chest", 2, 2, [
+        { op: "switch", id: "done", value: true },
+        { op: "gold", set: "add", amount: 10 },
+        { op: "text", lines: ["Loot."] },
+      ]),
+    ]),
+  ]);
+
+  test("an any-mode witness replays and re-verifies under any semantics", () => {
+    const project = lootProject();
+    const report = checkReach(project, {
+      goals: ["switch:impossible=true", "gold>=10"],
+      goalMode: "any",
+    });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals?.status).toBe("met");
+    // The report records the effective combinator and the canonical expr.
+    expect(report.goals?.mode).toBe("any");
+    expect(report.goals?.expr).toBe("any(switch:impossible=true, gold>=10)");
+    const path = writeTmp("any-report.json", report);
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    // The old replay failed here ("goals not all met: switch:impossible").
+    expect(verdict.ok).toBe(true);
+    // The per-leaf breakdown still shows which leaf carried the witness.
+    expect(verdict.goals).toEqual([
+      { goal: "switch:impossible=true", ok: false },
+      { goal: "gold>=10", ok: true },
+    ]);
+  });
+
+  test("a nested combinator witness replays under the nested semantics", () => {
+    const project = lootProject();
+    // A single any(...) goal string is an any-expression even though the
+    // --goal-mode option defaults to all.
+    const report = checkReach(project, {
+      goals: ["any(switch:impossible=true, all(switch:done=true, gold>=10))"],
+    });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals?.mode).toBe("any");
+    expect(report.goals?.expr).toBe("any(switch:impossible=true, all(switch:done=true, gold>=10))");
+    const path = writeTmp("nested-report.json", report);
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(true);
+    expect(verdict.goals?.map((r) => r.ok)).toEqual([false, true, true]);
+  });
+
+  test("a bare witness with an expr string re-verifies under it", () => {
+    const project = lootProject();
+    const report = checkReach(project, { goals: ["switch:done=true"] });
+    const path = writeTmp("bare-expr.json", {
+      hz: 60,
+      masks: report.goals!.witness!.masks,
+      expectedHash: report.goals!.expectedHash,
+      expr: "any(switch:impossible=true, switch:done=true)",
+    });
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(true);
+  });
+
+  test("an any-mode witness whose goals all fail on replay fails", () => {
+    const project = goalProject();
+    const report = checkReach(project, { goals: ["switch:done=true"] });
+    const path = writeTmp("any-fail.json", {
+      hz: 60,
+      masks: report.goals!.witness!.masks,
+      expectedHash: report.goals!.expectedHash,
+      expr: "any(switch:other=true, switch:nope=true)",
+    });
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain("switch:other=true");
+    expect(verdict.reason).toContain("switch:nope=true");
+  });
+
+  // B2: a custom start with NO bank fields must still replay identically.
+  // The search built its bank without the project's playerName/mapNameDisplay
+  // while the replay took the engine's fresh-playthrough path (which seeds
+  // them), so the hash mismatched on any project that sets either field —
+  // real Tuxemon projects set playerName.
+  const namedProject = (system?: Project["system"]): Project => ({
+    ...lootProject(),
+    playerName: "Red",
+    ...(system ? { system } : {}),
+  });
+
+  test("a bank-less custom start replays identically when the project sets playerName", () => {
+    const project = namedProject();
+    // A map entrance: custom position, no switches/variables/items/gold.
+    const report = checkReach(project, {
+      start: { map: "A", x: 1, y: 1 },
+      goals: ["switch:done=true"],
+    });
+    expect(report.endedReason).toBe("goals-met");
+    expect(report.goals!.start).toMatchObject({ map: "A", x: 1, y: 1 });
+    expect(report.goals!.start).not.toHaveProperty("switches");
+    const path = writeTmp("named-start.json", report);
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    // The old replay failed here (hash mismatch: 5bb128a9 != 165febad).
+    expect(verdict.ok).toBe(true);
+    expect(verdict.finalHash).toBe(report.goals!.expectedHash!);
+    // The replay really carries the project's session field.
+    expect(verdict.final.switches).toMatchObject({ done: true });
+  });
+
+  test("a bank-less custom start replays identically with mapNameDisplay on", () => {
+    const project = namedProject({ mapNameDisplay: true });
+    const report = checkReach(project, {
+      start: { map: "A", x: 1, y: 1 },
+      goals: ["switch:done=true"],
+    });
+    expect(report.endedReason).toBe("goals-met");
+    const path = writeTmp("banner-start.json", report);
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(true);
+    expect(verdict.finalHash).toBe(report.goals!.expectedHash!);
+  });
+
+  test("a bank-less custom start from the project's own entrance replays identically", () => {
+    // The Tuxemon retest shape: start at the map entrance (the project's own
+    // start coordinates, no bank), witness a switch goal, replay hash-equal.
+    const project = namedProject({ mapNameDisplay: true });
+    const report = checkReach(project, {
+      start: { map: "A", x: 0, y: 0 },
+      goals: ["switch:done=true"],
+    });
+    expect(report.endedReason).toBe("goals-met");
+    const path = writeTmp("entrance-start.json", report);
+    const verdict = replayReachWitness(project, loadReplayFile(path));
+    expect(verdict.ok).toBe(true);
+    expect(verdict.finalHash).toBe(report.goals!.expectedHash!);
+  });
 });

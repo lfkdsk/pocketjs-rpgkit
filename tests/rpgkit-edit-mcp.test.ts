@@ -445,3 +445,152 @@ describe("proposal-only side effects", () => {
     expect(existsSync(cacheFile)).toBe(true);
   });
 });
+
+describe("rpgkit-reach-replay witness confinement", () => {
+  // B3: the witness path must stay inside the server root (symlink-safe),
+  // including in proposal-only mode — the tool reads an arbitrary file the
+  // caller names, so an unconfined path read any file the process could.
+  async function callReplay(root: string, witness: string, access: "full" | "proposal-only" = "proposal-only"): Promise<any> {
+    return await dispatchMcpMessage(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "rpgkit-reach-replay", arguments: { file: join(root, "sunstone.json"), witness } } },
+      root,
+      access,
+    ) as any;
+  }
+
+  test("an absolute witness path outside the root is rejected with PATH_OUTSIDE_ROOT", async () => {
+    const root = join(TEMP, `replay-root-${randomUUID()}`);
+    const outside = join(TEMP, `replay-outside-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    copyFileSync(SUNSTONE, join(root, "sunstone.json"));
+    // Non-JSON on purpose: a rejection must come from the path check, before
+    // the file is ever read (the old code leaked a JSON parse error instead).
+    writeFileSync(join(outside, "w.json"), "not json");
+    const response = await callReplay(root, join(outside, "w.json"));
+    expect(response).toMatchObject({ error: { code: -32602, data: { code: "PATH_OUTSIDE_ROOT" } } });
+  });
+
+  test("a relative witness path escaping the root is rejected", async () => {
+    const root = join(TEMP, `replay-root-${randomUUID()}`);
+    const outside = join(TEMP, `replay-outside-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    copyFileSync(SUNSTONE, join(root, "sunstone.json"));
+    writeFileSync(join(outside, "w.json"), "not json");
+    const response = await callReplay(root, "../" + basename(outside) + "/w.json");
+    expect(response).toMatchObject({ error: { code: -32602, data: { code: "PATH_OUTSIDE_ROOT" } } });
+  });
+
+  test("a witness through a symlink escaping the root is rejected", async () => {
+    const root = join(TEMP, `replay-root-${randomUUID()}`);
+    const outside = join(TEMP, `replay-outside-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    copyFileSync(SUNSTONE, join(root, "sunstone.json"));
+    writeFileSync(join(outside, "w.json"), "not json");
+    symlinkSync(outside, join(root, "escape"));
+    const response = await callReplay(root, join(root, "escape", "w.json"));
+    expect(response).toMatchObject({ error: { code: -32602, data: { code: "PATH_OUTSIDE_ROOT" } } });
+  });
+
+  test("a witness inside the root still replays", async () => {
+    const root = join(TEMP, `replay-root-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    copyFileSync(SUNSTONE, join(root, "sunstone.json"));
+    // An empty tape from the project start: no goals, no expected hash — the
+    // replay lands on the start state and verifies.
+    writeFileSync(join(root, "w.json"), JSON.stringify({ hz: 60, masks: [] }));
+    const response = await callReplay(root, join(root, "w.json"), "full");
+    expect(response.result.isError).toBe(false);
+    const body = JSON.parse(response.result.content[0].text);
+    expect(body.verdict.ok).toBe(true);
+  });
+});
+
+describe("rpgkit-reach-replay with map@x,y in a combined goal", () => {
+  // N1: a witness combining map@x,y with another goal recorded an expr whose
+  // coordinate comma the replay parser split, so rpgkit-reach →
+  // rpgkit-reach-replay returned isError. Both the recorded-expr path and
+  // the goals-override path must replay ok.
+  const GOAL_PROJECT = join(ROOT, "tests/fixtures/rpgkit-check/goal-project.json");
+
+  async function reachWithGoals(root: string, goals: string[], goalMode?: "all" | "any"): Promise<any> {
+    const file = join(root, "goal.json");
+    copyFileSync(GOAL_PROJECT, file);
+    const response = await dispatchMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "rpgkit-reach", arguments: { file, goals, ...(goalMode ? { goalMode } : {}) } },
+      },
+      root,
+      "full",
+    ) as any;
+    expect(response.result.isError).toBe(false);
+    return JSON.parse(response.result.content[0].text);
+  }
+
+  async function replayWitness(root: string, witness: string, goals?: string[]): Promise<any> {
+    const response = await dispatchMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "rpgkit-reach-replay",
+          arguments: { file: join(root, "goal.json"), witness, ...(goals ? { goals } : {}) },
+        },
+      },
+      root,
+      "full",
+    ) as any;
+    return response;
+  }
+
+  test("a recorded map@x,y + switch witness replays via the recorded expr", async () => {
+    const root = join(TEMP, `reach-combo-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const report = await reachWithGoals(root, ["map:A@1,2", "switch:done=true"]);
+    expect(report.goals.status).toBe("met");
+    expect(report.goals.expr).toContain("map:A@1,2");
+    const witness = join(root, "report.json");
+    writeFileSync(witness, JSON.stringify(report));
+    const response = await replayWitness(root, witness);
+    expect(response.result.isError).toBe(false);
+    const body = JSON.parse(response.result.content[0].text);
+    expect(body.verdict.ok).toBe(true);
+    expect(body.verdict.goals).toEqual([
+      { goal: "map:A@1,2", ok: true },
+      { goal: "switch:done=true", ok: true },
+    ]);
+  }, 30_000);
+
+  test("a goals override with map@x,y replays", async () => {
+    // The override rebuilds the canonical expr via formatGoalExpr(parseGoals)
+    // — the same round-trip that split the coordinate comma before.
+    const root = join(TEMP, `reach-combo-override-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const report = await reachWithGoals(root, ["map:A@1,2", "switch:done=true"]);
+    const witness = join(root, "report.json");
+    writeFileSync(witness, JSON.stringify(report));
+    const response = await replayWitness(root, witness, ["map:A@1,2", "gold>=10"]);
+    expect(response.result.isError).toBe(false);
+    const body = JSON.parse(response.result.content[0].text);
+    expect(body.verdict.ok).toBe(true);
+  }, 30_000);
+
+  test("an any-mode witness with map@x,y replays", async () => {
+    const root = join(TEMP, `reach-combo-any-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const report = await reachWithGoals(root, ["map:A@1,2", "switch:nope=true"], "any");
+    expect(report.goals.status).toBe("met");
+    const witness = join(root, "report.json");
+    writeFileSync(witness, JSON.stringify(report));
+    const response = await replayWitness(root, witness);
+    expect(response.result.isError).toBe(false);
+    const body = JSON.parse(response.result.content[0].text);
+    expect(body.verdict.ok).toBe(true);
+  }, 30_000);
+});
