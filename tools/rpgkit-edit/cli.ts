@@ -2,6 +2,7 @@
 // JSON-only CLI for the headless RPG Kit editing API.
 
 import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { EDIT_COMMANDS } from "../../editor/api/types.ts";
 import { runFileEdit } from "../../editor/api/file.ts";
 import { PROPOSAL_COMMANDS, runProposalFileCommand } from "../../editor/api/proposals.ts";
@@ -15,15 +16,17 @@ export interface CliOptions {
 }
 
 export const CLI_USAGE = `Usage:
-  bun run rpgkit-edit <command> --file <project.json> [--json '<args>'] [--dry-run]
+  bun tools/rpgkit-edit/cli.ts <command> --file <project.json> [--json '<args>'] [--map <id>] [--dry-run]
 
 Commands:
   ${[...EDIT_COMMANDS, ...PROPOSAL_COMMANDS].join("\n  ")}
   materialize            convert between an inline document and a sharded
                          ProjectShell (--json '{"direction":"inline|pack",...}')
 
---json accepts an inline JSON object or @path/to/args.json. A "file" key
-inside --json is ignored: the explicit --file argument is always the input.
+--json accepts an inline JSON object or @path/to/args.json. Relative @paths
+resolve next to --file. A "file" key inside --json is ignored: the explicit
+--file argument is always the input.
+--map scopes validate to one map (and one shard for a ProjectShell).
 Edit mutations save atomically by default and return a reversible patch.
 Proposal commands operate on the adjacent proposal queue. --dry-run validates
 and returns the result without writing the project or sidecar.`;
@@ -42,6 +45,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions | { help: true
   const command = argv[0]!;
   let file = "";
   let json = "{}";
+  let map: string | undefined;
   let dryRun = false;
   for (let index = 1; index < argv.length; index++) {
     const argument = argv[index]!;
@@ -61,15 +65,30 @@ export function parseCliArgs(argv: readonly string[]): CliOptions | { help: true
       index += parsed.consumed;
       continue;
     }
+    if (argument === "--map" || argument.startsWith("--map=")) {
+      const parsed = optionValue(argv, index, "--map");
+      map = parsed.value;
+      index += parsed.consumed;
+      continue;
+    }
     throw new Error(`unknown option ${argument}`);
   }
   if (!file) throw new Error("--file is required");
-  const encoded = json.startsWith("@") ? readFileSync(json.slice(1), "utf8") : json;
+  const encoded = json.startsWith("@")
+    ? readFileSync(resolve(dirname(resolve(file)), json.slice(1)), "utf8")
+    : json;
   let args: unknown;
   try {
     args = JSON.parse(encoded);
   } catch (error) {
     throw new Error(`--json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (map !== undefined) {
+    if (command !== "validate") throw new Error("--map is only supported by validate");
+    if (typeof args !== "object" || args === null || Array.isArray(args)) {
+      throw new Error("--json must be an object when --map is present");
+    }
+    args = { ...args as Record<string, unknown>, map };
   }
   return { command, file, args, dryRun };
 }

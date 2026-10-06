@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 // tools/rpgkit-check/cli.ts — command-line entry for the rpgkit-check tools.
 //
 //   bun run rpgkit-check <check> --file <doc.json> [--json '<args>'] [--out <dir>]
@@ -18,12 +19,13 @@
 import { CHECK_TOOLS, CheckArgsError, CheckLoadError, checkTool } from "./src/registry.ts";
 import { countBySeverity, type CheckReport } from "./src/finding.ts";
 import type { SessionOptions } from "../../src/engine/session.ts";
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 function usage(): never {
   console.error(
-    `usage: bun run rpgkit-check <check> --file <doc.json> [--json '<args>'] [--out <dir>]\n` +
+    `usage: bun tools/rpgkit-check/cli.ts <check> --file <doc.json> [--json '<args>'] [--out <dir>]\n` +
       `  [--session <module>]\n` +
       `  [--max-frames <n>] [--max-states <n>] [--max-seconds <n>] [--map <id>] [--incremental]\n` +
       `checks: ${CHECK_TOOLS.map((t) => t.name.replace(/^rpgkit-/, "")).join(", ")}\n` +
@@ -120,7 +122,10 @@ if (!tool) {
 let extraArgs: Record<string, unknown> = {};
 if (argsJson) {
   try {
-    const parsed = JSON.parse(argsJson);
+    const encoded = argsJson.startsWith("@")
+      ? readFileSync(resolve(dirname(resolve(file)), argsJson.slice(1)), "utf8")
+      : argsJson;
+    const parsed = JSON.parse(encoded);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       console.error("--json must be a JSON object");
       process.exit(2);

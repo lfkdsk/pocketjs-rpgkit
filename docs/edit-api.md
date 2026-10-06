@@ -16,8 +16,14 @@ The same operations are available as MCP tools; see [MCP tools](#mcp-tools).
 ## Invocation
 
 ```sh
-bun run rpgkit-edit <command> --file <project.json> [--json '<args>'] [--dry-run]
+bun tools/rpgkit-edit/cli.ts <command> --file <project.json> [--json '<args>'] [--map <id>] [--dry-run]
 ```
+
+Use that direct entry for machine consumption: stdout is exactly one JSON
+object on success and failure, and the CLI itself writes no wrapper text to
+stderr. `bun run rpgkit-edit …` remains a convenient interactive alias, but
+Bun may print its `$ bun …` launcher line and a nonzero-exit diagnostic to
+stderr; do not merge that stream into JSON stdout.
 
 The commands are `open`, `list-maps`, `list-events`, `list-pages`,
 `list-commands`, `add-item`, `add-sprite`, `update-map`, `add-map`,
@@ -37,13 +43,14 @@ and `list-archive`. The six project catalogs add
 | flag | meaning |
 | --- | --- |
 | `--file <path>` | inline project or sharded `ProjectShell`. Required for every command. Shard entries resolve relative to the shell. |
-| `--json <json>` | arguments object: an inline JSON string or `@path/to/args.json`. Defaults to `{}`. |
+| `--json <json>` | arguments object: an inline JSON string or `@path/to/args.json`. A relative `@path` resolves from the directory containing `--file`, independent of the CLI process directory. Defaults to `{}`. |
+| `--map <id>` | `validate` only: validate one map. This overrides a `map` value in `--json`; a shell reads only that map's shard. |
 | `--dry-run` | project mutations and proposal create/withdraw/accept/reject: run full validation but do not write the project, assets, or sidecar. Read commands accept it only as a reported no-op. |
 | `--help`, `-h` | print usage, exit 0. |
 
 ## Response envelope
 
-Every command prints exactly one JSON object on stdout.
+The direct entry prints exactly one JSON object on stdout.
 This subsection describes project read/edit commands; proposal commands use
 the [proposal envelope](#proposal-request-and-validation) below.
 
@@ -69,8 +76,9 @@ Success:
   canonical semantic JSON. For a shell this is the operation's bounded
   logical view: shell only for `open`/`list-maps`, shell plus one target shard
   for ordinary map operations, shell plus the start shard for a project
-  catalog add/update, all shards for catalog list/get/remove, validation or a
-  map-id rename, or the patch-addressed shards for `save`.
+  catalog add/update, all shards for catalog list/get/remove, unscoped
+  validation or a map-id rename, one target shard for scoped validation, or
+  the patch-addressed shards for `save`.
 - `changed` is false when the edit was a no-op (for example painting a tile
   with the value it already has); `diff` and `patch` are still returned.
 - `patch` is present on successful mutating commands.
@@ -182,8 +190,10 @@ files named by `mapIndex[].entry`.
   importer's default): the edit API decodes a compact shard before
   validating and re-encodes it compact on write, so a project keeps its
   on-disk format. JSON shards stay JSON.
-- `validate` loads every shard. Renaming a map id also loads every shard so
-  literal transfers in other maps can follow the rename.
+- `validate` with no `map` loads every shard. `validate {"map":"town"}`
+  loads only that map's shard and returns `scopedMap`; a missing id is
+  `MAP_NOT_FOUND`. Renaming a map id also loads every shard so literal
+  transfers in other maps can follow the rename.
 - `add-map`, `duplicate-map`, `delete-map`, `move-map`, and `paint-edges`
   fail with `UNSUPPORTED_FOR_SHELL` before any shard is read. Patch-v1 keeps
   every `mapIndex` entry stable and in place (so a reverse patch can
@@ -201,6 +211,9 @@ files named by `mapIndex[].entry`.
 Those restrictions apply to direct reversible edits. A reviewed proposal may
 add, duplicate, move, delete and connect shell maps; acceptance creates or
 removes the corresponding shard files and publishes the refreshed shell last.
+The five refused direct commands return `UNSUPPORTED_FOR_SHELL` with a prompt
+to use `propose` and then `accept-proposal` rather than leaving the caller at a
+dead end.
 
 For example, this changes one map shard and its shell without loading the
 other maps:
@@ -433,16 +446,24 @@ shards.
 
 ### `validate`
 
-Args: none. Always `ok: true`; `result` is
-`{ valid: boolean, errors: [{ path, msg }] }`. Invalid documents are
-reported, not failures. Runs schema validation plus structural checks
-(duplicate ids, bounds, start map). For a shell it also verifies the manifest,
-schema identity, every declared shard checksum and every shard's metadata and
-full map schema.
+Args: optional `map` string, also accepted as CLI `--map <id>`. With no map,
+`result` is `{ valid: boolean, errors: [{ path, msg }] }`; with a map it also
+contains `scopedMap`. Invalid content is reported with `ok: true` and
+`valid: false`. An unknown map is instead a domain failure with
+`MAP_NOT_FOUND` at `$.map`.
+
+Unscoped validation runs schema and structural checks over the complete
+document (duplicate ids, bounds and start map). For a shell it also verifies
+the manifest, schema identity, every declared shard checksum and every
+shard's metadata and full map schema. Scoped validation checks only the named
+inline map or shell shard; other map payloads are neither loaded nor reported.
+The shell header and selected shard's checksum, metadata and map schema are
+still verified.
 
 ```sh
-$ bun run rpgkit-edit validate --file examples/sunstone/data/sunstone.json
-{ "valid": true, "errors": [] }
+$ bun tools/rpgkit-edit/cli.ts validate \
+    --file examples/sunstone/data/sunstone.json --map village
+{"ok":true,"command":"validate","result":{"valid":true,"errors":[],"scopedMap":"village"},…}
 ```
 
 ## Project catalogs
@@ -618,13 +639,35 @@ $ bun run rpgkit-edit paint-tile --file examples/sunstone/data/sunstone.json --d
 ### `paint-rect`
 
 Args: `map`, `x`, `y` (required), `width`, `height` (positive integers; the
-rect must fit the map), `tile` (required, `null` erases), `layer` (default
-`"ground"`). One stroke, one patch.
+rectangle must fit the map), and one of these mutually exclusive paint forms:
+
+- Ground or upper (the compatible default): `tile` is required (`null`
+  erases), and `layer` is `"ground"` (default) or `"upper"`.
+- Uniform passage: `layer` is `"passage"` and `value` is `"pass"`, `"block"`,
+  or `null` to clear the override.
+- Passage room template: `layer` is `"passage"`, `template` is `"room"`, and
+  `doors` optionally lists absolute `[x, y]` cells on the rectangle border.
+  Width and height must be at least 3. The border becomes `block`; the
+  interior and every listed door become `pass`. Omitting `doors` makes a
+  sealed room.
+
+All forms are one stroke and one reversible patch. Door coordinates outside
+the map are `OUT_OF_BOUNDS`; coordinates that are not on this rectangle's
+border are `INVALID_ARGUMENT`.
 
 ```sh
 $ bun run rpgkit-edit paint-rect --file examples/sunstone/data/sunstone.json --dry-run \
     --json '{"map":"village","x":0,"y":0,"width":2,"height":2,"tile":"town.0"}'
 {"ok":true,"changed":false,"addresses":["map:village/layer:ground/tile:0,0","map:village/layer:ground/tile:1,0","map:village/layer:ground/tile:0,1","map:village/layer:ground/tile:1,1"],"result":{"map":"village","layer":"ground","tile":"town.0","cells":4}}
+```
+
+This single call replaces the explicit 31-wall-cell plus 49-pass-cell lists
+for a 10×8 room with one bottom door:
+
+```sh
+$ bun run rpgkit-edit paint-rect --file game/data/project.json --dry-run \
+    --json '{"map":"guard-warehouse","layer":"passage","x":0,"y":0,"width":10,"height":8,"template":"room","doors":[[4,7]]}'
+{"ok":true,"changed":true,"addresses":[…80 cells…],"result":{"map":"guard-warehouse","layer":"passage","template":"room","doors":1,"blocked":31,"passable":49,"cells":80}}
 ```
 
 ### `fill-region`
@@ -753,6 +796,64 @@ $ bun run rpgkit-edit add-page --file examples/sunstone/data/sunstone.json --dry
     --json '{"map":"village","event":"boy","page":{"trigger":"action","commands":[{"op":"text","lines":["Hmm?"]}]}}'
 {"ok":true,"changed":true,"addresses":["map:village/event:boy/page:1"],"result":{"trigger":"action","commands":[{"op":"text","lines":["Hmm?"]}]}}
 ```
+
+### Page conditions
+
+An absent `condition` means the page is eligible. When a condition is present,
+every authored flat field and every entry in `condition.all` must hold: the
+forms combine with logical AND, including when both forms appear together.
+The runtime tests pages from the highest array index down and selects the
+first eligible page.
+
+The four flat fields are compact, compatibility-preserving spellings:
+
+| flat field | condition that must hold |
+| --- | --- |
+| `switch: "door-open"` | switch `door-open` is true |
+| `selfSwitch: "A"` | this event's self switch A is true |
+| `variable: {"id":"visits","op":">=","value":2}` | the numeric variable comparison is true; `op` is `>=`, `<=`, `==`, or `!=` |
+| `item: "key"` | the party owns at least one `key` |
+
+`condition.all` is a non-empty array of full condition objects. It supports
+the same four concepts with more control, plus the remaining condition kinds:
+
+| `kind` | fields and meaning |
+| --- | --- |
+| `switch` | `id`, optional `value` (default true) |
+| `variable` | `id`, `op` (`>=`, `<=`, `==`, `!=`), integer `value` |
+| `selfSwitch` | `key` (`A`–`D`), optional `value` (default true) |
+| `item` | `id`, positive `count` |
+| `gold` | non-negative `amount`; current gold must be at least this value |
+| `facing` | `dir` (`down`, `left`, `right`, `up`); tests player facing |
+| `appearance` | `target`, `sprite`; `null` means built-in player art or a sprite-less event page |
+| `tileProperty` | `x`, `y`, and one or more of `passage`, `enter`, `exit`; every listed runtime override must match |
+| `worldIdle` | optional `negate`; tests whether no blocking world activity is active |
+| `region` | `x`, `y`, `id` (0–255); id 0 matches an unmarked cell |
+| `bgmPlaying` | optional `id` and `negate`; tests audibly advancing BGM |
+| `timer` | `op` (`>=` or `<=`) and non-negative `seconds`; a stopped timer never matches |
+| `ext` | namespaced `call` and JSON `args`; invokes a registered pure game condition |
+
+For example, this page requires both the compact switch and two compound
+clauses:
+
+```json
+{
+  "condition": {
+    "switch": "quest-started",
+    "all": [
+      { "kind": "gold", "amount": 10 },
+      { "kind": "facing", "dir": "up" }
+    ]
+  },
+  "trigger": "action",
+  "commands": []
+}
+```
+
+The schema validates each spelling and payload, but it deliberately does not
+reject a logically contradictory combination. Run `rpgkit-check lint`; a
+provably impossible gate is reported as
+`lint/page-condition-contradiction`.
 
 ### `update-page`
 
@@ -1384,7 +1485,7 @@ that root after symlink resolution. Mutating tools also take `dryRun`.
 | `rpgkit_map_delete` | `delete-map` | `file`, `map` | `dryRun` |
 | `rpgkit_map_move` | `move-map` | `file`, `map`, `index` | `dryRun` |
 | `rpgkit_tile_paint` | `paint-tile` | `file`, `map`, `x`, `y`, `tile` | `layer`, `dryRun` |
-| `rpgkit_tile_rect` | `paint-rect` | `file`, `map`, `x`, `y`, `width`, `height`, `tile` | `layer`, `dryRun` |
+| `rpgkit_tile_rect` | `paint-rect` | `file`, `map`, `x`, `y`, `width`, `height`, plus `tile`, `value`, or `template:"room"` as described above | `layer`, `doors`, `dryRun` |
 | `rpgkit_tile_fill` | `fill-region` | `file`, `map`, `x`, `y`, `tile` | `layer`, `dryRun` |
 | `rpgkit_passage_paint` | `paint-passage` | `file`, `map`, `x`, `y`, `value` | `dryRun` |
 | `rpgkit_cells_paint` | `paint-cells` | `file`, `map`, `cells`, exactly one of `value` / `values` | `layer`, `dryRun` |
@@ -1398,7 +1499,7 @@ that root after symlink resolution. Mutating tools also take `dryRun`.
 | `rpgkit_command_insert` | `insert-command` | `file`, `map`, `event`, `page`, `address`, `command` | `dryRun` |
 | `rpgkit_command_delete` | `delete-command` | `file`, `map`, `event`, `page`, `address` | `dryRun` |
 | `rpgkit_command_update` | `update-command` | `file`, `map`, `event`, `page`, `address`, `field`, `value` | `dryRun` |
-| `rpgkit_project_validate` | `validate` | `file` | — |
+| `rpgkit_project_validate` | `validate` | `file` | `map` |
 | `rpgkit_project_save` | `save` | `file`, `patch` | `direction`, `dryRun` |
 | `rpgkit_proposal_create` | `propose` | `file`, `id`, `title`, `rationale`, `author`, `hunks` | `createdAt`, `dryRun` |
 | `rpgkit_proposals_list` | `list-proposals` | `file` | — |

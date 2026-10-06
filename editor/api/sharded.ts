@@ -77,9 +77,10 @@ function assertShellSupported(command: string): void {
   if (reason === undefined) return;
   throw new EditApiError(
     "UNSUPPORTED_FOR_SHELL",
-    `${command} is not supported for a sharded ProjectShell: ${reason}`,
+    `${command} is not supported as a direct edit for a sharded ProjectShell: ${reason}. ` +
+      "Use a reviewed proposal (propose, then accept-proposal) for this structural shell edit.",
     "$.command",
-    "an inline project with $.maps",
+    "an inline project with $.maps, or a reviewed ProjectShell proposal",
     command,
   );
 }
@@ -183,8 +184,9 @@ function pointerTokens(path: string): string[] {
 }
 
 /** Determine the exact shard set a file adapter must load. Ordinary map
- * operations return one entry; open/list return zero; validate and a real id
- * rename return all. save derives its set solely from logical patch paths. */
+ * operations and scoped validation return one entry; open/list return zero;
+ * unscoped validation and a real id rename return all. save derives its set
+ * solely from logical patch paths. */
 export function shardEntriesForOperation(
   shell: ProjectShell,
   command: string,
@@ -207,7 +209,7 @@ export function shardEntriesForOperation(
     // references, so these operations deliberately inspect every shard.
     return shell.mapIndex.map((meta) => meta.entry);
   }
-  if (command === "validate") return shell.mapIndex.map((meta) => meta.entry);
+  if (command === "validate" && args.map === undefined) return shell.mapIndex.map((meta) => meta.entry);
   if (command === "save") {
     const patch = parseEditPatch(args.patch);
     const entries = new Set<string>();
@@ -415,6 +417,7 @@ function executeValidatedShardedEditOperation(
   hashText: (text: string) => string,
   encodings?: Map<string, ShardEncoding>,
 ): ShardedEditExecution {
+  const { args } = validateEditOperationInput(commandValue, rawArgs);
   const entries = shardEntriesForOperation(shell, commandValue, rawArgs);
   if (commandValue === "open" || commandValue === "list-maps") {
     return shellRead(shell, commandValue);
@@ -424,8 +427,21 @@ function executeValidatedShardedEditOperation(
   }
   const maps = loadedMaps(shell, shardSources, entries, checksumsVerified, encodings);
   if (commandValue === "validate") {
-    const project = projectFromMaps(shell, shell.mapIndex.map((meta) => maps.get(meta.entry)!), true);
+    const scopedMap = typeof args.map === "string" ? args.map : undefined;
+    const project = projectFromMaps(
+      shell,
+      scopedMap === undefined
+        ? shell.mapIndex.map((meta) => maps.get(meta.entry)!)
+        : entries.map((entry) => maps.get(entry)!),
+      scopedMap === undefined,
+    );
     const inline = executeEditOperation(JSON.stringify(project), "validate");
+    if (inline.response.ok && scopedMap !== undefined) {
+      inline.response = {
+        ...inline.response,
+        result: { ...(inline.response.result as object), scopedMap },
+      };
+    }
     const view = shardedView(shell, maps);
     return { response: withProject(inline.response, summary(shell, view, manifestRevision)) };
   }
@@ -816,11 +832,19 @@ export function executeShardedEditOperation(
   rawArgs: unknown = {},
 ): ShardedEditExecution {
   try {
+    validateEditOperationInput(commandValue, rawArgs);
+  } catch (error) {
+    return failure(commandValue || undefined, error);
+  }
+  try {
     const shell = loadValidatedProjectShell(shellSource);
     const encodings = new Map<string, ShardEncoding>();
     return executeValidatedShardedEditOperation(shell, shardSources, commandValue, rawArgs, false, false, sha256Text, encodings);
   } catch (error) {
     if (commandValue === "validate") {
+      if (error instanceof EditApiError && error.code === "MAP_NOT_FOUND") {
+        return failure(commandValue, error);
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(shellSource);
@@ -844,7 +868,13 @@ export function executeShardedEditOperation(
           changed: false,
           addresses: [],
           diff: [],
-          result: { valid: false, errors: validationErrors(error) },
+          result: {
+            valid: false,
+            errors: validationErrors(error),
+            ...(isRecord(rawArgs) && typeof rawArgs.map === "string"
+              ? { scopedMap: rawArgs.map }
+              : {}),
+          },
         },
       };
     }

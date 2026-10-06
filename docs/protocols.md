@@ -150,9 +150,10 @@ crash-atomic. See `editor/api/file.ts` and
   `ProjectShell` (`add-map`, `duplicate-map`, `delete-map`, `move-map` and
   `paint-edges` are inline-only as direct edits); reads and ordinary map
   mutations load only the addressed
-  shard, and `save` publishes only the changed shards plus the shell. Two
-  operations load every shard: `validate`, and a real map-id rename (so
-  transfers in other maps can follow the rename). A
+  shard, and `save` publishes only the changed shards plus the shell.
+  `validate` loads every shard by default, while `validate {map}` reads only
+  the named shard and returns `scopedMap`; a real map-id rename still loads
+  every shard so transfers in other maps can follow the rename. A
   shell response's `diff`/`patch` addresses a logical
   `{ kind: "rpgkit-edit/sharded-document-v1", shell, shards }` document,
   with patch paths under `/shell/...` or `/shards/<entry>/...` (the entry is
@@ -160,6 +161,8 @@ crash-atomic. See `editor/api/file.ts` and
   "Sharded `ProjectShell` documents". Project-global `add-item` and
   `add-sprite` mutate only the shell; reviewed proposals additionally support
   structural map operations and publish new/changed shards before the shell.
+  A refused direct structural command explicitly points callers to the
+  `propose` then `accept-proposal` flow.
 - **Browser packs.** The in-browser editor additionally reads and writes a
   self-contained `rpgkit-edit/sharded-pack-v1` file
   (`{ kind, shell: "<json text>", shards: { "<entry>": "<json text>" } }`).

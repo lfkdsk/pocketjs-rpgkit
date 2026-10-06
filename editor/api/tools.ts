@@ -41,6 +41,22 @@ const mapChanges = {
   },
 };
 const passage = { type: ["string", "null"], enum: ["pass", "block", null], description: "Per-cell passage override, or null to clear it." };
+const rectLayer = { type: "string", enum: ["ground", "upper", "passage"], default: "ground" };
+const roomDoors = {
+  type: "array",
+  uniqueItems: true,
+  description: "Absolute [x, y] cells on the rectangle border. A room template paints each door passable; omitted means a sealed room.",
+  items: {
+    type: "array",
+    minItems: 2,
+    maxItems: 2,
+    prefixItems: [
+      { type: "integer", minimum: 0, description: "Column." },
+      { type: "integer", minimum: 0, description: "Row." },
+    ],
+    items: { type: "integer", minimum: 0 },
+  },
+};
 const cells = {
   type: "array",
   minItems: 1,
@@ -326,6 +342,14 @@ function exactlyOneOf(
   return definition;
 }
 
+function withVariants(
+  definition: EditToolDefinition,
+  variants: readonly Record<string, unknown>[],
+): EditToolDefinition {
+  definition.inputSchema.oneOf = variants;
+  return definition;
+}
+
 /** Ordered registry used for both tools/list and tools/call dispatch. */
 export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_project_open", "Open RPG Kit project", "open", "Validate and summarize an inline project or editable ProjectShell. Opening a shell reads no map shards."),
@@ -369,7 +393,23 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_map_delete", "Delete map", "delete-map", "Delete a map. Refuses the only map and the start map with MAP_DELETE_REFUSED. Literal transfers into the map are kept and listed in result.references. Inline projects only.", { map }, ["map"], true),
   tool("rpgkit_map_move", "Move map", "move-map", "Move a map to a zero-based final position in the map list. Ids are unchanged, so the start map and transfers are unaffected; the same index succeeds with changed:false. Inline projects only.", { map, index: { type: "integer", minimum: 0, description: "Final zero-based position of the map in the project's map list." } }, ["map", "index"], true),
   tool("rpgkit_tile_paint", "Paint one tile", "paint-tile", "Paint or erase one ground/upper cell using the editor stroke model. The tile must belong to a sheet declared by the map.", { map, layer, x: { type: "integer", minimum: 0 }, y: { type: "integer", minimum: 0 }, tile }, ["map", "x", "y", "tile"], true),
-  tool("rpgkit_tile_rect", "Paint tile rectangle", "paint-rect", "Paint or erase a complete in-bounds rectangle as one editor stroke and one reversible patch.", { map, layer, x: { type: "integer", minimum: 0 }, y: { type: "integer", minimum: 0 }, width: { type: "integer", minimum: 1 }, height: { type: "integer", minimum: 1 }, tile }, ["map", "x", "y", "width", "height", "tile"], true),
+  withVariants(tool("rpgkit_tile_rect", "Paint rectangle", "paint-rect", "Paint or erase a complete in-bounds ground, upper or passage rectangle as one editor stroke and one reversible patch. Passage rectangles accept a uniform value, or template:room with optional border door cells.", { map, layer: rectLayer, x: { type: "integer", minimum: 0 }, y: { type: "integer", minimum: 0 }, width: { type: "integer", minimum: 1 }, height: { type: "integer", minimum: 1 }, tile, value: passage, template: { const: "room" }, doors: roomDoors }, ["map", "x", "y", "width", "height"], true), [
+    {
+      required: ["tile"],
+      properties: { layer: { enum: ["ground", "upper"] } },
+      not: { anyOf: [{ required: ["value"] }, { required: ["template"] }, { required: ["doors"] }] },
+    },
+    {
+      required: ["layer", "value"],
+      properties: { layer: { const: "passage" } },
+      not: { anyOf: [{ required: ["tile"] }, { required: ["template"] }, { required: ["doors"] }] },
+    },
+    {
+      required: ["layer", "template"],
+      properties: { layer: { const: "passage" }, template: { const: "room" } },
+      not: { anyOf: [{ required: ["tile"] }, { required: ["value"] }] },
+    },
+  ]),
   tool("rpgkit_tile_fill", "Flood-fill tile region", "fill-region", "Four-way flood-fill the contiguous region containing x,y on ground or upper. null erases the region.", { map, layer, x: { type: "integer", minimum: 0 }, y: { type: "integer", minimum: 0 }, tile }, ["map", "x", "y", "tile"], true),
   tool("rpgkit_passage_paint", "Paint passage override", "paint-passage", "Set one map cell's passage override to pass or block, or clear it with null, through the editor stroke model.", { map, x: { type: "integer", minimum: 0 }, y: { type: "integer", minimum: 0 }, value: passage }, ["map", "x", "y", "value"], true),
   exactlyOneOf(tool("rpgkit_cells_paint", "Paint brush stroke", "paint-cells", "Paint an arbitrary list of cells on the ground, upper or passage layer as one editor stroke and one reversible patch. Pass one value for a uniform stroke, or a parallel values array for a patterned stroke. Ground/upper take tile ids or null; passage takes pass, block or null.", { map, layer: paintLayer, cells, value: paintValue, values: paintValues }, ["map", "cells"], true), "value", "values"),
@@ -383,7 +423,7 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_command_insert", "Insert command", "insert-command", "Insert a schema-valid command at a root or recursive branch slot. Opaque runtime commands are inserted intact; obtain nested paths from rpgkit_commands_list.", { map, event, page, address, command: commandValue }, ["map", "event", "page", "address", "command"], true),
   tool("rpgkit_command_delete", "Delete command", "delete-command", "Delete any command at a commandAddress, including an opaque command as one intact value.", { map, event, page, address }, ["map", "event", "page", "address"], true),
   tool("rpgkit_command_update", "Update command field", "update-command", "Edit one supported command field using the editor's validated text adapter. Errors name legal fields and accepted values.", { map, event, page, address, field: { type: "string", minLength: 1 }, value: { type: "string", description: "Editor text spelling, for example 10, true, or newline-separated text lines." } }, ["map", "event", "page", "address", "field", "value"], true),
-  tool("rpgkit_project_validate", "Validate project", "validate", "Validate a document against rpgkit-project/v1. A shell validation reads and verifies every indexed shard. Invalid content is returned as valid:false with field paths and messages."),
+  tool("rpgkit_project_validate", "Validate project", "validate", "Validate a document against rpgkit-project/v1. Pass map to scope a shell validation to that one shard; otherwise every indexed shard is read and verified. Invalid content is returned as valid:false with field paths and messages.", { map }),
   tool("rpgkit_project_save", "Apply reversible patch", "save", "Apply a patch forward or reverse after checking its semantic SHA-256 base. For a shell, read only patch-addressed shards, stage and conflict-check all outputs, publish shards before the shell, and use best-effort rollback.", { patch: patchValue, direction: { type: "string", enum: ["forward", "reverse"], default: "forward" } }, ["patch"], true),
 ] as const;
 

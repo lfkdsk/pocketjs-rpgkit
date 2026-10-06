@@ -13,8 +13,14 @@ and screenshots.
 ## Invocation
 
 ```sh
-bun run rpgkit-check <check> --file <doc.json> [--json '<args>'] [--out <dir>] [--session <module>]
+bun tools/rpgkit-check/cli.ts <check> --file <doc.json> [--json '<args>'] [--out <dir>] [--session <module>]
 ```
+
+Use that direct entry when another program consumes the report: stdout
+contains exactly one JSON value, including when findings make the command
+exit nonzero, and the CLI itself adds no wrapper text to stderr. `bun run
+rpgkit-check …` remains an interactive alias, but Bun may write its launch
+line and nonzero-exit diagnostic to stderr; keep stderr separate.
 
 Checks: `lint`, `locks`, `freeze`, `reach`, `explore`, `shot`. The short
 names above and the full `rpgkit-<check>` forms are both accepted.
@@ -22,7 +28,7 @@ names above and the full `rpgkit-<check>` forms are both accepted.
 | flag | meaning |
 | --- | --- |
 | `--file <path>` | project document: an inline `rpgkit-project/v1` JSON file, or a sharded `ProjectShell` (its `mapIndex[].entry` shards are read and decoded next to it, compact `rpgkit-map/1` included). Required. |
-| `--json <json>`, `--args <json>` | arguments object for the check. CLI flags win over `--json` keys. |
+| `--json <json>`, `--args <json>` | arguments object for the check, either inline or `@path/to/args.json`. A relative `@path` resolves from the directory containing `--file`, independent of the CLI process directory. CLI flags win over `--json` keys. |
 | `--map <id>` | `lint` only: scope the pass to one map (only that map's shard is loaded). |
 | `--incremental` | `lint` on a shell only: reuse cached per-shard findings and re-check only shards whose bytes on disk changed. |
 | `--out <dir>` | output directory for `shot` (default `.`). |
@@ -359,9 +365,12 @@ $ bun run rpgkit-check shot --file examples/sunstone/data/sunstone.json --json '
 ]
 ```
 
-`shot` requires `dist/rpgkit-shot.js` (`bun run build:example`) and
-`vendor/pocketjs/hosts/web/pocketjs.wasm` (`bun run build:wasm`); a missing
-prerequisite is a thrown error (exit 2).
+`shot` builds its fixture directly from source on first use and caches the
+bundle under `.cache/rpgkit-check/shot/`. A PocketJS input manifest makes a
+source or compiler change invalidate that cache; fresh calls reuse it. Build
+output is captured so it cannot contaminate the JSON report. The only manual
+prerequisite is `vendor/pocketjs/hosts/web/pocketjs.wasm` (`bun run
+build:wasm`); a missing wasm is a thrown error (exit 2).
 
 ## Finding codes
 

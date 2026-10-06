@@ -3,11 +3,13 @@
 // pixels, determinism, and semantic content (player dot, passable cells).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { renderShots, shotPreflight } from "../tools/rpgkit-check/src/shot/render.ts";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { ensureShotBundle, renderShots, shotPreflight } from "../tools/rpgkit-check/src/shot/render.ts";
 import type { Project } from "../src/engine/types.ts";
 
+const ROOT = resolve(import.meta.dir, "..");
+const CACHE = join(ROOT, ".cache", "rpgkit-check", "shot");
 const preflight = shotPreflight();
 const simDescribe = preflight.ok ? describe : describe.skip;
 if (!preflight.ok) console.warn(`rpgkit-check shot tests skipped: ${preflight.reason}`);
@@ -32,6 +34,26 @@ function countColors(fb: Uint8Array, pred: (r: number, g: number, b: number) => 
   }
   return n;
 }
+
+describe("rpgkit-check shot source bundle", () => {
+  test("builds a missing source cache once and reuses it without dist", async () => {
+    rmSync(CACHE, { recursive: true, force: true });
+    const [first, concurrent] = await Promise.all([ensureShotBundle(), ensureShotBundle()]);
+    expect(concurrent).toBe(first);
+    expect(first).toBe(join(CACHE, "rpgkit-shot"));
+    expect(first).not.toContain(`${join(ROOT, "dist")}/`);
+    expect(existsSync(`${first}.js`)).toBe(true);
+    expect(existsSync(`${first}.pak`)).toBe(true);
+    const manifest = join(CACHE, "rpgkit-shot.inputs.json");
+    const inputs = JSON.parse(readFileSync(manifest, "utf8")) as string[];
+    expect(inputs).toContain(join(ROOT, "tests", "fixtures", "rpgkit-shot", "rpgkit-shot.tsx"));
+    expect(inputs).toContain(join(ROOT, "vendor", "pocketjs", "tools", "build.ts"));
+
+    const before = [statSync(`${first}.js`).mtimeMs, statSync(`${first}.pak`).mtimeMs];
+    expect(await ensureShotBundle()).toBe(first);
+    expect([statSync(`${first}.js`).mtimeMs, statSync(`${first}.pak`).mtimeMs]).toEqual(before);
+  });
+});
 
 simDescribe("rpgkit-check shot", () => {
   test("renders meadow at two resolutions, non-trivial and deterministic", async () => {

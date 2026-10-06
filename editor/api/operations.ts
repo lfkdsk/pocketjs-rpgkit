@@ -193,7 +193,7 @@ const ARGUMENT_KEYS: Record<EditCommandName, readonly string[]> = {
   "delete-map": ["map"],
   "move-map": ["map", "index"],
   "paint-tile": ["map", "layer", "x", "y", "tile"],
-  "paint-rect": ["map", "layer", "x", "y", "width", "height", "tile"],
+  "paint-rect": ["map", "layer", "x", "y", "width", "height", "tile", "value", "template", "doors"],
   "fill-region": ["map", "layer", "x", "y", "tile"],
   "paint-passage": ["map", "x", "y", "value"],
   "paint-cells": ["map", "layer", "cells", "value", "values"],
@@ -207,7 +207,7 @@ const ARGUMENT_KEYS: Record<EditCommandName, readonly string[]> = {
   "insert-command": ["map", "event", "page", "address", "command"],
   "delete-command": ["map", "event", "page", "address"],
   "update-command": ["map", "event", "page", "address", "field", "value"],
-  validate: [],
+  validate: ["map"],
   save: ["patch", "direction"],
 };
 
@@ -1104,6 +1104,58 @@ function passageCellValue(value: unknown, key: string): "pass" | "block" | null 
   return value;
 }
 
+/** Absolute map cells used as openings in a passage room template. */
+function roomDoorsArg(
+  args: Record<string, unknown>,
+  map: MapDef,
+  rect: { x: number; y: number; width: number; height: number },
+): Set<number> {
+  if (!own(args, "doors")) return new Set();
+  const value = args.doors;
+  const perimeter = 2 * rect.width + 2 * (rect.height - 2);
+  if (!Array.isArray(value) || value.length > perimeter) {
+    throw new EditApiError(
+      "INVALID_ARGUMENT",
+      `doors must be an array of at most ${perimeter} [x, y] pairs on the rectangle border`,
+      "$.doors",
+      `0..${perimeter} border [x, y] pairs`,
+      Array.isArray(value) ? value.length : value,
+    );
+  }
+  const doors = new Set<number>();
+  value.forEach((door, at) => {
+    const path = `$.doors[${at}]`;
+    if (!Array.isArray(door) || door.length !== 2 || !Number.isInteger(door[0]) || !Number.isInteger(door[1])) {
+      throw new EditApiError("INVALID_ARGUMENT", "each door must be an [x, y] integer pair", path, "[x, y]", door);
+    }
+    const [x, y] = door as [number, number];
+    if (x < 0 || y < 0 || x >= map.width || y >= map.height) {
+      throw new EditApiError(
+        "OUT_OF_BOUNDS",
+        `door (${x},${y}) is outside map ${map.id} ${map.width}x${map.height}`,
+        path,
+        { x: `0..${map.width - 1}`, y: `0..${map.height - 1}` },
+        door,
+      );
+    }
+    const right = rect.x + rect.width - 1;
+    const bottom = rect.y + rect.height - 1;
+    const onBorder = x >= rect.x && x <= right && y >= rect.y && y <= bottom &&
+      (x === rect.x || x === right || y === rect.y || y === bottom);
+    if (!onBorder) {
+      throw new EditApiError(
+        "INVALID_ARGUMENT",
+        `door (${x},${y}) must lie on the rectangle border`,
+        path,
+        { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        door,
+      );
+    }
+    doors.add(y * map.width + x);
+  });
+  return doors;
+}
+
 /** One passage stroke: a null value is the eraser (clears overrides). */
 function paintPassageIndices(
   project: Project,
@@ -1579,14 +1631,13 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
   if (command === "paint-tile" || command === "paint-rect" || command === "fill-region") {
     const mapId = stringArg(args, "map");
     const { map, index: mapIndex } = findMap(project, mapId);
-    const layer = enumArg(args, "layer", ["ground", "upper"] as const, "ground");
+    const layer = command === "paint-rect"
+      ? enumArg(args, "layer", ["ground", "upper", "passage"] as const, "ground")
+      : enumArg(args, "layer", ["ground", "upper"] as const, "ground");
     const x = integerArg(args, "x", { min: 0, max: map.width - 1 })!;
     const y = integerArg(args, "y", { min: 0, max: map.height - 1 })!;
-    if (!own(args, "tile")) {
-      throw new EditApiError("INVALID_ARGUMENT", "tile is required; pass null explicitly to erase", "$.tile", "tile id or null");
-    }
-    const tile = args.tile;
     let cells: { x: number; y: number }[] = [];
+    let rect: { x: number; y: number; width: number; height: number } | undefined;
     if (command === "paint-tile") {
       cells = [{ x, y }];
     } else if (command === "paint-rect") {
@@ -1601,10 +1652,15 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
           { x, y, width, height },
         );
       }
+      rect = { x, y, width, height };
       for (let py = y; py < y + height; py++) {
         for (let px = x; px < x + width; px++) cells.push({ x: px, y: py });
       }
     } else {
+      if (!own(args, "tile")) {
+        throw new EditApiError("INVALID_ARGUMENT", "tile is required; pass null explicitly to erase", "$.tile", "tile id or null");
+      }
+      const tile = args.tile;
       const source = layer === "ground" ? map.ground : toDenseUpper(map);
       const origin = y * map.width + x;
       const target = source[origin];
@@ -1632,6 +1688,74 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
         }
       }
     }
+
+    if (command === "paint-rect" && layer === "passage") {
+      if (own(args, "tile")) {
+        throw new EditApiError(
+          "INVALID_ARGUMENT",
+          "passage rectangles use value, or template: room with optional doors; tile is for ground/upper",
+          "$.tile",
+          "omit tile",
+          args.tile,
+        );
+      }
+      if (own(args, "template")) {
+        if (args.template !== "room") {
+          throw new EditApiError("INVALID_ARGUMENT", "template must be room", "$.template", ["room"], args.template);
+        }
+        if (own(args, "value")) {
+          throw new EditApiError("INVALID_ARGUMENT", "a room template supplies its own passage values; omit value", "$.value", "omitted", args.value);
+        }
+        if (rect!.width < 3 || rect!.height < 3) {
+          throw new EditApiError(
+            "INVALID_ARGUMENT",
+            "a room template needs width and height of at least 3 so it has an interior",
+            "$",
+            { minWidth: 3, minHeight: 3 },
+            { width: rect!.width, height: rect!.height },
+          );
+        }
+        const doors = roomDoorsArg(args, map, rect!);
+        const indices = cells.map((cell) => cell.y * map.width + cell.x);
+        const values: CellPaintValue[] = indices.map((index, at) => {
+          const cell = cells[at]!;
+          const border = cell.x === rect!.x || cell.x === rect!.x + rect!.width - 1 ||
+            cell.y === rect!.y || cell.y === rect!.y + rect!.height - 1;
+          return border && !doors.has(index) ? "block" : "pass";
+        });
+        const blocked = values.filter((value) => value === "block").length;
+        const passable = values.length - blocked;
+        return {
+          project: paintCellValues(project, mapIndex, "passage", indices, values),
+          addresses: cells.map((cell) => tileAddress(mapId, "passage", cell.x, cell.y)),
+          result: { map: mapId, layer: "passage", template: "room", doors: doors.size, blocked, passable, cells: cells.length },
+        };
+      }
+      if (own(args, "doors")) {
+        throw new EditApiError("INVALID_ARGUMENT", "doors require template: room", "$.doors", "template: room", args.doors);
+      }
+      const value = passageValueArg(args);
+      return {
+        project: paintPassageIndices(project, mapIndex, value, cells.map((cell) => cell.y * map.width + cell.x)),
+        addresses: cells.map((cell) => tileAddress(mapId, "passage", cell.x, cell.y)),
+        result: { map: mapId, layer: "passage", value, cells: cells.length },
+      };
+    }
+
+    if (command === "paint-rect" && (own(args, "value") || own(args, "template") || own(args, "doors"))) {
+      const key = own(args, "value") ? "value" : own(args, "template") ? "template" : "doors";
+      throw new EditApiError(
+        "INVALID_ARGUMENT",
+        `${key} is only valid for a passage rectangle`,
+        `$.${key}`,
+        "layer: passage",
+        args[key],
+      );
+    }
+    if (!own(args, "tile")) {
+      throw new EditApiError("INVALID_ARGUMENT", "tile is required; pass null explicitly to erase", "$.tile", "tile id or null");
+    }
+    const tile = args.tile;
     const edited = paintIndices(project, mapIndex, layer, tile, cells.map((cell) => cell.y * map.width + cell.x));
     return {
       project: edited,
@@ -1944,19 +2068,71 @@ export function executeEditOperation(
   try {
     const { command, args } = validateEditOperationInput(commandValue, rawArgs);
     if (command === "validate") {
-      const loaded = loadProject(source);
+      const scopedMap = args.map === undefined ? undefined : stringArg(args, "map");
+      let validationSource = source;
+      let sourceMapIndex = 0;
+      if (scopedMap !== undefined) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(source);
+        } catch {
+          parsed = undefined;
+        }
+        if (isRecord(parsed) && Array.isArray(parsed.maps)) {
+          sourceMapIndex = parsed.maps.findIndex((map) => isRecord(map) && map.id === scopedMap);
+          if (sourceMapIndex < 0) {
+            const available = parsed.maps
+              .filter(isRecord)
+              .map((map) => map.id)
+              .filter((id): id is string => typeof id === "string");
+            throw new EditApiError(
+              "MAP_NOT_FOUND",
+              `map ${JSON.stringify(scopedMap)} does not exist; choose one of: ${available.join(", ")}`,
+              "$.map",
+              available,
+              scopedMap,
+            );
+          }
+          const start = isRecord(parsed.start) ? parsed.start : {};
+          validationSource = JSON.stringify({
+            ...parsed,
+            start: start.map === scopedMap
+              ? start
+              : { ...start, map: scopedMap, x: 0, y: 0 },
+            maps: [parsed.maps[sourceMapIndex]],
+          });
+        }
+      }
+      const loaded = loadProject(validationSource);
       const structural = loaded.errors.length === 0
         ? structuralErrors(loaded.project as unknown as ProjectSource)
         : [];
-      const errors = [...loaded.errors, ...structural];
+      const errors = [...loaded.errors, ...structural].map((error) =>
+        scopedMap === undefined
+          ? error
+          : { ...error, path: error.path.replace(/^\$\.maps\[0\]/, `$.maps[${sourceMapIndex}]`) }
+      );
+      let sourceProject: unknown = loaded.project;
+      if (scopedMap !== undefined) {
+        try {
+          sourceProject = JSON.parse(source);
+        } catch {
+          // Keep loadProject's null placeholder so malformed JSON preserves
+          // the long-standing validation response shape.
+        }
+      }
       const response: EditSuccess = {
         ok: true,
         command,
-        project: summaryOf(loaded.project),
+        project: summaryOf(sourceProject),
         changed: false,
         addresses: [],
         diff: [],
-        result: { valid: errors.length === 0, errors },
+        result: {
+          valid: errors.length === 0,
+          errors,
+          ...(scopedMap === undefined ? {} : { scopedMap }),
+        },
       };
       return { response };
     }
@@ -2068,13 +2244,27 @@ export function executeProjectOperation(
   try {
     const { command, args } = validateEditOperationInput(commandValue, rawArgs);
     if (!WRITE_COMMANDS.has(command)) {
+      const scopedMap = command === "validate" && args.map !== undefined
+        ? stringArg(args, "map")
+        : undefined;
+      if (scopedMap !== undefined && !project.maps.some((map) => map.id === scopedMap)) {
+        throw new EditApiError(
+          "MAP_NOT_FOUND",
+          `map ${JSON.stringify(scopedMap)} does not exist; choose one of: ${project.maps.map((map) => map.id).join(", ")}`,
+          "$.map",
+          project.maps.map((map) => map.id),
+          scopedMap,
+        );
+      }
       return {
         ok: true,
         command,
         changed: false,
         project,
         addresses: [],
-        result: command === "validate" ? { valid: true, errors: [] } : readOperation(command, project, args),
+        result: command === "validate"
+          ? { valid: true, errors: [], ...(scopedMap === undefined ? {} : { scopedMap }) }
+          : readOperation(command, project, args),
         edit: { before: project, after: project, changes: [] },
       };
     }

@@ -300,6 +300,12 @@ describe("map structure", () => {
 describe("MCP schemas", () => {
   test("accept the documented argument shapes and reject malformed ones", () => {
     const schema = (name: string) => EDIT_TOOL_BY_NAME.get(name)!.inputSchema;
+    expect(validateSchema(schema("rpgkit_tile_rect"), { file: "p.json", map: "village", x: 0, y: 0, width: 2, height: 2, tile: "town.1" })).toEqual([]);
+    expect(validateSchema(schema("rpgkit_tile_rect"), { file: "p.json", map: "village", layer: "passage", x: 0, y: 0, width: 2, height: 2, value: "block" })).toEqual([]);
+    expect(validateSchema(schema("rpgkit_tile_rect"), { file: "p.json", map: "village", layer: "passage", x: 0, y: 0, width: 10, height: 8, template: "room", doors: [[4, 7]] })).toEqual([]);
+    expect(validateSchema(schema("rpgkit_tile_rect"), { file: "p.json", map: "village", layer: "passage", x: 0, y: 0, width: 2, height: 2, tile: "block" })).not.toEqual([]);
+    expect(validateSchema(schema("rpgkit_tile_rect"), { file: "p.json", map: "village", x: 0, y: 0, width: 2, height: 2, value: "block" })).not.toEqual([]);
+    expect(validateSchema(schema("rpgkit_tile_rect"), { file: "p.json", map: "village", layer: "passage", x: 0, y: 0, width: 2, height: 2, value: "block", template: "room" })).not.toEqual([]);
     expect(validateSchema(schema("rpgkit_cells_paint"), { file: "p.json", map: "village", layer: "passage", cells: [[0, 1]], value: null })).toEqual([]);
     expect(validateSchema(schema("rpgkit_cells_paint"), { file: "p.json", map: "village", cells: [[0, 1], [1, 1]], values: ["town.1", "town.2"] })).toEqual([]);
     expect(validateSchema(schema("rpgkit_cells_paint"), { file: "p.json", map: "village", cells: [[0, 1]], value: "town.1", values: ["town.2"] })).not.toEqual([]);
@@ -310,6 +316,31 @@ describe("MCP schemas", () => {
     expect(validateSchema(schema("rpgkit_edges_paint"), { file: "p.json", map: "village", cells: [[0, 1]], brush: { kind: "clear", dir: "up" } })).not.toEqual([]);
     expect(validateSchema(schema("rpgkit_map_add"), { file: "p.json" })).toEqual([]);
     expect(validateSchema(schema("rpgkit_map_add"), { file: "p.json", map: "m", name: "M", width: 4, height: 4, sheets: ["town"], fill: null, after: "village" })).toEqual([]);
+    expect(validateSchema(schema("rpgkit_project_validate"), { file: "p.json", map: "village" })).toEqual([]);
+    expect(validateSchema(schema("rpgkit_project_validate"), { file: "p.json", map: 1 })).not.toEqual([]);
+  });
+});
+
+describe("validate map scope", () => {
+  test("validates one inline map without reporting an invalid sibling", () => {
+    const project = structuredClone(ORIGINAL);
+    const forestIndex = project.maps.findIndex((map) => map.id === "forest");
+    project.maps[forestIndex]!.ground.pop();
+    const source = JSON.stringify(project);
+
+    const full = executeEditOperation(source, "validate").response;
+    expect(full).toMatchObject({ ok: true, result: { valid: false } });
+    const village = executeEditOperation(source, "validate", { map: "village" }).response;
+    expect(village).toMatchObject({
+      ok: true,
+      result: { valid: true, errors: [], scopedMap: "village" },
+    });
+    const forest = executeEditOperation(source, "validate", { map: "forest" }).response;
+    expect(forest).toMatchObject({ ok: true, result: { valid: false, scopedMap: "forest" } });
+    if (forest.ok) {
+      expect((forest.result as { errors: { path: string }[] }).errors[0]!.path)
+        .toStartWith(`$.maps[${forestIndex}]`);
+    }
   });
 });
 
@@ -342,20 +373,67 @@ describe("sharded ProjectShell", () => {
     expect(semanticEqual(JSON.parse(reversed.output!.shell), split.shell)).toBe(true);
   });
 
+  test("a room template edits exactly one shell shard as one reversible patch", () => {
+    const shell = loadValidatedProjectShell(split.shellText);
+    const args = {
+      map: "village", layer: "passage", x: 0, y: 0, width: 10, height: 8,
+      template: "room", doors: [[4, 7]],
+    };
+    expect(shardEntriesForOperation(shell, "paint-rect", args)).toEqual([villageEntry]);
+    const execution = executeShardedEditOperation(
+      split.shellText,
+      { [villageEntry]: sources[villageEntry]! },
+      "paint-rect",
+      args,
+    );
+    if (!execution.response.ok) throw new Error(JSON.stringify(execution.response));
+    expect(execution.response.result).toMatchObject({ blocked: 31, passable: 49, cells: 80 });
+    expect(Object.keys(execution.output!.shards)).toEqual([villageEntry]);
+
+    const reversed = executeShardedEditOperation(
+      execution.output!.shell,
+      { [villageEntry]: execution.output!.shards[villageEntry]! },
+      "save",
+      { patch: execution.response.patch, direction: "reverse" },
+    );
+    if (!reversed.response.ok) throw new Error(JSON.stringify(reversed.response));
+    expect(semanticEqual(JSON.parse(reversed.output!.shards[villageEntry]!), mapOf(ORIGINAL, "village"))).toBe(true);
+  });
+
+  test("scoped validation selects exactly one shell shard", () => {
+    const shell = loadValidatedProjectShell(split.shellText);
+    expect(shardEntriesForOperation(shell, "validate", {})).toEqual(split.entries.map((entry) => entry.path));
+    expect(shardEntriesForOperation(shell, "validate", { map: "village" })).toEqual([villageEntry]);
+    const execution = executeShardedEditOperation(
+      split.shellText,
+      { [villageEntry]: sources[villageEntry]! },
+      "validate",
+      { map: "village" },
+    );
+    expect(execution.response).toMatchObject({
+      ok: true,
+      result: { valid: true, errors: [], scopedMap: "village" },
+    });
+    expect(executeShardedEditOperation(split.shellText, {}, "validate", { map: "missing" }).response)
+      .toMatchObject({ ok: false, error: { code: "MAP_NOT_FOUND", path: "$.map" } });
+  });
+
   const refused: [string, Record<string, unknown>][] = [
     ["add-map", {}],
     ["duplicate-map", { map: "forest" }],
     ["delete-map", { map: "forest" }],
+    ["move-map", { map: "forest", index: 0 }],
     ["paint-edges", { map: "village", cells: [[0, 0]], brush: { kind: "clear" } }],
   ];
 
   for (const [command, args] of refused) {
     test(`${command} fails closed before any shard is selected`, () => {
       const shell = loadValidatedProjectShell(split.shellText);
-      expect(() => shardEntriesForOperation(shell, command, args)).toThrow(/not supported for a sharded ProjectShell/);
+      expect(() => shardEntriesForOperation(shell, command, args)).toThrow(/Use a reviewed proposal/);
       const execution = executeShardedEditOperation(split.shellText, {}, command, args);
       expect(execution.output).toBeUndefined();
       expect(execution.response).toMatchObject({ ok: false, command, error: { code: "UNSUPPORTED_FOR_SHELL" } });
+      if (!execution.response.ok) expect(execution.response.error.message).toContain("propose, then accept-proposal");
       // Supplying every shard does not change the answer.
       expect(executeShardedEditOperation(split.shellText, sources, command, args).response)
         .toMatchObject({ ok: false, error: { code: "UNSUPPORTED_FOR_SHELL" } });

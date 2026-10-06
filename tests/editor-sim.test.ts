@@ -794,7 +794,10 @@ simDescribe("editor budget", () => {
     // switch/variable declarations in the embedded schema) and the
     // transactional proposal workflow (QA gate, sharded accept, PNG
     // publication, shared Studio acceptance path) add 35,685 B combined:
-    // the measured editor bundle is 1,673,954 B. Keep a narrow margin.
-    expect(js).toBeLessThan(1_678_000);
+    // the measured editor bundle is 1,673,954 B. The passage rectangle and
+    // room-template brushes, `validate --map` and the caller-relative
+    // `@path` resolution add 6,277 B: measured 1,680,231 B. Keep a narrow
+    // margin.
+    expect(js).toBeLessThan(1_684_000);
   });
 });

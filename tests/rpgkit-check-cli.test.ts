@@ -1,7 +1,8 @@
 // tests/rpgkit-check-cli.test.ts — the CLI: JSON output, exit codes, and the
 // MCP registry descriptors.
 
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHECK_TOOLS, checkTool } from "../tools/rpgkit-check/src/registry.ts";
 
@@ -15,6 +16,10 @@ const FREEZE_SESSION_OPTIONS = join(import.meta.dir, "fixtures", "rpgkit-check",
 const SESSION_NO_EXPORT = join(import.meta.dir, "fixtures", "rpgkit-check", "session-options-no-export.ts");
 const SESSION_BAD_EXPORT = join(import.meta.dir, "fixtures", "rpgkit-check", "session-options-bad-export.ts");
 const SESSION_BAD_EXTENSIONS = join(import.meta.dir, "fixtures", "rpgkit-check", "session-options-bad-extensions.ts");
+const TEMP = join(import.meta.dir, `.rpgkit-check-cli-tmp-${process.pid}`);
+
+beforeAll(() => mkdirSync(TEMP, { recursive: true }));
+afterAll(() => rmSync(TEMP, { recursive: true, force: true }));
 
 async function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn({
@@ -32,8 +37,9 @@ async function runCli(args: string[]): Promise<{ code: number; stdout: string; s
 
 describe("rpgkit-check CLI", () => {
   test("lint on sunstone: clean, exit 0, JSON report", async () => {
-    const { code, stdout } = await runCli(["lint", "--file", SUNSTONE]);
+    const { code, stdout, stderr } = await runCli(["lint", "--file", SUNSTONE]);
     expect(code).toBe(0);
+    expect(stderr).toBe("");
     const report = JSON.parse(stdout);
     expect(report.check).toBe("lint");
     expect(report.findings).toEqual([]);
@@ -69,12 +75,13 @@ describe("rpgkit-check CLI", () => {
   });
 
   test("a broken document exits 1 with findings", async () => {
-    const { code, stdout } = await runCli([
+    const { code, stdout, stderr } = await runCli([
       "lint",
       "--file",
       join(import.meta.dir, "..", "tests", "fixtures", "rpgkit-check", "broken.json"),
     ]);
     expect(code).toBe(1);
+    expect(stderr).toBe("");
     const report = JSON.parse(stdout);
     const ids = report.findings.map((f: { check: string }) => f.check);
     expect(ids).toContain("lint/transfer-target-missing");
@@ -86,6 +93,18 @@ describe("rpgkit-check CLI", () => {
     expect(code).toBe(0);
     const report = JSON.parse(stdout);
     expect(report.check).toBe("lint");
+  });
+
+  test("--json @path resolves next to --file, not the process cwd", async () => {
+    const file = join(TEMP, "project.json");
+    writeFileSync(file, readFileSync(SUNSTONE));
+    writeFileSync(join(TEMP, "args.json"), "{}\n");
+    const { code, stdout, stderr } = await runCli([
+      "lint", "--file", file, "--json", "@args.json",
+    ]);
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout).check).toBe("lint");
   });
 
   test("--json with a key the inputSchema forbids exits 2", async () => {

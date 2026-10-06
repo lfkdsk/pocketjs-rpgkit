@@ -54,6 +54,27 @@ interface CliMutationCase {
 
 const CLI_MUTATIONS: CliMutationCase[] = [
   {
+    command: "paint-rect",
+    args: {
+      map: "village", layer: "passage", x: 0, y: 0, width: 10, height: 8,
+      template: "room", doors: [[4, 7]],
+    },
+    check: (edited) => {
+      const village = mapById(edited, "village")!;
+      const passage = new Map(village.passage ?? []);
+      const values = Array.from({ length: 80 }, (_, index) => passage.get(
+        Math.floor(index / 10) * village.width + index % 10,
+      ));
+      expect(values.filter((value) => value === "block")).toHaveLength(31);
+      expect(values.filter((value) => value === "pass")).toHaveLength(49);
+      expect(passage.get(7 * village.width + 4)).toBe("pass");
+    },
+    bad: {
+      args: { map: "village", layer: "passage", x: 0, y: 0, width: 10, height: 8, template: "room", doors: [[4, 6]] },
+      error: { code: "INVALID_ARGUMENT", path: "$.doors[0]" },
+    },
+  },
+  {
     command: "paint-cells",
     args: { map: "village", cells: [[2, 2], [3, 2], [10, 7]], value: "town.1" },
     check: (edited) => {
@@ -212,7 +233,41 @@ describe("rpgkit-edit file and CLI adapter", () => {
     });
     expect(bad.exitCode).toBe(1);
     expect(JSON.parse(bad.stdout.toString())).toMatchObject({ ok: false, error: { code: "MAP_NOT_FOUND", path: "$.map" } });
+    expect(bad.stderr.toString()).toBe("");
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  test("CLI resolves a relative --json @path next to --file, not its process cwd", () => {
+    const directory = join(TEMP, `relative-json-${randomUUID()}`);
+    mkdirSync(directory, { recursive: true });
+    const file = join(directory, "project.json");
+    writeFileSync(file, readFileSync(SUNSTONE));
+    writeFileSync(join(directory, "args.json"), JSON.stringify({ map: "village" }));
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, CLI, "list-events", "--file", file, "--json", "@args.json"],
+      cwd: ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    expect(JSON.parse(result.stdout.toString())).toMatchObject({ ok: true, command: "list-events" });
+  });
+
+  test("CLI validate --map scopes validation and overrides JSON", () => {
+    const file = tempFile("validate-map");
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, CLI, "validate", "--file", file, "--json", '{"map":"forest"}', "--map", "village"],
+      cwd: ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    expect(JSON.parse(result.stdout.toString())).toMatchObject({
+      ok: true,
+      result: { valid: true, errors: [], scopedMap: "village" },
+    });
   });
 
   test("CLI --file wins over a file key inside --json", () => {

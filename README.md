@@ -439,14 +439,14 @@ bun run rpgkit-edit list-events --file game/data/project.json \
 bun run rpgkit-edit list-commands --file game/data/project.json \
   --json '{"map":"village","event":"elder","page":0}'
 
-# Preview one edit. stdout is exactly one JSON result.
-bun run rpgkit-edit paint-rect --file game/data/project.json --dry-run \
+# Preview one edit. The direct entry keeps stdout to one JSON result.
+bun tools/rpgkit-edit/cli.ts paint-rect --file game/data/project.json --dry-run \
   --json '{"map":"village","layer":"ground","x":4,"y":6,"width":3,"height":2,"tile":"town.43"}' \
   > preview.json
 
 # Apply that exact patch later (use direction:"reverse" to undo it).
 jq '{patch:.patch}' preview.json > apply.json
-bun run rpgkit-edit save --file game/data/project.json --json @apply.json
+bun tools/rpgkit-edit/cli.ts save --file game/data/project.json --json @apply.json
 ```
 
 For human-reviewed AI work on an inline or sharded project, group typed edit operations
@@ -553,11 +553,12 @@ accept/reject support a shell, including structural map operations. Visual
 editor review and local-agent requests still require an inline project.
 Shell-only
 discovery reads no map payloads; ordinary map operations load and validate
-only the selected shard. `validate` and a map-id rename read every shard,
-because validation covers the complete project and renames rewrite transfers
-everywhere. Effective mutations write only changed shards plus the refreshed
-shell. Shell patches use `/shards/<escaped-entry>/...` and `/shell/...`
-logical JSON Pointer paths and remain reversible with `save`. Run the complete
+only the selected shard. `validate` reads every shard by default, while
+`validate --map <id>` reads and checks only the selected shard; a map-id
+rename still reads every shard because it rewrites transfers everywhere.
+Effective mutations write only changed shards plus the refreshed shell. Shell
+patches use `/shards/<escaped-entry>/...` and `/shell/...` logical JSON Pointer
+paths and remain reversible with `save`. Run the complete
 CLI-to-interpreter example with:
 
 ```sh
@@ -606,13 +607,18 @@ parameters, output fields, finding codes and exit codes are documented in
 [`docs/qa-checks.md`](docs/qa-checks.md):
 
 ```sh
-bun run rpgkit-check lint    --file game/data/project.json
-bun run rpgkit-check locks   --file game/data/project.json
-bun run rpgkit-check freeze  --file game/data/project.json
-bun run rpgkit-check reach   --file game/data/project.json
-bun run rpgkit-check explore --file game/data/project.json
-bun run rpgkit-check shot    --file game/data/project.json --json '{"map":"village","x":4,"y":6}'
+bun tools/rpgkit-check/cli.ts lint    --file game/data/project.json
+bun tools/rpgkit-check/cli.ts locks   --file game/data/project.json
+bun tools/rpgkit-check/cli.ts freeze  --file game/data/project.json
+bun tools/rpgkit-check/cli.ts reach   --file game/data/project.json
+bun tools/rpgkit-check/cli.ts explore --file game/data/project.json
+bun tools/rpgkit-check/cli.ts shot    --file game/data/project.json --json '{"map":"village","x":4,"y":6}'
 ```
+
+The direct entries above are the machine-readable form: keep stdout as the
+single JSON report. The `bun run rpgkit-edit` and `bun run rpgkit-check`
+package aliases are convenient at a terminal, but Bun may add launcher and
+nonzero-exit diagnostics on stderr.
 
 `lint` is a static health check (dead pages, missing references, empty
 choices). `locks` proves every `lockInput` is released on the real engine,

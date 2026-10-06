@@ -202,13 +202,18 @@ describe("rpgkit-edit ProjectShell protocol", () => {
     expect(listed.ok && (listed.result as unknown[])).toHaveLength(263);
     renameSync(offline, mapsDir);
 
-    // Ordinary reads/writes need only their target. An absent unrelated map
-    // is harmless, while validate and id rename correctly require all maps.
+    // Ordinary reads/writes and scoped validation need only their target. An
+    // absent unrelated map is harmless, while full validation and an id
+    // rename correctly require all maps.
     const unrelated = join(root, "maps/map-100.json");
     const unavailable = `${unrelated}.missing`;
     renameSync(unrelated, unavailable);
     expect(runFileEdit({ command: "list-events", file: shellFile, root, args: { map: "map-000" } }))
       .toMatchObject({ ok: true });
+    expect(runFileEdit({ command: "validate", file: shellFile, root, args: { map: "map-000" } }))
+      .toMatchObject({ ok: true, result: { valid: true, errors: [], scopedMap: "map-000" } });
+    expect(runFileEdit({ command: "validate", file: shellFile, root, args: { map: "missing" } }))
+      .toMatchObject({ ok: false, error: { code: "MAP_NOT_FOUND", path: "$.map" } });
     expect(runFileEdit({
       command: "update-map",
       file: shellFile,

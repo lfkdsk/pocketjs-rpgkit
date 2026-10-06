@@ -78,7 +78,7 @@ describe("rpgkit-edit MCP protocol", () => {
     { name: "rpgkit_pages_list", args: (file) => ({ file, map: "village", event: "elder" }) },
     { name: "rpgkit_commands_list", args: (file) => ({ file, map: "village", event: "elder", page: 0 }) },
     { name: "rpgkit_tile_paint", args: (file) => ({ file, dryRun: true, map: "village", x: 0, y: 0, tile: "town.1" }) },
-    { name: "rpgkit_tile_rect", args: (file) => ({ file, dryRun: true, map: "village", x: 0, y: 0, width: 2, height: 1, tile: "town.1" }) },
+    { name: "rpgkit_tile_rect", args: (file) => ({ file, dryRun: true, map: "village", layer: "passage", x: 0, y: 0, width: 10, height: 8, template: "room", doors: [[4, 7]] }) },
     { name: "rpgkit_tile_fill", args: (file) => ({ file, dryRun: true, map: "village", x: 0, y: 0, tile: "town.1" }) },
     { name: "rpgkit_cells_paint", args: (file) => ({ file, dryRun: true, map: "village", layer: "passage", cells: [[4, 4], [5, 4]], value: "block" }) },
     { name: "rpgkit_edges_paint", args: (file) => ({ file, dryRun: true, map: "village", cells: [[2, 2]], brush: { kind: "exit", dir: "left" } }) },
@@ -95,7 +95,7 @@ describe("rpgkit-edit MCP protocol", () => {
     { name: "rpgkit_command_insert", args: (file) => ({ file, dryRun: true, map: "village", event: "elder", page: 0, address: { path: [], index: 0 }, command: { op: "text", lines: ["MCP"] } }) },
     { name: "rpgkit_command_delete", args: (file) => ({ file, dryRun: true, map: "village", event: "elder", page: 0, address: { path: [], index: 0 } }) },
     { name: "rpgkit_command_update", args: (file) => ({ file, dryRun: true, map: "village", event: "elder", page: 0, address: { path: [], index: 0 }, field: "cps", value: "30" }) },
-    { name: "rpgkit_project_validate", args: (file) => ({ file }) },
+    { name: "rpgkit_project_validate", args: (file) => ({ file, map: "village" }) },
     {
       name: "rpgkit_project_save",
       args: (file) => {

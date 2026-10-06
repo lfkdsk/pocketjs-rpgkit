@@ -97,6 +97,11 @@ describe("rpgkit edit read operations", () => {
     const valid = readSuccess(executeEditOperation(serializeProject(fixture()), "validate"));
     expect(valid.result).toEqual({ valid: true, errors: [] });
 
+    const scoped = readSuccess(executeEditOperation(serializeProject(fixture()), "validate", { map: "map" }));
+    expect(scoped.result).toEqual({ valid: true, errors: [], scopedMap: "map" });
+    expect(executeEditOperation(serializeProject(fixture()), "validate", { map: "missing" }).response)
+      .toMatchObject({ ok: false, error: { code: "MAP_NOT_FOUND", path: "$.map" } });
+
     const invalid = readSuccess(executeEditOperation('{"format":"wrong"}', "validate"));
     expect((invalid.result as any).valid).toBe(false);
     expect((invalid.result as any).errors[0]).toHaveProperty("path");
@@ -138,6 +143,49 @@ describe("rpgkit edit tile operations", () => {
       map: "map", layer: "ground", x: 2, y: 0, width: 2, height: 2, tile: "s.2",
     }));
     expect([2, 3, 6, 7].map((index) => after.maps[0]!.ground[index])).toEqual(["s.2", "s.2", "s.2", "s.2"]);
+  });
+
+  test("paints uniform passage rectangles and a room with border doors", () => {
+    const project = fixture();
+    const map = project.maps[0]!;
+    map.width = 10;
+    map.height = 8;
+    map.ground = new Array(80).fill("s.0");
+
+    const uniform = success(executeEditOperation(serializeProject(project), "paint-rect", {
+      map: "map", layer: "passage", x: 1, y: 1, width: 2, height: 3, value: "block",
+    }));
+    expect(uniform.result).toEqual({ map: "map", layer: "passage", value: "block", cells: 6 });
+    expect(new Map((JSON.parse(uniform.output) as Project).maps[0]!.passage).size).toBe(6);
+
+    const room = success(executeEditOperation(serializeProject(project), "paint-rect", {
+      map: "map", layer: "passage", x: 0, y: 0, width: 10, height: 8,
+      template: "room", doors: [[4, 7]],
+    }));
+    expect(room.result).toEqual({
+      map: "map", layer: "passage", template: "room", doors: 1,
+      blocked: 31, passable: 49, cells: 80,
+    });
+    expect(room.addresses).toHaveLength(80);
+    const passage = new Map((JSON.parse(room.output) as Project).maps[0]!.passage);
+    expect([...passage.values()].filter((value) => value === "block")).toHaveLength(31);
+    expect([...passage.values()].filter((value) => value === "pass")).toHaveLength(49);
+    expect(passage.get(7 * 10 + 4)).toBe("pass");
+    expect(applyEditPatch(JSON.parse(room.output), room.patch!, "reverse")).toEqual(project);
+  });
+
+  test("rejects mismatched rectangle payloads and doors outside the border", () => {
+    const source = serializeProject(fixture());
+    expect(executeEditOperation(source, "paint-rect", {
+      map: "map", layer: "passage", x: 0, y: 0, width: 3, height: 3, tile: "s.0",
+    }).response).toMatchObject({ ok: false, error: { code: "INVALID_ARGUMENT", path: "$.tile" } });
+    expect(executeEditOperation(source, "paint-rect", {
+      map: "map", layer: "ground", x: 0, y: 0, width: 3, height: 3, value: "block",
+    }).response).toMatchObject({ ok: false, error: { code: "INVALID_ARGUMENT", path: "$.value" } });
+    expect(executeEditOperation(source, "paint-rect", {
+      map: "map", layer: "passage", x: 0, y: 0, width: 4, height: 3,
+      template: "room", doors: [[1, 1]],
+    }).response).toMatchObject({ ok: false, error: { code: "INVALID_ARGUMENT", path: "$.doors[0]" } });
   });
 
   test("four-way fills only the connected source region", () => {
