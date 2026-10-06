@@ -1,6 +1,6 @@
 // editor/api/tools.ts — MCP-visible descriptions for the edit operations.
 
-import type { EditCommandName } from "./types.ts";
+import { EDIT_COMMANDS, type EditCommandName } from "./types.ts";
 
 export interface EditToolDefinition {
   kind: "edit";
@@ -308,6 +308,28 @@ const patchValue = {
   },
 };
 
+const batchOperation = {
+  type: "object",
+  additionalProperties: false,
+  required: ["command"],
+  properties: {
+    command: {
+      type: "string",
+      enum: EDIT_COMMANDS.filter((name) => name !== "batch" && name !== "save" && name !== "open" &&
+        !name.startsWith("list-") && name !== "validate"),
+      description: "An editing operation to run inside the transaction. Read commands, save and nested batch are not allowed.",
+    },
+    args: { type: "object", description: "The operation's arguments, as for the standalone command." },
+  },
+};
+
+const envelope = {
+  type: "string",
+  enum: ["full", "compact"],
+  default: "full",
+  description: "full (default): structural diff and reversible patch. compact: omit both and return a smaller semanticDiff summary (array inserts/removes/moves, per-cell passage changes).",
+};
+
 function schema(
   properties: Record<string, unknown>,
   required: string[],
@@ -317,7 +339,7 @@ function schema(
     type: "object",
     additionalProperties: false,
     required: ["file", ...required],
-    properties: { file, ...properties, ...(mutates ? { dryRun } : {}) },
+    properties: { file, ...properties, ...(mutates ? { dryRun, envelope } : {}) },
   };
 }
 
@@ -425,6 +447,7 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_command_update", "Update command field", "update-command", "Edit one supported command field using the editor's validated text adapter. Errors name legal fields and accepted values.", { map, event, page, address, field: { type: "string", minLength: 1 }, value: { type: "string", description: "Editor text spelling, for example 10, true, or newline-separated text lines." } }, ["map", "event", "page", "address", "field", "value"], true),
   tool("rpgkit_project_validate", "Validate project", "validate", "Validate a document against rpgkit-project/v1. Pass map to scope a shell validation to that one shard; otherwise every indexed shard is read and verified. Invalid content is returned as valid:false with field paths and messages.", { map }),
   tool("rpgkit_project_save", "Apply reversible patch", "save", "Apply a patch forward or reverse after checking its semantic SHA-256 base. For a shell, read only patch-addressed shards, stage and conflict-check all outputs, publish shards before the shell, and use best-effort rollback.", { patch: patchValue, direction: { type: "string", enum: ["forward", "reverse"], default: "forward" } }, ["patch"], true),
+  tool("rpgkit_project_batch", "Batch edit transaction", "batch", "Run several editing operations as one all-or-nothing transaction: one dry-run, one schema gate, one reversible patch, one publish. Operations apply in order; a failure in any of them changes nothing. Inline projects and sharded ProjectShells are both supported (a shell writes only the affected shards). Structural shell commands (add-map and friends) stay proposal-only. The result lists each operation's result in order.", { operations: { type: "array", minItems: 1, items: batchOperation } }, ["operations"], true),
 ] as const;
 
 export const EDIT_TOOL_BY_NAME: ReadonlyMap<string, EditToolDefinition> = new Map(

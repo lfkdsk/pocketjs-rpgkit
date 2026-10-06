@@ -33,7 +33,7 @@ const operation = {
         "paint-tile", "paint-rect", "fill-region", "paint-passage",
         "add-event", "update-event", "delete-event", "add-page", "update-page",
         "delete-page", "insert-command", "delete-command", "update-command",
-        "connect-maps",
+        "connect-maps", "batch",
       ],
     },
     args: { type: "object" },

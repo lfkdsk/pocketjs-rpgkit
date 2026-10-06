@@ -141,6 +141,7 @@ const MUTATION_COMMANDS = new Set([
   "delete-command",
   "update-command",
   "connect-maps",
+  "batch",
 ]);
 
 function record(value: unknown, path: string): Record<string, unknown> {

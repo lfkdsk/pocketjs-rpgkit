@@ -36,11 +36,15 @@ import {
   createEditMemo,
   createEditPatch,
   diffJson,
+  envelopeArg,
   executeEditOperation,
   executeProjectOperation,
+  parseBatchOperations,
   parseEditPatch,
   semanticHash,
   validateEditOperationInput,
+  withBatchStepIndex,
+  withEnvelope,
 } from "./operations.ts";
 import type {
   EditFailure,
@@ -83,6 +87,14 @@ function assertShellSupported(command: string): void {
     "an inline project with $.maps, or a reviewed ProjectShell proposal",
     command,
   );
+}
+
+/** Shell fields a reader can rebuild from the shards (per-entry checksums and
+ * the manifest/schema hashes). The compact semantic diff drops them so a
+ * sharded edit reports only its content changes. */
+function isDerivedShellMetadata(path: string): boolean {
+  return path === "/shell/mapSchemaHash" || path === "/shell/mapManifestHash" ||
+    /^\/shell\/mapIndex\/\d+\/sha256$/.test(path);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -452,10 +464,16 @@ function executeValidatedShardedEditOperation(
   // model rewrite start/common-event/all-shard literal transfer refs.
   const allMapsLoaded = entries.length === shell.mapIndex.length;
   const project = projectFromMaps(shell, orderedMaps, allMapsLoaded);
+  // `args` was validated at the top of this function. The envelope shapes only
+  // the final sharded response. Strip it before the inline operation runs so
+  // the inner compact summary (inline coordinates) is not computed only to be
+  // discarded; withEnvelope below recomputes the summary over the sharded
+  // {shell, shards} view in the same coordinate system a batch uses.
+  const { envelope: _envelope, ...innerArgs } = args;
   let inlineResponse: EditSuccess;
   let edited: Project;
   if (manifestRevision) {
-    const memory = executeProjectOperation(project, commandValue, rawArgs, createEditMemo());
+    const memory = executeProjectOperation(project, commandValue, innerArgs, createEditMemo());
     if (!memory.ok) return { response: memory };
     edited = memory.project;
     inlineResponse = {
@@ -468,7 +486,7 @@ function executeValidatedShardedEditOperation(
       result: memory.result,
     };
   } else {
-    const inline = executeEditOperation(JSON.stringify(project), commandValue, rawArgs);
+    const inline = executeEditOperation(JSON.stringify(project), commandValue, innerArgs);
     if (!inline.response.ok) return { response: inline.response };
     if (inline.output === undefined) {
       const beforeView = shardedView(shell, maps);
@@ -491,13 +509,14 @@ function executeValidatedShardedEditOperation(
       }
     : createEditPatch(before, after);
   const changed = patch.changes.length > 0;
-  const response: EditSuccess = {
+  const envelope = envelopeArg(args);
+  const response: EditSuccess = withEnvelope({
     ...inlineResponse,
     project: summary(derived.shell, after, manifestRevision),
     changed,
     diff: patch.changes,
     patch,
-  };
+  }, envelope, before, after, { excludePath: isDerivedShellMetadata });
   return {
     response,
     ...(changed ? { output: { shell: serializeShell(derived.shell), shards: derived.texts } } : {}),
@@ -516,6 +535,8 @@ function executeShellGlobalOperation(
 ): ShardedEditExecution {
   const placeholderId = "shell-edit-placeholder";
   const { mapIndex: _index, mapManifestHash: _manifest, mapSchemaHash: _schema, ...globals } = shell;
+  const args = isRecord(rawArgs) ? rawArgs : {};
+  const { envelope: _envelope, ...innerArgs } = args;
   const project: Project = {
     ...cloneJson(globals),
     start: { map: placeholderId, x: 0, y: 0, dir: shell.start.dir },
@@ -529,7 +550,7 @@ function executeShellGlobalOperation(
       events: [],
     }],
   };
-  const inline = executeEditOperation(JSON.stringify(project), command, rawArgs);
+  const inline = executeEditOperation(JSON.stringify(project), command, innerArgs);
   if (!inline.response.ok) return { response: inline.response };
   if (inline.output === undefined) {
     const view = shardedView(shell, new Map());
@@ -548,13 +569,14 @@ function executeShellGlobalOperation(
   const before = shardedView(shell, new Map());
   const after = shardedView(next, new Map());
   const patch = createEditPatch(before, after);
-  const response: EditSuccess = {
+  const envelope = envelopeArg(args);
+  const response: EditSuccess = withEnvelope({
     ...inline.response,
     project: summary(next, after, manifestRevision),
     changed: patch.changes.length > 0,
     diff: patch.changes,
     patch,
-  };
+  }, envelope, before, after, { excludePath: isDerivedShellMetadata });
   return {
     response,
     ...(response.changed ? { output: { shell: serializeShell(next), shards: {} } } : {}),
@@ -579,6 +601,104 @@ export function executeShardedEditOperationOnValidatedShell(
     return executeValidatedShardedEditOperation(shell, shardSources, commandValue, rawArgs, true, true, hashText, encodings);
   } catch (error) {
     return failure(commandValue || undefined, error);
+  }
+}
+
+/** Run several operations against a ProjectShell as one transaction. Each
+ * operation loads only the shards it names through `loadShard` (called once
+ * per entry, lazily), and the batch returns one reversible patch over the
+ * sparse {shell, shards} document plus one output carrying every changed
+ * shard and the refreshed shell. A failure in any operation returns that
+ * failure and produces no output, so the caller publishes nothing. The
+ * structural shell commands (add-map and friends) stay proposal-only, as
+ * for a single direct edit. */
+export function executeShardedEditTransaction(
+  shellSource: string,
+  loadShard: (entry: string) => string,
+  rawArgs: unknown = {},
+): ShardedEditExecution {
+  try {
+    const args = isRecord(rawArgs) ? rawArgs : {};
+    const operations = parseBatchOperations(args.operations);
+    const envelope = envelopeArg(args);
+    let shellText = shellSource;
+    let shell = loadValidatedProjectShell(shellSource);
+    const shardTexts: Record<string, string> = {};
+    const original: Record<string, string> = {};
+    const touched = new Set<string>();
+    const addresses: string[] = [];
+    const results: { command: string; result: unknown }[] = [];
+    let last: EditSuccess | undefined;
+    for (let index = 0; index < operations.length; index++) {
+      const operation = operations[index]!;
+      try {
+        const entries = shardEntriesForOperation(shell, operation.command, operation.args ?? {});
+        for (const entry of entries) {
+          if (shardTexts[entry] === undefined) {
+            const text = loadShard(entry);
+            shardTexts[entry] = text;
+            original[entry] = text;
+          }
+          touched.add(entry);
+        }
+        const execution = executeShardedEditOperationOnValidatedShell(shell, shardTexts, operation.command, operation.args ?? {});
+        const shardedResponse = execution.response;
+        if (!shardedResponse.ok) {
+          return { response: withBatchStepIndex(shardedResponse, index) };
+        }
+        last = shardedResponse as EditSuccess;
+        addresses.push(...last.addresses);
+        results.push({ command: operation.command, result: last.result });
+        if (execution.output) {
+          shellText = execution.output.shell;
+          Object.assign(shardTexts, execution.output.shards);
+          shell = loadValidatedProjectShell(shellText);
+        }
+      } catch (error) {
+        // failure() always builds an EditFailure; the ShardedEditExecution
+        // return type just does not carry that narrowing.
+        const failed = failure(operation.command, error).response as EditFailure;
+        return { response: withBatchStepIndex(failed, index) };
+      }
+    }
+    if (!last) {
+      return failure("batch", new EditApiError("EMPTY_TRANSACTION", "a batch needs at least one operation", "$.operations"));
+    }
+    const originalShell = loadValidatedProjectShell(shellSource);
+    const changedEntries = [...touched].filter((entry) => original[entry] !== shardTexts[entry]);
+    const beforeShards: Record<string, string> = {};
+    const afterShards: Record<string, string> = {};
+    for (const entry of changedEntries) {
+      beforeShards[entry] = original[entry]!;
+      afterShards[entry] = shardTexts[entry]!;
+    }
+    const sparseView = (viewShell: ProjectShell, texts: Record<string, string>): ShardedEditDocument => {
+      const shards = Object.create(null) as Record<string, MapDef>;
+      for (const [entry, text] of Object.entries(texts)) {
+        shards[entry] = loadValidatedMapShard(viewShell, entry, text);
+      }
+      return { kind: SHARDED_DOCUMENT_KIND, shell: cloneJson(viewShell), shards };
+    };
+    const beforeView = sparseView(originalShell, beforeShards);
+    const afterView = sparseView(shell, afterShards);
+    const patch = createEditPatch(beforeView, afterView);
+    const changed = patch.changes.length > 0;
+    const response: EditSuccess = withEnvelope({
+      ok: true,
+      command: "batch",
+      project: summary(shell, afterView),
+      changed,
+      addresses,
+      diff: patch.changes,
+      patch,
+      result: { operations: results, count: operations.length },
+    }, envelope, beforeView, afterView, { excludePath: isDerivedShellMetadata });
+    return {
+      response,
+      ...(changed ? { output: { shell: shellText, shards: afterShards } } : {}),
+    };
+  } catch (error) {
+    return failure("batch", error);
   }
 }
 

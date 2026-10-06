@@ -35,7 +35,7 @@ import {
   qaWithStoredBaseline,
   type QaReport,
 } from "../proposals/qa.ts";
-import { diffJson, EditApiError, executeEditOperation } from "./operations.ts";
+import { diffJson, EditApiError, envelopeArg, executeEditOperation, parseBatchOperations } from "./operations.ts";
 import { deepClone } from "../../src/engine/clone.ts";
 import { semanticEqual } from "../engine/document.ts";
 import { canonicalJson } from "../../src/engine/save.ts";
@@ -494,44 +494,27 @@ export function dryRunShardedProposal(
       }
       return shardTexts[entry]!;
     };
-    for (let operationIndex = 0; operationIndex < requestHunk.operations.length; operationIndex++) {
-      const operation = requestHunk.operations[operationIndex]!;
-      if (operation.command === "add-asset") {
-        const args = operation.args ?? {};
-        const path = args.path;
-        if (typeof path !== "string" || path.length === 0 || args.type !== "image/png" || typeof args.data !== "string" || args.data.length === 0 ||
-            Object.keys(args).some((key) => key !== "path" && key !== "type" && key !== "data")) {
-          throw new EditApiError(
-            "INVALID_PROPOSAL_ASSET",
-            "add-asset requires exactly non-empty path/data and type image/png",
-            `$.hunks[${hunkIndex}].operations[${operationIndex}].args`,
-          );
-        }
-        if (Object.hasOwn(assets, path)) {
-          throw new EditApiError(
-            "INVALID_PROPOSAL_ASSET",
-            `asset ${JSON.stringify(path)} is added more than once in one hunk`,
-            `$.hunks[${hunkIndex}].operations[${operationIndex}].args.path`,
-          );
-        }
-        Object.defineProperty(assets, path, {
-          value: { type: "image/png", data: args.data },
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        continue;
-      }
+    // Whether any operation (including one inside a batch) added, removed,
+    // duplicated or reordered a map. Structural changes keep /shell/mapIndex
+    // in the hunk diff so the merged result carries the new index.
+    let hunkStructural = false;
+    const runProposalOp = (
+      command: string,
+      args: Record<string, unknown>,
+      operationIndex: number,
+      label: string,
+    ): void => {
       const shell = currentShell;
       let expanded: { command: string; args: Record<string, unknown> }[];
       try {
-        expanded = expandProposalMacro(operation.command, operation.args ?? {}, shell.mapIndex);
+        expanded = expandProposalMacro(command, args, shell.mapIndex);
       } catch (error) {
         throw wrapOperationError(error, hunkIndex, operationIndex);
       }
       for (let stepIndex = 0; stepIndex < expanded.length; stepIndex++) {
         const step = expanded[stepIndex]!;
         if (STRUCTURAL_SHELL_COMMANDS.has(step.command)) {
+          hunkStructural = true;
           try {
             for (const entry of structuralEntries(shell, step.command, step.args)) {
               load(entry);
@@ -568,7 +551,7 @@ export function dryRunShardedProposal(
         if (!execution.response.ok) {
           throw new EditApiError(
             "PROPOSAL_OPERATION_FAILED",
-            `hunk ${JSON.stringify(requestHunk.id)} operation ${operationIndex + 1}${expanded.length > 1 ? ` step ${stepIndex + 1}` : ""} failed: ${execution.response.error.message}`,
+            `hunk ${JSON.stringify(requestHunk.id)} ${label}${expanded.length > 1 ? ` step ${stepIndex + 1}` : ""} failed: ${execution.response.error.message}`,
             `$.hunks[${hunkIndex}].operations[${operationIndex}]`,
             undefined,
             undefined,
@@ -581,13 +564,62 @@ export function dryRunShardedProposal(
           Object.assign(shardTexts, execution.output.shards);
         }
       }
+    };
+    for (let operationIndex = 0; operationIndex < requestHunk.operations.length; operationIndex++) {
+      const operation = requestHunk.operations[operationIndex]!;
+      if (operation.command === "add-asset") {
+        const args = operation.args ?? {};
+        const path = args.path;
+        if (typeof path !== "string" || path.length === 0 || args.type !== "image/png" || typeof args.data !== "string" || args.data.length === 0 ||
+            Object.keys(args).some((key) => key !== "path" && key !== "type" && key !== "data")) {
+          throw new EditApiError(
+            "INVALID_PROPOSAL_ASSET",
+            "add-asset requires exactly non-empty path/data and type image/png",
+            `$.hunks[${hunkIndex}].operations[${operationIndex}].args`,
+          );
+        }
+        if (Object.hasOwn(assets, path)) {
+          throw new EditApiError(
+            "INVALID_PROPOSAL_ASSET",
+            `asset ${JSON.stringify(path)} is added more than once in one hunk`,
+            `$.hunks[${hunkIndex}].operations[${operationIndex}].args.path`,
+          );
+        }
+        Object.defineProperty(assets, path, {
+          value: { type: "image/png", data: args.data },
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        continue;
+      }
+      if (operation.command === "batch") {
+        // Flatten the batch's inner operations through the same per-op path
+        // so a proposal batch can use structural shell commands (add-map and
+        // friends) just like a plain hunk operation. The dry-run is itself
+        // all-or-nothing, preserving the batch's transaction semantics.
+        const batchArgs: Record<string, unknown> = operation.args ?? {};
+        let inner: ReturnType<typeof parseBatchOperations>;
+        try {
+          envelopeArg(batchArgs);
+          inner = parseBatchOperations(batchArgs.operations);
+        } catch (error) {
+          throw wrapOperationError(error, hunkIndex, operationIndex);
+        }
+        for (let innerIndex = 0; innerIndex < inner.length; innerIndex++) {
+          const step = inner[innerIndex]!;
+          runProposalOp(step.command, step.args ?? {}, operationIndex, `operation ${operationIndex + 1} (batch step ${innerIndex + 1})`);
+        }
+        continue;
+      }
+      runProposalOp(operation.command, operation.args ?? {}, operationIndex, `operation ${operationIndex + 1}`);
     }
     const baseDoc = sparseDocument(baseShell, original, true);
     const afterShell = currentShell;
     const afterDoc = sparseDocument(afterShell, shardTexts, true);
     // Drop derived shell metadata from the hunk diff: it is rebuilt from the
     // shards at accept time, so hunks on different shards never overlap on it.
-    const structural = requestHunk.operations.some((operation) => STRUCTURAL_SHELL_COMMANDS.has(operation.command));
+    const structural = hunkStructural;
     const changes = diffJson(baseDoc, afterDoc).filter((change) =>
       !isDerivedShellPath(change.path) || structural &&
         (change.path === "/shell/mapIndex" || change.path.startsWith("/shell/mapIndex/")));

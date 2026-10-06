@@ -5,6 +5,7 @@ import type {
   MapDef,
   ProjectShell,
 } from "../../src/engine/types.ts";
+import type { SemanticChange } from "./semantic-diff.ts";
 
 export const EDIT_COMMANDS = [
   "open",
@@ -62,6 +63,7 @@ export const EDIT_COMMANDS = [
   "insert-command",
   "delete-command",
   "update-command",
+  "batch",
   "validate",
   "save",
 ] as const;
@@ -132,6 +134,9 @@ export interface EditErrorBody {
   expected?: unknown;
   actual?: unknown;
   details?: unknown;
+  /** For a `batch` failure, the 0-based index of the inner operation that
+   * failed, so a caller can tell which step of the transaction errored. */
+  operationIndex?: number;
 }
 
 export interface EditSuccess {
@@ -140,8 +145,13 @@ export interface EditSuccess {
   project: ProjectSummary;
   changed: boolean;
   addresses: string[];
+  /** Structural reversible changes. The `compact` envelope reports an empty
+   * array and carries `semanticDiff` instead. */
   diff: EditChange[];
   patch?: EditPatch;
+  /** Compact semantic summary of the same change. Present only for the
+   * `envelope: "compact"` mode, which omits `patch` and empties `diff`. */
+  semanticDiff?: SemanticChange[];
   result: unknown;
 }
 
@@ -174,3 +184,15 @@ export type FileEditResponse = FileEditSuccess | (EditFailure & {
   dryRun?: boolean;
   written?: false;
 });
+
+/** Response shape for a successful edit. `full` (the default) returns the
+ * structural `diff` and reversible `patch`. `compact` omits both and returns
+ * the smaller `semanticDiff` summary instead; the project summary, addresses
+ * and command result are unchanged. */
+export type EditEnvelope = "full" | "compact";
+
+/** One operation inside a `batch` transaction. */
+export interface BatchOperation {
+  command: EditCommandName;
+  args?: Record<string, unknown>;
+}

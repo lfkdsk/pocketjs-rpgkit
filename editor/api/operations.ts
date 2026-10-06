@@ -92,8 +92,10 @@ import {
 } from "../engine/document.ts";
 import {
   EDIT_COMMANDS,
+  type BatchOperation,
   type EditChange,
   type EditCommandName,
+  type EditEnvelope,
   type EditExecution,
   type EditFailure,
   type EditPatch,
@@ -101,6 +103,7 @@ import {
   type PatchValue,
   type ProjectSummary,
 } from "./types.ts";
+import { semanticDiffJson, type SemanticChange } from "./semantic-diff.ts";
 import {
   CatalogOperationError,
   catalogCommandSpec,
@@ -148,6 +151,7 @@ const WRITE_COMMANDS: ReadonlySet<EditCommandName> = new Set([
   "insert-command",
   "delete-command",
   "update-command",
+  "batch",
   "save",
 ]);
 
@@ -207,6 +211,7 @@ const ARGUMENT_KEYS: Record<EditCommandName, readonly string[]> = {
   "insert-command": ["map", "event", "page", "address", "command"],
   "delete-command": ["map", "event", "page", "address"],
   "update-command": ["map", "event", "page", "address", "field", "value"],
+  batch: ["operations"],
   validate: ["map"],
   save: ["patch", "direction"],
 };
@@ -262,8 +267,13 @@ function argsRecord(args: unknown): Record<string, unknown> {
   return args;
 }
 
+/** Arguments that shape the response rather than the edit, accepted by
+ * every command so a caller can request a compact envelope without the
+ * command-specific arg tables listing it. */
+const META_ARG_KEYS: readonly string[] = ["envelope"];
+
 function assertKnownArgs(command: EditCommandName, args: Record<string, unknown>): void {
-  const allowed = ARGUMENT_KEYS[command];
+  const allowed = [...ARGUMENT_KEYS[command], ...META_ARG_KEYS];
   const unknown = Object.keys(args).filter((key) => !allowed.includes(key));
   if (unknown.length > 0) {
     throw new EditApiError(
@@ -309,6 +319,43 @@ export function validateEditOperationInput(
   const args = argsRecord(rawArgs);
   assertKnownArgs(command, args);
   return { command, args };
+}
+
+/** The response envelope requested by a call. `full` (the default) keeps the
+ * structural `diff` and reversible `patch`; `compact` omits both and carries
+ * the smaller `semanticDiff` summary. */
+export function envelopeArg(args: Record<string, unknown>): EditEnvelope {
+  const value = args.envelope;
+  if (value === undefined) return "full";
+  if (value !== "full" && value !== "compact") {
+    throw new EditApiError("INVALID_ARGUMENT", "envelope must be one of full, compact", "$.envelope", ["full", "compact"], value);
+  }
+  return value;
+}
+
+/** Shape a successful mutating response for its envelope. The compact form
+ * empties the structural diff and drops the reversible patch (the noisy part
+ * of a large-array or passage edit) and reports the semantic summary instead. */
+export function withEnvelope(
+  response: EditSuccess,
+  envelope: EditEnvelope,
+  before: unknown,
+  after: unknown,
+  options: { excludePath?: (path: string) => boolean } = {},
+): EditSuccess {
+  if (envelope !== "compact") return response;
+  const { patch: _patch, ...rest } = response;
+  return { ...rest, diff: [], semanticDiff: semanticDiffJson(before, after, options) };
+}
+
+/** Tag a batch's inner-operation failure with the 0-based step that failed,
+ * so a caller can tell which operation of the transaction errored. */
+export function withBatchStepIndex(response: EditFailure, index: number): EditFailure {
+  return {
+    ok: false,
+    ...(response.command === undefined ? {} : { command: response.command }),
+    error: { ...response.error, operationIndex: index },
+  };
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string {
@@ -2067,6 +2114,9 @@ export function executeEditOperation(
 ): EditExecution {
   try {
     const { command, args } = validateEditOperationInput(commandValue, rawArgs);
+    if (command === "batch") {
+      return executeEditTransaction(source, args);
+    }
     if (command === "validate") {
       const scopedMap = args.map === undefined ? undefined : stringArg(args, "map");
       let validationSource = source;
@@ -2155,7 +2205,8 @@ export function executeEditOperation(
     validateEditedProject(mutation.project);
     const patch = createEditPatch(inline, mutation.project);
     const output = serializeProjectPreservingSource(source, inline, mutation.project);
-    const response: EditSuccess = {
+    const envelope = envelopeArg(args);
+    const response: EditSuccess = withEnvelope({
       ok: true,
       command,
       project: summaryOf(mutation.project),
@@ -2164,10 +2215,93 @@ export function executeEditOperation(
       diff: patch.changes,
       patch,
       result: mutation.result,
-    };
+    }, envelope, inline, mutation.project);
     return { response, output };
   } catch (error) {
     return fail(commandValue || undefined, error);
+  }
+}
+
+/** Commands that cannot appear inside a `batch`. `save` replays a captured
+ * patch, which a batch expresses directly as its own operations; `batch`
+ * cannot nest. */
+const BATCH_FORBIDDEN_COMMANDS: ReadonlySet<string> = new Set(["save", "batch"]);
+
+/** Parse and wire-validate a `batch` operation list. Exported so the sharded
+ * transaction path shares the same all-or-nothing input gate. */
+export function parseBatchOperations(value: unknown): BatchOperation[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new EditApiError("INVALID_ARGUMENT", "operations must be a non-empty array", "$.operations", "non-empty array", value);
+  }
+  return value.map((raw, index): BatchOperation => {
+    if (!isRecord(raw) || typeof raw.command !== "string" || raw.command.length === 0) {
+      throw new EditApiError("INVALID_ARGUMENT", `operations[${index}] needs a non-empty command string`, `$.operations[${index}].command`, "command string", raw);
+    }
+    if (BATCH_FORBIDDEN_COMMANDS.has(raw.command)) {
+      throw new EditApiError(
+        "INVALID_ARGUMENT",
+        `operations[${index}].command ${JSON.stringify(raw.command)} cannot run inside a batch`,
+        `$.operations[${index}].command`,
+        `a command other than ${[...BATCH_FORBIDDEN_COMMANDS].join(", ")}`,
+        raw.command,
+      );
+    }
+    // Validate the inner operation's wire shape now so a bad argument fails
+    // before any operation runs (all-or-nothing).
+    const { command, args } = validateEditOperationInput(raw.command, raw.args);
+    return { command, args };
+  });
+}
+
+/** Run several operations against source text as one transaction: every
+ * operation validates and applies in order, and the batch returns one
+ * reversible patch from the original to the final document. A failure in any
+ * operation returns that failure and publishes nothing; the caller writes
+ * only the final output. Read operations are allowed and contribute their
+ * result but no document change. */
+export function executeEditTransaction(
+  source: string,
+  rawArgs: unknown = {},
+): EditExecution {
+  try {
+    const args = argsRecord(rawArgs);
+    const operations = parseBatchOperations(args.operations);
+    const envelope = envelopeArg(args);
+    let currentSource = source;
+    const addresses: string[] = [];
+    const results: { command: EditCommandName; result: unknown }[] = [];
+    let last: EditSuccess | undefined;
+    for (let index = 0; index < operations.length; index++) {
+      const operation = operations[index]!;
+      const execution = executeEditOperation(currentSource, operation.command, operation.args);
+      if (!execution.response.ok) {
+        return { response: withBatchStepIndex(execution.response, index) };
+      }
+      last = execution.response as EditSuccess;
+      addresses.push(...last.addresses);
+      results.push({ command: operation.command, result: last.result });
+      if (execution.output !== undefined) currentSource = execution.output;
+    }
+    if (!last) {
+      return fail("batch", new EditApiError("EMPTY_TRANSACTION", "a batch needs at least one operation", "$.operations"));
+    }
+    const before = requireInline(loadValidProject(source));
+    const after = requireInline(loadValidProject(currentSource));
+    const patch = createEditPatch(before, after);
+    const changed = patch.changes.length > 0;
+    const response: EditSuccess = withEnvelope({
+      ok: true,
+      command: "batch",
+      project: summaryOf(after),
+      changed,
+      addresses,
+      diff: patch.changes,
+      patch,
+      result: { operations: results, count: operations.length },
+    }, envelope, before, after);
+    return { response, output: changed ? serializeProjectPreservingSource(source, before, after) : undefined };
+  } catch (error) {
+    return fail("batch", error);
   }
 }
 

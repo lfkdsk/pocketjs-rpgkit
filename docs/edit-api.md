@@ -31,7 +31,7 @@ The commands are `open`, `list-maps`, `list-events`, `list-pages`,
 `move-map`, `paint-tile`, `paint-rect`, `fill-region`, `paint-passage`,
 `paint-cells`, `paint-edges`, `add-event`, `update-event`, `delete-event`,
 `add-page`, `update-page`, `delete-page`, `insert-command`, `delete-command`,
-`update-command`, `validate`, `save`, `propose`, `list-proposals`,
+`update-command`, `batch`, `validate`, `save`, `propose`, `list-proposals`,
 `show-proposal`, `withdraw-proposal`, `accept-proposal`, `reject-proposal`,
 and `list-archive`. The six project catalogs add
 `list-<plural>`, `get-<singular>`, `add-<singular>`, `update-<singular>`, and
@@ -1130,6 +1130,90 @@ $ bun run rpgkit-edit save --file examples/sunstone/data/sunstone.json --json @r
 {"ok":true,"changed":true,"result":{"direction":"reverse","beforeHash":"76b5f5ca537e…","afterHash":"01fb89c775a8…"}}
 ```
 
+## `batch`
+
+Run several editing operations as one all-or-nothing transaction. Args:
+`operations` (a non-empty array of `{command, args}` objects, as for the
+standalone commands). Every operation validates and applies in order; the
+batch returns one reversible patch from the original to the final document
+and one publish. A failure in any operation returns that failure (with
+`error.operationIndex`, the 0-based index of the operation that failed) and
+writes nothing. `save` and a nested `batch` are refused inside a batch. Read
+operations are allowed and contribute their result but no document change.
+
+`batch` works on both inline projects and sharded `ProjectShell`s. A shell
+batch loads each operation's shards lazily and writes only the affected
+shards plus the shell. The structural shell commands (`add-map` and friends)
+stay proposal-only for a direct batch, as for a single direct edit; a
+`batch` inside a proposal hunk may use them, the same as a plain hunk
+operation.
+
+`result` is `{operations: [{command, result}, …], count}`, one entry per
+operation in order. The response carries the combined `addresses` and one
+`patch` over the whole transaction.
+
+```sh
+$ bun run rpgkit-edit batch --file examples/sunstone/data/sunstone.json --dry-run \
+    --json '{"operations":[
+      {"command":"add-item","args":{"item":{"id":"storehouse-key","name":"Storehouse Key","sprite":"town.12","type":"key"}}},
+      {"command":"add-event","args":{"map":"village","event":{"id":"key-giver","x":4,"y":6,"pages":[{"trigger":"action","commands":[{"op":"item","item":"storehouse-key","set":"add","count":1}]}]}}}
+    ]}'
+{"ok":true,"changed":true,"addresses":["item:storehouse-key","map:village/event:key-giver"],"patch":{…},"result":{"operations":[{…},{…}],"count":2}}
+```
+
+A proposal hunk may also contain a `batch` operation, so a reviewed proposal
+can carry a multi-step transaction as one independently reviewable unit.
+
+## Compact envelope
+
+Every mutating command (including `batch`) accepts an optional `envelope`
+argument. The default `"full"` envelope returns the structural `diff` and
+reversible `patch`. `"compact"` empties `diff`, omits `patch`, and returns a
+`semanticDiff` instead — a smaller, human-facing summary of the same change:
+
+- An array of id-keyed objects (`maps`, `events`, `items`, …) changes by
+  `insert`/`remove`/`move` rather than a whole-array replacement. A mixed
+  change (an insert or remove together with a reorder) reports the reorder as
+  `move` entries as well as the insert/remove, so no movement is hidden. A
+  `move` names only an item whose relative order changed; an item that an
+  insert or remove merely shifted (its order relative to every other item
+  stayed the same) is not reported as a move.
+- A sparse map layer (`upper`, `passage`, `regions`, `terrain`, `tiles`)
+  reports only the cells whose dense value changed, so editing one passage
+  cell reports one cell instead of the normalization noise the structural
+  diff shows when the sparse pair order shifts. This treatment applies only
+  to a map's own fields — an inline map at `/maps/<n>/<key>`, or a map shard
+  at `/shards/<entry>/<key>`. Any other array of pairs with one of those key
+  names (for example an event command's `args` or a battle's `setup`, which
+  are free JSON) is compared element-wise, so a reorder is reported.
+- A sharded edit's derived shell metadata (per-shard checksums,
+  `mapSchemaHash`, `mapManifestHash`) is dropped, since a reader can rebuild
+  it from the shards.
+
+```sh
+$ bun run rpgkit-edit paint-passage --file examples/sunstone/data/sunstone.json \
+    --json '{"map":"village","x":0,"y":0,"value":"pass","envelope":"compact"}'
+{"ok":true,"changed":true,"diff":[],"semanticDiff":[{"kind":"set","path":"/maps/0/passage/0","before":{"exists":true,"value":"block"},"after":{"exists":true,"value":"pass"}}],…}
+```
+
+`semanticDiff` entries are `{kind:"set",path,before,after}`,
+`{kind:"insert",path,index,after}`, `{kind:"remove",path,index,before}`, or
+`{kind:"move",path,from,to}`. Array indices are per side: an insert's `index`
+is its position in the after array, a remove's `index` is its position in the
+before array, and a move's `from`/`to` are the item's positions in the before
+and after arrays. The summary is descriptive — for inspection and logs — and
+is not a replay recipe; the reversible `patch` (returned by the default
+envelope) remains the form `save` replays and the way to reconstruct either
+side.
+
+Why the default envelope still shows many entries for one cell: an edit rule
+rewrites a sparse layer by appending the edited pair to the end of the array
+(the runtime's "last pair at an index wins" rule makes the order irrelevant),
+so the structural diff lists every slot the pair moved past — one passage
+cell can be dozens of `diff` entries. This is intentional and keeps the
+reversible patch a precise structural record; the `compact` envelope above is
+the remedy when only the real change matters.
+
 ## AI proposal lifecycle
 
 The proposal commands put typed edits into a human-review queue instead of
@@ -1500,6 +1584,7 @@ that root after symlink resolution. Mutating tools also take `dryRun`.
 | `rpgkit_command_delete` | `delete-command` | `file`, `map`, `event`, `page`, `address` | `dryRun` |
 | `rpgkit_command_update` | `update-command` | `file`, `map`, `event`, `page`, `address`, `field`, `value` | `dryRun` |
 | `rpgkit_project_validate` | `validate` | `file` | `map` |
+| `rpgkit_project_batch` | `batch` | `file`, `operations` | `dryRun`, `envelope` |
 | `rpgkit_project_save` | `save` | `file`, `patch` | `direction`, `dryRun` |
 | `rpgkit_proposal_create` | `propose` | `file`, `id`, `title`, `rationale`, `author`, `hunks` | `createdAt`, `dryRun` |
 | `rpgkit_proposals_list` | `list-proposals` | `file` | — |

@@ -15,6 +15,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { executeEditOperation } from "./operations.ts";
 import {
   executeShardedEditOperation,
+  executeShardedEditTransaction,
   loadValidatedProjectShell,
   shardEntriesForOperation,
   sourceDeclaresProjectShell,
@@ -246,6 +247,73 @@ function fileResponse(
   } as FileEditResponse;
 }
 
+/** Run a `batch` transaction against a ProjectShell: each operation's shards
+ * are loaded lazily through the confinement check, the whole batch validates
+ * as one unit, and only the changed shards plus the shell are published,
+ * shards first and the manifest last. */
+function runShellBatchEdit(
+  request: FileEditRequest,
+  file: string,
+  dryRun: boolean,
+  configuredRoot: string | undefined,
+  shell: ReturnType<typeof loadValidatedProjectShell>,
+  source: string,
+): FileEditResponse {
+  const boundary = configuredRoot ?? dirname(file);
+  const paths = new Map<string, string>();
+  const originals = Object.create(null) as Record<string, string>;
+  const loadShard = (entry: string): string => {
+    const cached = originals[entry];
+    if (cached !== undefined) return cached;
+    const path = confinedShardPath(file, boundary, entry);
+    const text = readFileSync(path, "utf8");
+    paths.set(entry, path);
+    originals[entry] = text;
+    return text;
+  };
+  let execution: ReturnType<typeof executeShardedEditTransaction>;
+  try {
+    execution = executeShardedEditTransaction(source, loadShard, request.args);
+  } catch (error) {
+    const pathFailure = error instanceof Error &&
+      (/outside|confined relative path|project shell/.test(error.message));
+    return ioFailure(
+      request.command,
+      file,
+      dryRun,
+      pathFailure ? "PATH_OUTSIDE_ROOT" : "READ_FAILED",
+      error,
+    );
+  }
+  if (!execution.response.ok) return fileResponse(execution.response, file, dryRun);
+  if (dryRun || !execution.response.changed || execution.output === undefined) {
+    return fileResponse(execution.response, file, dryRun);
+  }
+  const replacements: AtomicReplacement[] = [];
+  try {
+    for (const [entry, text] of Object.entries(execution.output.shards)) {
+      const path = paths.get(entry);
+      const expected = originals[entry];
+      if (path === undefined || expected === undefined) {
+        throw new Error(`batch emitted an unloaded shard ${JSON.stringify(entry)}`);
+      }
+      replacements.push({ path, text, expectedSource: expected });
+    }
+    // The manifest is the commit marker and must always be last.
+    replacements.push({ path: file, text: execution.output.shell, expectedSource: source });
+    withProjectFileLock(file, () => atomicWriteMany(replacements));
+  } catch (error) {
+    return ioFailure(
+      request.command,
+      file,
+      dryRun,
+      error instanceof WriteConflictError ? "WRITE_CONFLICT" : "WRITE_FAILED",
+      error,
+    );
+  }
+  return fileResponse(execution.response, file, dryRun, true, replacements.map((item) => item.path));
+}
+
 /** Read, execute, and (for effective mutations) atomically replace a file.
  * Dry-run follows the exact validation/diff path but never reaches the write. */
 export function runFileEdit(request: FileEditRequest): FileEditResponse {
@@ -271,9 +339,21 @@ export function runFileEdit(request: FileEditRequest): FileEditResponse {
 
   if (sourceDeclaresProjectShell(source)) {
     let shell: ReturnType<typeof loadValidatedProjectShell>;
-    let entries: string[];
     try {
       shell = loadValidatedProjectShell(source);
+    } catch {
+      const execution = executeShardedEditOperation(source, {}, request.command, request.args);
+      return fileResponse(execution.response, file, dryRun);
+    }
+
+    // A batch loads each operation's shards lazily (the set depends on the
+    // evolving shell), so it cannot use the single-operation pre-load below.
+    if (request.command === "batch") {
+      return runShellBatchEdit(request, file, dryRun, configuredRoot, shell, source);
+    }
+
+    let entries: string[];
+    try {
       entries = shardEntriesForOperation(shell, request.command, request.args);
     } catch {
       const execution = executeShardedEditOperation(source, {}, request.command, request.args);
