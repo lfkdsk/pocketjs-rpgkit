@@ -207,12 +207,15 @@ const maybeTest = preflight.ok ? test : test.skip;
 // route fold): 608,798, 975,980 and 773,676. The per-reference-tick route
 // resolver (the session/attract hook that keeps a turn from overshooting at
 // 4 Hz) adds 502 B to Meadow and 977 B to Sunstone and the WAV fixture:
-// 609,300, 976,957 and 774,653. PocketJS's socket module adds its entry to
-// the shared platform capability table, 192 B in each: 609,492, 977,149
-// and 774,845. Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 609_492;
-const EXPECTED_SUNSTONE_QOA_BYTES = 977_149;
-const EXPECTED_WAV_FIXTURE_BYTES = 774_845;
+// 609,300, 976,957 and 774,653. Optional project-level switch/variable
+// catalog declarations add 72 B to the shared project-schema validation
+// path in each bundle; they do not add a runtime loop or audio dependency.
+// PocketJS's socket module adds its entry to the shared platform capability
+// table, 192 B in each: 609,564, 977,221 and 774,917. Re-measure after
+// every shared-path change.
+const EXPECTED_MEADOW_BYTES = 609_564;
+const EXPECTED_SUNSTONE_QOA_BYTES = 977_221;
+const EXPECTED_WAV_FIXTURE_BYTES = 774_917;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

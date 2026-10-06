@@ -2,7 +2,7 @@
 //
 //   bun run rpgkit-check <check> --file <doc.json> [--json '<args>'] [--out <dir>]
 //     [--session <module>] [--max-frames <n>] [--max-states <n>]
-//     [--max-seconds <n>]
+//     [--max-seconds <n>] [--map <id>] [--incremental]
 //
 // <check> is one of: lint, locks, freeze, reach, explore, shot (or the full
 // rpgkit-<check> tool name). The report is printed to stdout as JSON. Exit
@@ -10,6 +10,10 @@
 // and 2 for usage or load errors (a load error still prints its findings as
 // a JSON report). The same tools are exposed as MCP descriptors in
 // src/registry.ts for the editing server to mount.
+//
+// --map scopes a lint pass to one map (a shell loads only that shard).
+// --incremental makes a shell lint reuse cached per-shard findings and
+// re-check only changed shards.
 
 import { CHECK_TOOLS, CheckArgsError, CheckLoadError, checkTool } from "./src/registry.ts";
 import { countBySeverity, type CheckReport } from "./src/finding.ts";
@@ -21,7 +25,7 @@ function usage(): never {
   console.error(
     `usage: bun run rpgkit-check <check> --file <doc.json> [--json '<args>'] [--out <dir>]\n` +
       `  [--session <module>]\n` +
-      `  [--max-frames <n>] [--max-states <n>] [--max-seconds <n>]\n` +
+      `  [--max-frames <n>] [--max-states <n>] [--max-seconds <n>] [--map <id>] [--incremental]\n` +
       `checks: ${CHECK_TOOLS.map((t) => t.name.replace(/^rpgkit-/, "")).join(", ")}\n` +
       `note: reach reports a replayable witness for every reached map; a notFound map is a lead, not a proof.\n` +
       `note: reach budgets are execution limits: the search may run at most one 6-tick block past --max-frames.`,
@@ -53,6 +57,8 @@ let sessionModule: string | undefined;
 let maxFrames: number | undefined;
 let maxStates: number | undefined;
 let maxSeconds: number | undefined;
+let map: string | undefined;
+let incremental = false;
 for (let i = 1; i < argv.length; i++) {
   const arg = argv[i]!;
   // A flag must be followed by its value; a missing or empty value is a
@@ -83,6 +89,8 @@ for (let i = 1; i < argv.length; i++) {
   else if (arg === "--max-frames") maxFrames = parseBudget("--max-frames", takeValue("--max-frames"), true);
   else if (arg === "--max-states") maxStates = parseBudget("--max-states", takeValue("--max-states"), true);
   else if (arg === "--max-seconds") maxSeconds = parseBudget("--max-seconds", takeValue("--max-seconds"));
+  else if (arg === "--map") map = takeValue("--map");
+  else if (arg === "--incremental") incremental = true;
   else if (arg.startsWith("--file=")) file = takeEquals("--file", arg);
   else if (arg.startsWith("--json=") || arg.startsWith("--args=")) {
     argsJson = takeEquals(arg.startsWith("--json=") ? "--json" : "--args", arg);
@@ -91,6 +99,7 @@ for (let i = 1; i < argv.length; i++) {
   else if (arg.startsWith("--max-frames=")) maxFrames = parseBudget("--max-frames", takeEquals("--max-frames", arg), true);
   else if (arg.startsWith("--max-states=")) maxStates = parseBudget("--max-states", takeEquals("--max-states", arg), true);
   else if (arg.startsWith("--max-seconds=")) maxSeconds = parseBudget("--max-seconds", takeEquals("--max-seconds", arg));
+  else if (arg.startsWith("--map=")) map = takeEquals("--map", arg);
   else {
     console.error(`unknown argument: ${arg}`);
     usage();
@@ -131,6 +140,8 @@ const callArgs = {
   ...(maxFrames !== undefined ? { maxFrames } : {}),
   ...(maxStates !== undefined ? { maxStates } : {}),
   ...(maxSeconds !== undefined ? { maxSeconds } : {}),
+  ...(map !== undefined ? { map } : {}),
+  ...(incremental ? { incremental: true } : {}),
   file,
 };
 

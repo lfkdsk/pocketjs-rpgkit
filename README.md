@@ -335,8 +335,9 @@ What it does today:
   inspect author/rationale and
   per-hunk conflict state, locate each hunk, preview proposed tiles as
   translucent art and event changes as color-coded boxes, then accept or
-  reject one hunk or accept every clean hunk; one accept action is one undo
-  step and rejection never edits the document;
+  reject one hunk or accept every clean hunk; acceptance re-runs proposal QA
+  in the desktop bridge and can publish proposal-owned PNG attachments, one
+  accept action is one undo step, and rejection never edits the document;
 - ask a configured local agent for a proposal from the natural-language box
   for an inline desktop project;
   the request carries the current map and explicit cell/event selection, and
@@ -364,7 +365,7 @@ What it does today:
   scenes use a visible placeholder, and screen backdrops use placeholders
   instead of crashing the editor.
 
-Not yet: common-event lists, asset import, or sheet-level `dirBlock` /
+Not yet: common-event lists, an interactive asset importer, or sheet-level `dirBlock` /
 `defaultPassage` editing. The grow example's generated settlement is not
 wired in: its sheet is synthesized by its cooker rather than cut from a
 source PNG.
@@ -448,7 +449,7 @@ jq '{patch:.patch}' preview.json > apply.json
 bun run rpgkit-edit save --file game/data/project.json --json @apply.json
 ```
 
-For human-reviewed AI work on an inline project, group typed edit operations
+For human-reviewed AI work on an inline or sharded project, group typed edit operations
 into explicit hunks and create a proposal instead of mutating the project:
 
 ```json
@@ -486,13 +487,15 @@ bun run rpgkit-edit propose --file game/data/inline-project.json \
 bun run rpgkit-edit list-proposals --file game/data/inline-project.json
 bun run rpgkit-edit show-proposal --file game/data/inline-project.json \
   --json '{"id":"agent-welcome-path-1"}'
-bun run rpgkit-edit withdraw-proposal --file game/data/inline-project.json \
+bun run rpgkit-edit accept-proposal --file game/data/inline-project.json \
   --json '{"id":"agent-welcome-path-1"}'
+bun run rpgkit-edit list-archive --file game/data/inline-project.json
 ```
 
 `propose --dry-run` returns the complete validated proposal without writing
-the project or sidecar. A normal `propose` writes exactly one JSON file to
-`<project.json>.proposals/`; it still never edits the project. Operations
+the project or sidecar. A normal `propose` writes the proposal JSON plus its
+versioned QA report under `<project.json>.proposals/qa/`; it still never edits
+the project. Operations
 inside one hunk run in order and may depend on one another. Every hunk starts
 from the same proposal base, and paths may not overlap across hunks, so the
 editor can review them independently. The stored `baseHash` is the project's
@@ -523,19 +526,31 @@ interrupted pending-to-archive transition is repaired on load.
 If bridge initialization fails after publishing the capability, managed SAVE
 fails closed; companions without that marker retain their legacy save channel.
 
+CLI/MCP acceptance uses the same accept-time QA gate. It permits only the
+unchanged, location-sensitive multiset of creation-time corpus errors and
+rejects new, moved or duplicated errors. The transaction publishes confined,
+validated PNG attachments, then project files, then the archive decision; a
+later failure restores the project and removes published assets. Sharded
+proposals can add, duplicate, move, delete and connect maps in either JSON or
+compact `.rkm` shards. The visual proposal panel remains inline-only.
+
 The command set is `open`, `list-maps`, `list-events`, `list-pages`,
-`list-commands`, `update-map`, `add-map`, `duplicate-map`, `delete-map`,
+`list-commands`, `add-item`, `add-sprite`, `update-map`, `add-map`,
+`duplicate-map`, `delete-map`,
 `move-map`, `paint-tile`, `paint-rect`, `fill-region`, `paint-passage`,
 `paint-cells`, `paint-edges`, `add-event`,
 `update-event`, `delete-event`, `add-page`, `update-page`, `delete-page`,
 `insert-command`, `delete-command`, `update-command`, `validate`, `save`,
-`propose`, `list-proposals`, `show-proposal`, and `withdraw-proposal`.
+`propose`, `list-proposals`, `show-proposal`, `withdraw-proposal`,
+`accept-proposal`, `reject-proposal`, and `list-archive`.
 Mutations use the same tile strokes, event/page transactions, recursive
 command addresses and field parsers as the visual editor. Project read/edit
 commands through `save` support inline documents and sharded `ProjectShell`
 projects, except that `add-map`, `duplicate-map`, `delete-map`, `move-map`,
-and `paint-edges` refuse a shell with `UNSUPPORTED_FOR_SHELL`. Proposal creation, assessment, and editor review currently require
-an inline project; a shell receives a clear `READ_ONLY_PROJECT_SHELL` error.
+and `paint-edges` refuse a shell with `UNSUPPORTED_FOR_SHELL`. Those are
+direct-edit limits: proposal creation, assessment and whole-proposal
+accept/reject support a shell, including structural map operations. Visual
+editor review and local-agent requests still require an inline project.
 Shell-only
 discovery reads no map payloads; ordinary map operations load and validate
 only the selected shard. `validate` and a map-id rename read every shard,
@@ -576,9 +591,11 @@ The server implements MCP initialization, ping, `tools/list`, and
 are returned as structured tool errors, while malformed requests use standard
 JSON-RPC error codes. Proposal lifecycle uses
 `rpgkit_proposal_create`, `rpgkit_proposals_list`,
-`rpgkit_proposal_show`, and `rpgkit_proposal_withdraw`; these are separate
-from project-editing tools because proposal creation and withdrawal touch only
-the sidecar queue. Their parameters, responses, errors, and full lifecycle
+`rpgkit_proposal_show`, `rpgkit_proposal_withdraw`,
+`rpgkit_proposal_accept`, `rpgkit_proposal_reject`, and
+`rpgkit_proposal_archive`; these are separate from project-editing tools so
+review-queue effects and accept-time project publication remain explicit.
+Their parameters, responses, errors, and full lifecycle
 examples are in the [edit API reference](docs/edit-api.md#ai-proposal-lifecycle).
 
 ## QA checks

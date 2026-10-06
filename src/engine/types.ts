@@ -952,6 +952,21 @@ export interface Item {
   kind?: "item" | "weapon" | "armor";
 }
 
+/** Optional editor-facing declaration for an event switch. Switch ids remain
+ * valid when they are only referenced by event content; this catalog gives
+ * tools a stable place for human-readable names and unused planned ids. */
+export interface SwitchDef {
+  id: string;
+  name?: string;
+}
+
+/** Optional editor-facing declaration for an event variable. Variable ids
+ * remain valid when undeclared, matching the reducer's sparse value bank. */
+export interface VariableDef {
+  id: string;
+  name?: string;
+}
+
 export interface CommonEvent {
   id: string;
   name?: string;
@@ -1104,6 +1119,12 @@ export interface Project {
   uiText?: UiTextOverrides;
   sheets: Sheet[];
   items: Item[];
+  /** Named switch directory for authoring tools. Event references to an id
+   * that is absent here keep their existing sparse-bank runtime semantics. */
+  switches?: SwitchDef[];
+  /** Named variable directory for authoring tools. Event references to an id
+   * that is absent here keep their existing sparse-bank runtime semantics. */
+  variables?: VariableDef[];
   /** Page.sprite key -> static character image. */
   sprites?: Record<string, SpriteDef>;
   /** Frame animations playable with the `mapAnim` command, by id. */

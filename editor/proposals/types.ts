@@ -12,14 +12,26 @@ export type ProposalDecisionStatus = "accepted" | "rejected";
 export interface ProposalDecision {
   status: ProposalDecisionStatus;
   decidedAt: string;
+  /** Who made the decision (CLI/MCP surface, agent id, …). Omitted by
+   * reviews written before this field existed. */
+  source?: string;
 }
 
 export interface ProposalHunk {
   id: string;
   summary: string;
   changes: EditChange[];
+  /** Proposal-owned PNGs, keyed by the project-relative path referenced by
+   * sprite declarations. Assets are immutable additions: acceptance never
+   * overwrites differing existing bytes. */
+  assets?: Record<string, ProposalAsset>;
   /** Omitted while the hunk is waiting for review. */
   decision?: ProposalDecision;
+}
+
+export interface ProposalAsset {
+  type: "image/png";
+  data: string;
 }
 
 /** Stored wire format. The seven required fields deliberately match the

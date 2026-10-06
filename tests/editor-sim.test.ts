@@ -789,7 +789,12 @@ simDescribe("editor budget", () => {
     // tapToWalk=false, so only the shared GameView/drain path ships):
     // measured 1,637,292 B. The per-reference-tick route resolver (the
     // session/attract hook that keeps a turn from overshooting at 4 Hz)
-    // adds 977 shared bytes: measured 1,638,269 B. Keep a narrow margin.
-    expect(js).toBeLessThan(1_640_000);
+    // adds 977 shared bytes: measured 1,638,269 B. Project catalog CRUD
+    // (six catalogs, typed reference discovery and the optional
+    // switch/variable declarations in the embedded schema) and the
+    // transactional proposal workflow (QA gate, sharded accept, PNG
+    // publication, shared Studio acceptance path) add 35,685 B combined:
+    // the measured editor bundle is 1,673,954 B. Keep a narrow margin.
+    expect(js).toBeLessThan(1_678_000);
   });
 });

@@ -1,8 +1,8 @@
 // tools/rpgkit-check/src/doc.ts — load an rpgkit-project/v1 document for
 // checking. The editor exports inline Projects (maps in the document);
-// those are what every check consumes. A ProjectShell (sharded maps) needs
-// a MapRepository the CLI does not own, so it is rejected with a clear
-// error instead of being half-checked.
+// those are what every check consumes. A ProjectShell (sharded maps) is
+// detected here and materialized by the registry (src/shell.ts), so both
+// shapes check through the same code path.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -24,8 +24,8 @@ export interface LoadedProject {
   project: Project | null;
   /** Schema-validation findings (error severity) for this document. */
   schemaErrors: Finding[];
-  /** True when the document is a ProjectShell (sharded maps), which the
-   *  CLI checks do not support directly. */
+  /** True when the document is a ProjectShell (sharded maps). The registry
+   *  materializes it (src/shell.ts) instead of checking it inline. */
   shell: boolean;
 }
 
@@ -81,16 +81,6 @@ export function loadProjectFile(path: string): LoadedProject {
     ),
   );
   const shell = isProjectShell(doc);
-  if (shell) {
-    errors.push(
-      makeFinding(
-        "doc/shell-unsupported",
-        "error",
-        `${abs} is a ProjectShell (mapIndex only); rpgkit-check checks inline documents`,
-        "pass the editor's inline export, or materialize the shell first",
-      ),
-    );
-  }
   return { project: doc as Project, schemaErrors: errors, shell };
 }
 

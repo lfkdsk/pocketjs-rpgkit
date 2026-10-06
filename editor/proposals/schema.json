@@ -57,20 +57,37 @@
         "decidedAt": {
           "type": "string",
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
-        }
+        },
+        "source": { "type": "string", "minLength": 1, "maxLength": 160 }
       }
     },
     "hunk": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "summary", "changes"],
+      "anyOf": [
+        { "properties": { "changes": { "minItems": 1 } } },
+        { "required": ["assets"] }
+      ],
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
         "summary": { "type": "string", "minLength": 1, "maxLength": 240 },
         "changes": {
           "type": "array",
-          "minItems": 1,
           "items": { "$ref": "#/$defs/change" }
+        },
+        "assets": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "data"],
+            "properties": {
+              "type": { "const": "image/png" },
+              "data": { "type": "string", "minLength": 1 }
+            }
+          }
         },
         "decision": { "$ref": "#/$defs/decision" }
       }

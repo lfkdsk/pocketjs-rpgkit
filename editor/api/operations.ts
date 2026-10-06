@@ -101,9 +101,33 @@ import {
   type PatchValue,
   type ProjectSummary,
 } from "./types.ts";
+import {
+  CatalogOperationError,
+  catalogCommandSpec,
+  mutateCatalog,
+  readCatalog,
+} from "./catalogs.ts";
 
 const COMMAND_SET: ReadonlySet<string> = new Set(EDIT_COMMANDS);
 const WRITE_COMMANDS: ReadonlySet<EditCommandName> = new Set([
+  "add-item",
+  "update-item",
+  "remove-item",
+  "add-sprite",
+  "update-sprite",
+  "remove-sprite",
+  "add-audio",
+  "update-audio",
+  "remove-audio",
+  "add-sheet",
+  "update-sheet",
+  "remove-sheet",
+  "add-switch",
+  "update-switch",
+  "remove-switch",
+  "add-variable",
+  "update-variable",
+  "remove-variable",
   "update-map",
   "add-map",
   "duplicate-map",
@@ -133,6 +157,36 @@ const ARGUMENT_KEYS: Record<EditCommandName, readonly string[]> = {
   "list-events": ["map"],
   "list-pages": ["map", "event"],
   "list-commands": ["map", "event", "page"],
+  "list-items": [],
+  "get-item": ["item"],
+  "add-item": ["item"],
+  "update-item": ["item", "changes"],
+  "remove-item": ["item"],
+  "list-sprites": [],
+  "get-sprite": ["sprite"],
+  "add-sprite": ["id", "sprite", "value"],
+  "update-sprite": ["sprite", "value"],
+  "remove-sprite": ["sprite"],
+  "list-audio": [],
+  "get-audio": ["audio"],
+  "add-audio": ["audio", "value"],
+  "update-audio": ["audio", "value"],
+  "remove-audio": ["audio"],
+  "list-sheets": [],
+  "get-sheet": ["sheet"],
+  "add-sheet": ["sheet"],
+  "update-sheet": ["sheet", "changes"],
+  "remove-sheet": ["sheet"],
+  "list-switches": [],
+  "get-switch": ["switch"],
+  "add-switch": ["switch"],
+  "update-switch": ["switch", "changes"],
+  "remove-switch": ["switch"],
+  "list-variables": [],
+  "get-variable": ["variable"],
+  "add-variable": ["variable"],
+  "update-variable": ["variable", "changes"],
+  "remove-variable": ["variable"],
   "update-map": ["map", "changes"],
   "add-map": ["map", "name", "width", "height", "sheets", "fill", "after"],
   "duplicate-map": ["map"],
@@ -174,7 +228,7 @@ export class EditApiError extends Error {
 }
 
 function fail(command: string | undefined, error: unknown): EditExecution {
-  const known = error instanceof EditApiError
+  const known = error instanceof EditApiError || error instanceof CatalogOperationError
     ? error
     : new EditApiError("INTERNAL_ERROR", error instanceof Error ? error.message : String(error));
   const response: EditFailure = {
@@ -218,6 +272,20 @@ function assertKnownArgs(command: EditCommandName, args: Record<string, unknown>
       "$",
       allowed,
       unknown,
+    );
+  }
+  // add-sprite speaks two shapes: the catalog path {sprite: id, value: def}
+  // and the proposal flow {id, sprite: def}. The id field belongs only to
+  // the latter; alongside a string sprite selector it would be silently
+  // dropped, so refuse it instead of ignoring it.
+  if (command === "add-sprite" && own(args, "id") &&
+    !(typeof args.sprite === "object" && args.sprite !== null)) {
+    throw new EditApiError(
+      "INVALID_ARGUMENT",
+      "id is only accepted with an object sprite payload; the catalog shape is {sprite: id, value: def}",
+      "$.id",
+      "omitted for the catalog shape, or an object sprite",
+      args.id,
     );
   }
 }
@@ -1233,6 +1301,22 @@ function modelFailure(error: string, path: string): never {
 }
 
 function mutate(command: EditCommandName, project: Project, args: Record<string, unknown>): MutationResult {
+  // The proposal flow registers sprites as {id, sprite: def}; the catalog
+  // path speaks {sprite: id, value: def}. Accept both shapes.
+  if (command === "add-sprite" && own(args, "id") && typeof args.sprite === "object" && args.sprite !== null) {
+    args = { sprite: args.id, value: args.sprite };
+  }
+  const catalog = catalogCommandSpec(command);
+  if (catalog && catalog.action !== "list" && catalog.action !== "get") {
+    if (catalog.action !== "add" || catalog.kind === "sprite" || catalog.kind === "audio") {
+      stringArg(args, catalog.kind);
+    }
+    if (catalog.action !== "remove" && (catalog.kind === "sprite" || catalog.kind === "audio") && !own(args, "value")) {
+      throw new EditApiError("INVALID_ARGUMENT", "value is required", "$.value", "catalog value");
+    }
+    return mutateCatalog(project, catalog.kind, catalog.action, args);
+  }
+
   if (command === "update-map") {
     const mapId = stringArg(args, "map");
     const { map, index: mapIndex } = findMap(project, mapId);
@@ -1797,6 +1881,12 @@ function readOperation(command: EditCommandName, project: ProjectSource, args: R
       entry: map.entry,
       sha256: map.sha256,
     }));
+  }
+  const catalog = catalogCommandSpec(command);
+  if (catalog && (catalog.action === "list" || catalog.action === "get")) {
+    const inline = requireInline(project);
+    const id = catalog.action === "get" ? stringArg(args, catalog.kind) : undefined;
+    return readCatalog(inline, catalog.kind, catalog.action, id);
   }
   const inline = requireInline(project);
   if (command === "list-events") {

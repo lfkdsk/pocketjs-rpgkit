@@ -13,8 +13,8 @@
 // neighbours and reads only cooked typed arrays. This matters under the
 // QuickJS desktop guest: a cross-module call per edge made a 10,000-cell
 // search ~85x slower than Bun. Parent/queue scratch for the last-used map
-// size is reused across calls (the BFS is pure and synchronous). The
-// QuickJS measurements and the chosen slice budget live in findings/K2.md.
+// size is reused across calls (the BFS is pure and synchronous), which
+// keeps the per-call allocation cost flat.
 
 import type { Dir4, PassageTable } from "./passability.ts";
 
@@ -159,7 +159,7 @@ export function bfsPath(
 // --- incremental BFS (frame-split for a per-frame compute budget) ----------
 //
 // Ten NPCs pathfinding at once can exceed the frame budget when each runs a
-// full search synchronously (findings/K2.md). createPathSearch builds a
+// full search synchronously. createPathSearch builds a
 // plain-data search (typed arrays, no closure) whose advance() expands at
 // most `cellBudget` dequeued cells per call, so the caller (a character
 // route) runs one slice per reference tick until done. The result is

@@ -20,6 +20,12 @@ const file = {
 const map = { type: "string", minLength: 1, description: "Stable map id returned by rpgkit_maps_list." };
 const event = { type: "string", minLength: 1, description: "Stable map-local event id returned by rpgkit_events_list." };
 const page = { type: "integer", minimum: 0, description: "Zero-based page index returned by rpgkit_pages_list." };
+const item = { type: "string", minLength: 1, description: "Stable item id returned by rpgkit_items_list." };
+const sprite = { type: "string", minLength: 1, description: "Stable sprite id returned by rpgkit_sprites_list." };
+const audio = { type: "string", minLength: 1, description: "Stable logical audio id returned by rpgkit_audio_list." };
+const sheet = { type: "string", minLength: 1, description: "Stable tile-sheet id returned by rpgkit_sheets_list." };
+const switchId = { type: "string", minLength: 1, description: "Switch id returned by rpgkit_switches_list." };
+const variable = { type: "string", minLength: 1, description: "Variable id returned by rpgkit_variables_list." };
 const tile = { type: ["string", "null"], description: "Tile id such as town.43, or null to erase." };
 const layer = { type: "string", enum: ["ground", "upper"], default: "ground" };
 const mapChanges = {
@@ -147,6 +153,118 @@ const eventValue = {
   },
 };
 
+const itemValue = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "name", "sprite"],
+  properties: {
+    id: { type: "string", pattern: "^[a-z0-9_-]+$" },
+    name: { type: "string", minLength: 1, maxLength: 24 },
+    sprite: { type: "string", pattern: "^[a-z0-9_-]+\\.[0-9]+$" },
+    usable: { type: "boolean" },
+    price: { type: "integer", minimum: 0 },
+    sellable: { type: "boolean" },
+    type: { enum: ["regular", "key", "hiddenA", "hiddenB"] },
+    kind: { enum: ["item", "weapon", "armor"] },
+  },
+};
+
+const itemChanges = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    name: itemValue.properties.name,
+    sprite: itemValue.properties.sprite,
+    usable: { type: ["boolean", "null"] },
+    price: { type: ["integer", "null"], minimum: 0 },
+    sellable: { type: ["boolean", "null"] },
+    type: { type: ["string", "null"], enum: ["regular", "key", "hiddenA", "hiddenB", null] },
+    kind: { type: ["string", "null"], enum: ["item", "weapon", "armor", null] },
+  },
+};
+
+const spriteValue = {
+  oneOf: [
+    {
+      type: "object", additionalProperties: false, required: ["kind", "src"],
+      properties: { kind: { const: "image" }, src: { type: "string", minLength: 1 } },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["kind", "atlases", "frames", "step"],
+      properties: {
+        kind: { const: "walker" },
+        atlases: {
+          type: "object", additionalProperties: false, required: ["down", "left", "right", "up"],
+          properties: {
+            down: { type: "string", minLength: 1 }, left: { type: "string", minLength: 1 },
+            right: { type: "string", minLength: 1 }, up: { type: "string", minLength: 1 },
+          },
+        },
+        frames: { type: "integer", minimum: 1, maximum: 8 },
+        step: { type: "integer", minimum: 1, maximum: 60 },
+      },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["kind", "sheet"],
+      properties: {
+        kind: { const: "walker" }, sheet: { type: "string", minLength: 1 },
+        h: { type: "integer", enum: [16, 32] }, cols: { type: "integer", minimum: 3, maximum: 32 },
+        rows: { type: "integer", minimum: 4, maximum: 32 },
+      },
+    },
+  ],
+};
+
+const audioValue = { type: "string", pattern: "^audio:(wav|qoa)\\..+$" };
+const directionList = { type: "array", minItems: 1, uniqueItems: true, items: { enum: ["down", "left", "right", "up"] } };
+const sheetFields = {
+  pak: { type: "string", minLength: 1 },
+  cols: { type: "integer", minimum: 1, maximum: 256 },
+  rows: { type: "integer", minimum: 1, maximum: 256 },
+  defaultPassage: { enum: ["pass", "block"] },
+  block: { type: "array", uniqueItems: true, items: { type: "integer", minimum: 0 } },
+  pass: { type: "array", uniqueItems: true, items: { type: "integer", minimum: 0 } },
+  dirBlock: { type: "object", additionalProperties: directionList },
+  dirEdges: {
+    type: "object",
+    additionalProperties: {
+      type: "object", additionalProperties: false,
+      properties: { enter: directionList, exit: directionList },
+    },
+  },
+};
+const sheetValue = {
+  type: "object", additionalProperties: false, required: ["id", "pak", "cols", "rows"],
+  properties: { id: { type: "string", pattern: "^[a-z0-9_-]+$" }, ...sheetFields },
+};
+const nullable = (value: Record<string, unknown>): Record<string, unknown> => ({
+  ...value,
+  type: Array.isArray(value.type) ? [...value.type, "null"] : [value.type, "null"],
+  ...(value.enum === undefined ? {} : { enum: [...value.enum as unknown[], null] }),
+});
+const sheetChanges = {
+  type: "object", additionalProperties: false, minProperties: 1,
+  properties: {
+    pak: sheetFields.pak,
+    cols: sheetFields.cols,
+    rows: sheetFields.rows,
+    defaultPassage: { type: ["string", "null"], enum: ["pass", "block", null] },
+    block: nullable(sheetFields.block),
+    pass: nullable(sheetFields.pass),
+    dirBlock: nullable(sheetFields.dirBlock),
+    dirEdges: nullable(sheetFields.dirEdges),
+  },
+};
+const catalogNameValue = {
+  type: "object", additionalProperties: false, required: ["id"],
+  properties: { id: { type: "string", pattern: "^[A-Za-z0-9_.-]+$" }, name: { type: "string", minLength: 1, maxLength: 80 } },
+};
+const catalogNameChanges = {
+  type: "object", additionalProperties: false, minProperties: 1,
+  properties: { name: { type: ["string", "null"], minLength: 1, maxLength: 80 } },
+};
+
 const patchSide = {
   oneOf: [
     { type: "object", additionalProperties: false, required: ["exists"], properties: { exists: { const: false } } },
@@ -215,6 +333,36 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_events_list", "List map events", "list-events", "List every event on the selected map with stable map/event addresses and page counts. A shell loads only that map's shard.", { map }, ["map"]),
   tool("rpgkit_pages_list", "List event pages", "list-pages", "List pages in priority order with stable map/event/page addresses, conditions, triggers and command counts. A shell loads only the selected map's shard.", { map, event }, ["map", "event"]),
   tool("rpgkit_commands_list", "List command tree", "list-commands", "Flatten one page's recursive command tree. Each row includes a reusable structured commandAddress, stable text address, branch, summary and read-only flag. A shell loads only the selected map's shard.", { map, event, page }, ["map", "event", "page"]),
+  tool("rpgkit_items_list", "List items", "list-items", "List item definitions and known reference counts in author order."),
+  tool("rpgkit_item_get", "Get item", "get-item", "Read one item definition and every statically typed project reference.", { item }, ["item"]),
+  tool("rpgkit_item_add", "Add item", "add-item", "Append one complete item definition to the project catalog.", { item: itemValue }, ["item"], true),
+  tool("rpgkit_item_update", "Update item", "update-item", "Update fields of an item without changing its stable id. null removes an optional field.", { item, changes: itemChanges }, ["item", "changes"], true),
+  tool("rpgkit_item_remove", "Remove item", "remove-item", "Remove an unreferenced item. RESOURCE_IN_USE returns every known reference without changing the project.", { item }, ["item"], true),
+  tool("rpgkit_sprites_list", "List sprites", "list-sprites", "List sprite definitions and known reference counts in id order."),
+  tool("rpgkit_sprite_get", "Get sprite", "get-sprite", "Read one sprite definition and every statically typed project reference.", { sprite }, ["sprite"]),
+  tool("rpgkit_sprite_add", "Add sprite", "add-sprite", "Add one keyed sprite definition.", { sprite, value: spriteValue }, ["sprite", "value"], true),
+  tool("rpgkit_sprite_update", "Update sprite", "update-sprite", "Replace one sprite definition without changing its stable id.", { sprite, value: spriteValue }, ["sprite", "value"], true),
+  tool("rpgkit_sprite_remove", "Remove sprite", "remove-sprite", "Remove an unreferenced sprite. RESOURCE_IN_USE returns every known reference without changing the project.", { sprite }, ["sprite"], true),
+  tool("rpgkit_audio_list", "List audio", "list-audio", "List logical audio ids, pak values and known reference counts in id order."),
+  tool("rpgkit_audio_get", "Get audio", "get-audio", "Read one logical audio entry and every statically typed project reference.", { audio }, ["audio"]),
+  tool("rpgkit_audio_add", "Add audio", "add-audio", "Add one logical audio id and WAV/QOA pak value.", { audio, value: audioValue }, ["audio", "value"], true),
+  tool("rpgkit_audio_update", "Update audio", "update-audio", "Replace one logical audio pak value without changing its stable id.", { audio, value: audioValue }, ["audio", "value"], true),
+  tool("rpgkit_audio_remove", "Remove audio", "remove-audio", "Remove an unreferenced logical audio entry. RESOURCE_IN_USE returns every known reference without changing the project.", { audio }, ["audio"], true),
+  tool("rpgkit_sheets_list", "List tile sheets", "list-sheets", "List tile-sheet definitions and known reference counts in author order."),
+  tool("rpgkit_sheet_get", "Get tile sheet", "get-sheet", "Read one tile-sheet definition and every map, tile and item reference.", { sheet }, ["sheet"]),
+  tool("rpgkit_sheet_add", "Add tile sheet", "add-sheet", "Append one complete tile-sheet definition to the project catalog.", { sheet: sheetValue }, ["sheet"], true),
+  tool("rpgkit_sheet_update", "Update tile sheet", "update-sheet", "Update fields of a tile sheet without changing its stable id. null removes an optional field.", { sheet, changes: sheetChanges }, ["sheet", "changes"], true),
+  tool("rpgkit_sheet_remove", "Remove tile sheet", "remove-sheet", "Remove an unreferenced tile sheet. RESOURCE_IN_USE returns every known reference without changing the project.", { sheet }, ["sheet"], true),
+  tool("rpgkit_switches_list", "List switches", "list-switches", "List declared switch names plus ids used implicitly by event content."),
+  tool("rpgkit_switch_get", "Get switch", "get-switch", "Read one declared or implicit switch and every known read/write reference.", { switch: switchId }, ["switch"]),
+  tool("rpgkit_switch_add", "Add switch", "add-switch", "Add an optional named switch declaration; runtime switch ids remain sparse.", { switch: catalogNameValue }, ["switch"], true),
+  tool("rpgkit_switch_update", "Update switch", "update-switch", "Update the name of a declared switch without renaming its id. null removes the name.", { switch: switchId, changes: catalogNameChanges }, ["switch", "changes"], true),
+  tool("rpgkit_switch_remove", "Remove switch", "remove-switch", "Remove an unreferenced switch declaration. RESOURCE_IN_USE returns every known reference without changing the project.", { switch: switchId }, ["switch"], true),
+  tool("rpgkit_variables_list", "List variables", "list-variables", "List declared variable names plus ids used implicitly by event content."),
+  tool("rpgkit_variable_get", "Get variable", "get-variable", "Read one declared or implicit variable and every known read/write reference.", { variable }, ["variable"]),
+  tool("rpgkit_variable_add", "Add variable", "add-variable", "Add an optional named variable declaration; runtime variable ids remain sparse.", { variable: catalogNameValue }, ["variable"], true),
+  tool("rpgkit_variable_update", "Update variable", "update-variable", "Update the name of a declared variable without renaming its id. null removes the name.", { variable, changes: catalogNameChanges }, ["variable", "changes"], true),
+  tool("rpgkit_variable_remove", "Remove variable", "remove-variable", "Remove an unreferenced variable declaration. RESOURCE_IN_USE returns every known reference without changing the project.", { variable }, ["variable"], true),
   tool("rpgkit_map_update", "Update map properties", "update-map", "Rename a map or update its display name, size and sheet list through the editor model. For a shell, ordinary changes load one shard; an id rename scans all shards to rewrite literal transfers but writes only changed shards.", { map, changes: mapChanges }, ["map", "changes"], true),
   tool("rpgkit_map_add", "Add map", "add-map", "Create an empty map through the editor model, inserted after `after` (default: the last map). `map` is a preferred id; a taken or unsafe id is made unique, so read the created MapDef from the result. Sheets default to the anchor map's sheets; fill defaults to void. Inline projects only.", { map: { type: "string", minLength: 1, description: "Preferred new map id; the model makes it schema-safe and unique." }, name: { type: "string", maxLength: 40 }, width: { type: "integer", minimum: 1, maximum: 256, default: 20 }, height: { type: "integer", minimum: 1, maximum: 256, default: 14 }, sheets: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } }, fill: { type: ["string", "null"], description: "Ground tile for every cell, such as town.0, or null for void." }, after: { type: "string", minLength: 1, description: "Existing map id to insert after." } }, [], true),
   tool("rpgkit_map_duplicate", "Duplicate map", "duplicate-map", "Copy a map (events keep their map-local ids) directly after it under a unique <id>-copy id. Inline projects only.", { map }, ["map"], true),

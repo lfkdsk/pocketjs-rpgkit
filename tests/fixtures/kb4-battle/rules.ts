@@ -7,11 +7,10 @@
 // Every animated beat (a message + an HP tween + a sprite effect) commits
 // its OUTCOME instantly when chosen (damage is rolled and HP written
 // immediately) and only plays it back over `beatDuration` reference
-// ticks — the scout report's "结算是瞬时的...演出按参考tick播放" rule
-// (findings/scout-S4-battle.md §4.2) — so a rewind to any tick mid-beat,
-// or the same fight folded at a different host Hz, reproduces identical
-// pixels: nothing here depends on a wall clock or a host frame count,
-// only on `nowTick`, which is itself state.
+// ticks, so a rewind to any tick mid-beat, or the same fight folded at a
+// different host Hz, reproduces identical pixels: nothing here depends on
+// a wall clock or a host frame count, only on `nowTick`, which is itself
+// state.
 
 import { deepClone } from "../../../src/engine/clone.ts";
 import { rngNext } from "../../../src/engine/interpreter.ts";

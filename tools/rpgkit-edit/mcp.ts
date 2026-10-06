@@ -6,9 +6,9 @@
 import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { validateSchema } from "../../src/engine/schema-validate.ts";
-import { runFileEdit, type FileEditRequest } from "../../editor/api/file.ts";
+import { runFileEdit, type FileEditRequest, confineWithinRoot } from "../../editor/api/file.ts";
 import { EDIT_TOOL_BY_NAME, EDIT_TOOLS, type EditToolDefinition } from "../../editor/api/tools.ts";
 import { runProposalFileCommand, type ProposalFileRequest } from "../../editor/api/proposals.ts";
 import {
@@ -16,6 +16,12 @@ import {
   PROPOSAL_TOOLS,
   type ProposalToolDefinition,
 } from "../../editor/api/proposal-tools.ts";
+import {
+  MATERIALIZE_TOOL_BY_NAME,
+  MATERIALIZE_TOOLS,
+  type MaterializeToolDefinition,
+} from "../../editor/api/materialize-tools.ts";
+import { runMaterializeCommand } from "../../editor/api/materialize.ts";
 import { CHECK_TOOLS, CheckArgsError, CheckLoadError, type CheckTool } from "../rpgkit-check/src/registry.ts";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -58,10 +64,11 @@ function resultResponse(id: JsonRpcId, result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result };
 }
 
-type ToolDefinition = EditToolDefinition | ProposalToolDefinition;
+type ToolDefinition = EditToolDefinition | ProposalToolDefinition | MaterializeToolDefinition;
 export const RPGKIT_TOOLS: readonly (ToolDefinition | CheckTool)[] = [
   ...EDIT_TOOLS,
   ...PROPOSAL_TOOLS,
+  ...MATERIALIZE_TOOLS,
   ...CHECK_TOOLS,
 ];
 
@@ -75,6 +82,7 @@ export function toolsForAccess(access: McpAccess): readonly (ToolDefinition | Ch
   return [
     ...EDIT_TOOLS.filter((tool) => !tool.mutates),
     ...PROPOSAL_TOOLS.filter((tool) => !tool.destructive),
+    ...MATERIALIZE_TOOLS.filter((tool) => !tool.mutates),
     ...CHECK_TOOLS.filter((tool) => tool.name !== "rpgkit-shot"),
   ];
 }
@@ -117,10 +125,6 @@ function publicCheckTool(tool: CheckTool): Record<string, unknown> {
 
 const CHECK_TOOL_BY_NAME = new Map<string, CheckTool>(CHECK_TOOLS.map((tool) => [tool.name, tool]));
 
-function isOutsideRoot(fromRoot: string): boolean {
-  return fromRoot === ".." || fromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(fromRoot);
-}
-
 /** Resolve a tool-supplied path and confirm it stays inside `root`,
  *  symlink-safe: the deepest existing ancestor is realpath'ed, so a symlink
  *  pointing out of the root is caught even when the leaf does not exist yet
@@ -133,22 +137,9 @@ function confinePath(root: string, p: unknown): { path: string } | { error: stri
   } catch {
     return { error: `server root ${root} does not exist` };
   }
-  let existing = resolve(p);
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      const real = realpathSync(existing);
-      const fromRoot = relative(rootReal, join(real, ...tail));
-      if (isOutsideRoot(fromRoot)) return { error: `path ${p} resolves outside the configured project root` };
-      return { path: join(real, ...tail) };
-    } catch {
-      const base = basename(existing);
-      const parent = dirname(existing);
-      if (parent === existing) return { error: `path ${p} resolves outside the configured project root` };
-      tail.unshift(base);
-      existing = parent;
-    }
-  }
+  const confined = confineWithinRoot(rootReal, p);
+  if (confined === null) return { error: `path ${p} resolves outside the configured project root` };
+  return { path: confined };
 }
 
 function toolErrorResult(id: JsonRpcId, message: string, structured?: unknown): JsonRpcResponse {
@@ -161,8 +152,9 @@ function toolErrorResult(id: JsonRpcId, message: string, structured?: unknown): 
 
 /** Run a check tool with root confinement and tool-level errors. A bad path,
  *  bad args or unloadable file is an isError tool result, never a -32603
- *  server crash. */
-async function callCheckTool(id: JsonRpcId, name: string, args: Record<string, unknown>, root: string): Promise<JsonRpcResponse> {
+ *  server crash. `writable` says whether the check may persist sidecars
+ *  (the incremental lint cache); proposal-only mode passes false. */
+async function callCheckTool(id: JsonRpcId, name: string, args: Record<string, unknown>, root: string, writable: boolean): Promise<JsonRpcResponse> {
   const file = confinePath(root, args.file);
   if ("error" in file) return errorResponse(id, -32602, `Invalid params: ${file.error}`);
   const callArgs: Record<string, unknown> = { ...args, file: file.path };
@@ -173,7 +165,7 @@ async function callCheckTool(id: JsonRpcId, name: string, args: Record<string, u
   }
   const tool = CHECK_TOOL_BY_NAME.get(name)!;
   try {
-    const result = await tool.run(callArgs);
+    const result = await tool.run(callArgs, { root, writable });
     // structuredContent must be an object; rpgkit-shot returns an array.
     const structured = result !== null && typeof result === "object" && !Array.isArray(result)
       ? result
@@ -276,7 +268,36 @@ export async function dispatchMcpMessage(
     }
     if (CHECK_TOOL_BY_NAME.has(toolName)) {
       const args = isRecord(request.params.arguments) ? request.params.arguments : {};
-      return callCheckTool(id, toolName, args, root);
+      return callCheckTool(id, toolName, args, root, access === "full");
+    }
+    if (MATERIALIZE_TOOL_BY_NAME.has(toolName)) {
+      const args = isRecord(request.params.arguments) ? request.params.arguments : {};
+      const definition = MATERIALIZE_TOOL_BY_NAME.get(toolName)!;
+      const errors = validateSchema(definition.inputSchema, args);
+      if (errors.length > 0) {
+        return errorResponse(id, -32602, `Invalid params: ${errors[0]!.path}: ${errors[0]!.msg}`, errors);
+      }
+      const values = args as Record<string, unknown>;
+      if (typeof values.file !== "string" || values.file.length === 0) {
+        return errorResponse(id, -32602, "Invalid params: file must be a non-empty string");
+      }
+      const { file, dryRun, ...rest } = values;
+      const response = runMaterializeCommand({
+        file,
+        direction: rest.direction as "inline" | "pack",
+        ...(typeof rest.map === "string" ? { map: rest.map } : {}),
+        ...(typeof rest.out === "string" ? { out: rest.out } : {}),
+        ...(rest.encoding !== undefined ? { encoding: rest.encoding as "json" | "compact" | "auto" } : {}),
+        ...(typeof rest.fromShell === "string" ? { fromShell: rest.fromShell } : {}),
+        dryRun: dryRun === true,
+        root,
+      });
+      const text = JSON.stringify(response);
+      return resultResponse(id, {
+        content: [{ type: "text", text }],
+        structuredContent: response,
+        isError: !response.ok,
+      });
     }
     const parsed = parseToolRequest(request.params, root);
     if ("error" in parsed) return errorResponse(id, -32602, `Invalid params: ${parsed.error}`, parsed.details);

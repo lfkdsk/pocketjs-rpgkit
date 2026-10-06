@@ -435,6 +435,15 @@ export function decodeMapEntryBytes(bytes: Uint8Array): string {
   return out;
 }
 
+/** Parse either canonical MapDef JSON or the self-describing compact map
+ * transport. Callers that admit untrusted authoring input still validate the
+ * returned value with validateMapDef; keeping transport detection here avoids
+ * authoring tools accidentally treating an rpgkit-map/1 envelope as MapDef. */
+export function decodeMapEntryText(text: string): unknown {
+  const value = JSON.parse(text) as unknown;
+  return isCompactMapValue(value) ? decodeCompactMap(value) : value;
+}
+
 export interface MapEntrySource {
   read(entry: string): string | Uint8Array | undefined;
   /** Optional host text fast path. When present it is authoritative: an
@@ -484,7 +493,7 @@ export function createJsonMapRepository(
       const text = typeof input === "string" ? input : decodeMapEntryBytes(input);
       let value: unknown;
       try {
-        value = JSON.parse(text);
+        value = decodeMapEntryText(text);
       } catch {
         throw new Error(`map repository: ${id} (${meta.entry}) is not JSON`);
       }
@@ -496,9 +505,7 @@ export function createJsonMapRepository(
       : sha256Bytes(staged.input)) !== meta.sha256) {
       throw new Error(`map repository: checksum mismatch for ${id} (${meta.entry})`);
     }
-    const decoded = isCompactMapValue(staged.value)
-      ? decodeCompactMap(staged.value)
-      : staged.value;
+    const decoded = staged.value;
     if (options.validate === "full") validateMapDef(decoded);
     else validateMapDefStructure(decoded);
     const map = decoded as MapDef;

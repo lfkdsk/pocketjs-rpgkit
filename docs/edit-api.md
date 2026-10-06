@@ -6,8 +6,10 @@ parses and validates the input document first; every effective mutation is
 validated again, returns JSON Pointer changes with before/after values and a
 reversible `rpgkit-edit/patch-v1` patch, and replaces either one inline file
 or the changed map shards plus their `ProjectShell` manifest.
-Proposal commands instead manage review sidecars without directly editing the
-project and currently require an inline project for creation and assessment.
+Proposal creation and review commands manage a sidecar queue for both inline
+and sharded projects. Creating, listing, showing and withdrawing a proposal do
+not edit the project; accepting one applies its clean hunks and attached PNGs
+as one rollback-protected transaction before archiving it.
 
 The same operations are available as MCP tools; see [MCP tools](#mcp-tools).
 
@@ -18,12 +20,17 @@ bun run rpgkit-edit <command> --file <project.json> [--json '<args>'] [--dry-run
 ```
 
 The commands are `open`, `list-maps`, `list-events`, `list-pages`,
-`list-commands`, `update-map`, `add-map`, `duplicate-map`, `delete-map`,
+`list-commands`, `add-item`, `add-sprite`, `update-map`, `add-map`,
+`duplicate-map`, `delete-map`,
 `move-map`, `paint-tile`, `paint-rect`, `fill-region`, `paint-passage`,
 `paint-cells`, `paint-edges`, `add-event`, `update-event`, `delete-event`,
 `add-page`, `update-page`, `delete-page`, `insert-command`, `delete-command`,
 `update-command`, `validate`, `save`, `propose`, `list-proposals`,
-`show-proposal`, and `withdraw-proposal`.
+`show-proposal`, `withdraw-proposal`, `accept-proposal`, `reject-proposal`,
+and `list-archive`. The six project catalogs add
+`list-<plural>`, `get-<singular>`, `add-<singular>`, `update-<singular>`, and
+`remove-<singular>` for `items`/`item`, `sprites`/`sprite`, `audio`/`audio`,
+`sheets`/`sheet`, `switches`/`switch`, and `variables`/`variable`.
 
 ### Common flags
 
@@ -31,7 +38,7 @@ The commands are `open`, `list-maps`, `list-events`, `list-pages`,
 | --- | --- |
 | `--file <path>` | inline project or sharded `ProjectShell`. Required for every command. Shard entries resolve relative to the shell. |
 | `--json <json>` | arguments object: an inline JSON string or `@path/to/args.json`. Defaults to `{}`. |
-| `--dry-run` | project mutations and proposal create/withdraw: run full validation but do not write the project or sidecar. Read commands accept it only as a reported no-op. |
+| `--dry-run` | project mutations and proposal create/withdraw/accept/reject: run full validation but do not write the project, assets, or sidecar. Read commands accept it only as a reported no-op. |
 | `--help`, `-h` | print usage, exit 0. |
 
 ## Response envelope
@@ -60,9 +67,10 @@ Success:
 
 - `project` is a summary of the document; `revision` is the SHA-256 of its
   canonical semantic JSON. For a shell this is the operation's bounded
-  logical view: shell only for catalog reads, shell plus one target shard for
-  ordinary operations, all shards for validation/id rename, or the
-  patch-addressed shards for `save`.
+  logical view: shell only for `open`/`list-maps`, shell plus one target shard
+  for ordinary map operations, shell plus the start shard for a project
+  catalog add/update, all shards for catalog list/get/remove, validation or a
+  map-id rename, or the patch-addressed shards for `save`.
 - `changed` is false when the edit was a no-op (for example painting a tile
   with the value it already has); `diff` and `patch` are still returned.
 - `patch` is present on successful mutating commands.
@@ -82,7 +90,8 @@ codes include `READ_FAILED`, `WRITE_FAILED`, `WRITE_CONFLICT`,
 `PATH_OUTSIDE_ROOT` (file layer), `UNKNOWN_COMMAND`, `INVALID_ARGUMENT`,
 `INVALID_DOCUMENT`, `MAP_NOT_FOUND`,
 `EVENT_NOT_FOUND`, `PAGE_NOT_FOUND`, `OUT_OF_BOUNDS`, `INVALID_TILE`,
-`DUPLICATE_EVENT`, `LAST_PAGE`, `MAP_DELETE_REFUSED`, `COMMAND_ADDRESS_NOT_FOUND`,
+`DUPLICATE_EVENT`, `DUPLICATE_RESOURCE`, `RESOURCE_NOT_FOUND`,
+`RESOURCE_IN_USE`, `LAST_PAGE`, `MAP_DELETE_REFUSED`, `COMMAND_ADDRESS_NOT_FOUND`,
 `READ_ONLY_COMMAND`, `READ_ONLY_PROJECT_SHELL`, `UNSUPPORTED_FOR_SHELL`,
 `INVALID_COMMAND_FIELD`, `INVALID_PATCH`,
 `PATCH_BASE_MISMATCH`, `PATCH_CHANGE_MISMATCH`, `INVALID_JSON_VALUE`,
@@ -114,6 +123,12 @@ map:<id>/event:<eid>
 map:<id>/event:<eid>/page:<i>
 map:<id>/event:<eid>/page:<i>/command:<key>
 sheet:<sheet>/cell:<n>
+item:<id>
+sprite:<id>
+audio:<id>
+sheet:<id>
+switch:<id>
+variable:<id>
 ```
 
 `sheet:<sheet>/cell:<n>` names a project-global sheet `dirEdges` entry, as
@@ -153,8 +168,20 @@ remains the catalog and content-identity record; map payloads stay in the
 files named by `mapIndex[].entry`.
 
 - `open` and `list-maps` read no shard files.
+- A project-catalog `list-*`, `get-*`, or `remove-*` reads and validates every
+  shard so implicit switch/variable ids and references cannot be missed.
+  Catalog `add-*` and `update-*` load only the start-map shard (except
+  `add-item` and `add-sprite`, which load no shard at all). Every effective
+  catalog mutation changes and writes only the shell; a refused removal
+  writes nothing.
+- `add-item` and `add-sprite` update project-global shell catalogs without
+  loading a map shard, then refresh the manifest identity.
 - A map read or ordinary mutation loads and validates only the addressed
   shard. Its raw SHA-256, id and dimensions must match the index entry.
+  Shards may be plain JSON or `rpgkit-map/1` compact envelopes (the
+  importer's default): the edit API decodes a compact shard before
+  validating and re-encodes it compact on write, so a project keeps its
+  on-disk format. JSON shards stay JSON.
 - `validate` loads every shard. Renaming a map id also loads every shard so
   literal transfers in other maps can follow the rename.
 - `add-map`, `duplicate-map`, `delete-map`, `move-map`, and `paint-edges`
@@ -170,6 +197,10 @@ files named by `mapIndex[].entry`.
   root (or beneath the shell directory for the CLI). Traversal, absolute
   paths, symlink escapes, physical aliases, and an entry resolving to the
   shell itself are refused.
+
+Those restrictions apply to direct reversible edits. A reviewed proposal may
+add, duplicate, move, delete and connect shell maps; acceptance creates or
+removes the corresponding shard files and publishes the refreshed shell last.
 
 For example, this changes one map shard and its shell without loading the
 other maps:
@@ -242,6 +273,79 @@ browser player applies the same asset count, decoded-byte, PNG and dimension
 limits when it opens a pack, then retains every accepted base64 string
 byte-for-byte.
 
+## Materialize and pack
+
+`materialize` converts between an inline `rpgkit-project/v1` document and a
+sharded `ProjectShell` on disk, in both directions. It is a file-level
+conversion (no patch envelope); the CLI and MCP tool are
+`materialize` and `rpgkit_project_materialize`.
+
+```sh
+# shell + shards -> one inline document. A full-project materialize also
+# records the shell's per-map transports in a sidecar next to the output,
+# so the default pack below round-trips a mixed-transport shell.
+bun run rpgkit-edit materialize --file game/data/project.json \
+  --json '{"direction":"inline","out":"game-inline.json"}'
+
+# inline document -> shell + per-map shards under a directory. With no
+# encoding and no fromShell, pack reproduces the recorded transports.
+bun run rpgkit-edit materialize --file game-inline.json \
+  --json '{"direction":"pack","out":"game-data"}'
+```
+
+- `direction`: `"inline"` (a shell file) or `"pack"` (an inline document).
+- `map` (inline only): materialize just that map's `MapDef` instead of the
+  whole project. With `out` it writes one map file; without, the map JSON is
+  returned in `result.text`.
+- `out`: a file for inline (required for a full project), a directory for
+  pack (required). `pack` refuses to overwrite any existing output file.
+- `encoding` (pack only): `json`, `compact`, or `auto`. An explicit value
+  opts out of the transports recorded by the inline step and decides every
+  map (`auto`: compact when it is smaller — the importer's default).
+- `fromShell` (pack only): the shell the inline document was materialized
+  from. Each map keeps that shell's entry path and transport (JSON or
+  compact); maps not in the reference shell use `encoding`. Overrides the
+  recorded transports.
+
+A full-project `inline` writes a `.rpgkit-transports` sidecar next to `out`
+recording each map's entry path and encoding. A default `pack` (no
+`encoding`, no `fromShell`) reads that sidecar and reproduces every
+transport, so a shell that mixed transports (the importer's oversize-shard
+JSON fallback plus compact shards) round-trips byte-for-byte through the
+two-step flow with no flags. A document without a sidecar falls back to
+`encoding` (default `auto`); a malformed sidecar is a hard
+`MATERIALIZE_TRANSPORTS_INVALID` failure. Every recorded entry — in a
+sidecar or in a `fromShell` reference — must be a canonical relative path
+under `maps/` (no absolute paths, `..`/`.` segments, backslashes or empty
+segments); an entry that is not fails the pack as `INVALID_DOCUMENT`
+before anything is written. The pack result names the source in
+`transportsSource` (`sidecar` or `fromShell`).
+
+Both directions are deterministic. `pack` revalidates its own output through
+the editor's shell and shard validation gates before writing, and publishes
+atomically: every file is staged next to its target and renamed into place,
+shards first and the shell last; a failure removes what this pack created,
+so a failed pack never leaves a partial project on disk. Before staging the
+first file, every publish target is confined to the output directory with
+symlinks resolved, and — through MCP — to the server root; a target that
+escapes either fails `PATH_OUTSIDE_ROOT` and writes nothing. `pack` after
+`materialize` reproduces a `splitProjectMaps` shell and every shard
+byte-for-byte; the default flow preserves a mixed-transport shell's per-map
+encoding and entry paths through the recorded sidecar, and `fromShell`
+reproduces them from a named shell. A canonical inline document (sorted keys,
+maps in id order) round-trips exactly; a non-canonical inline document is
+normalized to canonical key and map order by the round trip. `--dry-run`
+reports what would be written without writing.
+
+On the CLI, the explicit `--file` argument is always the input; a `file` key
+inside `--json` is ignored. Through MCP, the input file, the `fromShell`
+file and the recorded sidecar must resolve inside the server root
+(symlinks resolved); the sidecar's and `fromShell`'s entries must be
+canonical `maps/`-relative paths, and every publish target must resolve
+inside both the output directory and the server root, or the pack fails
+before writing. Proposal-only mode runs `lint --incremental` without
+writing its cache sidecar.
+
 ## Read commands
 
 ### `open`
@@ -310,6 +414,23 @@ map:village/event:elder/page:0/command:c1:option:0#0 | c1:option:0#0 | Text: ELD
 map:village/event:elder/page:0/command:c1:option:1#0 | c1:option:1#0 | Text: ELDER: Walk tall. The hollow believes in you.
 ```
 
+### `add-item`
+
+Args: `item` (required), one complete schema-valid item object with a unique
+lowercase `id`. The item is appended to the project-global catalog and the
+result is the stored item. Duplicate ids fail with `DUPLICATE_RESOURCE`. This
+operation also works on a `ProjectShell` without loading map shards.
+
+### `add-sprite`
+
+Args: either `sprite` (the new id) plus `value` (one complete schema-valid
+image or walker sprite declaration), or the proposal-flow shape `id` plus
+`sprite` (the declaration object). The result is the stored sprite
+definition. Duplicate ids fail with `DUPLICATE_RESOURCE`. An `id` alongside
+the `{sprite, value}` shape is refused with `INVALID_ARGUMENT` rather than
+ignored. This operation also works on a `ProjectShell` without loading map
+shards.
+
 ### `validate`
 
 Args: none. Always `ok: true`; `result` is
@@ -322,6 +443,83 @@ full map schema.
 ```sh
 $ bun run rpgkit-edit validate --file examples/sunstone/data/sunstone.json
 { "valid": true, "errors": [] }
+```
+
+## Project catalogs
+
+Items, sprites, audio, tile sheets, switches and variables share one CRUD
+contract. It is available through the in-process edit API, this CLI and the
+MCP tools below for both inline projects and sharded `ProjectShell` projects.
+
+| catalog | list | get/add/update/remove selector | add payload | update payload |
+| --- | --- | --- | --- | --- |
+| items | `list-items` | `item` | `item`: complete item object | `item`: id, `changes`: item fields |
+| sprites | `list-sprites` | `sprite` | `sprite`: id, `value`: complete sprite definition | `sprite`: id, `value`: replacement definition |
+| audio | `list-audio` | `audio` | `audio`: id, `value`: pak entry | `audio`: id, `value`: replacement pak entry |
+| sheets | `list-sheets` | `sheet` | `sheet`: complete sheet object | `sheet`: id, `changes`: sheet fields |
+| switches | `list-switches` | `switch` | `switch`: `{ "id": "…", "name"?: "…" }` | `switch`: id, `changes`: `{ "name"?: string|null }` |
+| variables | `list-variables` | `variable` | `variable`: `{ "id": "…", "name"?: "…" }` | `variable`: id, `changes`: `{ "name"?: string|null }` |
+
+Every list command takes no arguments and returns deterministic rows:
+
+```json
+{
+  "address": "item:storehouse-key",
+  "id": "storehouse-key",
+  "declared": true,
+  "value": { "id": "storehouse-key", "name": "Storehouse Key", "sprite": "town.12" },
+  "referenceCount": 1
+}
+```
+
+`get-*` returns the same row with `references`, an array of
+`{ address, field, access }`; `access` is `read`, `write`, `readWrite`, or
+`reference`. Items and sheets retain author order, while keyed sprite/audio
+ids are sorted. Switch and variable rows contain declarations in author order
+followed by sorted ids discovered in event content.
+
+Switch and variable declarations are optional editor metadata. An id used by
+an event but absent from the declaration array is still listed and can be read
+with `declared: false` and `value: { id }`. Adding a declaration does not
+initialize or otherwise change the runtime's sparse switch/variable bank.
+Only declared entries can be updated or removed.
+
+`add-*` rejects an existing id with `DUPLICATE_RESOURCE`; `get-*`, `update-*`
+and `remove-*` report `RESOURCE_NOT_FOUND` when their applicable entry is
+absent. Updates keep the id stable. For item, sheet, switch and variable
+`changes`, `null` removes an optional field; a complete sprite/audio value is
+replaced as a unit. The ordinary post-edit project validation applies to every
+payload.
+
+Removal is conservative and has no cascade mode. If a built-in, statically
+typed project field uses the id, the command fails without a patch or write:
+
+```json
+{
+  "code": "RESOURCE_IN_USE",
+  "details": {
+    "resource": { "kind": "item", "id": "storehouse-key" },
+    "references": [
+      { "address": "map:town/event:key-giver/page:0/command:root#0", "field": "item", "access": "reference" }
+    ]
+  }
+}
+```
+
+The scanner covers map/page/common-event conditions and commands, map sheets
+and tile layers, item icon cells, actor/page appearances, animation timing
+sounds, and text-variable tokens when enabled. Extension arguments, extension
+choice arguments, battle setup and scene arguments are opaque JSON, so ids
+inside those payloads are not guessed as references.
+
+For example, adding a key and then giving it from a new NPC needs two ordinary
+commands, not a hand-authored patch:
+
+```sh
+bun run rpgkit-edit add-item --file game.json \
+  --json '{"item":{"id":"storehouse-key","name":"Storehouse Key","sprite":"town.12","type":"key"}}'
+bun run rpgkit-edit add-event --file game.json \
+  --json '{"map":"town","event":{"id":"key-giver","x":4,"y":6,"pages":[{"trigger":"action","commands":[{"op":"item","item":"storehouse-key","set":"add","count":1}]}]}}'
 ```
 
 ## Map editing
@@ -834,14 +1032,31 @@ $ bun run rpgkit-edit save --file examples/sunstone/data/sunstone.json --json @r
 ## AI proposal lifecycle
 
 The proposal commands put typed edits into a human-review queue instead of
-changing the project immediately. An inline project `game.json` owns the
-sidecar directory `game.json.proposals/`; completed reviews move to its
-`archive/` directory. Creating, listing with live assessment, showing, and
-editor review currently require an inline project; those operations fail on a
-sharded shell with `READ_ONLY_PROJECT_SHELL`. Withdrawal only validates and
-removes an existing pending sidecar. Creating or withdrawing a proposal
-changes only the sidecar. Accepting and rejecting hunks happens in the desktop
-editor, not in these four commands.
+changing the project immediately. A project `game.json` owns the sidecar
+directory `game.json.proposals/`; completed reviews move to its `archive/`
+directory. Proposals work on both inline projects and sharded ProjectShells:
+a shell proposal stores hunks over the sparse `{shell, shards}` logical
+document (paths `/shell/...` and `/shards/<entry>/...`). Applying operations
+and assessing conflicts are sparse; creation-time and accept-time QA load the
+complete corpus so references and reachability cannot be hidden in an
+untouched shard. `propose`, `list-proposals`, `show-proposal`, and
+`list-archive` are project read-only; `withdraw-proposal`, `reject-proposal`,
+and archival mutate only the queue. `accept-proposal` changes the project and
+may publish attached assets before archiving. Accepting and rejecting is
+available from the CLI and MCP as well as the inline desktop editor.
+
+Every `propose` runs a QA gate over the document the proposal would produce
+(schema validity plus the static lint: references, page health, and
+transfer-graph reachability) and stores the findings under
+`game.json.proposals/qa/<id>.json`; archived QA moves to
+`archive/qa/<id>.json`. The versioned baseline in that sidecar is bound to the
+proposal id and base hash. It permits unchanged creation-time errors in an
+older corpus, while a new, moved, or duplicated error still blocks. Legacy
+adjacent `<id>.qa.json` files remain readable but, because they have no valid
+baseline, fail closed when errors exist. `list-proposals` and
+`show-proposal` return the QA summary and findings; `accept-proposal` re-runs
+the gate against the live full document and rolls the whole acceptance back
+on a QA regression.
 
 ### Proposal request and validation
 
@@ -875,15 +1090,28 @@ editor, not in these four commands.
 - `createdAt` is optional. When present it is an ISO UTC timestamp; when
   omitted the command supplies the current time.
 - `hunks` and every hunk's `operations` must be non-empty. Operations may use
-  `update-map`, `move-map`, `paint-tile`, `paint-rect`, `fill-region`, `paint-passage`,
+  `add-item`, `add-sprite`, `add-asset`, `update-map`, `move-map`, `add-map`,
+  `duplicate-map`, `delete-map`,
+  `paint-tile`, `paint-rect`, `fill-region`, `paint-passage`,
   `add-event`, `update-event`, `delete-event`, `add-page`, `update-page`,
-  `delete-page`, `insert-command`, `delete-command`, or `update-command`.
-  Read commands, `save`, and proposal commands cannot be nested in a hunk.
+  `delete-page`, `insert-command`, `delete-command`, `update-command`, or
+  `connect-maps`. Read commands, `save`, and proposal commands cannot be
+  nested in a hunk. `add-item` takes `{item}`, `add-sprite` takes
+  `{id,sprite}`, and proposal-only `add-asset` takes
+  `{path,type:"image/png",data}` with canonical padded base64 PNG data.
+  Attachment paths are confined beneath the project directory and the
+  combined proposal is bounded by the pack image count, byte and pixel
+  limits. `connect-maps` is a proposal macro that expands to an
+  `add-event` placing a transfer event: `{map, x, y, targetMap, targetX,
+  targetY, eventId?, trigger?}` (trigger defaults to `playerTouch`); it
+  validates both maps and the landing bounds at proposal time. Shell
+  proposals support `add-map`, `duplicate-map`, `move-map`, `delete-map`,
+  and `connect-maps`, including compact `.rkm` shards.
 - Operations inside one hunk run in order. Every hunk starts from the same
-  original project, must make a semantic change, and must not overlap another
-  hunk's JSON Pointer paths. The stored proposal replaces `operations` with
-  validated reversible `changes` and records the project's semantic
-  `baseHash`.
+  original project, must produce at least one semantic JSON change or attached
+  asset, and must not overlap another hunk's JSON Pointer or asset paths. The
+  stored proposal replaces `operations` with validated reversible `changes`,
+  stores assets on the hunk, and records the project's semantic `baseHash`.
 
 Proposal success has a separate envelope from direct project edits:
 
@@ -899,8 +1127,13 @@ Proposal success has a separate envelope from direct project edits:
 }
 ```
 
-`written` means that this command changed the sidecar queue. It never means
-that the project file was edited. `propose --dry-run` still builds and
+For creation/list/show/withdraw, `written` says whether the command changed
+the sidecar queue, not the project. A successful non-dry-run
+`accept-proposal` reports `written: true` only after the project, assets, and
+archive transition have all succeeded. A verified rollback reports
+`written: false`; `PROPOSAL_PARTIAL_WRITE` reports `written: true` with
+recovery details if compensation cannot be verified. `propose --dry-run`
+still builds and
 validates the complete proposal and checks for an id collision, but returns
 `written: false` and creates nothing. `list-proposals` and `show-proposal`
 always return `written: false`; `withdraw-proposal --dry-run` validates that a
@@ -935,9 +1168,14 @@ PROPOSAL="$(jq -c . proposal.json)"
 ### `propose`
 
 Args: `id`, `title`, `rationale`, `author`, and `hunks` are required;
-`createdAt` is optional. `result` is `{ path, proposal }`, where `path` is the
-new pending sidecar and `proposal` contains `baseHash` plus generated changes.
-Normal mode atomically creates one sidecar; `--dry-run` writes nothing.
+`createdAt` is optional. `result` is `{ path, proposal, qa }` (plus
+`touchedEntries` on a shell), where `path` is the new pending sidecar,
+`proposal` contains `baseHash` plus generated changes/assets, and `qa` is the
+creation-time QA report (`{checkedAt, documentHash, findings, errors,
+warnings, infos}`). Findings use lint check ids such as
+`lint/sprite-missing`; error findings do not block creation but are
+re-checked at accept time. Normal mode atomically creates the sidecar and
+its QA sidecar under `qa/`; `--dry-run` writes nothing.
 
 ```sh
 $ bun run rpgkit-edit propose --file "$DEMO_DIR/game.json" --json "$PROPOSAL" \
@@ -955,9 +1193,14 @@ field), `INVALID_PROPOSAL_OPERATION` (not an editing operation),
 ### `list-proposals`
 
 Args: none. `result` is the pending queue ordered by `createdAt` then id. Each
-row is `{ id, title, author, createdAt, hunkCount, pendingHunks, assessment }`.
-`assessment` contains `baseMatches`, `hasConflicts`, and hunk rows whose
-`state` is `clean`, `already-applied`, `partially-applied`, or `conflict`.
+row is `{ id, title, author, createdAt, hunkCount, pendingHunks, assessment,
+qa? }`. `assessment` contains `baseMatches`, `hasConflicts`, and hunk rows
+whose `state` is `clean`, `already-applied`, `partially-applied`, or
+`conflict`. JSON preconditions and attached asset bytes both contribute to
+that state: a missing attachment is clean, identical bytes are
+already-applied, and different bytes conflict. On a shell the assessment
+loads only each proposal's touched shards. `qa` is the summary
+`{checkedAt, errors, warnings, infos}` when a QA sidecar exists.
 
 ```sh
 $ bun run rpgkit-edit list-proposals --file "$DEMO_DIR/game.json" \
@@ -972,10 +1215,11 @@ The arguments object must be empty; extra fields fail with
 ### `show-proposal`
 
 Args: `id` (required). `result` is
-`{ path, archived, proposal, assessment }`. Pending hunks omit `decision`;
-after editor review, each decision has `status: "accepted"` or
-`"rejected"`. The command searches pending first and then `archive/`, so an
-agent can poll until `archived` becomes true.
+`{ path, archived, proposal, assessment, qa }`. Pending hunks omit `decision`;
+after review, each decision has `status: "accepted"` or `"rejected"` and, for
+CLI/MCP decisions, `source` and `decidedAt`. The command searches pending
+first and then `archive/`, so an agent can poll until `archived` becomes
+true. `qa` is the full QA report when a sidecar exists.
 
 ```sh
 $ bun run rpgkit-edit show-proposal --file "$DEMO_DIR/game.json" --json '{"id":"docs-demo"}' \
@@ -1003,10 +1247,48 @@ $ bun run rpgkit-edit withdraw-proposal --file "$DEMO_DIR/game.json" --json '{"i
 Argument errors match `show-proposal`. A missing or already archived id is
 `PROPOSAL_NOT_FOUND`; a live storage lock is `PROPOSAL_BUSY`.
 
-`propose`, `list-proposals`, and `show-proposal` can also report
-`READ_ONLY_PROJECT_SHELL`. All four can report `UNSAFE_PROPOSAL_PATH`,
-`PROPOSAL_IO_ERROR`, and, when constrained by an MCP root,
-`PATH_OUTSIDE_ROOT`.
+### `accept-proposal`
+
+Args: `id` (required), `source` (optional, defaults to `cli`; recorded on
+the archived decision). Applies every clean hunk as one transaction, re-runs
+the QA gate against the live document, then archives the proposal with its
+decisions. `result` is `{ id, status: "accepted", archived?, projectChanged,
+appliedHunks, qa, publishedAssets, summary }`, where `summary` is
+`{hunks, changes, assets, paths}`.
+Hunks that are already applied are skipped (an all-already-applied proposal
+accepts as a no-op and still archives). A conflict (`PROPOSAL_HUNK_CONFLICT`),
+a QA error (`PROPOSAL_QA_FAILED`, findings in `details`), or a proposal that
+already carries decisions (`PROPOSAL_ALREADY_DECIDED`) refuses without
+writing the project or the queue. On a shell, acceptance publishes the
+changed shards first and the shell manifest last through the staged
+multi-file writer, which restores already-published files if a later rename
+fails. Assets are immutable additions: identical existing bytes count as
+already applied, differing bytes conflict, and clean assets are published
+before project files. Any later project or archive failure restores the
+project and removes newly published assets/directories. If that compensation
+cannot be verified, `PROPOSAL_PARTIAL_WRITE` reports `written: true` instead
+of claiming no write. `--dry-run` reports the would-be result with
+`written: false` and changes nothing.
+
+### `reject-proposal`
+
+Args: `id` (required), `source` (optional). Records a `rejected` decision on
+every hunk and archives the proposal without touching the project. `result`
+is `{ id, status: "rejected", archived?, summary }`. A proposal that already
+carries decisions is `PROPOSAL_ALREADY_DECIDED`; a missing id is
+`PROPOSAL_NOT_FOUND`. `--dry-run` validates without archiving.
+
+### `list-archive`
+
+Args: none. `result` is the decided history, one row per archived proposal:
+`{ id, title, author, createdAt, decidedAt, status, source?, summary, qa? }`.
+`status` is `accepted`, `rejected`, or `mixed` (per-hunk decisions from the
+desktop editor). `qa` is the summary of the archived QA sidecar when one
+exists.
+
+Proposal commands can report `INVALID_PROPOSAL_ASSET`,
+`UNSAFE_PROPOSAL_PATH`, `PROPOSAL_IO_ERROR`, `PROPOSAL_PARTIAL_WRITE`, and,
+when constrained by an MCP root, `PATH_OUTSIDE_ROOT`.
 
 ## The `rpgkit-edit/patch-v1` envelope
 
@@ -1066,6 +1348,36 @@ that root after symlink resolution. Mutating tools also take `dryRun`.
 | `rpgkit_events_list` | `list-events` | `file`, `map` | — |
 | `rpgkit_pages_list` | `list-pages` | `file`, `map`, `event` | — |
 | `rpgkit_commands_list` | `list-commands` | `file`, `map`, `event`, `page` | — |
+| `rpgkit_items_list` | `list-items` | `file` | — |
+| `rpgkit_item_get` | `get-item` | `file`, `item` | — |
+| `rpgkit_item_add` | `add-item` | `file`, `item` | `dryRun` |
+| `rpgkit_item_update` | `update-item` | `file`, `item`, `changes` | `dryRun` |
+| `rpgkit_item_remove` | `remove-item` | `file`, `item` | `dryRun` |
+| `rpgkit_sprites_list` | `list-sprites` | `file` | — |
+| `rpgkit_sprite_get` | `get-sprite` | `file`, `sprite` | — |
+| `rpgkit_sprite_add` | `add-sprite` | `file`, `sprite`, `value` | `dryRun` |
+| `rpgkit_sprite_update` | `update-sprite` | `file`, `sprite`, `value` | `dryRun` |
+| `rpgkit_sprite_remove` | `remove-sprite` | `file`, `sprite` | `dryRun` |
+| `rpgkit_audio_list` | `list-audio` | `file` | — |
+| `rpgkit_audio_get` | `get-audio` | `file`, `audio` | — |
+| `rpgkit_audio_add` | `add-audio` | `file`, `audio`, `value` | `dryRun` |
+| `rpgkit_audio_update` | `update-audio` | `file`, `audio`, `value` | `dryRun` |
+| `rpgkit_audio_remove` | `remove-audio` | `file`, `audio` | `dryRun` |
+| `rpgkit_sheets_list` | `list-sheets` | `file` | — |
+| `rpgkit_sheet_get` | `get-sheet` | `file`, `sheet` | — |
+| `rpgkit_sheet_add` | `add-sheet` | `file`, `sheet` | `dryRun` |
+| `rpgkit_sheet_update` | `update-sheet` | `file`, `sheet`, `changes` | `dryRun` |
+| `rpgkit_sheet_remove` | `remove-sheet` | `file`, `sheet` | `dryRun` |
+| `rpgkit_switches_list` | `list-switches` | `file` | — |
+| `rpgkit_switch_get` | `get-switch` | `file`, `switch` | — |
+| `rpgkit_switch_add` | `add-switch` | `file`, `switch` | `dryRun` |
+| `rpgkit_switch_update` | `update-switch` | `file`, `switch`, `changes` | `dryRun` |
+| `rpgkit_switch_remove` | `remove-switch` | `file`, `switch` | `dryRun` |
+| `rpgkit_variables_list` | `list-variables` | `file` | — |
+| `rpgkit_variable_get` | `get-variable` | `file`, `variable` | — |
+| `rpgkit_variable_add` | `add-variable` | `file`, `variable` | `dryRun` |
+| `rpgkit_variable_update` | `update-variable` | `file`, `variable`, `changes` | `dryRun` |
+| `rpgkit_variable_remove` | `remove-variable` | `file`, `variable` | `dryRun` |
 | `rpgkit_map_update` | `update-map` | `file`, `map`, `changes` | `dryRun` |
 | `rpgkit_map_add` | `add-map` | `file` | `map`, `name`, `width`, `height`, `sheets`, `fill`, `after`, `dryRun` |
 | `rpgkit_map_duplicate` | `duplicate-map` | `file`, `map` | `dryRun` |
@@ -1092,10 +1404,13 @@ that root after symlink resolution. Mutating tools also take `dryRun`.
 | `rpgkit_proposals_list` | `list-proposals` | `file` | — |
 | `rpgkit_proposal_show` | `show-proposal` | `file`, `id` | — |
 | `rpgkit_proposal_withdraw` | `withdraw-proposal` | `file`, `id` | `dryRun` |
+| `rpgkit_proposal_accept` | `accept-proposal` | `file`, `id` | `source`, `dryRun` |
+| `rpgkit_proposal_reject` | `reject-proposal` | `file`, `id` | `source`, `dryRun` |
+| `rpgkit_proposal_archive` | `list-archive` | `file` | — |
 
 Proposal tool arguments have the same constraints as their CLI command.
-`rpgkit_proposal_create` is annotated as a non-destructive sidecar mutation,
-`rpgkit_proposal_withdraw` as destructive, and list/show as read-only. A
+`rpgkit_proposal_create` is annotated as a non-destructive sidecar mutation;
+withdraw, accept and reject are destructive; list/show/archive are read-only. A
 list call may nevertheless finish crash recovery by moving an already-decided
 pending sidecar into `archive/`. A successful `tools/call` result wraps the
 same CLI envelope twice:

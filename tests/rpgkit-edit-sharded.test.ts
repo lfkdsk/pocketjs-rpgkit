@@ -114,7 +114,7 @@ describe("rpgkit-edit ProjectShell protocol", () => {
     expect(second.entries).toEqual(first.entries);
   });
 
-  test("proposal assessment fails closed on a shell without reading shards, while withdrawal remains sidecar-only", () => {
+  test("proposal sidecar commands on a shell stay sidecar-only; assessment reads only touched shards", () => {
     const root = join(TEMP, "proposal-boundary");
     const { shellFile } = materialize(syntheticProject(2), root);
     const proposalDirectory = proposalDirectoryFor(shellFile);
@@ -142,21 +142,25 @@ describe("rpgkit-edit ProjectShell protocol", () => {
     const offline = join(root, "maps-offline");
     renameSync(maps, offline);
     try {
-      for (const response of [
-        runProposalFileCommand({ command: "propose", file: shellFile, args: {} }),
-        runProposalFileCommand({ command: "list-proposals", file: shellFile }),
-        runProposalFileCommand({ command: "show-proposal", file: shellFile, args: { id: proposal.id } }),
-      ]) {
-        expect(response).toMatchObject({
-          ok: false,
-          written: false,
-          error: {
-            code: "READ_ONLY_PROJECT_SHELL",
-            message: expect.stringContaining("inline project"),
-            path: "$.mapIndex",
-          },
-        });
-      }
+      // Request validation fails before any shard IO.
+      expect(runProposalFileCommand({ command: "propose", file: shellFile, args: {} })).toMatchObject({
+        ok: false,
+        written: false,
+        error: { code: "INVALID_PROPOSAL_REQUEST" },
+      });
+      // An inline proposal next to a shell assesses against the shell's
+      // sparse document without reading shards (it has no /shards paths).
+      expect(runProposalFileCommand({ command: "list-proposals", file: shellFile })).toMatchObject({
+        ok: true,
+        written: false,
+        result: [{ id: proposal.id, assessment: { hasConflicts: true } }],
+      });
+      expect(runProposalFileCommand({ command: "show-proposal", file: shellFile, args: { id: proposal.id } })).toMatchObject({
+        ok: true,
+        written: false,
+        result: { archived: false, assessment: { hasConflicts: true } },
+      });
+      // Withdrawal remains sidecar-only.
       expect(runProposalFileCommand({
         command: "withdraw-proposal",
         file: shellFile,

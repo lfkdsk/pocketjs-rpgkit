@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `a749a871f1eb32969ae58ff186871e21ff1ca4fb26390088512ee2bca927f82a` | optional editor-facing `switches` and `variables` declaration directories; undeclared ids retain the same sparse runtime semantics | additive |
 | `1127febbfb43f2f33b1bd7a2df8c554efbbdc56e1e9a35f26558dbda4f8261b9` | optional `text` layout fields: `position` (top/center/bottom, the four corners, left/right), `align`, `valign` and `background` (window/dim/transparent); a text without them draws the same box as before | additive |
 | `5f14109a6414a63f6a4eaaa25c586aca61218b3a8e53f4f3776853a9573e7349` | `autosave` command; optional `save.autosave` interface label | additive |
 | `c0e962138a1f12dc5627590869b99f7c9b2ced3040e3d05ed0ebd663142d4857` | optional `system.textTokens` — declaring it is the explicit opt-in that switches `{x:<key>}` text-token expansion on (the allowlist of keys the game's session resolver answers); a document without it keeps the pre-`{x:}` literal behavior | additive |

@@ -298,6 +298,102 @@ describe("proposal sidecar storage", () => {
     expect(proposalDirectoryFor(file)).toEndWith("game.json.proposals");
   });
 
+  test("QA storage cannot overwrite a proposal whose id ends in .qa", () => {
+    const file = join(TEMP, "qa-id-collision.json");
+    writeFileSync(file, serializeProject(fixture()));
+    expect(runProposalFileCommand({ command: "propose", file, args: { ...REQUEST, id: "pair.qa" } }))
+      .toMatchObject({ ok: true });
+    expect(runProposalFileCommand({ command: "propose", file, args: { ...REQUEST, id: "pair" } }))
+      .toMatchObject({ ok: true });
+
+    const pending = loadPendingProposals(file);
+    expect(pending.map((proposal) => proposal.id).sort()).toEqual(["pair", "pair.qa"]);
+    expect(readFileSync(join(proposalDirectoryFor(file), "qa", "pair.json"), "utf8"))
+      .toContain('"documentHash"');
+  });
+
+  test("accept allows unchanged baseline QA errors but still reports them", () => {
+    const file = join(TEMP, "baseline-qa-errors.json");
+    const project = fixture();
+    project.maps[0]!.events!.push({
+      id: "old-ghost",
+      x: 3,
+      y: 2,
+      pages: [{
+        trigger: "action",
+        sprite: "unregistered-old-sprite",
+        commands: [{ op: "text", lines: ["This defect predates the proposal"] }],
+      }],
+    });
+    writeFileSync(file, serializeProject(project));
+    const created = runProposalFileCommand({ command: "propose", file, args: { ...REQUEST, id: "baseline-errors" } });
+    expect(created).toMatchObject({
+      ok: true,
+      result: { qa: { errors: 1, baseline: { errors: [{ code: "lint/sprite-missing" }] } } },
+    });
+
+    expect(runProposalFileCommand({ command: "accept-proposal", file, args: { id: "baseline-errors" } }))
+      .toMatchObject({ ok: true, result: { projectChanged: true, qa: { errors: 1 } } });
+    expect((JSON.parse(readFileSync(file, "utf8")) as Project).maps[0]!.ground.slice(0, 2))
+      .toEqual(["s.3", "s.3"]);
+  });
+
+  test("a same-message error at a new event is not covered by the baseline", () => {
+    const file = join(TEMP, "baseline-error-location.json");
+    const project = fixture();
+    project.maps[0]!.events!.push({
+      id: "old-ghost",
+      x: 3,
+      y: 2,
+      pages: [{ trigger: "action", sprite: "same-missing-sprite", commands: [] }],
+    });
+    writeFileSync(file, serializeProject(project));
+    const request = {
+      ...REQUEST,
+      id: "new-location-error",
+      hunks: [{
+        id: "new-ghost",
+        summary: "Add a second broken reference",
+        operations: [{
+          command: "add-event",
+          args: { map: "map", event: {
+            id: "new-ghost",
+            x: 0,
+            y: 0,
+            pages: [{ trigger: "action", sprite: "same-missing-sprite", commands: [] }],
+          } },
+        }],
+      }],
+    };
+    expect(runProposalFileCommand({ command: "propose", file, args: request }))
+      .toMatchObject({ ok: true, result: { qa: { errors: 2 } } });
+    expect(runProposalFileCommand({ command: "accept-proposal", file, args: { id: "new-location-error" } }))
+      .toMatchObject({ ok: false, error: { code: "PROPOSAL_QA_FAILED", actual: 1 } });
+  });
+
+  test("an old or malformed QA sidecar cannot whitelist existing errors", () => {
+    const file = join(TEMP, "legacy-qa-baseline.json");
+    const project = fixture();
+    project.maps[0]!.events!.push({
+      id: "old-ghost",
+      x: 3,
+      y: 2,
+      pages: [{ trigger: "action", sprite: "unregistered-old-sprite", commands: [] }],
+    });
+    writeFileSync(file, serializeProject(project));
+    expect(runProposalFileCommand({ command: "propose", file, args: { ...REQUEST, id: "legacy-baseline" } }))
+      .toMatchObject({ ok: true, result: { qa: { errors: 1 } } });
+    const qaPath = join(proposalDirectoryFor(file), "qa", "legacy-baseline.json");
+    const qa = JSON.parse(readFileSync(qaPath, "utf8")) as Record<string, unknown>;
+    delete qa.baseline;
+    writeFileSync(qaPath, `${JSON.stringify(qa, null, 2)}\n`);
+    const before = readFileSync(file, "utf8");
+
+    expect(runProposalFileCommand({ command: "accept-proposal", file, args: { id: "legacy-baseline" } }))
+      .toMatchObject({ ok: false, error: { code: "PROPOSAL_QA_FAILED", actual: 1 } });
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
   test("review persistence rejects rewrites, preserves omissions, and refuses decision reversal", () => {
     const file = join(TEMP, "review-guard.json");
     writeFileSync(file, serializeProject(fixture()));
@@ -423,6 +519,36 @@ describe("proposal sidecar storage", () => {
     expect(loadPendingProposals(file)[0]!.hunks[1]!.decision?.status).toBe("rejected");
     expect(JSON.parse(readFileSync(sessionFile, "utf8")).proposals[0].hunks[0].decision).toBeUndefined();
     expect(JSON.parse(readFileSync(sessionFile, "utf8")).proposals[0].hunks[1].decision.status).toBe("rejected");
+  });
+
+  test("desktop bridge reruns QA and refuses a newly broken live project", () => {
+    const file = join(TEMP, "bridge-qa-drift.json");
+    const sessionFile = join(TEMP, "bridge-qa-drift-data", "proposal-session.json");
+    const project = fixture();
+    writeFileSync(file, serializeProject(project));
+    expect(runProposalFileCommand({ command: "propose", file, args: { ...REQUEST, id: "qa-drift" } }).ok).toBe(true);
+    syncEditorProposalBridge(file, sessionFile);
+    const proposal = loadPendingProposals(file)[0]!;
+    const accepted = decideProposalHunks(proposal, ["entrance-tiles"], "accepted", "2026-09-30T12:05:00.000Z");
+
+    const drifted = structuredClone(project);
+    drifted.maps[0]!.events!.push({
+      id: "ghost",
+      x: 3,
+      y: 2,
+      pages: [{ trigger: "action", sprite: "missing-ghost", commands: [{ op: "text", lines: ["Boo"] }] }],
+    });
+    const driftedText = serializeProject(drifted);
+    writeFileSync(file, driftedText);
+    writeFileSync(sessionFile, `${JSON.stringify({ projectHash: proposal.baseHash, proposals: [accepted] }, null, 2)}\n`);
+
+    expect(syncEditorProposalBridge(file, sessionFile)).toMatchObject({
+      persisted: 0,
+      archived: 0,
+      conflicts: [expect.stringContaining("QA")],
+    });
+    expect(readFileSync(file, "utf8")).toBe(driftedText);
+    expect(loadPendingProposals(file)[0]!.hunks[0]!.decision).toBeUndefined();
   });
 
   test("desktop bridge finishes an accepted decision after a post-write crash", () => {

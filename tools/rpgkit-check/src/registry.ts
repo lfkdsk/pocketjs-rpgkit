@@ -7,8 +7,10 @@
 // returns a JSON-serializable report. The CLI (cli.ts) is a thin wrapper
 // over this registry.
 
-import { lintProject } from "./lint.ts";
+import { lintProject, lintScoped } from "./lint.ts";
 import { loadProjectFile } from "./doc.ts";
+import { loadShellProject, scopeProjectToMap } from "./shell.ts";
+import { lintShellIncremental } from "./incremental.ts";
 import { checkLocks, type LockReport } from "./dynamic/locks.ts";
 import { checkFreeze, type FreezeReport } from "./dynamic/freeze.ts";
 import { checkReach, type ReachReport } from "./dynamic/reach.ts";
@@ -18,6 +20,9 @@ import type { CheckReport, Finding } from "./finding.ts";
 import type { Dir, Project } from "../../../src/engine/types.ts";
 import type { SessionOptions } from "../../../src/engine/session.ts";
 import { validateSchema, type Schema, type VError } from "../../../src/engine/schema-validate.ts";
+import { CheckArgsError, CheckLoadError } from "./errors.ts";
+
+export { CheckArgsError, CheckLoadError };
 
 export interface CheckTool {
   name: string;
@@ -31,28 +36,11 @@ export interface CheckTool {
  *  trusted local module; MCP calls intentionally expose only JSON args. */
 export interface CheckRunContext {
   sessionOptions?: SessionOptions;
-}
-
-/** Args failed the tool's inputSchema. Entry points (CLI/MCP) report this
- *  as a usage error, never a server crash. */
-export class CheckArgsError extends Error {
-  readonly details: VError[];
-  constructor(message: string, details: VError[]) {
-    super(message);
-    this.name = "CheckArgsError";
-    this.details = details;
-  }
-}
-
-/** The project file could not be loaded. Carries the doc/* findings so the
- *  CLI/MCP can emit them as a JSON report instead of a plain crash. */
-export class CheckLoadError extends Error {
-  readonly findings: Finding[];
-  constructor(message: string, findings: Finding[]) {
-    super(message);
-    this.name = "CheckLoadError";
-    this.findings = findings;
-  }
+  /** MCP root confinement: a shell's shard files must resolve inside it. */
+  root?: string;
+  /** Whether the check may persist sidecars (the incremental lint cache).
+   *  The MCP proposal-only mode passes false. */
+  writable?: boolean;
 }
 
 /** Validate `args` against the tool's own inputSchema. Every entry point
@@ -69,11 +57,17 @@ export function validateCheckArgs(tool: CheckTool, args: unknown): Record<string
   return args as Record<string, unknown>;
 }
 
-function loadProject(file: unknown): { project: Project; schemaErrors: Finding[] } {
+function loadProject(file: unknown, root?: string): { project: Project; schemaErrors: Finding[] } {
   if (typeof file !== "string" || file.length === 0) {
     throw new CheckArgsError("args.file must be a path to an rpgkit-project/v1 JSON document", []);
   }
   const loaded = loadProjectFile(file);
+  if (loaded.shell) {
+    // A ProjectShell is materialized into the inline view every check
+    // consumes. lint's --map/incremental paths load the shell themselves.
+    const shell = loadShellProject(file, undefined, root);
+    return { project: shell.project, schemaErrors: shell.schemaErrors };
+  }
   if (!loaded.project) {
     const findings = loaded.schemaErrors;
     throw new CheckLoadError(
@@ -117,16 +111,45 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
       "Static health check of an rpgkit-project/v1 document: switches/variables read but never set " +
       "(or set but never read), dead pages (shadowed or contradictory conditions), missing references " +
       "(transfer/place/common-event/item/audio/sprite/sheet), empty choices, unreachable maps. " +
-      "Returns findings with severity, location and a suggestion.",
+      "Returns findings with severity, location and a suggestion. Accepts an inline document or a " +
+      "ProjectShell (sharded maps are materialized). `map` scopes the pass to one map (only that " +
+      "shard is loaded; global checks that need the whole document are skipped). `incremental` caches " +
+      "per-shard findings next to a shell and re-checks only changed shards.",
     inputSchema: {
       type: "object",
-      properties: { file: FILE_PROP },
+      properties: {
+        file: FILE_PROP,
+        map: { type: "string", description: "Scope the pass to one map id; only that shard is loaded." },
+        incremental: { type: "boolean", description: "Shell only: reuse cached per-shard findings and re-check only changed shards." },
+      },
       required: ["file"],
       additionalProperties: false,
     },
-    run: async (args) => {
-      const { project, schemaErrors } = loadProject(args.file);
-      return lintProject(project, schemaErrors) satisfies CheckReport;
+    run: async (args, context) => {
+      const file = String(args.file);
+      const map = typeof args.map === "string" ? args.map : undefined;
+      const loaded = loadProjectFile(file);
+      if (loaded.shell) {
+        if (map !== undefined) {
+          const scoped = loadShellProject(file, map, context?.root);
+          return lintScoped(scoped.project, map, scoped.schemaErrors) satisfies CheckReport;
+        }
+        if (args.incremental === true) {
+          return await lintShellIncremental(file, { root: context?.root, writable: context?.writable }) satisfies CheckReport;
+        }
+        const shell = loadShellProject(file, undefined, context?.root);
+        return lintProject(shell.project, shell.schemaErrors) satisfies CheckReport;
+      }
+      if (!loaded.project) {
+        throw new CheckLoadError(
+          `rpgkit-check: ${loaded.schemaErrors[0]?.message ?? "could not load project"}`,
+          loaded.schemaErrors,
+        );
+      }
+      if (map !== undefined) {
+        return lintScoped(scopeProjectToMap(loaded.project, map), map, loaded.schemaErrors) satisfies CheckReport;
+      }
+      return lintProject(loaded.project, loaded.schemaErrors) satisfies CheckReport;
     },
   },
   {
@@ -145,7 +168,7 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
       additionalProperties: false,
     },
     run: async (args, context) => {
-      const { project } = loadProject(args.file);
+      const { project } = loadProject(args.file, context?.root);
       return checkLocks(project, {
         frames: numArg(args, "frames"),
         sessionOptions: context?.sessionOptions,
@@ -168,7 +191,7 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
       additionalProperties: false,
     },
     run: async (args, context) => {
-      const { project } = loadProject(args.file);
+      const { project } = loadProject(args.file, context?.root);
       return checkFreeze(project, {
         windowFrames: numArg(args, "windowFrames"),
         sessionOptions: context?.sessionOptions,
@@ -212,7 +235,7 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
       additionalProperties: false,
     },
     run: async (args, context) => {
-      const { project } = loadProject(args.file);
+      const { project } = loadProject(args.file, context?.root);
       const start = args.start as Parameters<typeof checkReach>[1] extends { start?: infer S } ? S : never;
       return checkReach(project, {
         start,
@@ -242,7 +265,7 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
       additionalProperties: false,
     },
     run: async (args, context) => {
-      const { project } = loadProject(args.file);
+      const { project } = loadProject(args.file, context?.root);
       return checkExplore(project, {
         frames: numArg(args, "frames"),
         stuckFrames: numArg(args, "stuckFrames"),
@@ -286,7 +309,7 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
       additionalProperties: false,
     },
     run: async (args, context) => {
-      const { project } = loadProject(args.file);
+      const { project } = loadProject(args.file, context?.root);
       const options: RenderShotsOptions = {
         map: String(args.map ?? ""),
         x: numArg(args, "x") ?? 0,

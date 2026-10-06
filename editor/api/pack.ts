@@ -21,27 +21,21 @@ import {
   MAX_PACK_BYTES,
   MAX_PROJECT_FILE_BYTES,
   MAX_SHARD_BYTES,
-  PNG_HEADER_BYTES,
-  packAssetBytesProblem,
-  packAssetCountProblem,
   packFileProblem,
-  pngProblem,
   projectFileProblem,
-  readPngSize,
   shardCountProblem,
   shardProblem,
   utf8Bytes,
 } from "./limits.ts";
 import { EditApiError } from "./operations.ts";
 import {
-  base64DecodedBound,
-  decodeBase64,
   packEntryProblem,
   packText,
   readPackEnvelope,
   SHARDED_PACK_KIND,
   type PackAsset,
 } from "./pack-format.ts";
+import { validatePngAssetRecord } from "./assets.ts";
 import { loadValidatedProjectShell } from "./sharded.ts";
 
 export { SHARDED_PACK_KIND, type PackAsset };
@@ -125,38 +119,17 @@ export function parseShardedPack(text: string): ShardedPack {
  * base64 data decodes to a PNG within the local-PNG limits. The count and
  * the decoded total are limited per pack; an image's size is checked from
  * its base64 length before it is decoded. */
-function parsePackAssets(supplied: Record<string, unknown> | undefined): Map<string, PackAsset> {
-  const assets = new Map<string, PackAsset>();
-  if (supplied === undefined) return assets;
-  const paths = Object.keys(supplied);
-  tooLarge(packAssetCountProblem(paths.length), "$.assets");
-  let total = 0;
-  for (const path of paths) {
-    const at = `$.assets[${JSON.stringify(path)}]`;
-    if (packEntryProblem(path) !== null) {
-      throw new EditApiError("INVALID_PACK", `unsafe asset path ${JSON.stringify(path)}; asset keys must be portable relative paths`, "$.assets", "relative key", path);
-    }
-    const value = supplied[path];
-    if (!isRecord(value) || typeof value.data !== "string" || Object.keys(value).some((key) => key !== "type" && key !== "data")) {
-      throw new EditApiError("INVALID_PACK", `asset ${JSON.stringify(path)} must be an object with only "type" and "data"`, at);
-    }
-    if (value.type !== "image/png") {
-      throw new EditApiError("INVALID_PACK", `asset ${JSON.stringify(path)} has type ${JSON.stringify(value.type)}; only "image/png" is supported`, `${at}.type`, "image/png", value.type);
-    }
-    const data = value.data;
-    // Refuse an oversized image from its base64 length, before decoding.
-    tooLarge(pngProblem(`asset ${JSON.stringify(path)}`, base64DecodedBound(data.length) - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0)), `${at}.data`);
-    const bytes = decodeBase64(data);
-    if (bytes === null) throw new EditApiError("INVALID_PACK", `asset ${JSON.stringify(path)} is not valid base64`, `${at}.data`);
-    total += bytes.length;
-    tooLarge(packAssetBytesProblem(total), "$.assets");
-    const header = bytes.subarray(0, PNG_HEADER_BYTES);
-    const size = readPngSize(header);
-    const problem = pngProblem(`asset ${JSON.stringify(path)}`, bytes.length, header);
-    if (problem !== null) throw new EditApiError(size === null || size.width === 0 || size.height === 0 ? "INVALID_PACK" : "TOO_LARGE", problem, `${at}.data`);
-    assets.set(path, { type: "image/png", data });
+export function parsePackAssets(supplied: Record<string, unknown> | undefined): Map<string, PackAsset> {
+  if (supplied === undefined) return new Map();
+  const checked = validatePngAssetRecord(supplied);
+  if (!checked.ok) {
+    throw new EditApiError(
+      checked.issue.code === "TOO_LARGE" ? "TOO_LARGE" : "INVALID_PACK",
+      checked.issue.message,
+      checked.issue.path,
+    );
   }
-  return assets;
+  return checked.assets;
 }
 
 /** Serialize in the browser host's spelling: two-space JSON, shards in

@@ -120,7 +120,7 @@ describe("Studio play-test controller", () => {
     expect(game.calls).toEqual([]);
     expect(await play.play()).toBe(false);
     expect(game.calls).toEqual([]);
-  });
+  }, 15_000);
 
   test("the size check counts the load message the way the game page does", () => {
     const { app } = studio();

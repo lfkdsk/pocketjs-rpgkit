@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { EDIT_COMMANDS, type EditPatch } from "../editor/api/types.ts";
 import { EDIT_TOOLS } from "../editor/api/tools.ts";
 import { PROPOSAL_COMMANDS } from "../editor/api/proposals.ts";
 import { PROPOSAL_TOOLS } from "../editor/api/proposal-tools.ts";
 import { runFileEdit } from "../editor/api/file.ts";
+import { runMaterializeCommand } from "../editor/api/materialize.ts";
+import type { ProjectShell } from "../src/engine/types.ts";
 import {
   MCP_PROTOCOL_VERSION,
   RPGKIT_TOOLS,
@@ -269,5 +271,177 @@ describe("rpgkit-check tools over MCP", () => {
     if (!response.result.isError) {
       expect(Array.isArray(response.result.structuredContent.shots)).toBe(true);
     }
+  });
+});
+
+describe("materialize over MCP", () => {
+  test("packs an inline project and materializes it back through MCP", async () => {
+    const file = copy();
+    const packed = join(TEMP, `packed-${randomUUID()}`);
+    const pack = await call("rpgkit_project_materialize", { file, direction: "pack", out: packed });
+    expect(pack).toMatchObject({ result: { isError: false } });
+    const packBody = JSON.parse(pack.result.content[0].text);
+    expect(packBody.ok).toBe(true);
+    expect(packBody.result.maps).toBeGreaterThan(0);
+    const shellFile = join(packed, "project.json");
+    const back = join(TEMP, `back-${randomUUID()}.json`);
+    const mat = await call("rpgkit_project_materialize", { file: shellFile, direction: "inline", out: back });
+    expect(mat).toMatchObject({ result: { isError: false } });
+    const matBody = JSON.parse(mat.result.content[0].text);
+    expect(matBody.ok).toBe(true);
+    // The round trip normalizes key order and map order to canonical (maps
+    // sort by id); content is unchanged.
+    const before = JSON.parse(readFileSync(file, "utf8"));
+    const after = JSON.parse(readFileSync(back, "utf8"));
+    const byId = (p: any) => p.maps.sort((m: any, n: any) => (m.id < n.id ? -1 : 1));
+    expect(byId(after)).toEqual(byId(before));
+  });
+
+  test("a bad direction is a params error, and proposal-only rejects the tool", async () => {
+    const file = copy();
+    const bad = await call("rpgkit_project_materialize", { file, direction: "sideways" });
+    expect(bad).toMatchObject({ error: { code: -32602 } });
+    const denied = await dispatchMcpMessage({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "rpgkit_project_materialize", arguments: { file, direction: "pack", out: join(TEMP, "x") } },
+    }, process.cwd(), "proposal-only");
+    expect(denied).toMatchObject({ error: { code: -32601, message: expect.stringContaining("proposal-only") } });
+  });
+});
+
+describe("MCP root confinement", () => {
+  test("a shell shard symlinking outside the server root is refused, not read", async () => {
+    const root = join(TEMP, `shard-root-${randomUUID()}`);
+    const outside = join(TEMP, `shard-outside-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    copyFileSync(SUNSTONE, join(root, "sunstone.json"));
+    const pack = runMaterializeCommand({ file: join(root, "sunstone.json"), direction: "pack", out: join(root, "packed") });
+    expect(pack.ok).toBe(true);
+    if (!pack.ok) return;
+    const shellFile = join(root, "packed", "project.json");
+    const shell = JSON.parse(readFileSync(shellFile, "utf8")) as ProjectShell;
+    const entry = shell.mapIndex[0]!.entry;
+    const shardPath = join(root, "packed", entry);
+    // A byte-identical copy outside the root: without confinement the lint
+    // would read it through the symlink and report nothing wrong.
+    const outsideShard = join(outside, basename(entry));
+    copyFileSync(shardPath, outsideShard);
+    rmSync(shardPath);
+    symlinkSync(outsideShard, shardPath);
+    const response = await dispatchMcpMessage(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "rpgkit-lint", arguments: { file: shellFile } } },
+      root,
+      "full",
+    ) as any;
+    expect(response.result.isError).toBe(false);
+    const body = JSON.parse(response.result.content[0].text);
+    expect(body.findings.some((f: any) => f.check === "doc/shell" && /outside the project root/.test(f.message))).toBe(true);
+    // The outside file was never opened for writing.
+    expect(existsSync(outsideShard)).toBe(true);
+  });
+
+  test("materialize refuses an output whose ancestor symlinks outside the root", async () => {
+    const root = join(TEMP, `out-root-${randomUUID()}`);
+    const outside = join(TEMP, `out-outside-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    symlinkSync(outside, join(root, "escape"));
+    copyFileSync(SUNSTONE, join(root, "sunstone.json"));
+    const response = await dispatchMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "rpgkit_project_materialize",
+          arguments: { file: join(root, "sunstone.json"), direction: "pack", out: join(root, "escape", "leak") },
+        },
+      },
+      root,
+      "full",
+    ) as any;
+    expect(response.result.isError).toBe(true);
+    const body = JSON.parse(response.result.content[0].text);
+    expect(body.error.code).toBe("PATH_OUTSIDE_ROOT");
+    expect(existsSync(join(outside, "leak"))).toBe(false);
+  });
+
+  test("materialize default pack rejects a sidecar entry that escapes the server root", async () => {
+    // The transports sidecar a default pack reads must only carry canonical
+    // maps/-relative entries. An entry with ".." segments must fail the
+    // default pack (no encoding, no fromShell) before anything is written,
+    // inside or outside the root.
+    const root = join(TEMP, `sidecar-escape-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const file = join(root, "sunstone.json");
+    copyFileSync(SUNSTONE, file);
+    writeFileSync(
+      `${file}.rpgkit-transports`,
+      JSON.stringify({
+        version: 1,
+        kind: "rpgkit-materialize-transports/1",
+        transports: { village: { entry: "../../escaped.rkm", encoding: "compact" } },
+      }),
+    );
+    const out = join(root, "packed");
+    const escaped = resolve(out, "../../escaped.rkm");
+    rmSync(escaped, { force: true });
+    const response = await dispatchMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "rpgkit_project_materialize",
+          arguments: { file, direction: "pack", out },
+        },
+      },
+      root,
+      "full",
+    ) as any;
+    expect(response.result.isError).toBe(true);
+    const body = JSON.parse(response.result.content[0].text);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("INVALID_DOCUMENT");
+    // Nothing was written: no escaped file outside the root, no packed tree.
+    expect(existsSync(escaped)).toBe(false);
+    expect(existsSync(out)).toBe(false);
+    rmSync(escaped, { force: true });
+  });
+});
+
+describe("proposal-only side effects", () => {
+  test("incremental lint never writes the cache sidecar", async () => {
+    const root = join(TEMP, `prop-only-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    copyFileSync(SUNSTONE, join(root, "sunstone.json"));
+    const pack = runMaterializeCommand({ file: join(root, "sunstone.json"), direction: "pack", out: join(root, "packed") });
+    expect(pack.ok).toBe(true);
+    if (!pack.ok) return;
+    const shellFile = join(root, "packed", "project.json");
+    const cacheFile = join(root, "packed", ".rpgkit-check-lint.json");
+    rmSync(cacheFile, { force: true });
+
+    // Proposal-only mode exposes lint (readOnlyHint) and must not persist
+    // the incremental cache next to the project.
+    const listed = await dispatchMcpMessage(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "rpgkit-lint", arguments: { file: shellFile, incremental: true } } },
+      process.cwd(),
+      "proposal-only",
+    ) as any;
+    expect(listed.result.isError).toBe(false);
+    expect(existsSync(cacheFile)).toBe(false);
+
+    // Full access does persist the cache.
+    const full = await dispatchMcpMessage(
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "rpgkit-lint", arguments: { file: shellFile, incremental: true } } },
+      process.cwd(),
+      "full",
+    ) as any;
+    expect(full.result.isError).toBe(false);
+    expect(existsSync(cacheFile)).toBe(true);
   });
 });

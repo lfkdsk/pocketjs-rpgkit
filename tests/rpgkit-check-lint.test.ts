@@ -1,7 +1,7 @@
 // tests/rpgkit-check-lint.test.ts — every static lint check must fire on a
 // fixture broken exactly where the check says, and stay silent on a clean
-// fixture. The example documents must be error-clean (warnings/info are
-// listed in findings/AI2.md).
+// fixture. The example documents must be error-clean; their warnings and
+// info findings are accepted as-is.
 
 import { describe, expect, test } from "bun:test";
 import { lintProject } from "../tools/rpgkit-check/src/lint.ts";

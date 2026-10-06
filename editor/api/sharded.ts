@@ -16,20 +16,28 @@ import {
   describeMapSchemaRefusal,
   isCompatibleMapSchemaHash,
   canonicalMapJson,
+  decodeMapEntryText,
   mapManifestHash,
   resolveMapManifestHash,
   sha256Text,
   validateMapDef,
+  validateMapDefStructure,
   validateMapIndex,
 } from "../../src/engine/map-repository.ts";
+import { decodeCompactMap, isCompactMapValue } from "../../src/engine/compact-map.ts";
+import { encodeCompactMap } from "../../tools/lib/compact-map.ts";
 import { loadProject, semanticEqual } from "../engine/document.ts";
 import { deepClone } from "../../src/engine/clone.ts";
+import { canonicalJson } from "../../src/engine/save.ts";
 import { eventCountProblem, MAX_SHARD_BYTES, shardProblem, utf8Bytes } from "./limits.ts";
 import {
   EditApiError,
   applyEditPatchValue,
+  createEditMemo,
   createEditPatch,
+  diffJson,
   executeEditOperation,
+  executeProjectOperation,
   parseEditPatch,
   semanticHash,
   validateEditOperationInput,
@@ -42,10 +50,12 @@ import type {
   ShardedEditDocument,
   ShardedEditExecution,
 } from "./types.ts";
+import { catalogCommandSpec } from "./catalogs.ts";
 
 export const SHARDED_DOCUMENT_KIND = "rpgkit-edit/sharded-document-v1" as const;
 
 const NO_SHARD_COMMANDS = new Set(["open", "list-maps"]);
+const SHELL_GLOBAL_COMMANDS = new Set(["add-item", "add-sprite"]);
 
 /** Commands that cannot be expressed over a shell in patch-v1. Map
  * add/duplicate/delete/move would add, remove or reorder mapIndex entries,
@@ -184,6 +194,19 @@ export function shardEntriesForOperation(
   // Refuse before any shard selection: add-map has no map argument at all.
   assertShellSupported(command);
   if (NO_SHARD_COMMANDS.has(command)) return [];
+  if (SHELL_GLOBAL_COMMANDS.has(command)) return [];
+  const catalog = catalogCommandSpec(command);
+  if (catalog) {
+    if (catalog.action === "add" || catalog.action === "update") {
+      const start = shell.mapIndex.find((meta) => meta.id === shell.start.map);
+      if (!start) throw new EditApiError("INVALID_DOCUMENT", `unknown start map ${JSON.stringify(shell.start.map)}`, "$.start.map");
+      return [start.entry];
+    }
+    // Reads include reference counts/details and switch/variable reads merge
+    // undeclared ids found in event content. Removal must prove there are no
+    // references, so these operations deliberately inspect every shard.
+    return shell.mapIndex.map((meta) => meta.entry);
+  }
   if (command === "validate") return shell.mapIndex.map((meta) => meta.entry);
   if (command === "save") {
     const patch = parseEditPatch(args.patch);
@@ -227,6 +250,25 @@ export function shardEntriesForOperation(
   return [meta.entry];
 }
 
+/** How a shard file is encoded on disk. Invalid JSON reports "json" so the
+ *  normal validation path produces the useful parse error. */
+export type ShardEncoding = "json" | "compact";
+
+export function shardEncodingOf(source: string): ShardEncoding {
+  try {
+    return isCompactMapValue(JSON.parse(source) as unknown) ? "compact" : "json";
+  } catch {
+    return "json";
+  }
+}
+
+/** The bytes a shard with this encoding is written back as. Compact shards
+ *  stay compact across an edit, so an unchanged project keeps its on-disk
+ *  format and only changed shards change bytes. */
+export function serializeShard(map: MapDef, encoding: ShardEncoding): string {
+  return encoding === "compact" ? encodeCompactMap(map).text : canonicalMapJson(map);
+}
+
 function shardError(entry: string, message: string): never {
   invalidDocument(`$.shards[${JSON.stringify(entry)}]`, message);
 }
@@ -254,20 +296,33 @@ export function loadValidatedMapShard(shell: ProjectShell, entry: string, source
   if (sha256Text(source) !== meta.sha256) shardError(entry, `checksum mismatch for ${meta.id}`);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(source);
+    parsed = decodeMapEntryText(source);
   } catch (error) {
     shardError(entry, `invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (isRecord(parsed) && Array.isArray(parsed.events)) {
-    const tooMany = eventCountProblem(meta.id, parsed.events.length);
+  // Importers default to rpgkit-map/1 compact envelopes; the runtime
+  // repository has always decoded them (map-repository.ts). Decode before
+  // validation so the edit API accepts the same bytes the game ships.
+  let decoded: unknown;
+  if (isCompactMapValue(parsed)) {
+    try {
+      decoded = decodeCompactMap(parsed);
+    } catch (error) {
+      shardError(entry, error instanceof Error ? error.message : String(error));
+    }
+  } else {
+    decoded = parsed;
+  }
+  if (isRecord(decoded) && Array.isArray(decoded.events)) {
+    const tooMany = eventCountProblem(meta.id, decoded.events.length);
     if (tooMany !== null) throw new EditApiError("TOO_LARGE", tooMany, `${path}.events`);
   }
   try {
-    validateMapDef(parsed);
+    validateMapDef(decoded);
   } catch (error) {
     shardError(entry, error instanceof Error ? error.message : String(error));
   }
-  const map = parsed as MapDef;
+  const map = decoded as MapDef;
   if (map.id !== meta.id || map.width !== meta.width || map.height !== meta.height) {
     shardError(
       entry,
@@ -282,11 +337,35 @@ function loadedMaps(
   shell: ProjectShell,
   sources: Readonly<Record<string, string>>,
   entries: readonly string[],
+  checksumsVerified = false,
+  encodings?: Map<string, ShardEncoding>,
 ): Map<string, MapDef> {
   const maps = new Map<string, MapDef>();
   for (const entry of entries) {
     if (!own(sources, entry)) shardError(entry, "required shard source was not loaded");
-    maps.set(entry, loadValidatedMapShard(shell, entry, sources[entry]!));
+    if (encodings !== undefined) encodings.set(entry, shardEncodingOf(sources[entry]!));
+    if (!checksumsVerified) {
+      maps.set(entry, loadValidatedMapShard(shell, entry, sources[entry]!));
+      continue;
+    }
+    const meta = shell.mapIndex.find((item) => item.entry === entry);
+    if (!meta) shardError(entry, "entry is absent from mapIndex");
+    let parsed: unknown;
+    try {
+      parsed = decodeMapEntryText(sources[entry]!);
+      // The host already verified the raw checksum. Keep the normative schema
+      // gate here; besides authoring safety it seeds the validator's hot path
+      // before the in-memory delta validation below.
+      validateMapDef(parsed);
+    } catch (error) {
+      shardError(entry, error instanceof Error ? error.message : String(error));
+    }
+    const map = parsed as MapDef;
+    if (map.id !== meta.id || map.width !== meta.width || map.height !== meta.height) {
+      shardError(entry, `metadata mismatch: index has ${meta.id} ${meta.width}x${meta.height}, shard has ${map.id} ${map.width}x${map.height}`);
+    }
+    validateMapSemantics(map, (message) => shardError(entry, message));
+    maps.set(entry, map);
   }
   return maps;
 }
@@ -312,15 +391,179 @@ function shardedView(shell: ProjectShell, maps: ReadonlyMap<string, MapDef>): Sh
   return { kind: SHARDED_DOCUMENT_KIND, shell: cloneJson(shell), shards };
 }
 
-function summary(shell: ProjectShell, view: ShardedEditDocument): ProjectSummary {
+function summary(shell: ProjectShell, view: ShardedEditDocument, manifestRevision = false): ProjectSummary {
   return {
     format: shell.format,
     title: shell.title,
     documentKind: "shell",
     editable: true,
     mapCount: shell.mapIndex.length,
-    revision: semanticHash(view),
+    // Proposal dry-runs already bind their own sparse-document baseHash and do
+    // not expose this response summary. Reusing the verified shell content
+    // identity avoids canonicalizing a large shell once more on that path.
+    revision: manifestRevision ? resolveMapManifestHash(shell) : semanticHash(view),
   };
+}
+
+function executeValidatedShardedEditOperation(
+  shell: ProjectShell,
+  shardSources: Readonly<Record<string, string>>,
+  commandValue: string,
+  rawArgs: unknown,
+  manifestRevision: boolean,
+  checksumsVerified: boolean,
+  hashText: (text: string) => string,
+  encodings?: Map<string, ShardEncoding>,
+): ShardedEditExecution {
+  const entries = shardEntriesForOperation(shell, commandValue, rawArgs);
+  if (commandValue === "open" || commandValue === "list-maps") {
+    return shellRead(shell, commandValue);
+  }
+  if (SHELL_GLOBAL_COMMANDS.has(commandValue)) {
+    return executeShellGlobalOperation(shell, commandValue, rawArgs, manifestRevision);
+  }
+  const maps = loadedMaps(shell, shardSources, entries, checksumsVerified, encodings);
+  if (commandValue === "validate") {
+    const project = projectFromMaps(shell, shell.mapIndex.map((meta) => maps.get(meta.entry)!), true);
+    const inline = executeEditOperation(JSON.stringify(project), "validate");
+    const view = shardedView(shell, maps);
+    return { response: withProject(inline.response, summary(shell, view, manifestRevision)) };
+  }
+  if (commandValue === "save") return executeSave(shell, maps, rawArgs, encodings ?? new Map());
+
+  const orderedMaps = entries.map((entry) => maps.get(entry)!);
+  // Only a real id rename asks for all maps. This exact project lets the
+  // model rewrite start/common-event/all-shard literal transfer refs.
+  const allMapsLoaded = entries.length === shell.mapIndex.length;
+  const project = projectFromMaps(shell, orderedMaps, allMapsLoaded);
+  let inlineResponse: EditSuccess;
+  let edited: Project;
+  if (manifestRevision) {
+    const memory = executeProjectOperation(project, commandValue, rawArgs, createEditMemo());
+    if (!memory.ok) return { response: memory };
+    edited = memory.project;
+    inlineResponse = {
+      ok: true,
+      command: memory.command,
+      project: summary(shell, shardedView(shell, maps), true),
+      changed: memory.changed,
+      addresses: memory.addresses,
+      diff: [...memory.edit.changes],
+      result: memory.result,
+    };
+  } else {
+    const inline = executeEditOperation(JSON.stringify(project), commandValue, rawArgs);
+    if (!inline.response.ok) return { response: inline.response };
+    if (inline.output === undefined) {
+      const beforeView = shardedView(shell, maps);
+      return { response: withProject(inline.response, summary(shell, beforeView, manifestRevision)) };
+    }
+    edited = JSON.parse(inline.output) as Project;
+    inlineResponse = inline.response;
+  }
+  const derived = updateShell(shell, project, edited, maps, hashText, encodings);
+  const changedBefore = new Map<string, MapDef>();
+  for (const entry of derived.changed.keys()) changedBefore.set(entry, maps.get(entry)!);
+  const before = shardedView(shell, changedBefore);
+  const after = shardedView(derived.shell, derived.changed);
+  const patch = manifestRevision
+    ? {
+        format: "rpgkit-edit/patch-v1" as const,
+        beforeHash: hashText(canonicalJson(before)),
+        afterHash: hashText(canonicalJson(after)),
+        changes: diffJson(before, after),
+      }
+    : createEditPatch(before, after);
+  const changed = patch.changes.length > 0;
+  const response: EditSuccess = {
+    ...inlineResponse,
+    project: summary(derived.shell, after, manifestRevision),
+    changed,
+    diff: patch.changes,
+    patch,
+  };
+  return {
+    response,
+    ...(changed ? { output: { shell: serializeShell(derived.shell), shards: derived.texts } } : {}),
+  };
+}
+
+/** Run a global catalog mutation without loading any map payload. A tiny
+ * schema-valid placeholder lets the normative inline operation/validator own
+ * argument and item/sprite shape checks; only global fields are copied back
+ * to the shell, whose real start and map index stay byte-bound. */
+function executeShellGlobalOperation(
+  shell: ProjectShell,
+  command: string,
+  rawArgs: unknown,
+  manifestRevision: boolean,
+): ShardedEditExecution {
+  const placeholderId = "shell-edit-placeholder";
+  const { mapIndex: _index, mapManifestHash: _manifest, mapSchemaHash: _schema, ...globals } = shell;
+  const project: Project = {
+    ...cloneJson(globals),
+    start: { map: placeholderId, x: 0, y: 0, dir: shell.start.dir },
+    maps: [{
+      id: placeholderId,
+      name: "Shell edit placeholder",
+      width: 1,
+      height: 1,
+      sheets: [shell.sheets[0]!.id],
+      ground: [null],
+      events: [],
+    }],
+  };
+  const inline = executeEditOperation(JSON.stringify(project), command, rawArgs);
+  if (!inline.response.ok) return { response: inline.response };
+  if (inline.output === undefined) {
+    const view = shardedView(shell, new Map());
+    return { response: withProject(inline.response, summary(shell, view, manifestRevision)) };
+  }
+  const edited = JSON.parse(inline.output) as Project;
+  const { maps: _maps, start: _start, ...editedGlobals } = edited;
+  const next: ProjectShell = {
+    ...editedGlobals,
+    start: cloneJson(shell.start),
+    mapIndex: shell.mapIndex.map((entry) => ({ ...entry })),
+    ...(shell.mapSchemaHash === undefined ? {} : { mapSchemaHash: shell.mapSchemaHash }),
+  };
+  if (shell.mapManifestHash !== undefined) next.mapManifestHash = mapManifestHash(next);
+  loadValidatedProjectShell(`${JSON.stringify(next)}\n`);
+  const before = shardedView(shell, new Map());
+  const after = shardedView(next, new Map());
+  const patch = createEditPatch(before, after);
+  const response: EditSuccess = {
+    ...inline.response,
+    project: summary(next, after, manifestRevision),
+    changed: patch.changes.length > 0,
+    diff: patch.changes,
+    patch,
+  };
+  return {
+    response,
+    ...(response.changed ? { output: { shell: serializeShell(next), shards: {} } } : {}),
+  };
+}
+
+/** Internal proposal fast path. `shell` must come from
+ * loadValidatedProjectShell; normal file/API callers use the source-text
+ * wrapper below and retain the traditional sparse-document revision hash. */
+export function executeShardedEditOperationOnValidatedShell(
+  shell: ProjectShell,
+  shardSources: Readonly<Record<string, string>>,
+  commandValue: string,
+  rawArgs: unknown = {},
+  hashText: (text: string) => string = sha256Text,
+): ShardedEditExecution {
+  try {
+    // The proposal adapter verifies exact source bytes with the host's native
+    // SHA-256 before entering this pure operation path. Track each shard's
+    // on-disk encoding so a compact shard is written back compact.
+    const encodings = new Map<string, ShardEncoding>();
+    return executeValidatedShardedEditOperation(shell, shardSources, commandValue, rawArgs, true, true, hashText, encodings);
+  } catch (error) {
+    return failure(commandValue || undefined, error);
+  }
 }
 
 function shellRead(
@@ -362,9 +605,11 @@ function withProject(response: EditResponse, project: ProjectSummary): EditRespo
 
 function updateShell(
   shell: ProjectShell,
+  beforeProject: Project,
   edited: Project,
   beforeByEntry: ReadonlyMap<string, MapDef>,
-  allMapsLoaded: boolean,
+  hashText: (text: string) => string = sha256Text,
+  encodings?: ReadonlyMap<string, ShardEncoding>,
 ): { shell: ProjectShell; changed: Map<string, MapDef>; texts: Record<string, string> } {
   const changed = new Map<string, MapDef>();
   const texts = Object.create(null) as Record<string, string>;
@@ -377,17 +622,40 @@ function updateShell(
     const after = editedByOldEntry.get(entry)!;
     if (!semanticEqual(before, after)) {
       changed.set(entry, after);
-      texts[entry] = canonicalMapJson(after);
+      texts[entry] = serializeShard(after, encodings?.get(entry) ?? "json");
     }
   }
-  if (changed.size === 0) return { shell, changed, texts };
+  // Global catalog fields (items, sprites, audio, sheets, switches, variables)
+  // can change without any map shard changing. Diff them against the project
+  // we sent into the operation so a global-only edit still publishes. This is
+  // safe on a partial load: projectFromMaps rewrites `start` only when the
+  // shell's start map is not among the loaded shards, and that rewrite is
+  // present in both beforeProject and the edited result, so it cancels here.
+  // No partially-loaded direct edit mutates global catalog fields — catalog
+  // add/update load the start shard and touch only their own catalog array,
+  // while structural and sheet-edge commands are refused on shells.
+  const { maps: _beforeMaps, ...beforeGlobals } = beforeProject;
+  const { maps: _afterMaps, ...afterGlobals } = edited;
+  const globalKeys = new Set([...Object.keys(beforeGlobals), ...Object.keys(afterGlobals)]);
+  const globalsChanged = [...globalKeys].some((key) => !semanticEqual(
+    (beforeGlobals as Record<string, unknown>)[key],
+    (afterGlobals as Record<string, unknown>)[key],
+  ));
+  if (changed.size === 0 && !globalsChanged) return { shell, changed, texts };
 
-  let next: ProjectShell;
-  if (allMapsLoaded) {
-    const { maps: _maps, ...globals } = edited;
-    next = { ...globals, mapIndex: oldEntries.map((meta) => ({ ...meta })) };
-  } else {
-    next = { ...cloneJson(shell), mapIndex: oldEntries.map((meta) => ({ ...meta })) };
+  const next = { ...cloneJson(shell), mapIndex: oldEntries.map((meta) => ({ ...meta })) } as ProjectShell;
+  if (globalsChanged) {
+    for (const key of globalKeys) {
+      if (semanticEqual(
+        (beforeGlobals as Record<string, unknown>)[key],
+        (afterGlobals as Record<string, unknown>)[key],
+      )) continue;
+      if (!Object.prototype.hasOwnProperty.call(afterGlobals, key)) {
+        delete (next as unknown as Record<string, unknown>)[key];
+      } else {
+        (next as unknown as Record<string, unknown>)[key] = cloneJson((afterGlobals as Record<string, unknown>)[key]);
+      }
+    }
   }
   next.mapIndex = next.mapIndex.map((meta) => {
     const map = changed.get(meta.entry);
@@ -398,7 +666,7 @@ function updateShell(
           width: map.width,
           height: map.height,
           entry: meta.entry,
-          sha256: sha256Text(texts[meta.entry]!),
+          sha256: hashText(texts[meta.entry]!),
         };
   });
   next.mapSchemaHash = MAP_SCHEMA_HASH;
@@ -433,7 +701,11 @@ function assertLogicalResult(
   return value as unknown as ShardedEditDocument;
 }
 
-function validateLogicalResult(current: ShardedEditDocument, next: ShardedEditDocument): void {
+function validateLogicalResult(
+  current: ShardedEditDocument,
+  next: ShardedEditDocument,
+  encodings: ReadonlyMap<string, ShardEncoding>,
+): void {
   // Validate shell through the same strict gate, including its recomputed
   // manifest. Entry strings are immutable in patch-v1 so reverse patches can
   // always reacquire the same physical shards.
@@ -465,7 +737,9 @@ function validateLogicalResult(current: ShardedEditDocument, next: ShardedEditDo
     validateMapSemantics(map, (message) => {
       throw new EditApiError("INVALID_PATCH", message, `/shards/${entry}`);
     });
-    const text = canonicalMapJson(map);
+    // The index checksum hashes the shard's on-disk encoding, so a compact
+    // shard must be re-encoded compact before the hash compares.
+    const text = serializeShard(map, encodings.get(entry) ?? "json");
     if (sha256Text(text) !== meta.sha256 || map.id !== meta.id || map.width !== meta.width || map.height !== meta.height) {
       throw new EditApiError("INVALID_PATCH", `result shard metadata/checksum mismatch for ${JSON.stringify(entry)}`, `/shards/${entry}`);
     }
@@ -476,6 +750,7 @@ function executeSave(
   shell: ProjectShell,
   maps: ReadonlyMap<string, MapDef>,
   args: unknown,
+  encodings: ReadonlyMap<string, ShardEncoding>,
 ): ShardedEditExecution {
   const record = isRecord(args) ? args : {};
   const direction = record.direction === undefined ? "forward" : record.direction;
@@ -492,13 +767,15 @@ function executeSave(
   const before = shardedView(shell, maps);
   const applied = applyEditPatchValue(before, supplied, direction);
   const after = assertLogicalResult(before, applied);
-  validateLogicalResult(before, after);
+  validateLogicalResult(before, after, encodings);
   const patch = createEditPatch(before, after);
   const changed = patch.changes.length > 0;
   const shardOutputs = Object.create(null) as Record<string, string>;
   if (changed) {
     for (const [entry, map] of Object.entries(after.shards)) {
-      if (!semanticEqual(before.shards[entry], map)) shardOutputs[entry] = canonicalMapJson(map);
+      if (!semanticEqual(before.shards[entry], map)) {
+        shardOutputs[entry] = serializeShard(map, encodings.get(entry) ?? "json");
+      }
     }
   }
   const response: EditSuccess = {
@@ -540,49 +817,8 @@ export function executeShardedEditOperation(
 ): ShardedEditExecution {
   try {
     const shell = loadValidatedProjectShell(shellSource);
-    const entries = shardEntriesForOperation(shell, commandValue, rawArgs);
-    if (commandValue === "open" || commandValue === "list-maps") {
-      return shellRead(shell, commandValue);
-    }
-    const maps = loadedMaps(shell, shardSources, entries);
-    if (commandValue === "validate") {
-      const project = projectFromMaps(shell, shell.mapIndex.map((meta) => maps.get(meta.entry)!), true);
-      const inline = executeEditOperation(JSON.stringify(project), "validate");
-      const view = shardedView(shell, maps);
-      return { response: withProject(inline.response, summary(shell, view)) };
-    }
-    if (commandValue === "save") return executeSave(shell, maps, rawArgs);
-
-    const orderedMaps = entries.map((entry) => maps.get(entry)!);
-    // Only a real id rename asks for all maps. This exact project lets the
-    // model rewrite start/common-event/all-shard literal transfer refs.
-    const allMapsLoaded = entries.length === shell.mapIndex.length;
-    const project = projectFromMaps(shell, orderedMaps, allMapsLoaded);
-    const inline = executeEditOperation(JSON.stringify(project), commandValue, rawArgs);
-    if (!inline.response.ok) return { response: inline.response };
-    const beforeView = shardedView(shell, maps);
-    if (inline.output === undefined) {
-      return { response: withProject(inline.response, summary(shell, beforeView)) };
-    }
-    const edited = JSON.parse(inline.output) as Project;
-    const derived = updateShell(shell, edited, maps, allMapsLoaded);
-    const changedBefore = new Map<string, MapDef>();
-    for (const entry of derived.changed.keys()) changedBefore.set(entry, maps.get(entry)!);
-    const before = shardedView(shell, changedBefore);
-    const after = shardedView(derived.shell, derived.changed);
-    const patch = createEditPatch(before, after);
-    const changed = patch.changes.length > 0;
-    const response: EditSuccess = {
-      ...inline.response,
-      project: summary(derived.shell, after),
-      changed,
-      diff: patch.changes,
-      patch,
-    };
-    return {
-      response,
-      ...(changed ? { output: { shell: serializeShell(derived.shell), shards: derived.texts } } : {}),
-    };
+    const encodings = new Map<string, ShardEncoding>();
+    return executeValidatedShardedEditOperation(shell, shardSources, commandValue, rawArgs, false, false, sha256Text, encodings);
   } catch (error) {
     if (commandValue === "validate") {
       let parsed: unknown;

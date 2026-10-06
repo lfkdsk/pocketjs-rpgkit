@@ -44,6 +44,11 @@ export interface SplitProjectOptions {
   /** Entry transport. `auto` chooses compact only when it is smaller.
    * Defaults to legacy canonical JSON for complete backwards compatibility. */
   entryEncoding?: MapEntryEncoding;
+  /** Per-map transport overrides: the entry path and encoding a map had in
+   *  the shell this round trip started from. materialize pack uses this to
+   *  reproduce a mixed-transport shell byte-for-byte; maps not listed here
+   *  use `entryEncoding`. */
+  transports?: ReadonlyMap<string, { entry: string; encoding: "json" | "compact" }>;
 }
 
 const compareText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
@@ -64,14 +69,16 @@ export function splitProjectMaps(
   const entries: SplitMapEntry[] = maps.map((map) => {
     if (ids.has(map.id)) throw new Error(`splitProjectMaps: duplicate map id ${map.id}`);
     ids.add(map.id);
-    const path = mapEntry(map.id);
+    const override = options.transports?.get(map.id);
+    const wanted: MapEntryEncoding = override?.encoding ?? requestedEncoding;
+    const path = override?.entry ?? mapEntry(map.id);
     if (!path) throw new Error(`splitProjectMaps: empty entry for ${map.id}`);
     if (paths.has(path)) throw new Error(`splitProjectMaps: duplicate output path ${path}`);
     paths.add(path);
     const jsonText = canonicalMapJson(map);
-    const compactText = requestedEncoding === "json" ? undefined : encodeCompactMap(map).text;
-    const encoding = requestedEncoding === "compact" ||
-        requestedEncoding === "auto" && compactText!.length < jsonText.length
+    const compactText = wanted === "json" ? undefined : encodeCompactMap(map).text;
+    const encoding = wanted === "compact" ||
+        wanted === "auto" && compactText!.length < jsonText.length
       ? "compact" as const
       : "json" as const;
     const text = encoding === "compact" ? compactText! : jsonText;

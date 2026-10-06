@@ -21,8 +21,10 @@ names above and the full `rpgkit-<check>` forms are both accepted.
 
 | flag | meaning |
 | --- | --- |
-| `--file <path>` | project document (inline `rpgkit-project/v1` JSON). Required. Sharded `ProjectShell` documents are rejected with `doc/shell-unsupported`. |
+| `--file <path>` | project document: an inline `rpgkit-project/v1` JSON file, or a sharded `ProjectShell` (its `mapIndex[].entry` shards are read and decoded next to it, compact `rpgkit-map/1` included). Required. |
 | `--json <json>`, `--args <json>` | arguments object for the check. CLI flags win over `--json` keys. |
+| `--map <id>` | `lint` only: scope the pass to one map (only that map's shard is loaded). |
+| `--incremental` | `lint` on a shell only: reuse cached per-shard findings and re-check only shards whose bytes on disk changed. |
 | `--out <dir>` | output directory for `shot` (default `.`). |
 | `--session <module>` | trusted TypeScript or JavaScript module providing function-bearing `SessionOptions` for `locks`, `freeze`, `reach`, `explore`, and `shot`. The path is resolved from the current directory. `lint` rejects this flag. |
 
@@ -127,6 +129,34 @@ typos and accidentally omitted ids visible.
 $ bun run rpgkit-check lint --file examples/sunstone/data/sunstone.json
 { "check": "lint", "findings": [], "summary": { "maps": 3, "events": 21, "pages": 28, "commands": 64 } }
 ```
+
+`lint` accepts a sharded `ProjectShell` wherever it takes an inline
+document: the shell is materialized through the same decode/validate path
+the runtime uses (compact `rpgkit-map/1` shards included), so the findings
+match an inline lint of the same content.
+
+- `--map <id>` scopes the pass to one map: only that map's shard is loaded,
+  and the report carries that map's own findings. The document-global checks
+  (switch/variable pairing, scene review, start, reachability) need the whole
+  document and are skipped — run the full pass for them. `summary.scopedMap`
+  names the map.
+- `--incremental` (shell only) caches per-shard findings and usage digests
+  in `.rpgkit-check-lint.json` next to the shell, keyed by the shell globals,
+  the mapIndex structure and the schema hash. A shard is a cache hit only
+  when both the checksum the shell declares and the SHA-256 of the shard's
+  raw bytes on disk match — the byte hash is taken before UTF-8 decoding, so
+  any byte drift still misses the cache, including one that decodes to the
+  same text (an illegal byte replaced by U+FFFD) and ones that decode to
+  different text (a BOM, a newline difference such as CRLF to LF). A shard
+  that changed without a
+  shell refresh (an external edit, a sync/restore, corruption) is re-checked
+  and its checksum finding is replayed, and so is a shard whose declared
+  checksum changed; a re-run after an edit decodes and lints only the
+  re-checked shards and merges the rest from the cache.
+  `summary.checked`/`summary.cached` report the split. The cache is
+  invalidated by any change to the shell globals, the map set, the schema,
+  or the lint logic. A read-only caller (the MCP proposal-only mode)
+  computes the cache in memory without writing the sidecar.
 
 ## `locks` — permanent input-lock check
 
@@ -342,7 +372,8 @@ prerequisite is a thrown error (exit 2).
 | `doc/unreadable` | the file cannot be read | pass a path to an `rpgkit-project/v1` JSON document |
 | `doc/invalid-json` | the file is not parseable JSON | fix the JSON syntax |
 | `doc/schema` | JSON Schema violation (the location is in `loc.pointer`) | bring the document back to what the editor exports |
-| `doc/shell-unsupported` | the document is a sharded `ProjectShell` | pass the editor's inline export, or materialize the shell first |
+| `doc/shell` | a sharded `ProjectShell` or one of its shards is malformed (bad index, manifest, envelope, or shard content) | fix the shell/shard, or re-import |
+| `doc/shard-checksum` | a shard's bytes do not match the `mapIndex` checksum | re-export the shard or restore the indexed bytes |
 | `lint/map-id-duplicate` | duplicate map id | map ids must be unique; the engine keys worlds and transfers by them |
 | `lint/event-id-duplicate` | duplicate event id within a map | event ids must be unique within a map; the engine keys characters and self-switches by them |
 

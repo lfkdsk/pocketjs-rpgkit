@@ -8,6 +8,7 @@ import { canonicalJson } from "../../src/engine/save.ts";
 import { deepClone } from "../../src/engine/clone.ts";
 import { validateProject } from "../engine/document.ts";
 import type { EditChange, PatchValue } from "../api/types.ts";
+import { validatePngAssetRecord } from "../api/assets.ts";
 import proposalSchema from "./schema.json";
 import type {
   EditProposal,
@@ -145,8 +146,11 @@ function validateCandidate(project: Project): void {
   }
 }
 
-function applyChanges(project: Project, changes: readonly EditChange[]): Project {
-  let next: unknown = deepClone(project);
+/** Apply reversible changes after checking every local before value. Unlike
+ * applyProposalHunks this performs no Project validation, so the same
+ * mechanics can drive a sharded logical document (shell + shards). */
+export function applyProposalChanges(root: unknown, changes: readonly EditChange[]): unknown {
+  let next: unknown = deepClone(root);
   for (const change of changes) {
     const actual = sideAt(next, change.path);
     if (!sameSide(actual, change.before)) {
@@ -154,8 +158,13 @@ function applyChanges(project: Project, changes: readonly EditChange[]): Project
     }
     next = setSide(next, change.path, change.after);
   }
-  validateCandidate(next as Project);
-  return next as Project;
+  return next;
+}
+
+function applyChanges(project: Project, changes: readonly EditChange[]): Project {
+  const next = applyProposalChanges(project, changes) as Project;
+  validateCandidate(next);
+  return next;
 }
 
 function overlap(a: string, b: string): boolean {
@@ -172,6 +181,8 @@ export function proposalErrors(value: unknown): VError[] {
   const proposal = value as EditProposal;
   const ids = new Set<string>();
   const paths: { path: string; hunk: string }[] = [];
+  const assetPaths = new Map<string, string>();
+  const allAssets = Object.create(null) as Record<string, unknown>;
   for (let hunkIndex = 0; hunkIndex < proposal.hunks.length; hunkIndex++) {
     const hunk = proposal.hunks[hunkIndex]!;
     if (ids.has(hunk.id)) {
@@ -198,7 +209,27 @@ export function proposalErrors(value: unknown): VError[] {
         paths.push({ path: change.path, hunk: hunk.id });
       }
     }
+    if (hunk.assets !== undefined) {
+      const checked = validatePngAssetRecord(hunk.assets, `$.hunks[${hunkIndex}].assets`);
+      if (!checked.ok) {
+        errors.push({ path: checked.issue.path, msg: checked.issue.message });
+      }
+      for (const [path, asset] of Object.entries(hunk.assets)) {
+        const prior = assetPaths.get(path);
+        if (prior !== undefined) {
+          errors.push({
+            path: `$.hunks[${hunkIndex}].assets`,
+            msg: `asset path ${JSON.stringify(path)} also appears in hunk ${JSON.stringify(prior)}; combine dependent assets into one hunk`,
+          });
+        } else {
+          assetPaths.set(path, hunk.id);
+          Object.defineProperty(allAssets, path, { value: asset, enumerable: true, configurable: true, writable: true });
+        }
+      }
+    }
   }
+  const combinedAssets = validatePngAssetRecord(allAssets, "$.hunks");
+  if (!combinedAssets.ok) errors.push({ path: combinedAssets.issue.path, msg: combinedAssets.issue.message });
   return errors;
 }
 
@@ -217,29 +248,55 @@ export function parseProposal(value: unknown): EditProposal {
   return deepClone(value) as EditProposal;
 }
 
-export function assessHunk(project: Project, hunk: EditProposal["hunks"][number]): HunkAssessment {
+export type ProposalAssetLookup = (path: string) => string | null;
+
+export function assessHunkValue(
+  root: unknown,
+  hunk: EditProposal["hunks"][number],
+  assetData?: ProposalAssetLookup,
+): HunkAssessment {
   let before = 0;
   let after = 0;
   const conflicts: string[] = [];
   for (const change of hunk.changes) {
-    const actual = sideAt(project, change.path);
+    const actual = sideAt(root, change.path);
     if (sameSide(actual, change.before)) before++;
     else if (sameSide(actual, change.after)) after++;
     else conflicts.push(change.path || "$");
   }
+  const assets = Object.entries(hunk.assets ?? {});
+  for (const [path, asset] of assets) {
+    const actual = assetData?.(path) ?? null;
+    if (actual === null) before++;
+    else if (actual === asset.data) after++;
+    else conflicts.push(`asset:${path}`);
+  }
+  const total = hunk.changes.length + assets.length;
   const state = conflicts.length > 0
     ? "conflict"
-    : before === hunk.changes.length
+    : before === total
       ? "clean"
-      : after === hunk.changes.length
+      : after === total
         ? "already-applied"
         : "partially-applied";
   return { id: hunk.id, state, conflicts };
 }
 
-export function assessProposal(project: Project, value: unknown): ProposalAssessment {
+export function assessHunk(
+  project: Project,
+  hunk: EditProposal["hunks"][number],
+  assetData?: ProposalAssetLookup,
+): HunkAssessment {
+  return assessHunkValue(project, hunk, assetData);
+}
+
+export function assessProposal(
+  project: Project,
+  value: unknown,
+  assetData?: ProposalAssetLookup,
+): ProposalAssessment {
   const proposal = parseProposal(value);
-  const hunks = proposal.hunks.map((hunk) => assessHunk(project, hunk));
+  const hunks = proposal.hunks.map((hunk) => assessHunk(project, hunk, assetData));
   return {
     baseMatches: proposalSemanticHash(project) === proposal.baseHash,
     hasConflicts: hunks.some((hunk) => hunk.state === "conflict" || hunk.state === "partially-applied"),
@@ -253,6 +310,7 @@ export function applyProposalHunks(
   project: Project,
   value: unknown,
   hunkIds: readonly string[],
+  assetData?: ProposalAssetLookup,
 ): Project {
   const proposal = parseProposal(value);
   const wanted = new Set(hunkIds);
@@ -271,7 +329,7 @@ export function applyProposalHunks(
   }
   const changes = [] as EditProposal["hunks"][number]["changes"];
   for (const hunk of selected) {
-    const assessment = assessHunk(project, hunk);
+    const assessment = assessHunk(project, hunk, assetData);
     if (assessment.state !== "clean") {
       throw new ProposalError(
         "PROPOSAL_HUNK_CONFLICT",
@@ -291,7 +349,8 @@ export function decideProposalHunks(
   value: unknown,
   hunkIds: readonly string[],
   status: ProposalDecisionStatus,
-  decidedAt = new Date().toISOString(),
+  decidedAt: string = new Date().toISOString(),
+  source?: string,
 ): EditProposal {
   const proposal = parseProposal(value);
   const wanted = new Set(hunkIds);
@@ -302,7 +361,7 @@ export function decideProposalHunks(
   const next: EditProposal = {
     ...proposal,
     hunks: proposal.hunks.map((hunk) => wanted.has(hunk.id)
-      ? { ...hunk, decision: { status, decidedAt } }
+      ? { ...hunk, decision: { status, decidedAt, ...(source === undefined ? {} : { source }) } }
       : hunk),
   };
   return parseProposal(next);

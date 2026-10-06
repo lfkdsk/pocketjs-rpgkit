@@ -96,13 +96,20 @@ of already-published shards if a later rename fails; this is **not**
 crash-atomic. See `editor/api/file.ts` and
 [`edit-api.md`](edit-api.md#response-envelope) (the atomicity paragraph).
 
-- **Operations** (27): `open`, `list-maps`, `list-events`, `list-pages`,
+- **Operations** (57): `open`, `list-maps`, `list-events`, `list-pages`,
   `list-commands`, `validate`, `update-map`, `add-map`, `duplicate-map`,
   `delete-map`, `move-map`, `paint-tile`, `paint-rect`, `fill-region`,
   `paint-passage`, `paint-cells`, `paint-edges`, `add-event` (optional
   `index` places the event in the map's event list), `update-event`,
   `delete-event`, `add-page`, `update-page`, `delete-page`,
-  `insert-command`, `delete-command`, `update-command`, `save`.
+  `insert-command`, `delete-command`, `update-command`, `save`, plus
+  `list-items`, `get-item`, `add-item`, `update-item`, `remove-item`,
+  `list-sprites`, `get-sprite`, `add-sprite`, `update-sprite`,
+  `remove-sprite`, `list-audio`, `get-audio`, `add-audio`, `update-audio`,
+  `remove-audio`, `list-sheets`, `get-sheet`, `add-sheet`, `update-sheet`,
+  `remove-sheet`, `list-switches`, `get-switch`, `add-switch`,
+  `update-switch`, `remove-switch`, `list-variables`, `get-variable`,
+  `add-variable`, `update-variable`, and `remove-variable`.
 - **Addresses** are stable text paths: `map:<id>`,
   `map:<id>/event:<eid>/page:<i>/command:<key>`, with recursive command keys
   such as `i2:then#0` (if), `c2:option:1#0` (choices), `b2:win#0`
@@ -140,8 +147,9 @@ crash-atomic. See `editor/api/file.ts` and
   one operation, one reversible patch and one undo step. Project and patch
   formats are unchanged.
 - **Sharded projects are first-class.** The same commands open a
-  `ProjectShell` (`add-map`, `duplicate-map`, `delete-map` and
-  `paint-edges` are inline-only); reads and ordinary mutations load only the addressed
+  `ProjectShell` (`add-map`, `duplicate-map`, `delete-map`, `move-map` and
+  `paint-edges` are inline-only as direct edits); reads and ordinary map
+  mutations load only the addressed
   shard, and `save` publishes only the changed shards plus the shell. Two
   operations load every shard: `validate`, and a real map-id rename (so
   transfers in other maps can follow the rename). A
@@ -149,7 +157,9 @@ crash-atomic. See `editor/api/file.ts` and
   `{ kind: "rpgkit-edit/sharded-document-v1", shell, shards }` document,
   with patch paths under `/shell/...` or `/shards/<entry>/...` (the entry is
   one RFC 6901 token). Full contract: [`edit-api.md`](edit-api.md),
-  "Sharded `ProjectShell` documents".
+  "Sharded `ProjectShell` documents". Project-global `add-item` and
+  `add-sprite` mutate only the shell; reviewed proposals additionally support
+  structural map operations and publish new/changed shards before the shell.
 - **Browser packs.** The in-browser editor additionally reads and writes a
   self-contained `rpgkit-edit/sharded-pack-v1` file
   (`{ kind, shell: "<json text>", shards: { "<entry>": "<json text>" } }`).
@@ -195,7 +205,7 @@ when it renders warning-worthy content.
 **Normative: [`../editor/proposals/schema.json`](../editor/proposals/schema.json)**
 (JSON Schema 2020-12), implemented in `editor/proposals/` and
 `editor/api/proposals.ts`. Status: **implemented** (desktop editor review
-queue; inline projects only).
+queue, CLI and MCP lifecycle; inline and sharded projects).
 
 A proposal is one JSON file describing reviewed edits before they touch a
 project. Proposals live in a sidecar directory next to the project file:
@@ -245,15 +255,24 @@ Contract:
   `id` (`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`), `title` (1–160 chars),
   `rationale` (1–4000), `author` (1–160), `createdAt` (UTC ISO-8601 with
   `Z`), `baseHash` (64 lowercase hex), and `hunks` (at least one).
-- **Hunks** need `id`, `summary` (1–240) and at least one `change`; a hunk
-  may carry a `decision` while under review.
+- **Hunks** need `id`, `summary` (1–240), a `changes` array, and at least one
+  change or one attached asset; a hunk may carry a `decision` while under
+  review.
 - **Changes** are `{ path, before, after }`. `path` is a JSON Pointer
   (root `""` or leading `/`); `before`/`after` are sides
   (`{ "exists": false }` or `{ "exists": true, "value": <any JSON> }`).
   Beyond the schema, the implementation requires unique hunk ids, canonical
   decimal array tokens, and non-overlapping change paths across hunks.
+- **Assets** are an optional `assets` object keyed by confined
+  project-relative path. Each value is
+  `{ "type": "image/png", "data": <canonical padded base64> }`. PNG shape,
+  byte/pixel/count limits, unique paths across hunks, and symlink/path escape
+  protections are checked before creation or publication. Assets are
+  immutable additions: missing bytes are clean, identical bytes are already
+  applied, and different bytes conflict.
 - **Applying** (`applyProposalHunks`): every selected hunk must assess
-  `clean` (each change's `before` matches the project), then the changes
+  `clean` (each change's `before` matches the project and each attachment is
+  absent), then the changes
   apply through the proposal module's own `setSide` and the result is
   schema-validated as one transaction. `setSide` permits adding, replacing
   or deleting an **object property**, and replacing an **existing array
@@ -265,10 +284,34 @@ Contract:
   editor shows live conflict state per hunk (`clean` / `conflict` /
   `already-applied` / `partially-applied`).
 - **Decisions** are `{ "status": "accepted" | "rejected", "decidedAt":
-  <UTC ISO-8601> }`, omitted while a hunk waits for review. Review
-  persistence may only add decisions, never rewrite the proposal payload.
-  Accepting/rejecting happens in the desktop editor; the CLI offers
-  `propose`, `list-proposals`, `show-proposal` and `withdraw-proposal`.
+  <UTC ISO-8601>, "source"?: string }`, omitted while a hunk waits for
+  review. Review persistence may only add decisions, never rewrite the
+  proposal payload. Accepting/rejecting is available in the desktop editor
+  and through the CLI/MCP commands `accept-proposal`, `reject-proposal`,
+  and `list-archive`; the CLI also offers `propose`, `list-proposals`,
+  `show-proposal` and `withdraw-proposal`. Whole-proposal acceptance publishes
+  assets, then project files, then the archive transition. A failure restores
+  project/assets and leaves the proposal pending; an unverifiable rollback is
+  reported as `PROPOSAL_PARTIAL_WRITE` with `written: true`.
+- **QA sidecar**: `propose` stores `qa/<id>.json` below the pending directory;
+  a decision moves it to `archive/qa/<id>.json`. It holds
+  `{checkedAt, documentHash, findings[], errors, warnings, infos, baseline?}`.
+  The versioned baseline is bound to proposal id and base hash and contains
+  creation-time errors, so unchanged old corpus errors remain acceptable but
+  a new, moved, or duplicated error blocks. Legacy adjacent `<id>.qa.json`
+  files remain readable and fail closed when errors exist. `accept-proposal`
+  re-runs schema and the full static lint (references, page health,
+  transfer-graph reachability) over the live proposed document.
+- **Sharded projects**: a proposal next to a ProjectShell stores hunks over
+  the sparse `{shell, shards}` logical document with `/shell/...` and
+  `/shards/<entry>/...` paths. Derived shell metadata (mapIndex checksums
+  and dimensions, manifest hash) is not stored in hunks; it is rebuilt from
+  the shards at accept time. Operation execution and conflict assessment load
+  only touched shards, while creation-time and accept-time QA materialize the
+  full map corpus. `add-map`, `duplicate-map`, `move-map`, `delete-map`, and
+  `connect-maps` are supported for both JSON and compact `.rkm` shards; new
+  shard files are created atomically and the shell remains the last commit
+  marker.
 
 ## 5. Preview protocol — `rpgkit-preview/v1`
 

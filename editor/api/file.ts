@@ -2,6 +2,7 @@
 
 import {
   chmodSync,
+  existsSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -10,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { executeEditOperation } from "./operations.ts";
 import {
   executeShardedEditOperation,
@@ -56,7 +57,8 @@ export class WriteConflictError extends Error {}
 export interface AtomicReplacement {
   path: string;
   text: string;
-  expectedSource: string;
+  /** Exact current bytes, or null when this transaction creates the file. */
+  expectedSource: string | null;
 }
 
 interface StagedReplacement extends AtomicReplacement {
@@ -93,14 +95,15 @@ function atomicWriteMany(replacements: readonly AtomicReplacement[]): void {
       throw new Error("atomic replacement targets must be unique");
     }
     for (const replacement of replacements) {
-      const mode = statSync(replacement.path).mode;
+      const mode = replacement.expectedSource === null ? 0o600 : statSync(replacement.path).mode;
       const temporary = `${replacement.path}.rpgkit-edit-${process.pid}-${randomUUID()}.tmp`;
       writeFileSync(temporary, replacement.text, { encoding: "utf8", flag: "wx", mode });
       staged.push({ ...replacement, temporary, mode });
       chmodSync(temporary, mode);
     }
     for (const replacement of staged) {
-      if (readFileSync(replacement.path, "utf8") !== replacement.expectedSource) {
+      if (replacement.expectedSource === null ? existsSync(replacement.path) :
+          readFileSync(replacement.path, "utf8") !== replacement.expectedSource) {
         throw new WriteConflictError(`on-disk bytes no longer match the edited revision: ${replacement.path}`);
       }
     }
@@ -112,6 +115,10 @@ function atomicWriteMany(replacements: readonly AtomicReplacement[]): void {
     // A failure before the shell replacement leaves the old manifest live.
     // Restore any shards already published so subsequent reads are coherent.
     for (const replacement of [...committed].reverse()) {
+      if (replacement.expectedSource === null) {
+        rmSync(replacement.path, { force: true });
+        continue;
+      }
       const rollback = `${replacement.path}.rpgkit-edit-${process.pid}-${randomUUID()}.rollback`;
       try {
         writeFileSync(rollback, replacement.expectedSource, {
@@ -153,7 +160,38 @@ function outside(root: string, path: string): boolean {
     isAbsolute(fromRoot);
 }
 
-function confinedShardPath(shellFile: string, root: string, entry: string): string {
+/** Symlink-safe root confinement for a path that may not exist yet (a fresh
+ *  output file): the deepest existing ancestor is realpath'ed, so a symlink
+ *  pointing out of the root is caught even when the leaf is missing. The
+ *  root itself is realpath'ed too. Returns the resolved absolute path, or
+ *  null when the root does not exist or the path escapes it. */
+export function confineWithinRoot(root: string, path: string): string | null {
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(resolve(root));
+  } catch {
+    return null;
+  }
+  let existing = resolve(path);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const resolved = join(realpathSync(existing), ...tail);
+      return outside(rootReal, resolved) ? null : resolved;
+    } catch {
+      const base = basename(existing);
+      const parent = dirname(existing);
+      if (parent === existing) return null;
+      tail.unshift(base);
+      existing = parent;
+    }
+  }
+}
+
+/** Resolve a mapIndex entry to a real path confined under the shell's
+ *  directory (or an explicit root). Shared by the sharded edit path and the
+ *  materialize command. */
+export function confinedShardPath(shellFile: string, root: string, entry: string): string {
   // mapIndex entries are portable package-style relative paths. Refuse both
   // platform separators for traversal, even when one is not special here.
   if (isAbsolute(entry) || entry.split(/[\\/]+/).some((part) => part === "..")) {
@@ -163,6 +201,33 @@ function confinedShardPath(shellFile: string, root: string, entry: string): stri
   if (outside(root, path)) throw new Error(`shard entry ${JSON.stringify(entry)} resolves outside ${root}`);
   if (path === shellFile) throw new Error(`shard entry ${JSON.stringify(entry)} resolves to the project shell`);
   return path;
+}
+
+/** Resolve a mapIndex entry relative to a shell file, refusing absolute
+ * paths, traversal, escapes from the shell's directory, and the shell file
+ * itself. Shared by direct edits and proposal acceptance so both load shards
+ * through the same confinement check. */
+export function confinedProjectShardPath(shellFile: string, entry: string): string {
+  return confinedShardPath(shellFile, dirname(shellFile), entry);
+}
+
+/** Resolve a proposed new map entry without requiring its leaf to exist. The
+ * existing parent is realpath-checked, and an existing leaf is resolved too,
+ * so neither a symlinked directory nor a last-component symlink can escape. */
+export function confinedProjectNewShardPath(shellFile: string, entry: string): string {
+  const root = dirname(shellFile);
+  if (isAbsolute(entry) || entry.split(/[\\/]+/).some((part) => part === "..")) {
+    throw new Error(`shard entry ${JSON.stringify(entry)} is not a confined relative path`);
+  }
+  const candidate = resolve(root, entry);
+  const parent = realpathSync(dirname(candidate));
+  if (outside(root, parent)) throw new Error(`shard entry ${JSON.stringify(entry)} resolves outside ${root}`);
+  if (existsSync(candidate)) {
+    const existing = realpathSync(candidate);
+    if (outside(root, existing)) throw new Error(`shard entry ${JSON.stringify(entry)} resolves outside ${root}`);
+    return existing;
+  }
+  return candidate;
 }
 
 function fileResponse(

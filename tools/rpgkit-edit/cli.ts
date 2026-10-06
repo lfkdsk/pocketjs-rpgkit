@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { EDIT_COMMANDS } from "../../editor/api/types.ts";
 import { runFileEdit } from "../../editor/api/file.ts";
 import { PROPOSAL_COMMANDS, runProposalFileCommand } from "../../editor/api/proposals.ts";
+import { runMaterializeCommand } from "../../editor/api/materialize.ts";
 
 export interface CliOptions {
   command: string;
@@ -18,11 +19,14 @@ export const CLI_USAGE = `Usage:
 
 Commands:
   ${[...EDIT_COMMANDS, ...PROPOSAL_COMMANDS].join("\n  ")}
+  materialize            convert between an inline document and a sharded
+                         ProjectShell (--json '{"direction":"inline|pack",...}')
 
---json accepts an inline JSON object or @path/to/args.json. Edit mutations
-save atomically by default and return a reversible patch. Proposal commands
-operate on the adjacent proposal queue. --dry-run validates and returns the
-result without writing the project or sidecar.`;
+--json accepts an inline JSON object or @path/to/args.json. A "file" key
+inside --json is ignored: the explicit --file argument is always the input.
+Edit mutations save atomically by default and return a reversible patch.
+Proposal commands operate on the adjacent proposal queue. --dry-run validates
+and returns the result without writing the project or sidecar.`;
 
 function optionValue(argv: readonly string[], index: number, name: string): { value: string; consumed: number } {
   const argument = argv[index]!;
@@ -84,7 +88,20 @@ export function runCli(argv: readonly string[]): number {
           args: options.args,
           dryRun: options.dryRun,
         })
-      : runFileEdit(options);
+      : options.command === "materialize"
+        ? runMaterializeCommand({
+            ...(typeof options.args === "object" && options.args !== null
+              ? (() => {
+                  // The explicit --file wins; a "file" key in the operation
+                  // JSON must not become a second, higher-priority input.
+                  const { file: _jsonFile, ...rest } = options.args as Record<string, unknown>;
+                  return rest;
+                })()
+              : {}),
+            file: options.file,
+            dryRun: options.dryRun,
+          } as Parameters<typeof runMaterializeCommand>[0])
+        : runFileEdit(options);
     process.stdout.write(`${JSON.stringify(response)}\n`);
     return response.ok ? 0 : 1;
   } catch (error) {

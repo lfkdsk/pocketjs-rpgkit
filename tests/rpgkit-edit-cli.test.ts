@@ -215,6 +215,27 @@ describe("rpgkit-edit file and CLI adapter", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
+  test("CLI --file wins over a file key inside --json", () => {
+    // The explicit --file is the CLI's own input; a "file" hidden in the
+    // operation JSON must not redirect the command to another project.
+    const argsFile = join(TEMP, `args-${randomUUID()}.json`);
+    writeFileSync(argsFile, JSON.stringify({
+      file: SUNSTONE,
+      direction: "pack",
+      out: join(TEMP, `must-not-be-created-${randomUUID()}`),
+    }));
+    const missing = join(TEMP, `explicit-missing-${randomUUID()}.json`);
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, CLI, "materialize", "--file", missing, "--json", `@${argsFile}`, "--dry-run"],
+      cwd: ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(1);
+    const body = JSON.parse(result.stdout.toString());
+    expect(body).toMatchObject({ ok: false, file: missing });
+  });
+
   test("CLI authors a loop, fills its body through loop-segment addresses, and edits inside it", () => {
     const file = tempFile("cli-loop");
     const at = { map: "village", event: "boy", page: 0 };

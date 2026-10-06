@@ -264,7 +264,7 @@ export function syncEditorProposalBridge(
         persistedIds.add(incoming.id);
         if (dirname(result.path) === proposalArchiveDirectoryFor(projectFile)) archivedIds.add(incoming.id);
       } catch (error) {
-        if (errorCode(error) === "PROPOSAL_HUNK_CONFLICT") {
+        if (errorCode(error) === "PROPOSAL_HUNK_CONFLICT" || errorCode(error) === "PROPOSAL_QA_FAILED") {
           conflicts.push(error instanceof Error ? error.message : String(error));
           continue;
         }

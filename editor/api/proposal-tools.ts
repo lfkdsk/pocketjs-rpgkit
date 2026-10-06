@@ -28,9 +28,12 @@ const operation = {
   properties: {
     command: {
       enum: [
-        "update-map", "move-map", "paint-tile", "paint-rect", "fill-region", "paint-passage",
+        "add-item", "add-sprite", "add-asset",
+        "update-map", "move-map", "add-map", "duplicate-map", "delete-map",
+        "paint-tile", "paint-rect", "fill-region", "paint-passage",
         "add-event", "update-event", "delete-event", "add-page", "update-page",
         "delete-page", "insert-command", "delete-command", "update-command",
+        "connect-maps",
       ],
     },
     args: { type: "object" },
@@ -121,6 +124,41 @@ export const PROPOSAL_TOOLS: readonly ProposalToolDefinition[] = [
     ["id"],
     true,
     true,
+  ),
+  proposalTool(
+    "rpgkit_proposal_accept",
+    "Accept edit proposal",
+    "accept-proposal",
+    "Apply every clean hunk of a pending proposal as one transaction, re-run the proposal QA gate (schema, references, reachability), then archive the proposal with its decision. A conflict or QA error rolls the whole acceptance back: the project and the proposal queue stay untouched.",
+    {
+      id,
+      source: { type: "string", minLength: 1, maxLength: 160, description: "Who accepts; recorded on the archived decision. Defaults to cli." },
+    },
+    ["id"],
+    true,
+    true,
+  ),
+  proposalTool(
+    "rpgkit_proposal_reject",
+    "Reject edit proposal",
+    "reject-proposal",
+    "Record a rejection decision on every hunk of a pending proposal and archive it without changing the target project.",
+    {
+      id,
+      source: { type: "string", minLength: 1, maxLength: 160, description: "Who rejects; recorded on the archived decision. Defaults to cli." },
+    },
+    ["id"],
+    true,
+    true,
+  ),
+  proposalTool(
+    "rpgkit_proposal_archive",
+    "List archived proposals",
+    "list-archive",
+    "List decided proposals with their decision time, deciding source, and a diff summary (hunk count, change count, touched paths).",
+    {},
+    [],
+    false,
   ),
 ] as const;
 
