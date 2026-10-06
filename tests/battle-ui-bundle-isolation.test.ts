@@ -200,8 +200,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // tap-to-walk module, pointer-line drain and per-frame route fold) adds
 // 7,270: measured 975,980. The per-reference-tick route resolver (the
 // session/attract hook that keeps a turn from overshooting at 4 Hz) adds
-// 977: measured 976,957.
-const EXPECTED_BYTES = 976_957;
+// 977: measured 976,957. PocketJS's socket capability entry in the shared
+// platform table adds 192: measured 977,149.
+const EXPECTED_BYTES = 977_149;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
