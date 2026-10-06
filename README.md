@@ -111,20 +111,45 @@ woods and meadows are grow's coordinate-hashed Ninja stamps.
   re-centres it (a floating origin): the next window is built in budgeted
   slices and the session state is translated, so positions stay small and
   exact and nothing on screen moves. Houses, fences, props and tree trunks
-  block; canopies are walked under; residents walk their routes.
+  block; canopies are walked under; residents walk their routes. When a
+  held d-pad direction catches an obstacle corner, manual control takes a
+  short, bounded side step around the nearer opening and then resumes the
+  held direction. A wall blocked on both sides still holds the player in
+  place, facing it; auto-wander and tap-to-walk keep their own paths.
 - **Attract.** An auto-wander driver (A* over the window, preferring
-  roads) walks from town to town by itself. Any d-pad or face button takes
-  over; ten idle seconds hand the walk back. **SQUARE** grows a new seed,
-  **TRIANGLE** toggles fast travel, **SELECT** hands back at once, and a
-  tap walks to the tapped tile. The HUD shows the seed, world
+  roads) walks from town to town by itself. A d-pad, **CIRCLE**, **CROSS**,
+  shoulder or **START** press takes over; ten idle seconds hand the walk
+  back. **SQUARE** grows a new seed, **TRIANGLE** toggles fast travel,
+  **SELECT** hands back at once, and a tap walks to the tapped tile. The HUD
+  shows the seed, world
   coordinates, the chunk minimap (rendered / resident / queued / evicted,
   with the load and unload rings) and the residency counters.
 
 Generation, discovery and the window swap all happen per 60 Hz reference
 tick, so the world, its residency and the auto-wander trajectory are
-identical at 60/30/20/4 Hz. The example bakes no new terrain: it points at
-grow's PNGs in place (`../grow/assets/...`) and adds only whole-stamp and
-64 px fill composites of them (`bun examples/wander/gen-assets.ts`).
+identical at 60/30/20/4 Hz. Every live input — taps, d-pad holds, SQUARE
+reseed, TRIANGLE and SELECT — is sampled once per host frame and enqueued
+on the sim's scheduled tape at that frame's first reference tick
+(`WanderSim.enqueue`), so live play and replays are the same code path;
+the recorded tape (`globalThis.__wanderTape`) replays a session
+tick-for-tick at any host rate. A frame that reseeds (SQUARE, or a
+seed-plate tap) starts a new session clock at 0, so the rest of that
+frame's mask changes and taps are enqueued at the new session's tick 0 —
+not the old session's `now`, which would park them at the tape's front
+until the new session caught up — and the held mask carries across the
+reseed without re-firing as a fresh press. The per-frame sampling is the
+engine's documented input contract (`src/engine/motion-clock.ts`): a slow
+host observes a click later than a fast one, but the same recorded inputs
+produce the same per-reference-tick trajectory at every rate. Tapes can
+also be authored directly (`WanderSim.schedule`) with exact-tick taps,
+holds and reseeds; same-tick semantics: edges run from the previous
+tick's final mask to this tick's final mask (a press and release queued
+for one tick leave no edge), and a held takeover mask wins a same-tick
+race with a tap. An `onTick` hook exposes each folded tick's digest for
+tick-for-tick comparisons. The example bakes no new
+terrain: it points at grow's PNGs in place (`../grow/assets/...`) and adds
+only whole-stamp and 64 px fill composites of them
+(`bun examples/wander/gen-assets.ts`).
 
 **`examples/meadow`** is the minimal example: one 20×12 map and four
 events proving the package boots, renders, replays deterministically,
