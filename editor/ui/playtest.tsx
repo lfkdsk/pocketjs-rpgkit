@@ -190,6 +190,9 @@ export function PlaytestSurface(props: PlaytestSurfaceProps): JSX.Element {
         parallax={ParallaxLayer}
         scenes={playtestSceneRules(props.project)}
         sceneViews={playtestSceneViews(props.project)}
+        // The editor app owns the host pointer lines (debug panel hit
+        // testing through connectSvc); GameView must not drain them.
+        tapToWalk={false}
       />
 
       <View

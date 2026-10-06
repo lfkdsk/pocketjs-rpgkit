@@ -47,6 +47,7 @@ import {
   isSessionWorldIdle,
   prepareSessionMap,
   releaseSessionMapsExcept,
+  sessionPassageTable,
   startSession,
   stepSession,
   type Session,
@@ -55,6 +56,7 @@ import {
   type SessionInput,
   type SceneOptions,
   type SessionState,
+  type SessionTickDirection,
 } from "../engine/session.ts";
 import { isProjectShell, MapNotReadyError } from "../engine/map-repository.ts";
 import { AttractController, type AttractStatus } from "../engine/attract.ts";
@@ -86,6 +88,7 @@ import type {
   WorldTraversalMode,
 } from "../engine/types.ts";
 import { PlayerSprite, playerImageKey } from "./PlayerSprite.tsx";
+import { startTapWalk, stepTapWalk, TAP_WALK_DIR_BITS, type TapWalkRoute } from "./tap-to-walk.ts";
 import { walkPose, type WalkPose } from "../engine/movement.ts";
 import { TILE } from "../engine/tiles.ts";
 import {
@@ -830,6 +833,8 @@ declare global {
   var __rpgSessionState: SessionState | undefined;
   // eslint-disable-next-line no-var
   var __rpgGameCamera: CameraState | undefined;
+  // eslint-disable-next-line no-var
+  var __rpgPlayerScreen: { x: number; y: number } | undefined;
 }
 
 /** A game-owned scene renderer is deliberately read-only. All animation,
@@ -1006,6 +1011,10 @@ export interface GameViewProps {
    * host frame and clamped to the active component. Production callers should
    * omit it so the camera follows reducer state. Used only with `world`. */
   debugWorldCamera?: () => { x: number; y: number } | undefined;
+  /** Tap/click a walkable map tile to walk there (host pointer service
+   *  lines; see tap-to-walk.ts). Defaults to true; the editor playtest
+   *  passes false because its pointer lines drive the debug panel. */
+  tapToWalk?: boolean;
 }
 
 /** KG1: renders whichever scene component the active SceneSlot selects.
@@ -1535,6 +1544,107 @@ export function GameView(props: GameViewProps) {
     error?: Error;
   } | null = null;
 
+  // ---- tap-to-walk --------------------------------------------------------
+  // View-local only: the route never enters the reducer, so saves, rewind
+  // and attract tapes are untouched. A tap (host pointer service line) on a
+  // walkable tile plans one BFS route; each frame then folds one direction
+  // bit until the player arrives, a modal opens, the map changes or a real
+  // direction press takes over.
+  const tapToWalk = props.tapToWalk !== false;
+  let tapRoute: TapWalkRoute | null = null;
+  let tapDown: { x: number; y: number } | null = null;
+  const TAP_SLOP = 12;
+
+  /** Drain the host's pointer lines and report one tap (down+up without a
+   *  drag). Lines for other consumers are not expected in a GameView app;
+   *  everything pending is drained so a tap behind a modal never fires
+   *  late. */
+  const drainTap = (): { x: number; y: number } | null => {
+    const ops = getOps();
+    const batch = ops.svcPoll?.() as string | null | undefined;
+    if (!batch) return null;
+    let tapped: { x: number; y: number } | null = null;
+    for (const line of batch.split("\n")) {
+      if (!line) continue;
+      let message: { t?: string; x?: number; y?: number; d?: boolean; b?: number };
+      try {
+        message = JSON.parse(line) as typeof message;
+      } catch {
+        continue;
+      }
+      if (!message || message.t !== "mouse" || typeof message.x !== "number" || typeof message.y !== "number") continue;
+      if (message.b !== undefined && message.b !== 0) continue; // left/touch only
+      if (message.d) {
+        if (tapDown && (Math.abs(message.x - tapDown.x) > TAP_SLOP || Math.abs(message.y - tapDown.y) > TAP_SLOP)) {
+          tapDown = null; // a drag, not a tap
+        } else if (!tapDown) {
+          tapDown = { x: message.x, y: message.y };
+        }
+      } else if (tapDown) {
+        tapped = tapDown;
+        tapDown = null;
+      }
+    }
+    return tapped;
+  };
+
+  /** Convert a tap to a tile and plan the walk. Taps while a modal, scene,
+   *  battle, dialog or event-driven route owns the world are ignored. */
+  const handleTap = (x: number, y: number): void => {
+    const st = state;
+    if (!isSessionWorldIdle(st) || st.playerRoute) return;
+    if (attract && attract.status().phase !== "play") return;
+    const frame = worldFrame();
+    const cam = activeMapCamera();
+    const tx = Math.floor((x - frame.x + cam.x) / project.tileSize);
+    const ty = Math.floor((y - frame.y + cam.y) / project.tileSize);
+    tapRoute = startTapWalk(
+      sessionPassageTable(session, st),
+      st.move.tx,
+      st.move.ty,
+      tx,
+      ty,
+      st.mapId,
+      st.move.px,
+      st.move.py,
+    );
+  };
+
+  /** Re-validate the active route against one state snapshot and report the
+   *  direction bit to fold next (0 when there is no route). Called once per
+   *  reference tick: at the host frame's start for tick 0, and from the
+   *  session's tick-direction resolver on every following tick, so a route
+   *  turns at the tile instead of holding one direction across a whole
+   *  low-rate host frame. */
+  const tapWalkStep = (buttons: number, st: SessionState): number => {
+    if (!tapRoute) return 0;
+    const userDir = buttons & (BTN.UP | BTN.DOWN | BTN.LEFT | BTN.RIGHT);
+    if (
+      !isSessionWorldIdle(st) ||
+      st.playerRoute ||
+      st.mapId !== tapRoute.mapId ||
+      (attract && attract.status().phase !== "play") ||
+      userDir !== 0
+    ) {
+      tapRoute = null;
+      return 0;
+    }
+    const step = stepTapWalk(tapRoute, st.move.tx, st.move.ty, st.move.px, st.move.py);
+    if (!step.alive || step.dir === null) {
+      tapRoute = null;
+      return 0;
+    }
+    return TAP_WALK_DIR_BITS[step.dir] ?? 0;
+  };
+
+  /** The direction bit to fold this frame's first tick, plus the per-tick
+   *  resolver for the ticks that follow (undefined without a route, so the
+   *  reducer's hot path stays untouched). */
+  const tapWalkFrame = (buttons: number): { bit: number; hook: SessionTickDirection | undefined } => {
+    const bit = tapWalkStep(buttons, state);
+    return { bit, hook: tapRoute ? (st) => tapWalkStep(buttons, st) : undefined };
+  };
+
   const syncPresentedState = (
     prev: SessionState,
     status: AttractStatus | null,
@@ -1544,6 +1654,17 @@ export function GameView(props: GameViewProps) {
 
     camera = cameraFor(state);
     globalThis.__rpgGameCamera = camera;
+    // The player's top-left in logical screen pixels (letterbox + camera
+    // aware, both renderers). Test/debug hook for tap-to-walk verification;
+    // carries no behavior.
+    {
+      const frame = worldFrame();
+      const localCam = activeMapCamera();
+      globalThis.__rpgPlayerScreen = {
+        x: state.move.px - localCam.x + frame.x,
+        y: state.move.py - localCam.y + frame.y,
+      };
+    }
 
     // Seamless-world cache policy: prefetch imminent targets and evict every
     // layer to its keep-set. Derived-cache only; the fold above is untouched.
@@ -1629,6 +1750,11 @@ export function GameView(props: GameViewProps) {
       setViewport({ w: nextViewport.w, h: nextViewport.h });
     }
 
+    // Tap-to-walk: drain the host's pointer lines every frame (so a tap
+    // behind an open menu never fires late) and convert one tap into a
+    // walking target before the fold below.
+    const tapped = tapToWalk ? drainTap() : null;
+
     // Under attract the controller owns the fold: a tape mask or the live
     // mask, takeover, rewind and the idle attract entry all resolve inside it.
     const prev = state;
@@ -1645,6 +1771,7 @@ export function GameView(props: GameViewProps) {
         if (replaced && blocked) props.onMapLoading?.(null);
         if (replaced) blocked = null;
         replaced = false;
+        tapRoute = null;
         attract?.syncLiveButtons(buttons);
         prevButtons = buttons;
         edge.confirm = false;
@@ -1664,6 +1791,7 @@ export function GameView(props: GameViewProps) {
         // Menu/transport input owns this host frame. Keep both edge domains
         // aligned while folding no reducer input; a restored chapter is
         // presented directly, without an accidental extra world tick.
+        tapRoute = null;
         attract!.syncLiveButtons(buttons);
         prevButtons = buttons;
         edge.confirm = false;
@@ -1674,7 +1802,9 @@ export function GameView(props: GameViewProps) {
         return;
       }
     }
-    const frameButtons = blocked?.buttons ?? buttons;
+    if (tapped) handleTap(tapped.x, tapped.y);
+    const { bit: tapBit, hook: tapHook } = tapWalkFrame(buttons);
+    const frameButtons = blocked?.buttons ?? (buttons | tapBit);
     const input: SessionInput = blocked?.input ?? {
       buttons: frameButtons,
       confirmEdge: edge.confirm,
@@ -1689,11 +1819,11 @@ export function GameView(props: GameViewProps) {
       frameHostEffects.length = 0;
       const effects = props.hostActions === undefined ? undefined : hostEffectSink;
       if (attract) {
-        const result = attract.step(frameButtons, effects);
+        const result = attract.step(frameButtons, effects, tapHook);
         state = result.state;
         status = result.status;
       } else {
-        state = stepSession(session, state, input, effects);
+        state = stepSession(session, state, input, effects, tapHook);
       }
       frameProfileMark("reducer:end");
       dispatchGameViewHostEffects(frameHostEffects, props.hostActions, sessionHost);

@@ -15,3 +15,15 @@ export function rpgkitBootFromSearch(search: string): RpgkitBoot {
   }
   return boot;
 }
+
+/** Replace the demo-owned query keys (chapter/autoplay/…) with `values`,
+ *  preserving every other parameter — the language parameter first among
+ *  them, so a `?lang=` deep link survives chapter and autoplay clicks. The
+ *  returned string is "" when nothing remains. */
+export function withDemoQuery(search: string, values: Record<string, string>): string {
+  const query = new URLSearchParams(search);
+  for (const key of RPGKIT_BOOT_KEYS) query.delete(key);
+  for (const [key, value] of Object.entries(values)) query.set(key, value);
+  const next = query.toString();
+  return next ? `?${next}` : "";
+}

@@ -54,7 +54,7 @@ import {
   __packTouchWide,
   createTouchHitFacts,
 } from "../../vendor/pocketjs/framework/src/touch.ts";
-import { rpgkitBootFromSearch } from "./boot.ts";
+import { rpgkitBootFromSearch, withDemoQuery } from "./boot.ts";
 import { fitViewport } from "./fit.ts";
 import { BTN } from "./keys.ts";
 import { createMasterAudioHost } from "./audio-control.ts";
@@ -86,6 +86,8 @@ const MAX_CONTACTS = 8;
 const TOUCH_LIMIT = 1024;
 /** Mouse lines kept for an app that does not poll every frame. */
 const SVC_LIMIT = 256;
+/** localStorage key for the landscape "hide buttons" choice. */
+const PAD_HIDDEN_KEY = "pocket-rpgkit:web:pad-hidden";
 /** Companion requests normally answer in the next frame; recover the toolbar
  * after five seconds if a broken guest consumes one without replying. */
 const EDITOR_REQUEST_TIMEOUT = 300;
@@ -165,6 +167,11 @@ const $ = (id) => {
   if (!element) throw new Error(`player page has no #${id}`);
   return element;
 };
+
+// Player-page chrome strings follow the page language when the page declares
+// languages (tools/web.ts embeds the switcher, which defines __pocketI18n);
+// the English fallback keeps pages without a switcher unchanged.
+const t = (key, fallback) => (typeof globalThis.__pocketI18n === "function" ? globalThis.__pocketI18n(key) : fallback);
 
 /**
  * Pointer ids -> touch contacts. The guest reads a level snapshot every
@@ -878,6 +885,12 @@ class Player {
     this.muteButton = $("audio-mute");
     this.volumeControl = $("audio-volume");
     this.volumeValue = $("audio-volume-value");
+    this.playSurface = document.querySelector(".play-surface");
+    this.fullscreenToggle = $("fullscreen-toggle");
+    this.immersiveExit = $("immersive-exit");
+    this.padToggle = $("pad-toggle");
+    this.padHidden = false;
+    this.rotateHint = $("rotate-hint");
     this.context = this.canvas.getContext("2d");
     this.audio = createMasterAudioHost(createAudioHost());
     this.pool = new ContactPool();
@@ -927,8 +940,11 @@ class Player {
     this.bindPad();
     this.editorHost?.bind();
     this.bindDemoControls();
+    this.bindDemoMenu();
     this.editorHost?.bind();
     this.bindAudioControls();
+    this.bindImmersive();
+    this.bindPadToggle();
   }
 
   async boot() {
@@ -988,7 +1004,7 @@ class Player {
     this.frameFn = null;
     console.error(`${this.config.app}:`, error);
     const text = error && error.message ? error.message : String(error);
-    this.setState("error", `The game stopped: ${text}`);
+    this.setState("error", `${t("game-stopped", "The game stopped")}: ${text}`);
     $("overlay-reload").hidden = false;
   }
 
@@ -1098,6 +1114,19 @@ class Player {
   bindKeys() {
     const stage = this.stage;
     stage.addEventListener("keydown", (event) => {
+      // In the CSS-fallback immersive mode (no real fullscreen), Escape
+      // leaves immersive instead of reaching the game as CROSS. A real
+      // fullscreen swallows Escape to exit itself, then fullscreenchange
+      // runs exitImmersive().
+      if (
+        event.code === "Escape" &&
+        document.body.classList.contains("immersive") &&
+        !document.fullscreenElement
+      ) {
+        event.preventDefault();
+        this.exitImmersive();
+        return;
+      }
       const command = event.ctrlKey || event.metaKey;
       // Keep browser navigation reachable while the editor owns the stage.
       // Tab must leave the canvas, and reload shortcuts must retain their
@@ -1279,6 +1308,28 @@ class Player {
 
   // ---- HTML demo controls ------------------------------------------------
 
+  /** The chapter/speed panel is a disclosure (tools/web.ts renders the
+   *  toggle). Touch screens start collapsed so the on-screen pad stays in
+   *  reach; mouse users get it open. */
+  setDemoMenu(open) {
+    const toggle = document.querySelector("[data-demo-toggle]");
+    const body = document.querySelector(".demo-body");
+    if (!toggle || !body) return;
+    toggle.setAttribute("aria-expanded", String(open));
+    body.hidden = !open;
+  }
+
+  bindDemoMenu() {
+    const toggle = document.querySelector("[data-demo-toggle]");
+    if (!toggle) return;
+    if (matchMedia("(hover: none) and (pointer: coarse)").matches) this.setDemoMenu(false);
+    toggle.addEventListener("click", () => {
+      const open = toggle.getAttribute("aria-expanded") !== "true";
+      this.setDemoMenu(open);
+      if (!open) this.focus();
+    });
+  }
+
   demoHook() {
     const hook = globalThis.__rpgkitDemo;
     return hook && typeof hook.jump === "function" && typeof hook.autoplay === "function" && typeof hook.current === "function"
@@ -1286,11 +1337,16 @@ class Player {
       : null;
   }
 
+  // The demo owns only the chapter/autoplay/warp keys (tools/web/boot.ts);
+  // every other parameter — the language one first of all — is preserved, so
+  // a ?lang= deep link survives chapter and autoplay clicks.
   replaceDemoQuery(values) {
-    const url = new URL(location.href);
-    url.search = "";
-    for (const [key, value] of Object.entries(values)) url.searchParams.set(key, String(value));
-    history.replaceState(history.state, "", url);
+    history.replaceState(history.state, "", location.pathname + withDemoQuery(location.search, values) + location.hash);
+  }
+
+  /** A fallback href (no demo hook) that keeps every non-demo parameter. */
+  demoHref(values) {
+    return withDemoQuery(location.search, values) + location.hash;
   }
 
   syncDemoControls() {
@@ -1321,6 +1377,9 @@ class Player {
       button.setAttribute("aria-pressed", String(active));
       if (active) button.setAttribute("aria-current", "true");
       else button.removeAttribute("aria-current");
+      // Keep the no-hook fallback link on the current language (and any
+      // other non-demo parameter).
+      button.href = this.demoHref({ chapter: button.dataset.demoChapter });
     }
     const activeChapter = root.querySelector(`[data-demo-chapter="${CSS.escape(chapter ?? "")}"][data-demo-autoplay="true"]`);
     const fallbackChapter = activeChapter?.dataset.demoChapter ?? root.querySelector('[data-demo-chapter][data-demo-autoplay="true"]')?.dataset.demoChapter;
@@ -1329,7 +1388,7 @@ class Player {
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
       if (fallbackChapter) {
-        button.href = `?${new URLSearchParams({ autoplay: fallbackChapter, speed: button.dataset.demoSpeed })}`;
+        button.href = this.demoHref({ autoplay: fallbackChapter, speed: button.dataset.demoSpeed });
       }
     }
   }
@@ -1346,6 +1405,8 @@ class Player {
         hook.jump(id);
         this.replaceDemoQuery({ chapter: id });
         this.syncDemoControls();
+        this.setDemoMenu(false);
+        this.focus();
       });
     }
     for (const button of root.querySelectorAll("[data-demo-speed]")) {
@@ -1363,9 +1424,116 @@ class Player {
         hook.autoplay(id, speed);
         this.replaceDemoQuery({ autoplay: id, speed });
         this.syncDemoControls();
+        this.setDemoMenu(false);
+        this.focus();
       });
     }
     this.syncDemoControls();
+  }
+
+  // ---- immersive (fullscreen play) ----------------------------------------
+
+  bindImmersive() {
+    this.fullscreenToggle.addEventListener("click", () => {
+      if (document.body.classList.contains("immersive")) this.exitImmersive();
+      else void this.enterImmersive();
+    });
+    this.immersiveExit.addEventListener("click", () => this.exitImmersive());
+    this.rotateHint.querySelector("[data-rotate-dismiss]")?.addEventListener("click", () => {
+      this.rotateHint.hidden = true;
+      this.focus();
+    });
+    // Esc / the browser's back control leave fullscreen natively; sync the
+    // CSS fallback either way (iPhone Safari has no Fullscreen API).
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement && document.body.classList.contains("immersive")) this.exitImmersive();
+    });
+    window.addEventListener("popstate", () => {
+      if (document.body.classList.contains("immersive")) this.exitImmersive();
+    });
+  }
+
+  async enterImmersive() {
+    document.body.classList.add("immersive");
+    this.rotateHint.hidden = false;
+    this.fullscreenToggle.setAttribute("aria-pressed", "true");
+    this.fullscreenToggle.textContent = t("exit-fullscreen", "Exit fullscreen");
+    this.immersiveExit.hidden = false;
+    this.fit();
+    // A history entry lets the device back button exit the CSS fallback.
+    try {
+      history.pushState({ immersive: true }, "");
+    } catch {
+      // Sandboxed windows may forbid history changes; the exit button stays.
+    }
+    try {
+      if (this.playSurface.requestFullscreen) await this.playSurface.requestFullscreen();
+    } catch {
+      // iPhone Safari: the fixed CSS surface is the immersive mode.
+    }
+    try {
+      await screen.orientation?.lock?.("landscape");
+    } catch {
+      // Orientation locking is best effort; the layout handles both.
+    }
+    this.focus();
+  }
+
+  exitImmersive() {
+    if (!document.body.classList.contains("immersive")) return;
+    document.body.classList.remove("immersive");
+    this.rotateHint.hidden = true;
+    this.fullscreenToggle.setAttribute("aria-pressed", "false");
+    this.fullscreenToggle.textContent = t("fullscreen", "Fullscreen");
+    this.immersiveExit.hidden = true;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    try {
+      screen.orientation?.unlock?.();
+    } catch {
+      // Best effort.
+    }
+    this.fit();
+    this.focus();
+  }
+
+  // ---- on-screen pad visibility -------------------------------------------
+
+  /** The "hide buttons" toggle (landscape immersive only): a hidden pad
+   *  leaves a small translucent "show" button in the corner. The choice is
+   *  stored per browser; storage can be unavailable (private mode), so every
+   *  read and write is guarded. */
+  bindPadToggle() {
+    if (!this.padToggle) return;
+    try {
+      this.padHidden = localStorage.getItem(PAD_HIDDEN_KEY) === "1";
+    } catch {
+      this.padHidden = false;
+    }
+    this.applyPadHidden();
+    this.padToggle.addEventListener("click", () => {
+      this.padHidden = !this.padHidden;
+      try {
+        localStorage.setItem(PAD_HIDDEN_KEY, this.padHidden ? "1" : "0");
+      } catch {
+        // The toggle still works for this session without persistence.
+      }
+      this.applyPadHidden();
+      this.focus();
+    });
+  }
+
+  applyPadHidden() {
+    document.body.classList.toggle("pad-hidden", this.padHidden);
+    if (!this.padToggle) return;
+    const key = this.padHidden ? "show-buttons" : "hide-buttons";
+    const fallback = this.padHidden ? "Show buttons" : "Hide buttons";
+    this.padToggle.textContent = t(key, fallback);
+    // Keep the data-i18n hook on the active label so a language switch
+    // translates the button the user actually sees.
+    this.padToggle.dataset.i18n = key;
+    this.padToggle.setAttribute("aria-pressed", String(this.padHidden));
   }
 
   // ---- audio controls ------------------------------------------------------
@@ -1386,8 +1554,8 @@ class Player {
   bindAudioControls() {
     const update = () => {
       const percent = Math.round(this.audio.masterVolume * 100);
-      this.muteButton.textContent = this.audio.muted ? "Unmute" : "Mute";
-      this.muteButton.setAttribute("aria-label", this.audio.muted ? "Unmute audio" : "Mute audio");
+      this.muteButton.textContent = this.audio.muted ? t("unmute", "Unmute") : t("mute", "Mute");
+      this.muteButton.setAttribute("aria-label", this.audio.muted ? t("unmute-audio", "Unmute audio") : t("mute-audio", "Mute audio"));
       this.muteButton.setAttribute("aria-pressed", String(this.audio.muted));
       this.volumeControl.value = String(percent);
       this.volumeControl.setAttribute("aria-valuetext", `${percent}%`);
@@ -1406,16 +1574,71 @@ class Player {
 
   // ---- sizing -------------------------------------------------------------
 
+  /** Position the immersive pad so its clusters straddle the screen's left
+   *  and right edges: the maximised screen is letterboxed on narrow phones,
+   *  and viewport-corner buttons would sit in the black bars instead of over
+   *  the picture. The pad keeps its CSS band everywhere else (normal flow,
+   *  portrait immersive). Called from fit() and the immersive transitions. */
+  layoutPad() {
+    const pad = document.querySelector(".pad");
+    if (!pad) return;
+    const immersive = document.body.classList.contains("immersive");
+    if (!immersive || window.innerWidth <= window.innerHeight) {
+      pad.style.left = "";
+      pad.style.right = "";
+      pad.style.bottom = "";
+      return;
+    }
+    const stage = this.stage.getBoundingClientRect();
+    const surface = this.playSurface.getBoundingClientRect();
+    // Hang up to 96px of each cluster in the letterbox; on a wide screen
+    // (thin letterbox) keep the buttons a few px inside the viewport.
+    const leftGap = Math.max(0, stage.left - surface.left - 4);
+    const rightGap = Math.max(0, surface.right - stage.right - 4);
+    const straddle = Math.min(96, leftGap, rightGap);
+    pad.style.left = `${Math.max(0, stage.left - surface.left - straddle)}px`;
+    pad.style.right = `${Math.max(0, surface.right - stage.right - straddle)}px`;
+    // Rest the pad's bottom edge on the screen's bottom edge so the buttons
+    // overlap the picture instead of the black bar below a letterboxed
+    // screen.
+    pad.style.bottom = `${Math.max(0, surface.bottom - stage.bottom)}px`;
+  }
+
+  /** Height of the on-screen pad when it is displayed, plus a gap. */
+  padReserve() {
+    const pad = document.querySelector(".pad");
+    if (!pad || getComputedStyle(pad).display === "none") return 0;
+    return pad.offsetHeight + 10;
+  }
+
+  /** Room to keep free below the screen so the touch pad and the collapsed
+   *  demo menu stay in the first viewport on phones. */
+  reserveBelow() {
+    let reserved = RESERVE_PX;
+    if (!this.embedded && matchMedia("(hover: none) and (pointer: coarse)").matches) {
+      reserved += this.padReserve();
+      const demo = document.querySelector("[data-demo-controls]");
+      if (demo) reserved += demo.offsetHeight + 12;
+    }
+    return reserved;
+  }
+
   fit() {
     const dpr = window.devicePixelRatio || 1;
     const area = this.stage.parentElement;
     // clientWidth includes the area's side padding; the stage gets the rest.
     const style = getComputedStyle(area);
     const areaWidth = area.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    const top = this.stage.getBoundingClientRect().top + window.scrollY;
-    const areaHeight = this.embedded
-      ? window.innerHeight
-      : Math.max(window.innerHeight - top - RESERVE_PX, window.innerHeight * 0.5);
+    const immersive = document.body.classList.contains("immersive");
+    // In immersive mode the screen area fills the fixed surface between the
+    // safe-area insets; the touch pad floats at the left/right corners, so it
+    // reserves no band of height. Fitting the full area is what lets the
+    // screen take the largest whole-pixel scale (fit.ts) and centre.
+    const areaHeight = immersive
+      ? Math.max(area.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom), 0)
+      : this.embedded
+        ? window.innerHeight
+        : Math.max(window.innerHeight - (this.stage.getBoundingClientRect().top + window.scrollY) - this.reserveBelow(), window.innerHeight * 0.5);
     const density = this.config.rasterDensity ?? 1;
     const { size, k } = fitViewport(this.config.viewport, areaWidth, areaHeight, dpr, density);
     const [w, h] = size;
@@ -1427,6 +1650,7 @@ class Player {
     this.stage.dataset.scale = String(k);
     this.stage.dataset.density = String(density);
     if (w !== this.width || h !== this.height) this.resize(w, h);
+    this.layoutPad();
   }
 
   /** A new logical size: canvas, touch wire, and (once booted) core and app. */
@@ -1480,9 +1704,9 @@ if (typeof document !== "undefined") {
   player.bindSizing();
   player.bindInput();
   if (location.protocol === "file:") {
-    player.setState("error", "Open this page through a web server; browsers do not load WebAssembly from file:// pages.");
+    player.setState("error", t("file-server", "Open this page through a web server; browsers do not load WebAssembly from file:// pages."));
   } else {
-    player.setState("loading", "Loading…");
+    player.setState("loading", t("loading", "Loading…"));
     player.boot().catch((error) => player.fail(error));
   }
 }

@@ -52,7 +52,7 @@
 // (tools/studio-build.ts: static files, no wasm) and adds its landing card.
 // Without the entry nothing of it is built.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { validateAndResolveBuildPlan } from "../vendor/pocketjs/framework/src/manifest/resolve.ts";
 import type { ResolvedBuildPlan } from "../vendor/pocketjs/framework/src/manifest/plan.ts";
@@ -64,6 +64,8 @@ import {
 import { APPS } from "./build-example.ts";
 import { appDirOf, fontLicenseFiles } from "./lib/font-licenses.ts";
 import type { Size, ViewportConfig } from "./web/fit.ts";
+import { writeSiteIcons } from "./web/icon.ts";
+import { PAGE_I18N_SCRIPT, PLAYER_I18N } from "./web/i18n.ts";
 import {
   BUTTON_GLYPHS,
   BUTTON_NAMES,
@@ -120,6 +122,46 @@ export interface WebChapter {
   autoplay?: boolean;
 }
 
+export interface WebLanguageOption {
+  /** URL/storage language code, e.g. "en", "zh". */
+  code: string;
+  /** Button label, e.g. "English", "中文". */
+  label: string;
+}
+
+/** How the page's language switch is communicated to the game. The defaults
+ *  follow the kit's own convention; a game with its own boot-time language
+ *  detection declares what it reads. */
+export interface WebLanguageSwitch {
+  /** URL query parameter the game reads its language from. Default "lang". */
+  param?: string;
+  /** localStorage key the game reads its language from. Default
+   *  `pocket-rpgkit:<game-id>:lang:v1`. */
+  storage?: string;
+}
+
+/** Per-language overrides for the game's own page text, keyed by language
+ *  code. Only declared languages may appear. */
+export interface WebGameI18n {
+  description?: string;
+  chapters?: Record<string, { title?: string; description?: string; preview?: string }>;
+  /** Shown in the demo controls when chapters/autoplay are unavailable in
+   *  this language (e.g. their tapes were recorded in another language). */
+  chaptersNotice?: string;
+  /** Translated control actions, keyed by the English action string. The
+   *  controls table shows only the active language's wording. */
+  controls?: Record<string, string>;
+  /** Translated pointer note (the "Mouse, touch" row). */
+  pointer?: string;
+}
+
+/** The resolved language settings handed to the player page. */
+export interface WebLanguageConfig {
+  options: WebLanguageOption[];
+  param: string;
+  storage: string;
+}
+
 export interface WebDocumentExample {
   /** Stable URL/file stem. */
   id: string;
@@ -155,6 +197,16 @@ export interface WebGameEntry {
   keys?: Record<string, string | null>;
   /** Enable the browser document host and copy these built-in projects. */
   documents?: WebDocumentExample[];
+  /** Languages the game's content ships in. When declared, the player page
+   *  shows a switcher and translates its own chrome. The first entry is the
+   *  default. Games that declare none keep their page exactly as it was. */
+  languages?: WebLanguageOption[];
+  /** How the language switch reaches the game (URL parameter and storage
+   *  key), when the game has its own boot-time language detection. */
+  languageSwitch?: WebLanguageSwitch;
+  /** Per-language page text (chapter titles/descriptions, the game
+   *  description, a chapters-unavailable notice), keyed by declared code. */
+  i18n?: Record<string, WebGameI18n>;
 }
 
 export interface WebSiteConfig {
@@ -214,6 +266,10 @@ export interface WebGame {
   viewport: ViewportConfig;
   keymap: Keymap;
   documents?: Array<WebDocumentExample & { path: string }>;
+  /** Present when the game declares languages: the player page shows a
+   *  switcher and translates its own chrome. */
+  languages?: WebLanguageConfig;
+  i18n?: Record<string, WebGameI18n>;
 }
 
 /** The settings a player page hands tools/web/player.js. */
@@ -241,6 +297,8 @@ export interface PlayerConfig {
 // ---- configuration ---------------------------------------------------------
 
 const ID = /^[a-z0-9][a-z0-9._-]*$/i;
+/** Language codes the page accepts: "en", "zh", "pt-br"… */
+const LANG_CODE = /^[a-z]{2,3}(-[a-z]{2})?$/;
 
 function isRelativePngPath(path: string): boolean {
   return path.length > 0 &&
@@ -392,6 +450,96 @@ function validateEntry(id: string, entry: WebGameEntry, source: string): void {
       ids.add(document.id);
       if (typeof document.title !== "string" || document.title.length === 0 || typeof document.document !== "string" || document.document.length === 0) {
         throw new Error(`web: ${source}: games.${id}.documents[${index}] needs a title and document path`);
+      }
+    }
+  }
+  if (entry.languages !== undefined) {
+    if (!Array.isArray(entry.languages) || entry.languages.length === 0) {
+      throw new Error(`web: ${source}: games.${id}.languages is a non-empty list`);
+    }
+    const codes = new Set<string>();
+    for (const [index, language] of entry.languages.entries()) {
+      if (!language || typeof language !== "object" || typeof language.code !== "string" || !LANG_CODE.test(language.code)) {
+        throw new Error(`web: ${source}: games.${id}.languages[${index}].code is a language code like "en" or "pt-br"`);
+      }
+      if (codes.has(language.code)) throw new Error(`web: ${source}: games.${id}.languages repeats "${language.code}"`);
+      codes.add(language.code);
+      if (typeof language.label !== "string" || language.label.trim().length === 0) {
+        throw new Error(`web: ${source}: games.${id}.languages[${index}].label must be non-empty text`);
+      }
+    }
+  }
+  if (entry.languageSwitch !== undefined) {
+    if (!entry.languageSwitch || typeof entry.languageSwitch !== "object" || Array.isArray(entry.languageSwitch)) {
+      throw new Error(`web: ${source}: games.${id}.languageSwitch is an object`);
+    }
+    if (
+      entry.languageSwitch.param !== undefined &&
+      (typeof entry.languageSwitch.param !== "string" || !/^[a-z][a-z0-9_-]*$/i.test(entry.languageSwitch.param))
+    ) {
+      throw new Error(`web: ${source}: games.${id}.languageSwitch.param is a query parameter name like "lang"`);
+    }
+    if (
+      entry.languageSwitch.storage !== undefined &&
+      (typeof entry.languageSwitch.storage !== "string" || entry.languageSwitch.storage.trim().length === 0)
+    ) {
+      throw new Error(`web: ${source}: games.${id}.languageSwitch.storage is a localStorage key`);
+    }
+  }
+  if (entry.i18n !== undefined) {
+    if (!entry.i18n || typeof entry.i18n !== "object" || Array.isArray(entry.i18n)) {
+      throw new Error(`web: ${source}: games.${id}.i18n is a table keyed by language code`);
+    }
+    const chapterIds = new Set((entry.chapters ?? []).map((chapter) => chapter.id));
+    for (const [code, text] of Object.entries(entry.i18n)) {
+      if (!entry.languages?.some((language) => language.code === code)) {
+        throw new Error(`web: ${source}: games.${id}.i18n.${code} is not one of the declared languages`);
+      }
+      if (!text || typeof text !== "object" || Array.isArray(text)) {
+        throw new Error(`web: ${source}: games.${id}.i18n.${code} is an object`);
+      }
+      if (text.description !== undefined && typeof text.description !== "string") {
+        throw new Error(`web: ${source}: games.${id}.i18n.${code}.description is text`);
+      }
+      if (text.chaptersNotice !== undefined && typeof text.chaptersNotice !== "string") {
+        throw new Error(`web: ${source}: games.${id}.i18n.${code}.chaptersNotice is text`);
+      }
+      if (text.controls !== undefined) {
+        if (!text.controls || typeof text.controls !== "object" || Array.isArray(text.controls)) {
+          throw new Error(`web: ${source}: games.${id}.i18n.${code}.controls is a table keyed by the English control action`);
+        }
+        const actions = new Set((entry.controls ?? []).map((control) => control.action));
+        for (const [action, translation] of Object.entries(text.controls)) {
+          if (!actions.has(action)) {
+            throw new Error(`web: ${source}: games.${id}.i18n.${code}.controls.${action} is not one of this game's control actions`);
+          }
+          if (typeof translation !== "string" || translation.length === 0) {
+            throw new Error(`web: ${source}: games.${id}.i18n.${code}.controls.${action} is text`);
+          }
+        }
+      }
+      if (text.pointer !== undefined && typeof text.pointer !== "string") {
+        throw new Error(`web: ${source}: games.${id}.i18n.${code}.pointer is text`);
+      }
+      if (text.chapters !== undefined) {
+        if (!text.chapters || typeof text.chapters !== "object" || Array.isArray(text.chapters)) {
+          throw new Error(`web: ${source}: games.${id}.i18n.${code}.chapters is a table keyed by chapter id`);
+        }
+        for (const [chapterId, chapterText] of Object.entries(text.chapters)) {
+          if (!chapterIds.has(chapterId)) {
+            throw new Error(`web: ${source}: games.${id}.i18n.${code}.chapters.${chapterId} is not one of this game's chapters`);
+          }
+          if (
+            !chapterText ||
+            typeof chapterText !== "object" ||
+            (chapterText.title !== undefined && typeof chapterText.title !== "string") ||
+            (chapterText.description !== undefined && typeof chapterText.description !== "string") ||
+            (chapterText.preview !== undefined &&
+              (typeof chapterText.preview !== "string" || !isRelativePngPath(chapterText.preview)))
+          ) {
+            throw new Error(`web: ${source}: games.${id}.i18n.${code}.chapters.${chapterId} takes title and description text and a relative PNG preview`);
+          }
+        }
       }
     }
   }
@@ -547,6 +695,7 @@ export function resolveGame(projectRoot: string, config: WebSiteConfig, id: stri
   if (plan.companions.includes("rpgkit-editor") && !documents) {
     throw new Error(`web: the rpgkit-editor companion for "${id}" requires browser documents`);
   }
+  const languages = entry.languages?.map(({ code, label }) => ({ code, label }));
   return {
     id,
     manifestPath,
@@ -562,6 +711,16 @@ export function resolveGame(projectRoot: string, config: WebSiteConfig, id: stri
     viewport: viewportFor(manifest, plan, entry.viewport),
     keymap: withKeys(entry.keys),
     ...(documents ? { documents } : {}),
+    ...(languages
+      ? {
+          languages: {
+            options: languages,
+            param: entry.languageSwitch?.param ?? "lang",
+            storage: entry.languageSwitch?.storage ?? `pocket-rpgkit:${id}:lang:v1`,
+          } satisfies WebLanguageConfig,
+        }
+      : {}),
+    ...(entry.i18n ? { i18n: entry.i18n } : {}),
   };
 }
 
@@ -584,18 +743,32 @@ const ICON =
       "<rect x='1' y='2' width='6' height='4' fill='#f4c35a'/><rect x='3' y='3' width='2' height='2' fill='#fff3c4'/></svg>",
   );
 
-function head(title: string, description: string, css: string): string {
+function head(title: string, description: string, css: string, pageLang = false): string {
+  // Every page asset is relative to the page, so the site also works under a
+  // subpath such as /pocket-rpgkit/. The manifest and the install icons live
+  // beside site.css at the site root.
+  const base = css.includes("/") ? css.slice(0, css.lastIndexOf("/") + 1) : "";
   return [
     "<!doctype html>",
-    '<html lang="en">',
+    // A page with languages hides the body until the inline switcher resolved
+    // one (tools/web/i18n.ts), so an English page never flashes before a
+    // Chinese one; the noscript fallback keeps it visible without JavaScript.
+    `<html lang="en"${pageLang ? ' data-page-lang="pending"' : ""}>`,
     "<head>",
     '<meta charset="utf-8">',
-    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
     `<title>${escapeHtml(title)}</title>`,
     ...(description ? [`<meta name="description" content="${escapeHtml(description)}">`] : []),
     '<meta name="color-scheme" content="dark">',
     `<link rel="icon" href="${ICON}">`,
     `<link rel="stylesheet" href="${css}">`,
+    `<link rel="manifest" href="${base}manifest.webmanifest">`,
+    '<meta name="theme-color" content="#0d0f14">',
+    '<meta name="mobile-web-app-capable" content="yes">',
+    '<meta name="apple-mobile-web-app-capable" content="yes">',
+    '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">',
+    `<link rel="apple-touch-icon" href="${base}apple-touch-icon.png">`,
+    ...(pageLang ? ['<noscript><style>html[data-page-lang="pending"] body{visibility:visible}</style></noscript>'] : []),
     "</head>",
   ].join("\n");
 }
@@ -604,13 +777,36 @@ function controlButtons(control: WebControl): ControlButton[] {
   return control.buttons ?? (control.button ? [control.button] : []);
 }
 
-export function controlsTable(controls: readonly WebControl[], pointer?: string, keymap?: Keymap): string {
+/** How a controls table participates in the page language switch. Player
+ *  pages key their rows by the English action (`data-i18n-control`); landing
+ *  cards additionally carry their game id (`data-landing-control`) so the
+ *  inline script can pick that game's i18n table. */
+export interface ControlsTableI18n {
+  game: string;
+  landing: boolean;
+}
+
+export function controlsTable(
+  controls: readonly WebControl[],
+  pointer?: string,
+  keymap?: Keymap,
+  i18n?: ControlsTableI18n,
+): string {
+  const actionHook = (action: string) =>
+    i18n
+      ? ` data-i18n-control="${escapeHtml(action)}"${i18n.landing ? ` data-landing-control="${escapeHtml(i18n.game)}"` : ""}`
+      : "";
   const rows = controls.map((control) => {
     const keys: string[] = [...(control.keys ?? [])];
     for (const button of controlButtons(control)) for (const key of keysFor(button, keymap)) if (!keys.includes(key)) keys.push(key);
-    return `<tr><th scope="row">${keys.map((key) => `<kbd>${escapeHtml(key)}</kbd>`).join(" ")}</th><td>${escapeHtml(control.action)}</td></tr>`;
+    return `<tr><th scope="row">${keys.map((key) => `<kbd>${escapeHtml(key)}</kbd>`).join(" ")}</th><td${actionHook(control.action)}>${escapeHtml(control.action)}</td></tr>`;
   });
-  if (pointer) rows.push(`<tr><th scope="row"><span class="pointer-key">Mouse, touch</span></th><td>${escapeHtml(pointer)}</td></tr>`);
+  if (pointer) {
+    const pointerHook = i18n
+      ? ` data-i18n-pointer${i18n.landing ? ` data-landing-pointer="${escapeHtml(i18n.game)}"` : ""}`
+      : "";
+    rows.push(`<tr><th scope="row"><span class="pointer-key">Mouse, touch</span></th><td${pointerHook}>${escapeHtml(pointer)}</td></tr>`);
+  }
   return `<table class="controls">\n${rows.join("\n")}\n</table>`;
 }
 
@@ -620,7 +816,7 @@ function padButtons(controls: readonly WebControl[]): ButtonName[] {
   return BUTTON_NAMES.filter((b) => !["UP", "DOWN", "LEFT", "RIGHT"].includes(b) && named.has(b));
 }
 
-function editorTools(config: PlayerConfig): string[] {
+function editorTools(config: PlayerConfig, game: WebGame): string[] {
   if (!config.editor) return [];
   const examples = config.editor.examples.map(
     (example) => `<button type="button" data-editor-example="${escapeHtml(example.id)}" disabled>${escapeHtml(example.title)}</button>`,
@@ -628,13 +824,13 @@ function editorTools(config: PlayerConfig): string[] {
   return [
     '<section class="editor-tools" aria-label="Project files">',
     '<div class="editor-actions">',
-    '<button type="button" id="editor-open" disabled>Open…</button>',
+    `<button type="button" id="editor-open" disabled${i18nAttr(game, "editor-open")}>Open…</button>`,
     '<input type="file" id="editor-open-input" accept="application/json,.json" hidden disabled>',
     ...examples,
-    '<button type="button" id="editor-download" disabled>Download</button>',
+    `<button type="button" id="editor-download" disabled${i18nAttr(game, "editor-download")}>Download</button>`,
     '</div>',
-    '<p class="editor-status" id="editor-status" role="status" aria-live="polite">Preparing the browser editor…</p>',
-    '<p class="editor-privacy">Your project data stays in this browser; nothing is uploaded.</p>',
+    '<p class="editor-status" id="editor-status" role="status" aria-live="polite"${i18nAttr(game, "editor-preparing")}>Preparing the browser editor…</p>',
+    `<p class="editor-privacy"${i18nAttr(game, "editor-privacy")}>Your project data stays in this browser; nothing is uploaded.</p>`,
     '</section>',
   ];
 }
@@ -698,23 +894,44 @@ export interface Card {
   preview?: Size;
 }
 
+/** The landing-page chapter list: a compact disclosure, collapsed by
+ *  default, whose chips wrap instead of a long vertical link list. The
+ *  deep links keep their `?chapter=` shape. On a site whose game declares
+ *  languages, the summary and the chip titles carry the inline switcher's
+ *  hooks (tools/web/i18n.ts), so the list follows the page language. */
 function chaptersNav(game: WebGame): string | undefined {
   if (game.chapters.length === 0) return undefined;
+  const localized = game.languages !== undefined;
   const links = game.chapters.map(({ id, title }) => {
     const query = new URLSearchParams({ chapter: id }).toString();
     const href = `${encodeURIComponent(game.id)}/?${query}`;
-    return `<li><a href="${escapeHtml(href)}">${escapeHtml(title)}</a></li>`;
+    const hook = localized ? ` data-landing-chapter="${escapeHtml(game.id)}/${escapeHtml(id)}"` : "";
+    return `<li><a${hook} href="${escapeHtml(href)}">${escapeHtml(title)}</a></li>`;
   });
   return [
-    `<nav class="chapters" aria-label="${escapeHtml(`${game.title} chapters`)}">`,
-    "<span>Chapters:</span>",
-    `<ul>${links.join("")}</ul>`,
-    "</nav>",
+    `<details class="chapters"${localized ? ` data-landing-game="${escapeHtml(game.id)}"` : ""}>`,
+    `<summary><span${localized ? ' data-i18n="chapters"' : ""}>Chapters</span> (${game.chapters.length})</summary>`,
+    `<ul class="chapter-chips">${links.join("")}</ul>`,
+    "</details>",
   ].join("\n");
 }
 
+/** The data-i18n hook for a chrome string, present only on pages whose game
+ *  declares languages (other pages stay byte-for-byte unchanged). */
+function i18nAttr(game: WebGame, key: string): string {
+  return game.languages ? ` data-i18n="${key}"` : "";
+}
+
+/** The data-i18n-aria-label hook, same condition as i18nAttr. */
+function i18nAriaAttr(game: WebGame, key: string): string {
+  return game.languages ? ` data-i18n-aria-label="${key}"` : "";
+}
+
 /** Same-page controls for a running opt-in demo. Links remain functional
- * deep-link fallbacks when the game does not install the demo hook. */
+ * deep-link fallbacks when the game does not install the demo hook. The
+ * chapter/speed panel is a disclosure: it renders open for mouse users, and
+ * tools/web/player.js collapses it on touch screens so the on-screen pad
+ * stays in reach. */
 function playerDemoControls(game: WebGame): string | undefined {
   if (game.chapters.length === 0) return undefined;
   const chapters = game.chapters.map(({ id, title, description, preview, autoplay }) => {
@@ -724,7 +941,7 @@ function playerDemoControls(game: WebGame): string | undefined {
     return [
       `<a class="demo-button demo-chapter-card" role="button" aria-pressed="false" data-demo-chapter="${escapeHtml(id)}" data-demo-autoplay="${autoplay === true}" href="${escapeHtml(href)}" aria-labelledby="${escapeHtml(titleId)}"${description === undefined ? "" : ` aria-describedby="${escapeHtml(descriptionId)}"`}>`,
       ...(preview
-        ? [`<img class="demo-chapter-preview" src="${escapeHtml(chapterPreviewOutput(id))}" alt="" loading="lazy">`]
+        ? [`<img class="demo-chapter-preview" id="demo-chapter-preview-${escapeHtml(id)}" src="${escapeHtml(chapterPreviewOutput(id))}" alt="" loading="lazy">`]
         : []),
       '<span class="demo-chapter-copy">',
       `<span class="demo-chapter-title" id="${escapeHtml(titleId)}">${escapeHtml(title)}</span>`,
@@ -740,22 +957,32 @@ function playerDemoControls(game: WebGame): string | undefined {
     const href = `?${new URLSearchParams({ autoplay: firstAutoplay, speed: String(speed) })}`;
     return `<a class="demo-button demo-speed" role="button" aria-pressed="false" data-demo-speed="${speed}" href="${escapeHtml(href)}">${speed}×</a>`;
   }) : [];
+  const hasAutoplay = speeds.length > 0;
   return [
     '<section class="demo-controls" data-demo-controls aria-labelledby="demo-controls-heading">',
-    '<h2 id="demo-controls-heading">Demo controls</h2>',
-    '<div class="demo-control-row"><span>Chapter</span><div class="demo-buttons demo-chapter-cards">',
+    '<div class="demo-head">',
+    `<h2 id="demo-controls-heading"${i18nAttr(game, "demo-controls")}>Demo controls</h2>`,
+    `<button type="button" class="demo-toggle" data-demo-toggle aria-expanded="true" aria-controls="demo-controls-body" aria-label="${hasAutoplay ? "Chapters and autoplay" : "Chapters"}"${i18nAttr(game, "chapters-toggle")}${i18nAriaAttr(game, hasAutoplay ? "chapters-autoplay-aria" : "chapters-toggle-aria")}>Chapters</button>`,
+    "</div>",
+    '<div class="demo-body" id="demo-controls-body">',
+    `<div class="demo-control-row"><span${i18nAttr(game, "chapter-row")}>Chapter</span><div class="demo-buttons demo-chapter-cards">`,
     ...chapters,
     "</div></div>",
-    ...(speeds.length > 0
-      ? ['<div class="demo-control-row"><span>Autoplay</span><div class="demo-buttons">', ...speeds, "</div></div>"]
+    ...(hasAutoplay
+      ? [`<div class="demo-control-row"><span${i18nAttr(game, "autoplay-row")}>Autoplay</span><div class="demo-buttons">`, ...speeds, "</div></div>"]
       : []),
-    `<p class="demo-help">Jump instantly without reloading.${speeds.length > 0 ? " Autoplay starts the selected chapter at the chosen speed." : ""}</p>`,
+    `<p class="demo-help"${i18nAttr(game, hasAutoplay ? "demo-help-autoplay" : "demo-help")}>Jump instantly without reloading.${hasAutoplay ? " Autoplay starts the selected chapter at the chosen speed." : ""}</p>`,
+    // Filled by the inline switcher when the active language declares the
+    // chapters unavailable (e.g. tapes recorded in another language).
+    ...(game.languages ? ['<p class="demo-chapters-notice" data-chapters-notice hidden></p>'] : []),
+    "</div>",
     "</section>",
   ].join("\n");
 }
 
 /** The landing page at the site root. */
 export function renderLanding(site: SiteInfo, cards: readonly Card[]): string {
+  const i18n = landingI18nConfig(cards);
   const showcase = (site.showcase ?? []).map(showcaseCard);
   const previewDemo = cards.some((card) => card.game.id === PREVIEW_APP_ID)
     ? 'Embed a project document from another page: <a href="preview-demo.html">the preview protocol demo</a>. '
@@ -771,8 +998,8 @@ export function renderLanding(site: SiteInfo, cards: readonly Card[]): string {
       `<a class="shot" href="${href}" tabindex="-1" aria-hidden="true">${shot}</a>`,
       '<div class="card-body">',
       `<h2><a href="${href}">${escapeHtml(game.title)}</a></h2>`,
-      ...(game.description ? [`<p class="description">${escapeHtml(game.description)}</p>`] : []),
-      controlsTable(game.controls, game.pointer, game.keymap),
+      ...(game.description ? [`<p class="description"${game.languages ? ` data-landing-description="${escapeHtml(game.id)}"` : ""}>${escapeHtml(game.description)}</p>`] : []),
+      controlsTable(game.controls, game.pointer, game.keymap, game.languages ? { game: game.id, landing: true } : undefined),
       ...(chapterNav ? [chapterNav] : []),
       `<p><a class="play" href="${href}">Play in the browser</a></p>`,
       "</div>",
@@ -783,7 +1010,7 @@ export function renderLanding(site: SiteInfo, cards: readonly Card[]): string {
   const featured = articles.filter((article) => article.featured).map((article) => article.html);
   const regular = articles.filter((article) => !article.featured).map((article) => article.html);
   return [
-    head(site.title, site.intro, "site.css"),
+    head(site.title, site.intro, "site.css", i18n !== undefined),
     '<body class="landing">',
     '<header class="site-header">',
     `<h1>${escapeHtml(site.title)}</h1>`,
@@ -800,6 +1027,14 @@ export function renderLanding(site: SiteInfo, cards: readonly Card[]): string {
     `<p>${previewDemo}Runs on <a href="https://github.com/pocket-stack/pocketjs">PocketJS</a>, compiled to WebAssembly. ` +
       "Nothing to install; a keyboard works best. Art credits are on each game's page.</p>",
     "</footer>",
+    // The same inline switcher as the player page (tools/web/i18n.ts), so the
+    // landing's chapter lists follow the language chosen on a player page.
+    ...(i18n
+      ? [
+          `<script type="application/json" id="pocket-i18n">${scriptJson(i18n)}</script>`,
+          `<script>${PAGE_I18N_SCRIPT}</script>`,
+        ]
+      : []),
     "</body>",
     "</html>",
     "",
@@ -839,6 +1074,72 @@ export function copyFontLicenses(appDir: string, dir: string): string[] {
   return names;
 }
 
+/** The top-bar language switcher, for a game that declares languages. The
+ *  inline script (tools/web/i18n.ts) highlights the active language and
+ *  reloads with the stored choice when one is pressed. */
+function languageSwitchHtml(game: WebGame): string {
+  const config = game.languages!;
+  const buttons = config.options
+    .map(
+      ({ code, label }) =>
+        `<button type="button" class="lang-button" data-lang-code="${escapeHtml(code)}" aria-pressed="false">${escapeHtml(label)}</button>`,
+    )
+    .join("");
+  return `<div class="lang-switch" role="group" aria-label="Language"${i18nAriaAttr(game, "lang-switch-aria")}>${buttons}</div>`;
+}
+
+/** The per-language page text with chapter preview paths resolved from
+ *  project-relative sources to the site-relative output URLs the page
+ *  actually serves. */
+function resolvedI18nContent(game: WebGame): Record<string, unknown> {
+  const content: Record<string, unknown> = {};
+  for (const [lang, table] of Object.entries(game.i18n ?? {})) {
+    const chapters = table.chapters
+      ? Object.fromEntries(
+          Object.entries(table.chapters).map(([id, chapter]) => [
+            id,
+            { ...chapter, ...(chapter.preview ? { preview: chapterPreviewOutput(id, lang) } : {}) },
+          ]),
+        )
+      : undefined;
+    content[lang] = { ...table, ...(chapters ? { chapters } : {}) };
+  }
+  return content;
+}
+
+/** The JSON the inline switcher (tools/web/i18n.ts) reads. */
+function pageI18nConfig(game: WebGame): Record<string, unknown> {
+  const config = game.languages!;
+  return {
+    options: config.options,
+    param: config.param,
+    storage: config.storage,
+    default: config.options[0]!.code,
+    ui: PLAYER_I18N,
+    content: resolvedI18nContent(game),
+  };
+}
+
+/** The landing page follows the language of the first game that declares
+ *  one: the same URL parameter and storage key its player page reads, so a
+ *  choice made there applies here too. Each game's chapter titles come from
+ *  its own i18n table under `landing`. */
+function landingI18nConfig(cards: readonly Card[]): Record<string, unknown> | undefined {
+  const localizable = cards.map((card) => card.game).find((game) => game.languages !== undefined);
+  if (!localizable) return undefined;
+  const config = localizable.languages!;
+  const landing: Record<string, unknown> = {};
+  for (const { game } of cards) if (game.i18n) landing[game.id] = resolvedI18nContent(game);
+  return {
+    options: config.options,
+    param: config.param,
+    storage: config.storage,
+    default: config.options[0]!.code,
+    ui: PLAYER_I18N,
+    landing,
+  };
+}
+
 /** One game's player page, <site>/<id>/index.html. */
 export function renderPlayer(
   site: SiteInfo,
@@ -857,54 +1158,103 @@ export function renderPlayer(
     `Built with <a href="${escapeHtml(site.source ?? "https://github.com/lfkdsk/pocketjs-rpgkit")}">${escapeHtml(site.title)}</a> ` +
       'on <a href="https://github.com/pocket-stack/pocketjs">PocketJS</a>.',
   ].join(" ");
+  const pageLang = game.languages !== undefined;
   return [
-    head(`${game.title} · ${site.title}`, game.description, "../site.css"),
+    head(`${game.title} · ${site.title}`, game.description, "../site.css", pageLang),
     '<body class="player-page">',
     '<header class="bar">',
     `<a class="back" href="../">← ${escapeHtml(site.title)}</a>`,
     `<h1>${escapeHtml(game.title)}</h1>`,
+    ...(pageLang ? [languageSwitchHtml(game)] : []),
+    `<button type="button" id="fullscreen-toggle" class="bar-button" aria-pressed="false"${i18nAttr(game, "fullscreen")}>Fullscreen</button>`,
     '<div class="audio-controls" role="group" aria-label="Audio">',
-    '<button type="button" id="audio-mute" aria-label="Mute audio" aria-pressed="false">Mute</button>',
-    '<label for="audio-volume">Volume</label>',
+    `<button type="button" id="audio-mute" aria-label="Mute audio" aria-pressed="false"${i18nAttr(game, "mute")}${i18nAriaAttr(game, "mute-audio")}>Mute</button>`,
+    `<label for="audio-volume"${i18nAttr(game, "volume")}>Volume</label>`,
     '<input type="range" id="audio-volume" min="0" max="100" step="5" value="100">',
     '<output id="audio-volume-value" for="audio-volume">100%</output>',
     "</div>",
     "</header>",
     "<main>",
-    ...editorTools(config),
+    ...editorTools(config, game),
+    '<div class="play-surface" id="play-surface">',
     '<div class="screen-area">',
     `<div class="stage" id="stage" tabindex="0" role="application" aria-label="${escapeHtml(game.title)}: game screen" ` +
       `aria-describedby="controls-heading" data-state="loading" data-viewport="${config.viewport.policy}" style="aspect-ratio: ${shape[0]} / ${shape[1]}">`,
     `<canvas id="screen" width="${shape[0]}" height="${shape[1]}"></canvas>`,
-    '<div class="overlay" id="overlay"><p id="overlay-message">Loading…</p><button type="button" id="overlay-reload" hidden>Reload</button></div>',
-    '<p class="focus-hint" id="focus-hint" hidden>Click the game to use the keyboard</p>',
+    `<div class="overlay" id="overlay"><p id="overlay-message"${i18nAttr(game, "loading")}>Loading…</p><button type="button" id="overlay-reload" hidden${i18nAttr(game, "reload")}>Reload</button></div>`,
+    `<p class="focus-hint" id="focus-hint" hidden${i18nAttr(game, "focus-hint")}>Click the game to use the keyboard</p>`,
     "</div>",
     "</div>",
-    '<p class="caption">Keys reach the game while it has focus: it takes focus when the page loads and whenever you click it.</p>',
-    ...(demoControls ? [demoControls] : []),
     padHtml(game.controls, game.keymap),
+    '<div class="immersive-tools">',
+    `<button type="button" class="pad-toggle" id="pad-toggle" hidden aria-pressed="false"${i18nAttr(game, "hide-buttons")}>Hide buttons</button>`,
+    `<button type="button" class="immersive-exit" id="immersive-exit" hidden${i18nAttr(game, "exit-fullscreen")}>Exit fullscreen</button>`,
+    "</div>",
+    '<div class="rotate-hint" id="rotate-hint" hidden>',
+    `<p${i18nAttr(game, "rotate-hint")}>Rotate your device to play in landscape.</p>`,
+    `<button type="button" data-rotate-dismiss${i18nAttr(game, "continue-portrait")}>Continue in portrait</button>`,
+    "</div>",
+    "</div>",
+    `<p class="caption"${i18nAttr(game, "caption")}>Keys reach the game while it has focus: it takes focus when the page loads and whenever you click it.</p>`,
+    ...(demoControls ? [demoControls] : []),
     '<section class="info">',
-    ...(game.description ? [`<p class="description">${escapeHtml(game.description)}</p>`] : []),
+    ...(game.description ? [`<p class="description"${pageLang ? ' data-game-description' : ""}>${escapeHtml(game.description)}</p>`] : []),
     ...(game.features && game.features.length > 0
       ? [
-          "<h2>Exhibition halls</h2>",
+          `<h2${i18nAttr(game, "exhibition-halls")}>Exhibition halls</h2>`,
           '<ol class="features">',
           ...game.features.map((feature) => `<li>${escapeHtml(feature)}</li>`),
           "</ol>",
         ]
       : []),
-    '<h2 id="controls-heading">Controls</h2>',
-    controlsTable(game.controls, game.pointer, game.keymap),
+    `<h2 id="controls-heading"${i18nAttr(game, "controls-heading")}>Controls</h2>`,
+    controlsTable(game.controls, game.pointer, game.keymap, game.languages ? { game: game.id, landing: false } : undefined),
     "</section>",
     "</main>",
     `<footer class="site-footer"><p>${footer}</p></footer>`,
     '<noscript><p class="noscript">This game needs JavaScript and WebAssembly.</p></noscript>',
     `<script type="application/json" id="pocket-game">${scriptJson(config)}</script>`,
     '<script type="module" src="../player.js"></script>',
+    // The switcher runs as a classic inline script after the module tag so it
+    // can swap the chrome before the first paint and hand player.js the
+    // strings it sets itself.
+    ...(pageLang
+      ? [
+          `<script type="application/json" id="pocket-i18n">${scriptJson(pageI18nConfig(game))}</script>`,
+          `<script>${PAGE_I18N_SCRIPT}</script>`,
+        ]
+      : []),
     "</body>",
     "</html>",
     "",
   ].join("\n");
+}
+
+/** The web app manifest: standalone fullscreen, landscape, the generated
+ *  icons. Every URL is relative to the manifest at the site root, so the
+ *  manifest also works under a subpath such as /pocket-rpgkit/. */
+export function renderManifest(site: SiteInfo): string {
+  return (
+    JSON.stringify(
+      {
+        name: site.title,
+        short_name: site.title,
+        description: site.intro || undefined,
+        start_url: ".",
+        scope: ".",
+        display: "fullscreen",
+        orientation: "landscape",
+        background_color: "#0d0f14",
+        theme_color: "#0d0f14",
+        icons: [
+          { src: "icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+        ],
+      },
+      null,
+      2,
+    ) + "\n"
+  );
 }
 
 /** Width and height from a PNG's IHDR chunk. */
@@ -933,18 +1283,43 @@ function isInside(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-/** Relative URL/path used for one copied chapter-card preview. */
-export function chapterPreviewOutput(id: string): string {
-  return `chapter-previews/${id}.png`;
+/** Relative URL/path used for one copied chapter-card preview. A per-language
+ *  preview (i18n.<code>.chapters.<id>.preview) is copied beside the default
+ *  one with the language code in its name. */
+export function chapterPreviewOutput(id: string, lang?: string): string {
+  return `chapter-previews/${id}${lang ? `.${lang}` : ""}.png`;
+}
+
+/** Resolve a configured preview source to an absolute path and prove it is a
+ *  file inside the project root, following symlinks: a relative PNG that
+ *  links outside the root would otherwise publish a file the config never
+ *  named. Throws with `what` identifying the configured preview. */
+function resolvePreviewSource(projectRoot: string, source: string, what: string): string {
+  const resolved = resolve(projectRoot, source);
+  if (!isInside(projectRoot, resolved) || !existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new Error(`web: ${what} not found: ${resolved}`);
+  }
+  if (!isInside(realpathSync(projectRoot), realpathSync(resolved))) {
+    throw new Error(`web: ${what} leaves the project root: ${resolved}`);
+  }
+  return resolved;
 }
 
 /** Copy configured chapter previews beside one built game's player page. */
 export function copyChapterPreviews(projectRoot: string, game: WebGame, outputDir: string): void {
+  const copy = (source: string, target: string, what: string) => {
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(resolvePreviewSource(projectRoot, source, what), target);
+  };
   for (const chapter of game.chapters) {
     if (!chapter.preview) continue;
-    const target = join(outputDir, chapterPreviewOutput(chapter.id));
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(resolve(projectRoot, chapter.preview), target);
+    copy(chapter.preview, join(outputDir, chapterPreviewOutput(chapter.id)), `chapter preview for "${game.id}/${chapter.id}"`);
+  }
+  for (const [lang, table] of Object.entries(game.i18n ?? {})) {
+    for (const [id, chapter] of Object.entries(table.chapters ?? {})) {
+      if (!chapter.preview) continue;
+      copy(chapter.preview, join(outputDir, chapterPreviewOutput(id, lang)), `chapter preview for "${game.id}/${id}" (${lang})`);
+    }
   }
 }
 
@@ -1095,6 +1470,15 @@ export async function buildWebSite(options: BuildOptions): Promise<WebGame[]> {
 
   copyFileSync(WASM_PATH, join(outdir, "pocketjs.wasm"));
   copyFileSync(join(KIT_ROOT, "tools", "web", "site.css"), join(outdir, "site.css"));
+  // The install icons come from the site's first preview image when one
+  // exists (tools/web/icon.ts), so "Add to Home Screen" shows the game.
+  const iconPreview = cards.find((card) => card.preview)?.game.id;
+  writeSiteIcons(
+    outdir,
+    (path, bytes) => writeFileSync(path, bytes),
+    iconPreview ? join(outdir, iconPreview, "preview.png") : undefined,
+  );
+  await Bun.write(join(outdir, "manifest.webmanifest"), renderManifest(site));
   if (games.some((game) => game.id === PREVIEW_APP_ID)) {
     copyFileSync(join(KIT_ROOT, "tools", "web", "preview-demo.html"), join(outdir, "preview-demo.html"));
   }

@@ -53,6 +53,7 @@ import {
   type SessionEffectSink,
   type Session,
   type SessionState,
+  type SessionTickDirection,
 } from "./session.ts";
 
 // Button masks (contracts/spec/spec.ts BTN), duplicated as constants to
@@ -67,6 +68,9 @@ const BTN_RTRIGGER = 0x0200;
 const BTN_ZL = 0x0400;
 const BTN_ZR = 0x0800;
 const BTN_TRIANGLE = 0x1000;
+/** The d-pad portion of a mask; a tick-direction resolver replaces only
+ *  these bits between the timeline folds of one low-rate host frame. */
+const BTN_DIR_MASK = BTN_UP | BTN_DOWN | BTN_LEFT | BTN_RIGHT;
 const BTN_CIRCLE = 0x2000;
 const BTN_CROSS = 0x4000;
 const BTN_SQUARE = 0x8000;
@@ -927,8 +931,8 @@ export class AttractController {
    *  the controller decides whether the tape or the player owns it. A
    *  repository miss rolls the whole host frame back, including low-rate
    *  multi-fold bookkeeping, so a caller can prepare bytes and retry it. */
-  step(liveButtons: number, effects?: SessionEffectSink): FoldResult {
-    if (!this.session.repository?.prepare) return this.stepUnchecked(liveButtons, effects);
+  step(liveButtons: number, effects?: SessionEffectSink, tickDirection?: SessionTickDirection): FoldResult {
+    if (!this.session.repository?.prepare) return this.stepUnchecked(liveButtons, effects, tickDirection);
     // A repository miss rolls the whole controller back. The checkpoint is
     // one reused record, every field rewritten here, so a demo-enabled game
     // allocates nothing per frame for it.
@@ -963,7 +967,7 @@ export class AttractController {
     cp.residentMaps.length = 0;
     for (const id of this.session.maps.keys()) cp.residentMaps.push(id);
     try {
-      const result = this.stepUnchecked(liveButtons, effects);
+      const result = this.stepUnchecked(liveButtons, effects, tickDirection);
       // The step succeeded, so the rollback snapshot is stale. Resync its
       // heavy references onto the live objects: a keyframe generation this
       // step evicted (or a published state it retired) must not stay alive
@@ -1009,7 +1013,7 @@ export class AttractController {
   }
 
 
-  private stepUnchecked(liveButtons: number, effects?: SessionEffectSink): FoldResult {
+  private stepUnchecked(liveButtons: number, effects?: SessionEffectSink, tickDirection?: SessionTickDirection): FoldResult {
     this.loopReset = false;
     this.rewound = false;
     const live = liveButtons >>> 0;
@@ -1058,7 +1062,7 @@ export class AttractController {
       } else {
         this.idle = 0;
       }
-      this.foldLive(live, effects);
+      this.foldLive(live, effects, tickDirection);
       return this.result();
     }
 
@@ -1119,7 +1123,7 @@ export class AttractController {
     }
   }
 
-  private foldLive(mask: number, effects?: SessionEffectSink): void {
+  private foldLive(mask: number, effects?: SessionEffectSink, tickDirection?: SessionTickDirection): void {
     this.carry += this.timelineHz;
     while (this.carry >= this.hz) {
       this.carry -= this.hz;
@@ -1133,6 +1137,13 @@ export class AttractController {
       } else {
         if (this.firstDivergence === Infinity) this.firstDivergence = this.logLength;
         this.fold(mask, 0, effects);
+      }
+      // The resolver advances the view-local route at the timeline (reference)
+      // tick boundary; its bit replaces the d-pad on the NEXT fold, so a turn
+      // inside one low-rate host frame is taken at the tile. The last fold of
+      // the batch leaves the route to the next frame's first resolver call.
+      if (tickDirection && this.carry >= this.hz) {
+        mask = (mask & ~BTN_DIR_MASK) | (tickDirection(this.state) | 0);
       }
     }
   }

@@ -4,8 +4,8 @@
 // the pages' URLs. tools/web-verify.ts plays the built site in Chrome.
 
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { APPS, EXAMPLES } from "../tools/build-example.ts";
 import {
   cardOrder,
@@ -17,6 +17,7 @@ import {
   parseSiteConfig,
   PREVIEW_APP_ID,
   renderLanding,
+  renderManifest,
   renderPlayer,
   resolveGame,
   shortTitle,
@@ -26,11 +27,12 @@ import {
   type WebGame,
 } from "../tools/web.ts";
 import { fitViewport, type ViewportConfig } from "../tools/web/fit.ts";
-import { rpgkitBootFromSearch } from "../tools/web/boot.ts";
+import { rpgkitBootFromSearch, withDemoQuery } from "../tools/web/boot.ts";
 import { verifyPlanHash } from "../vendor/pocketjs/framework/src/manifest/plan.ts";
 import { BTN, KEYMAP, keyMasks, keysFor, withKeys } from "../tools/web/keys.ts";
 import { loadProject } from "../editor/engine/document.ts";
 import { createMasterAudioHost } from "../tools/web/audio-control.ts";
+import { decodePngRgba, drawIcon, drawIconFromPreview, encodePngRgba, SITE_ICONS, writeSiteIcons } from "../tools/web/icon.ts";
 
 const config = loadSiteConfig(KIT_ROOT);
 const site = { title: config.title!, intro: config.intro!, source: config.source! };
@@ -240,6 +242,68 @@ describe("pages", () => {
     expect(html.match(/class="chapters"/g)).toHaveLength(1);
   });
 
+  test("the landing chapter list is a collapsed disclosure with wrapping chips", () => {
+    const sunstone = games.find((game) => game.id === "sunstone")!;
+    const html = renderLanding(site, [{ game: sunstone }]);
+    // Collapsed by default: a <details> without the open attribute.
+    expect(html).toContain("<details");
+    expect(html).toContain('<details class="chapters">');
+    expect(html).not.toContain("<details open");
+    // The summary names the chapter count, and the links are chips.
+    expect(html).toContain("<summary><span>Chapters</span> (3)</summary>");
+    expect(html).toContain('<ul class="chapter-chips">');
+    expect(html).toContain('href="sunstone/?chapter=village">Village</a>');
+    expect(html).toContain('href="sunstone/?chapter=cave">Cave</a>');
+    // A game without chapters renders no disclosure.
+    const meadow = games.find((game) => game.id === "meadow")!;
+    expect(renderLanding(site, [{ game: meadow }])).not.toContain('class="chapters"');
+  });
+
+  test("the landing page follows the first game's language when one declares languages", () => {
+    const sunstone = games.find((game) => game.id === "sunstone")!;
+    const localized: WebGame = {
+      ...sunstone,
+      languages: {
+        options: [
+          { code: "en", label: "English" },
+          { code: "zh", label: "中文" },
+        ],
+        param: "lang",
+        storage: "pocket-tuxemon/lang",
+      },
+      i18n: { zh: { chapters: { village: { title: "村庄" }, cave: { title: "山洞" } } } },
+    };
+    const html = renderLanding(site, [{ game: localized }]);
+    expect(html).toContain('<html lang="en" data-page-lang="pending">');
+    expect(html).toContain('<details class="chapters" data-landing-game="sunstone">');
+    expect(html).toContain('<summary><span data-i18n="chapters">Chapters</span> (3)</summary>');
+    expect(html).toContain('data-landing-chapter="sunstone/village" href="sunstone/?chapter=village"');
+    const json = /<script type="application\/json" id="pocket-i18n">([\s\S]*?)<\/script>/.exec(html)![1]!;
+    const parsed = JSON.parse(json) as {
+      options: { code: string }[];
+      param: string;
+      storage: string;
+      default: string;
+      landing: Record<string, unknown>;
+    };
+    expect(parsed.options.map((o) => o.code)).toEqual(["en", "zh"]);
+    expect(parsed.param).toBe("lang");
+    expect(parsed.storage).toBe("pocket-tuxemon/lang");
+    expect(parsed.default).toBe("en");
+    expect(parsed.landing.sunstone).toMatchObject({ zh: { chapters: { village: { title: "村庄" } } } });
+    // The game description follows the page language on the landing too.
+    expect(html).toContain('data-landing-description="sunstone"');
+  });
+
+  test("the landing page has no i18n trace when no game declares languages", () => {
+    const html = renderLanding(site, games.map((game) => ({ game })));
+    expect(html).not.toContain("pocket-i18n");
+    expect(html).not.toContain("data-page-lang");
+    expect(html).not.toContain("data-landing-chapter");
+    expect(html).not.toContain("data-i18n");
+    expect(html).toContain('<html lang="en">');
+  });
+
   test("showcase entries are cards linked to their own site, after featured local games", () => {
     const entry = {
       title: "Pocket Tuxemon",
@@ -409,6 +473,40 @@ describe("pages", () => {
     }
   });
 
+  test("localized chapter previews cannot read or publish files outside the project root", () => {
+    const root = mkdtempSync(join(KIT_ROOT, ".web-preview-root-"));
+    const outside = mkdtempSync(join(KIT_ROOT, ".web-preview-out-"));
+    const output = mkdtempSync(join(KIT_ROOT, ".web-preview-dst-"));
+    try {
+      mkdirSync(join(root, "art"), { recursive: true });
+      copyFileSync(join(KIT_ROOT, CHAPTER_PREVIEW), join(root, "art", "real.png"));
+      writeFileSync(join(outside, "secret.png"), "outside the project");
+      symlinkSync(join(outside, "secret.png"), join(root, "art", "escape.png"));
+      const game = (preview: string) =>
+        ({
+          id: "meadow",
+          chapters: [{ id: "intro", title: "Intro", preview: "art/real.png" }],
+          i18n: { zh: { chapters: { intro: { preview } } } },
+        }) as unknown as WebGame;
+      // A symlinked preview that resolves outside the root is refused...
+      expect(() => copyChapterPreviews(root, game("art/escape.png"), output)).toThrow(/leaves the project root/);
+      // ...and so are absolute and parent-relative sources that name outside
+      // files directly, even when they bypass the schema check.
+      expect(() => copyChapterPreviews(root, game(join(outside, "secret.png")), output)).toThrow(/not found/);
+      const parentPreview = join(relative(root, outside), "secret.png");
+      expect(() => copyChapterPreviews(root, game(parentPreview), output)).toThrow(/not found/);
+      // Nothing was published for the refused previews.
+      expect(existsSync(join(output, "chapter-previews", "intro.zh.png"))).toBe(false);
+      // A real inside file still copies into both the default and the zh slot.
+      copyChapterPreviews(root, game("art/real.png"), output);
+      expect(readFileSync(join(output, "chapter-previews", "intro.zh.png"))).toEqual(readFileSync(join(root, "art", "real.png")));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+      rmSync(output, { recursive: true, force: true });
+    }
+  });
+
   test("the editor page exposes local files, built-in projects and browser-only privacy copy", () => {
     const editor = games.find((game) => game.id === "editor")!;
     const html = renderPlayer(site, editor, playerConfig(editor), false);
@@ -492,6 +590,266 @@ describe("preview host", () => {
   });
 });
 
+describe("install icons and manifest", () => {
+  /** Decode the icon's PNG just far enough to read pixels back. */
+  function decodePng(bytes: Uint8Array): { width: number; height: number; rgba: Uint8Array } {
+    let offset = 8;
+    let width = 0;
+    let height = 0;
+    const idat: number[] = [];
+    while (offset < bytes.length) {
+      const len = new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0);
+      const type = new TextDecoder().decode(bytes.subarray(offset + 4, offset + 8));
+      const data = bytes.subarray(offset + 8, offset + 8 + len);
+      if (type === "IHDR") {
+        width = new DataView(data.buffer, data.byteOffset, 4).getUint32(0);
+        height = new DataView(data.buffer, data.byteOffset + 4, 4).getUint32(0);
+      } else if (type === "IDAT") {
+        idat.push(...data);
+      }
+      offset += 12 + len;
+    }
+    // Bun.inflateSync is raw DEFLATE; the IDAT carries the zlib wrapper
+    // (2-byte header, 4-byte ADLER32 trailer).
+    const raw = Bun.inflateSync(Uint8Array.from(idat).subarray(2, idat.length - 4));
+    const stride = width * 4;
+    const rgba = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      rgba.set(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)), y * stride);
+    }
+    return { width, height, rgba };
+  }
+
+  const pixel = (rgba: Uint8Array, width: number, x: number, y: number) => {
+    const i = (y * width + x) * 4;
+    return `#${[rgba[i], rgba[i + 1], rgba[i + 2]].map((v) => v!.toString(16).padStart(2, "0")).join("")}`;
+  };
+
+  test("icons are deterministic PNGs at the manifest's sizes", () => {
+    for (const [name, size] of Object.entries(SITE_ICONS)) {
+      const a = drawIcon(size);
+      const b = drawIcon(size);
+      expect(a).toEqual(b);
+      expect(a.subarray(0, 8)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      const decoded = decodePng(a);
+      expect(decoded.width).toBe(size);
+      expect(decoded.height).toBe(size);
+      // The mark: page background in the corner, yellow on a plus arm, the
+      // light highlight at the very centre.
+      expect(pixel(decoded.rgba, size, 0, 0)).toBe("#0d0f14");
+      expect(pixel(decoded.rgba, size, Math.floor(size / 2), Math.floor(size / 8))).toBe("#f4c35a");
+      expect(pixel(decoded.rgba, size, Math.floor(size / 2), Math.floor(size / 2))).toBe("#fff3c4");
+      // Fully opaque: maskable icons need a full-bleed background.
+      expect(decoded.rgba.some((_, i) => i % 4 === 3 && decoded.rgba[i] !== 255)).toBe(false);
+    }
+  });
+
+  test("decodePngRgba round-trips the encoder and reads RGB PNGs", () => {
+    const size = 4;
+    const pixels = new Uint8Array(size * size * 4);
+    for (let i = 0; i < pixels.length; i += 4) {
+      pixels[i] = (i * 7) & 0xff;
+      pixels[i + 1] = (i * 13) & 0xff;
+      pixels[i + 2] = (i * 29) & 0xff;
+      pixels[i + 3] = 255;
+    }
+    const roundTrip = decodePngRgba(encodePngRgba(size, pixels));
+    expect(roundTrip.width).toBe(size);
+    expect(roundTrip.height).toBe(size);
+    expect(roundTrip.pixels).toEqual(pixels);
+
+    // A 1x2 RGB (color type 2) PNG with an Up filter on the second row.
+    const rgb = (() => {
+      const crcTable = (() => {
+        const table = new Uint32Array(256);
+        for (let n = 0; n < 256; n++) {
+          let c = n;
+          for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+          table[n] = c >>> 0;
+        }
+        return table;
+      })();
+      const chunk = (type: string, data: Uint8Array) => {
+        const typeBytes = new TextEncoder().encode(type);
+        const body = new Uint8Array(typeBytes.length + data.length);
+        body.set(typeBytes, 0);
+        body.set(data, typeBytes.length);
+        const out = new Uint8Array(12 + data.length);
+        const view = new DataView(out.buffer);
+        view.setUint32(0, data.length);
+        out.set(body, 4);
+        let crc = 0xffffffff;
+        for (const byte of body) crc = crcTable[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+        view.setUint32(4 + body.length, (crc ^ 0xffffffff) >>> 0);
+        return out;
+      };
+      const ihdr = new Uint8Array(13);
+      new DataView(ihdr.buffer).setUint32(0, 1);
+      new DataView(ihdr.buffer).setUint32(4, 2);
+      ihdr[8] = 8; // 8-bit
+      ihdr[9] = 2; // RGB
+      // Row 0: filter None, red. Row 1: filter Up, black (reconstructs to red).
+      const raw = Uint8Array.from([0, 255, 0, 0, 2, 0, 0, 0]);
+      const deflated = Bun.deflateSync(raw);
+      const zlib = new Uint8Array(deflated.length + 6);
+      zlib[0] = 0x78;
+      zlib[1] = 0x9c;
+      zlib.set(deflated, 2);
+      let a = 1, b = 0;
+      for (const byte of raw) { a = (a + byte) % 65521; b = (b + a) % 65521; }
+      new DataView(zlib.buffer).setUint32(2 + deflated.length, ((b << 16) | a) >>> 0);
+      const parts = [
+        new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        chunk("IHDR", ihdr),
+        chunk("IDAT", zlib),
+        chunk("IEND", new Uint8Array(0)),
+      ];
+      const png = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      let offset = 0;
+      for (const part of parts) { png.set(part, offset); offset += part.length; }
+      return png;
+    })();
+    const decoded = decodePngRgba(rgb);
+    expect(decoded.width).toBe(1);
+    expect(decoded.height).toBe(2);
+    // Both rows reconstruct to red (the second used the Up filter).
+    expect([...decoded.pixels]).toEqual([255, 0, 0, 255, 255, 0, 0, 255]);
+  });
+
+  test("preview icons come from the preview, deterministically and full-bleed", () => {
+    // A 4x4 preview: red top-left, green top-right, blue bottom-left, white
+    // bottom-right, so a cover-crop and scale can be checked at the corners.
+    const width = 4, height = 4;
+    const source = new Uint8Array(width * height * 4);
+    source.fill(255); // fully opaque
+    const set = (x: number, y: number, r: number, g: number, b: number) => {
+      const i = (y * width + x) * 4;
+      source[i] = r; source[i + 1] = g; source[i + 2] = b; source[i + 3] = 255;
+    };
+    set(0, 0, 255, 0, 0); set(3, 0, 0, 255, 0);
+    set(0, 3, 0, 0, 255); set(3, 3, 255, 255, 255);
+    const a = drawIconFromPreview(8, width, height, source);
+    const b = drawIconFromPreview(8, width, height, source);
+    expect(a).toEqual(b);
+    const decoded = decodePngRgba(a);
+    expect(decoded.width).toBe(8);
+    const corner = (x: number, y: number) => {
+      const i = (y * 8 + x) * 4;
+      return [decoded.pixels[i], decoded.pixels[i + 1], decoded.pixels[i + 2]];
+    };
+    expect(corner(0, 0)).toEqual([255, 0, 0]);
+    expect(corner(7, 0)).toEqual([0, 255, 0]);
+    expect(corner(0, 7)).toEqual([0, 0, 255]);
+    expect(corner(7, 7)).toEqual([255, 255, 255]);
+    // Full-bleed: every pixel opaque.
+    expect(decoded.pixels.some((_, i) => i % 4 === 3 && decoded.pixels[i] !== 255)).toBe(false);
+    // A preview icon is not the kit mark.
+    expect(drawIconFromPreview(192, width, height, source)).not.toEqual(drawIcon(192));
+  });
+
+  test("writeSiteIcons uses the preview when one is given, the mark otherwise", () => {
+    const dir = mkdtempSync(join(import.meta.dir, "icon-tmp-"));
+    try {
+      const previewPath = join(dir, "preview.png");
+      const source = new Uint8Array(4 * 4 * 4).fill(255);
+      writeFileSync(previewPath, encodePngRgba(4, source));
+      const written = new Map<string, Uint8Array>();
+      writeSiteIcons(dir, (path, bytes) => written.set(path, bytes), previewPath);
+      expect(written.size).toBe(Object.keys(SITE_ICONS).length);
+      for (const [name, size] of Object.entries(SITE_ICONS)) {
+        const bytes = written.get(join(dir, name))!;
+        const decoded = decodePngRgba(bytes);
+        expect(decoded.width).toBe(size);
+        // The white preview fills the icon, not the dark kit mark.
+        expect(decoded.pixels[0]).toBe(255);
+      }
+      written.clear();
+      writeSiteIcons(dir, (path, bytes) => written.set(path, bytes));
+      for (const [name, size] of Object.entries(SITE_ICONS)) {
+        expect(written.get(join(dir, name))).toEqual(drawIcon(size));
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the manifest is fullscreen landscape with the generated icons", () => {
+    const manifest = JSON.parse(renderManifest(site)) as Record<string, unknown>;
+    expect(manifest.display).toBe("fullscreen");
+    expect(manifest.orientation).toBe("landscape");
+    expect(manifest.start_url).toBe(".");
+    expect(manifest.theme_color).toBe("#0d0f14");
+    const icons = manifest.icons as Array<{ src: string; sizes: string; type: string; purpose: string }>;
+    expect(icons.map((icon) => icon.src).sort()).toEqual(Object.keys(SITE_ICONS).filter((n) => n !== "apple-touch-icon.png").sort());
+    const iconSizes: Record<string, number> = { ...SITE_ICONS };
+    for (const icon of icons) {
+      const size = Number(icon.sizes.split("x")[0]);
+      expect(icon.sizes).toBe(`${size}x${size}`);
+      expect(iconSizes[icon.src]).toBe(size);
+      expect(icon.purpose).toContain("maskable");
+    }
+  });
+});
+
+describe("mobile chrome", () => {
+  const sunstone = resolveGame(KIT_ROOT, config, "sunstone");
+
+  test("every page ships the install manifest and the mobile web-app meta", () => {
+    const landing = renderLanding(site, [{ game: sunstone }]);
+    expect(landing).toContain('<link rel="manifest" href="manifest.webmanifest">');
+    expect(landing).toContain('<link rel="apple-touch-icon" href="apple-touch-icon.png">');
+    expect(landing).toContain('<meta name="theme-color" content="#0d0f14">');
+    expect(landing).toContain('name="apple-mobile-web-app-capable" content="yes"');
+    expect(landing).toContain("viewport-fit=cover");
+    const player = renderPlayer(site, sunstone, playerConfig(sunstone), true);
+    expect(player).toContain('<link rel="manifest" href="../manifest.webmanifest">');
+    expect(player).toContain('<link rel="apple-touch-icon" href="../apple-touch-icon.png">');
+  });
+
+  test("the player page has the fullscreen toggle, the immersive exit and the rotate hint", () => {
+    const html = renderPlayer(site, sunstone, playerConfig(sunstone), true);
+    expect(html).toContain('<button type="button" id="fullscreen-toggle" class="bar-button" aria-pressed="false">Fullscreen</button>');
+    expect(html).toContain('<button type="button" class="immersive-exit" id="immersive-exit" hidden>Exit fullscreen</button>');
+    expect(html).toContain('<div class="rotate-hint" id="rotate-hint" hidden>');
+    expect(html).toContain("Rotate your device to play in landscape.");
+    expect(html).toContain('data-rotate-dismiss');
+  });
+
+  test("the screen and the touch pad share one play surface, in that order", () => {
+    const html = renderPlayer(site, sunstone, playerConfig(sunstone), true);
+    const surface = html.indexOf('class="play-surface"');
+    const screen = html.indexOf('class="screen-area"');
+    const pad = html.indexOf('class="pad"');
+    const exit = html.indexOf('id="immersive-exit"');
+    expect(surface).toBeGreaterThan(-1);
+    expect(surface).toBeLessThan(screen);
+    expect(screen).toBeLessThan(pad);
+    expect(pad).toBeLessThan(exit);
+    // The pad keeps its buttons inside the surface.
+    expect(html.slice(surface, exit)).toContain('data-button="UP"');
+  });
+
+  test("the demo controls are a disclosure, open by default for mouse users", () => {
+    const html = renderPlayer(site, sunstone, playerConfig(sunstone), true);
+    expect(html).toContain('data-demo-toggle aria-expanded="true" aria-controls="demo-controls-body"');
+    expect(html).toContain('<div class="demo-body" id="demo-controls-body">');
+    expect(html).toContain('class="demo-head"');
+    // The chapter cards keep their markup inside the collapsible body.
+    const body = html.slice(html.indexOf('id="demo-controls-body"'));
+    expect(body).toContain('data-demo-chapter="cave"');
+    expect(body).toContain('data-demo-speed="4"');
+  });
+
+  test("a game without chapters has no demo disclosure but keeps the immersive chrome", () => {
+    const meadow = resolveGame(KIT_ROOT, config, "meadow");
+    const html = renderPlayer(site, meadow, playerConfig(meadow), true);
+    expect(html).not.toContain("data-demo-toggle");
+    expect(html).not.toContain("demo-body");
+    expect(html).toContain('id="fullscreen-toggle"');
+    expect(html).toContain('class="play-surface"');
+  });
+});
+
 describe("preview demo page", () => {
   const path = join(KIT_ROOT, "tools", "web", "preview-demo.html");
   const html = existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -528,6 +886,22 @@ describe("boot query", () => {
   test("ignores unknown keys and treats decoded text only as data", () => {
     expect(rpgkitBootFromSearch("?unknown=x&__proto__=bad")).toEqual({});
     expect(rpgkitBootFromSearch("?chapter=%3C%2Fscript%3E&chapter=second")).toEqual({ chapter: "</script>" });
+  });
+
+  test("withDemoQuery keeps the language parameter and other non-demo keys", () => {
+    // The B1 regression: a chapter click used to wipe ?lang=, so a deep link
+    // lost its language on the next refresh.
+    expect(withDemoQuery("?lang=en&chapter=bedroom", { chapter: "paper-town" })).toBe("?lang=en&chapter=paper-town");
+    expect(withDemoQuery("?lang=en", { autoplay: "bedroom", speed: "2" })).toBe("?lang=en&autoplay=bedroom&speed=2");
+    expect(withDemoQuery("?lang=zh&campaign=spyder", { chapter: "bedroom" })).toBe("?lang=zh&campaign=spyder&chapter=bedroom");
+  });
+
+  test("withDemoQuery replaces the demo keys it owns and drops the rest", () => {
+    expect(withDemoQuery("?chapter=bedroom&autoplay=bedroom&speed=4", { chapter: "paper-town" })).toBe("?chapter=paper-town");
+    expect(withDemoQuery("?map=village&x=1&y=2", { chapter: "bedroom" })).toBe("?chapter=bedroom");
+    expect(withDemoQuery("", { chapter: "bedroom" })).toBe("?chapter=bedroom");
+    expect(withDemoQuery("?lang=en", {})).toBe("?lang=en");
+    expect(withDemoQuery("?chapter=bedroom", {})).toBe("");
   });
 });
 

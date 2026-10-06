@@ -322,6 +322,12 @@ async function main(): Promise<void> {
     await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1 });
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1 });
   };
+  /** The demo menu collapses itself after a pick (and starts collapsed on
+   *  touch screens); reopen it before driving another demo control. */
+  const openDemoMenu = async () => {
+    const expanded = await evaluate<string | null>(`document.querySelector("[data-demo-toggle]")?.getAttribute("aria-expanded") ?? null`);
+    if (expanded === "false") await clickElement('[data-demo-toggle]');
+  };
   const installNoReloadSentinel = () => evaluate(`globalThis.__demoClickSentinel = {
     player: globalThis.__pocketPlayer,
     canvas: document.getElementById("screen"),
@@ -479,6 +485,39 @@ async function main(): Promise<void> {
     expect("landing: previews load", landing.previews.every((w) => w > 0), `widths ${landing.previews.join(", ")}`);
     const absolute = landing.links.filter((h) => h.startsWith("/"));
     expect("landing: relative links", absolute.length === 0, absolute.length ? absolute.join(", ") : `${landing.links.length} links`);
+
+    // The chapter list is a collapsed disclosure whose chips keep the deep
+    // links, not a long vertical link list.
+    const chapterLists = await evaluate<number>(`document.querySelectorAll("details.chapters").length`);
+    if (chapterLists > 0) {
+      const collapsed = await evaluate<boolean>(
+        `[...document.querySelectorAll("details.chapters")].every((d) => !d.open)`,
+      );
+      expect("landing: the chapter list starts collapsed", collapsed, "every <details class=chapters> is closed");
+      const chipLinks = await evaluate<string[]>(
+        `[...document.querySelectorAll(".chapter-chips a")].map((a) => a.getAttribute("href"))`,
+      );
+      expect(
+        "landing: chapter chips keep their deep links",
+        chipLinks.length > 0 && chipLinks.every((href) => /\?chapter=[^&]+$/.test(href)),
+        `${chipLinks.length} chips, e.g. ${chipLinks[0] ?? "none"}`,
+      );
+      await clickElement("details.chapters summary");
+      const expanded = await evaluate<boolean>(`document.querySelector("details.chapters").open === true`);
+      const chipsVisible = await evaluate<boolean>(
+        `(() => { const el = document.querySelector(".chapter-chips a"); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 2 && r.height > 2; })()`,
+      );
+      expect(
+        "landing: the disclosure opens to visible chips",
+        expanded && chipsVisible,
+        `details.open=${expanded}, chips visible=${chipsVisible}`,
+      );
+      await evaluate(`document.querySelector("details.chapters").open = false`);
+    }
+    const landingOverflow = await evaluate<number>(
+      `document.documentElement.scrollWidth - document.documentElement.clientWidth`,
+    );
+    expect("landing: no horizontal overflow", landingOverflow <= 0, `${landingOverflow}px`);
     await screenshot("landing", true);
     results.landing = landing;
 
@@ -1083,6 +1122,7 @@ async function main(): Promise<void> {
         document.querySelector('[data-demo-chapter="forest"]').getAttribute("aria-current") === "true"`);
 
       const beforeFastFrame = await evaluate<number>("__rpgSessionState.frame");
+      await openDemoMenu();
       await clickElement('[data-demo-speed="4"]');
       await waitFor("4x page autoplay", `globalThis.__rpgkitDemo?.current().chapter === "forest" &&
         globalThis.__rpgkitDemo?.current().autoplay === true &&
@@ -1113,6 +1153,7 @@ async function main(): Promise<void> {
       // performs its documented query reload and the new game consumes it.
       const fallbackLoads = loadEvents;
       await evaluate(`globalThis.__rpgkitDemo = undefined`);
+      await openDemoMenu();
       await clickElement('[data-demo-chapter="village"]');
       await waitFor("chapter link reload fallback", `location.search === "?chapter=village" &&
         globalThis.__pocketPlayer?.state === "running" && __rpgSessionState?.mapId === "village" &&
@@ -1397,6 +1438,35 @@ async function main(): Promise<void> {
     await sleep(300);
     const phone = await evaluate<{ pad: boolean; width: number }>(`({ pad: getComputedStyle(document.querySelector(".pad")).display !== "none", width: document.getElementById("stage").getBoundingClientRect().width })`);
     expect("sizing: the phone layout fits and shows touch buttons", phone.pad && phone.width <= 390, `pad ${phone.pad}, screen ${phone.width.toFixed(1)}px wide`);
+    const phoneMenu = await evaluate<{ collapsed: boolean; chapters: number }>(`(() => {
+      const toggle = document.querySelector("[data-demo-toggle]");
+      const body = document.querySelector(".demo-body");
+      return {
+        collapsed: toggle?.getAttribute("aria-expanded") === "false" && body?.hidden === true,
+        chapters: document.querySelectorAll("[data-demo-chapter]").length,
+      };
+    })()`);
+    expect(
+      "sizing: the demo menu starts collapsed on a touch screen",
+      phoneMenu.collapsed && phoneMenu.chapters > 0,
+      `collapsed ${phoneMenu.collapsed}, ${phoneMenu.chapters} chapter(s)`,
+    );
+    if (phoneMenu.chapters > 0) {
+      await clickElement('[data-demo-toggle]');
+      const opened = await evaluate<string>(`document.querySelector("[data-demo-toggle]").getAttribute("aria-expanded")`);
+      const firstChapter = await evaluate<string>(`document.querySelector("[data-demo-chapter]").dataset.demoChapter`);
+      expect("sizing: the demo menu toggle opens the panel", opened === "true", `aria-expanded=${opened}`);
+      await clickElement(`[data-demo-chapter="${firstChapter}"]`);
+      const picked = await evaluate<{ collapsed: boolean; current: string | null }>(`({
+        collapsed: document.querySelector("[data-demo-toggle]").getAttribute("aria-expanded") === "false",
+        current: document.querySelector("[data-demo-chapter][aria-current='true']")?.dataset.demoChapter ?? null,
+      })`);
+      expect(
+        "sizing: picking a chapter jumps and collapses the menu again",
+        picked.collapsed && picked.current === firstChapter,
+        `collapsed ${picked.collapsed}, current ${picked.current}, wanted ${firstChapter}`,
+      );
+    }
     await screenshot("phone");
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
     await cdp.send("Emulation.clearDeviceMetricsOverride");

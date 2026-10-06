@@ -504,8 +504,12 @@ simDescribe("sunstone — render budget", () => {
     // resumability predicate, coalesced effect dispatch and tagged-modal
     // save validation: measured 966,169 B. Keep a narrow margin.
     // The seamless commit-frame preview handover (+673) and the stepped
-    // World build (+1,697) measure 968,710 B.
-    expect(jsBytes).toBeLessThan(969_500);
+    // World build (+1,697) measure 968,710 B. GameView tap-to-walk (the
+    // tap-to-walk module, pointer-line drain and per-frame route fold)
+    // adds 7,270: measured 975,980 B. The per-reference-tick route resolver
+    // (the session/attract hook that keeps a turn from overshooting at 4 Hz)
+    // adds 977: measured 976,957 B. Keep a narrow margin.
+    expect(jsBytes).toBeLessThan(978_000);
   });
 });
 

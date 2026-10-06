@@ -202,10 +202,15 @@ const maybeTest = preflight.ok ? test : test.skip;
 // building a World in bounded steps (beginWorld/stepWorld) adds 1,697 B to
 // each bundle, and GameView's seamless commit-frame preview handover adds
 // 673 B to Sunstone and the WAV fixture: 608,704, 968,710 and 766,406.
-// Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 608_704;
-const EXPECTED_SUNSTONE_QOA_BYTES = 968_710;
-const EXPECTED_WAV_FIXTURE_BYTES = 766_406;
+// GameView tap-to-walk adds 94 B to Meadow and 7,270 B to Sunstone and the
+// WAV fixture (the tap-to-walk module, pointer-line drain and per-frame
+// route fold): 608,798, 975,980 and 773,676. The per-reference-tick route
+// resolver (the session/attract hook that keeps a turn from overshooting at
+// 4 Hz) adds 502 B to Meadow and 977 B to Sunstone and the WAV fixture:
+// 609,300, 976,957 and 774,653. Re-measure after every shared-path change.
+const EXPECTED_MEADOW_BYTES = 609_300;
+const EXPECTED_SUNSTONE_QOA_BYTES = 976_957;
+const EXPECTED_WAV_FIXTURE_BYTES = 774_653;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

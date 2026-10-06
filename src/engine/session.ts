@@ -1410,6 +1410,9 @@ function ensureMoveControls(s: SessionState): MoveControlState {
 }
 
 const BUTTON_FOR_DIR = [BTN_BITS.DOWN, BTN_BITS.LEFT, BTN_BITS.UP, BTN_BITS.RIGHT] as const;
+/** The d-pad portion of a button mask; a tick-direction resolver replaces
+ *  only these bits on ticks 1..N-1 of a multi-tick frame. */
+const TICK_DIR_MASK = BTN_BITS.UP | BTN_BITS.DOWN | BTN_BITS.LEFT | BTN_BITS.RIGHT;
 
 function stepPlayerWander(
   s: SessionState,
@@ -2040,23 +2043,38 @@ function advanceBattleScene(
   s.scene = null;
 }
 
+/** Per-reference-tick direction resolver for a view-local walking route
+ *  (GameView tap-to-walk). Called after a tick with the post-tick state,
+ *  returns the d-pad bit to hold on the NEXT reference tick (0 to stop).
+ *  The route itself stays view-local: the reducer only calls the resolver
+ *  and folds its bit, so saves, rewind and attract tapes never see it. */
+export type SessionTickDirection = (state: SessionState) => number;
+
 /** One host virtual frame. The fold runs on the fixed MOTION_HZ reference:
  *  every host frame folds MOTION_HZ/hz reference ticks — two at 30 Hz,
  *  three at 20 Hz, fifteen at 4 Hz. Motion, waits, text and fades are
  *  therefore functions of virtual time and agree at every host rate. Input
  *  edges are one host frame wide and are delivered only on the FIRST
  *  reference tick of a batch; the remaining ticks reuse the held button
- *  mask with no edges. Pure: returns a NEW SessionState. */
+ *  mask with no edges. Pure: returns a NEW SessionState.
+ *
+ *  `tickDirection` advances a view-local walking route at reference-tick
+ *  boundaries: it is called after every tick but the frame's last with the
+ *  post-tick state, and its bit REPLACES the d-pad portion of the next
+ *  tick's buttons (the frame input already carries the first tick's bit).
+ *  On a 60 Hz host the batch is one tick, so the resolver is never called
+ *  and the path is byte-identical to a session without one. */
 export function stepSession(
   sess: Session,
   s0: SessionState,
   input: SessionInput,
   effects?: SessionEffectSink,
+  tickDirection?: SessionTickDirection,
 ): SessionState {
-  if (!sess.immutableState) return foldSession(sess, s0, input, effects);
+  if (!sess.immutableState) return foldSession(sess, s0, input, effects, tickDirection);
   const metadata = beginStateMetadata();
   try {
-    return foldSession(sess, s0, input, effects);
+    return foldSession(sess, s0, input, effects, tickDirection);
   } finally {
     endStateMetadata(metadata);
   }
@@ -2067,6 +2085,7 @@ function foldSession(
   s0: SessionState,
   input: SessionInput,
   effects?: SessionEffectSink,
+  tickDirection?: SessionTickDirection,
 ): SessionState {
   // One working copy per frame. The reference ticks below advance it in
   // place; characters and switch records stay shared with s0 until written.
@@ -2125,12 +2144,18 @@ function foldSession(
   let frameHostActions: HostAction[] | undefined;
 
   let prevCell = { x: s.move.tx, y: s.move.ty };
+  // The d-pad bit a view-local walking route resolved for this tick. Tick 0
+  // folds the frame input unchanged; ticks 1..N-1 replace ONLY the d-pad
+  // portion, so a turn resolved mid-frame takes effect at the next tile.
+  let nextDir = 0;
   for (let tick = 0; tick < ticks; tick++) {
     const tickInput: SessionInput = s.scene
       ? NO_MAP_INPUT
       : tick === 0
         ? input
-        : { buttons: input.buttons, confirmEdge: false, cancelEdge: false, upEdge: false, downEdge: false };
+        : tickDirection
+          ? { buttons: (input.buttons & ~TICK_DIR_MASK) | nextDir, confirmEdge: false, cancelEdge: false, upEdge: false, downEdge: false }
+          : { buttons: input.buttons, confirmEdge: false, cancelEdge: false, upEdge: false, downEdge: false };
     const hadScene = s.scene !== null;
     const tickResult = stepReferenceTick(sess, s, tickInput, prevCell);
     prevCell = tickResult;
@@ -2183,6 +2208,10 @@ function foldSession(
     // batch (review 1274 B1): reference clock keeps advancing, the fold
     // does not.
     if (s.interp.error) break;
+    // The route resolver advances at the reference-tick boundary; its bit
+    // replaces the d-pad on the next tick. Skipped after the frame's last
+    // tick: the next frame's fold carries its own first-tick bit.
+    if (tickDirection && tick + 1 < ticks) nextDir = tickDirection(s) | 0;
   }
   if (s.scene) {
     const sceneTicks = sceneAtFrameStart ? ticks : Math.max(0, ticks - sceneStartedAt);

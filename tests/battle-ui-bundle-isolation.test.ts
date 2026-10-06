@@ -196,8 +196,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // linked save validator brings the measured bundle to 966,340 (+2,358).
 // The sandboxed neighbour preview stays behind pocket-rpgkit/ui/world;
 // GameView's seamless commit-frame handover (+673) and the stepped World
-// build (+1,697) bring it to 968,710.
-const EXPECTED_BYTES = 968_710;
+// build (+1,697) bring it to 968,710. GameView tap-to-walk (the
+// tap-to-walk module, pointer-line drain and per-frame route fold) adds
+// 7,270: measured 975,980. The per-reference-tick route resolver (the
+// session/attract hook that keeps a turn from overshooting at 4 Hz) adds
+// 977: measured 976,957.
+const EXPECTED_BYTES = 976_957;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

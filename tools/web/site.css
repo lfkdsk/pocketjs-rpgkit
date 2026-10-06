@@ -140,6 +140,51 @@ table.controls td { padding: 4px 0; color: var(--muted); }
 }
 .play:hover { background: #ffd98a; color: var(--accent-ink); }
 
+/* Landing page chapter lists: a compact disclosure, collapsed by default,
+   whose chips wrap instead of a long vertical link list (tools/web.ts). */
+.chapters {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+.chapters > summary {
+  cursor: pointer;
+  color: var(--muted);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.chapters > summary:hover { color: var(--accent); }
+.chapter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.chapter-chips a {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.chapter-chips a:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Nothing on the page should force a horizontal scrollbar on a phone:
+   media stays inside its column, and long unbreakable tokens wrap. */
+img, video, canvas { max-width: 100%; }
+.card-body .description,
+.controls td,
+.info .description {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 860px) {
   .game-card { grid-template-columns: 1fr; gap: 14px; }
   .shot img { width: 100%; max-width: 480px; }
@@ -160,6 +205,21 @@ table.controls td { padding: 4px 0; color: var(--muted); }
 }
 .bar h1 { margin: 0; font-size: 18px; }
 .back { font-size: 14px; }
+
+.bar-button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.bar-button:hover { border-color: var(--accent); color: var(--accent); }
+.bar-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 .audio-controls {
   display: flex;
@@ -189,6 +249,14 @@ table.controls td { padding: 4px 0; color: var(--muted); }
   display: flex;
   justify-content: center;
   padding: 0 16px;
+}
+
+/* The screen and its touch controls stay together in normal flow (screen,
+   then the pad right below it on touch devices) and become the fixed
+   fullscreen surface in immersive mode (body.immersive, player.js). */
+.play-surface {
+  display: flex;
+  flex-direction: column;
 }
 
 /* tools/web/player.js sets the exact size: a whole number of device pixels
@@ -264,6 +332,7 @@ body.embedded .info,
 body.embedded .demo-controls,
 body.embedded .site-footer { display: none; }
 body.embedded main { display: flex; align-items: center; justify-content: center; height: 100vh; }
+body.embedded .play-surface { display: contents; }
 body.embedded .screen-area { width: 100%; padding: 0; }
 body.embedded .stage { box-shadow: none; }
 
@@ -323,7 +392,30 @@ body.embedded .stage { box-shadow: none; }
   border-radius: 6px;
   background: var(--panel);
 }
-.demo-controls h2 { margin: 0 0 10px; font-size: 16px; }
+.demo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.demo-head h2 { margin: 0; font-size: 16px; }
+.demo-toggle {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #1c212b;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.demo-toggle:hover { border-color: var(--accent); color: #ffd98a; }
+.demo-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.demo-body[hidden] { display: none; }
 .demo-control-row {
   display: grid;
   grid-template-columns: 76px 1fr;
@@ -347,6 +439,8 @@ body.embedded .stage { box-shadow: none; }
   color: var(--text);
   font-size: 13px;
   text-decoration: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .demo-button:hover { border-color: var(--accent); color: #ffd98a; }
 .demo-button.active {
@@ -378,11 +472,12 @@ body.embedded .stage { box-shadow: none; }
   flex-direction: column;
   gap: 3px;
 }
-.demo-chapter-title { font-weight: 650; }
+.demo-chapter-title { font-weight: 650; overflow-wrap: anywhere; }
 .demo-chapter-description {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .demo-chapter-card.active .demo-chapter-description { color: #463a21; }
 .demo-speed { min-width: 42px; text-align: center; }
@@ -495,3 +590,219 @@ body.embedded .stage { box-shadow: none; }
 }
 .pad .actions button { border-radius: 24px; padding: 0 12px; }
 .pad .pad-select, .pad .pad-start { font-size: 12px; height: 36px; }
+
+/* ---- immersive (fullscreen play) ----------------------------------------
+   body.immersive is added by tools/web/player.js when the Fullscreen button
+   is pressed. On browsers with the Fullscreen API the play surface itself is
+   the fullscreen element; everywhere else (iPhone Safari) the same class
+   drives this CSS fallback: a fixed surface over 100dvh/100dvw that respects
+   the safe-area insets on every side, with the page chrome hidden. */
+body.immersive {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+body.immersive .bar,
+body.immersive .caption,
+body.immersive .info,
+body.immersive .demo-controls,
+body.immersive .site-footer,
+body.immersive .editor-tools,
+body.immersive noscript { display: none; }
+
+body.immersive .play-surface {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  width: 100dvw;
+  height: 100dvh;
+  z-index: 10;
+  background: var(--bg);
+  padding:
+    env(safe-area-inset-top)
+    env(safe-area-inset-right)
+    env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body.immersive .screen-area {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  /* The stage is sized by fit.ts to the largest whole-pixel scale; centre
+     it both ways so the handheld layout keeps it off the pad corners. */
+  align-items: center;
+}
+body.immersive .pad {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: none;
+  margin: 0;
+  padding:
+    0
+    max(12px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+  align-items: flex-end;
+}
+
+/* Landscape immersive: the pad floats OVER the maximised screen. The
+   container receives no touch (only the buttons do), so taps on the game
+   picture between the buttons reach the game. Buttons rest at a light
+   translucent opacity and turn solid while held; Start/Select shrink to a
+   centered pair on the bottom edge. Portrait immersive is untouched. */
+@media (orientation: landscape) {
+  body.immersive .pad { pointer-events: none; }
+  body.immersive .pad button {
+    pointer-events: auto;
+    opacity: 0.38;
+    border-color: rgba(223, 228, 236, 0.55);
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  }
+  body.immersive .pad button.held {
+    opacity: 1;
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-ink);
+    text-shadow: none;
+  }
+  body.immersive .pad .pad-select,
+  body.immersive .pad .pad-start {
+    position: fixed;
+    top: calc(8px + env(safe-area-inset-top));
+    bottom: auto;
+  }
+  body.immersive .pad .pad-select { left: calc(8px + env(safe-area-inset-left)); }
+  body.immersive .pad .pad-start { left: calc(66px + env(safe-area-inset-left)); }
+  body.immersive .pad-toggle { display: block; }
+  /* Hidden: the pad is gone and the toggle shrinks to a small translucent
+     "show" button in the corner. */
+  body.immersive.pad-hidden .pad { display: none; }
+  body.immersive.pad-hidden .pad-toggle {
+    padding: 3px 9px;
+    font-size: 11px;
+    opacity: 0.45;
+  }
+}
+
+/* The corner tools of immersive play: "exit fullscreen" and (landscape
+   only) the "hide buttons" toggle. Only the buttons receive touch; the
+   container itself lets taps fall through to the game. */
+.immersive-tools {
+  position: absolute;
+  top: calc(8px + env(safe-area-inset-top));
+  right: calc(8px + env(safe-area-inset-right));
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+.immersive-tools > button {
+  pointer-events: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.immersive-tools > button:hover { border-color: var(--accent); color: var(--accent); }
+.immersive-tools > button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The pad toggle stays hidden until landscape immersive play; portrait
+   immersive keeps its unchanged bottom-row pad. */
+.pad-toggle { display: none; }
+
+/* Shown only while the device is portrait in immersive mode; the layout
+   still plays portrait, this is a dismissible suggestion. */
+.rotate-hint {
+  position: absolute;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%;
+  z-index: 2;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 24px);
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(13, 15, 20, 0.92);
+  font-size: 13px;
+  transform: translateX(-50%);
+  white-space: normal;
+}
+.rotate-hint p { margin: 0; }
+.rotate-hint button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #1c212b;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+@media (orientation: portrait) {
+  body.immersive .rotate-hint:not([hidden]) { display: flex; }
+}
+
+/* ---- player page language switch ----------------------------------------
+   A game that declares languages in web.json gets a switcher in the bar.
+   The inline script (tools/web/i18n.ts) resolves the language and swaps the
+   page chrome; <html data-page-lang="pending"> keeps the body hidden until
+   it ran, so an English page never flashes before a Chinese one. */
+html[data-page-lang="pending"] body { visibility: hidden; }
+
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lang-switch .lang-button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.lang-switch .lang-button:hover { border-color: var(--accent); color: var(--accent); }
+.lang-switch .lang-button.active,
+.lang-switch .lang-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Chapters/autoplay unavailable in the active language (tapes recorded in
+   another): the inline switcher fills this notice and disables the cards. */
+.demo-chapters-notice {
+  margin: 9px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #1c212b;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.demo-chapters-notice[hidden] { display: none; }
+.demo-button.is-disabled {
+  opacity: .5;
+  pointer-events: none;
+}

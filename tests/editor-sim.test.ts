@@ -785,7 +785,11 @@ simDescribe("editor budget", () => {
     // Deferred autosave scheduling adds 1,714 shared runtime bytes: the
     // measured editor bundle is 1,627,080 B. The seamless commit-frame
     // preview handover and the stepped World build bring it to 1,629,994 B.
-    // Keep a narrow margin.
-    expect(js).toBeLessThan(1_631_000);
+    // GameView tap-to-walk adds 7,298 B (the editor playtest passes
+    // tapToWalk=false, so only the shared GameView/drain path ships):
+    // measured 1,637,292 B. The per-reference-tick route resolver (the
+    // session/attract hook that keeps a turn from overshooting at 4 Hz)
+    // adds 977 shared bytes: measured 1,638,269 B. Keep a narrow margin.
+    expect(js).toBeLessThan(1_640_000);
   });
 });

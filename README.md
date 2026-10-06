@@ -173,6 +173,16 @@ page loads), then use the arrow keys and **A**/**Enter**/**Z** to confirm.
 Each page lists the rest of its controls. Grow's timeline also takes a mouse
 or touch drag, and phones get on-screen buttons.
 
+On a phone the chapter menu starts collapsed (a **Chapters** button opens it;
+picking a chapter or speed closes it again), the screen and the touch buttons
+share the first viewport in portrait, and **Fullscreen** enters a landscape
+play mode: real fullscreen with an orientation lock where the browser allows,
+a fixed safe-area layout where it does not, with an exit button and a
+dismissible rotate hint. The site ships a web app manifest and generated
+icons, so "Add to Home Screen" opens without browser chrome.
+`bun tools/web-mobile-verify.ts` plays the built site across four portrait and
+four landscape phone viewports in emulated Chrome.
+
 The [browser editor](https://lfkdsk.github.io/pocketjs-rpgkit/editor/) can
 open a local `rpgkit-project/v1` JSON file or start from the bundled Sunstone
 and Meadow projects. **Save** keeps the current document in this browser's
@@ -2288,6 +2298,56 @@ page hides its header, caption, chapter buttons, on-screen pad, controls
 table and footer and fits the game screen to the window, for pages that show
 the player in an iframe (Studio's play-test panel embeds the `preview` page
 this way). The editor page's file tools stay visible.
+
+### Player page languages
+
+A game whose content ships in more than one language declares them in its
+`web.json` entry:
+
+```json
+"languages": [
+  { "code": "en", "label": "English" },
+  { "code": "zh", "label": "中文" }
+],
+"languageSwitch": { "param": "lang", "storage": "pocket-tuxemon/lang" }
+```
+
+The player page then shows a language switcher in its top bar and translates
+its own chrome (the demo menu, chapters, autoplay, the controls table, and
+the fullscreen and rotate hints), with `<html lang>` following the choice.
+The first entry is the default. The switch persists the choice through the
+same URL parameter (`param`, default `lang`) and localStorage key (`storage`,
+default `pocket-rpgkit:<game-id>:lang:v1`) that the game reads at boot, so
+the page switcher, the game's own in-game switcher and a `?lang=<code>` deep
+link all agree: a deep link wins for that visit, the stored choice wins after
+a reload, and switching reboots the game in the new language. Games that
+declare no languages keep their page exactly as it was.
+
+Chapter titles and descriptions, and the game description, can be given per
+language under `i18n.<code>`; so can the controls table — `controls` maps
+each English action string to its translation and `pointer` translates the
+mouse/touch row, so the table shows only the active language's wording — and
+a chapter's preview image (`chapters.<id>.preview`, copied beside the default
+one and swapped with the language). A `chaptersNotice` is shown (and the
+chapter cards disabled) when chapters or autoplay are unavailable in a
+language, for example when their tapes were recorded in another:
+
+```json
+"i18n": {
+  "zh": {
+    "description": "……",
+    "chapters": { "cave": { "title": "洞穴", "description": "……" } },
+    "controls": { "Talk, confirm": "对话、确认" },
+    "pointer": "鼠标与触屏",
+    "chaptersNotice": "……"
+  }
+}
+```
+
+Chapter and autoplay clicks only touch the demo's own query keys
+(`chapter`, `autoplay`, `speed`, `map`, `x`, `y`), so a `?lang=<code>` deep
+link — and any other parameter — survives them and keeps winning until it is
+gone.
 
 Chapter snapshots and save codes are the same data as ordinary saves; see
 [Saves and save codes](#saves-and-save-codes).
