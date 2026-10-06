@@ -23,7 +23,7 @@ import { Text, View } from "@pocketjs/framework/components";
 import { Osk } from "@pocketjs/framework/osk";
 import type { OskController } from "@pocketjs/framework/osk";
 import type { FsSlotInfo } from "../host/save-fs.ts";
-import { SAVE_MENU_UI_TEXT, saveMenuRootRows, type MenuState } from "../engine/save-menu.ts";
+import { SAVE_MENU_UI_TEXT, saveMenuRootRows, type ExtraRootRow, type MenuState } from "../engine/save-menu.ts";
 import { fitBounded, marqueeOffset, type BoundedCell } from "./list-window.ts";
 import { useMarqueeTick } from "./use-marquee-tick.ts";
 import { BoundedLine } from "./BoundedLine.tsx";
@@ -54,6 +54,10 @@ export interface SaveMenuProps {
   /** The kit's words (engine/ui-text.ts): any subset of keys; missing keys
    *  keep English. Pass the same table to menuStep's `text`. */
   uiText?: UiTextOverrides;
+  /** Game-defined rows appended after the kit's own root rows. Their labels
+   *  are the game's own (already localized) text; CONFIRM on one returns an
+   *  `extra` command the host performs. */
+  extraRows?: readonly ExtraRootRow[];
 }
 
 /** Font slot of `text-sm` (14 px regular): index 1 of PocketJS's FONT_PX
@@ -156,13 +160,16 @@ export function SaveMenu(props: SaveMenuProps) {
     a.kind === b.kind && a.overflow === b.overflow && sameStrings(a.rows, b.rows);
   const rootTitle = createMemo(() => boundSm(rawTitle(), CONTENT_W, TITLE_MAX_ROWS), undefined, { equals: sameCell });
   const hasAutosave = () => (props.autosave?.() ?? null) !== null;
-  const rootRows = () => saveMenuRootRows(props.hasFs, hasAutosave());
-  // Each root row's label, bounded after the cursor prefix.
+  const rootRows = () => saveMenuRootRows(props.hasFs, hasAutosave(), props.extraRows);
+  // Each root row's label, bounded after the cursor prefix. Kit rows resolve
+  // their ui-text key; extra rows carry their own already-localized label.
   const rootLabels = createMemo(
     () => {
       const measure = slotMeasure(TEXT_SM_SLOT);
       const prefix = Math.max(measure(SELECTED_PREFIX), measure(IDLE_PREFIX));
-      return rootRows().map((row) => boundSm(text()[row.textKey], CONTENT_W - prefix, ROOT_ROW_MAX_ROWS));
+      return rootRows().map((row) =>
+        boundSm(row.textKey ? text()[row.textKey] : row.label, CONTENT_W - prefix, ROOT_ROW_MAX_ROWS)
+      );
     },
     undefined,
     { equals: (a, b) => a.length === b.length && a.every((cell, i) => sameCell(cell, b[i]!)) },

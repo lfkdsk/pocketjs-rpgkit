@@ -52,18 +52,30 @@ export type MenuCommand =
   | { op: "load-slot"; slot: number }
   | { op: "load-autosave" }
   | { op: "open-export" }
-  | { op: "open-import" };
+  | { op: "open-import" }
+  /** A game-defined root row was confirmed. The menu stays on the root so
+   *  the game can close it or open its own screen; the host performs `id`. */
+  | { op: "extra"; id: string };
 
 export interface MenuStepResult {
   state: MenuState;
   command?: MenuCommand;
 }
 
-/** A root row: `label` is the English default, `textKey` its ui-text key. */
+/** A root row: `label` is the English default, `textKey` its ui-text key.
+ *  Game-supplied extra rows ({@link ExtraRootRow}) omit `textKey` and carry
+ *  their already-localized label. */
 export interface RootRow<Id extends string> {
   id: Id;
   label: string;
-  textKey: SaveMenuTextKey & UiTextKey;
+  textKey?: SaveMenuTextKey & UiTextKey;
+}
+
+/** A game-defined root row appended after the kit's own rows. CONFIRM on it
+ *  returns an `extra` command instead of entering a kit page. */
+export interface ExtraRootRow {
+  id: string;
+  label: string;
 }
 
 // Literal rows (no helper call) so a game that never opens the menu can
@@ -87,8 +99,13 @@ export const ROOT_AUTOSAVE: readonly RootRow<"slots-load" | "code-export" | "cod
   { id: "code-import", label: "Load code (import)", textKey: "save.codeImport" },
 ];
 
-export function saveMenuRootRows(hasFs: boolean, autosaveAvailable = false): readonly RootRow<string>[] {
-  return hasFs ? ROOT_FS : autosaveAvailable ? ROOT_AUTOSAVE : ROOT_CODE;
+export function saveMenuRootRows(
+  hasFs: boolean,
+  autosaveAvailable = false,
+  extra: readonly ExtraRootRow[] = [],
+): readonly RootRow<string>[] {
+  const base = hasFs ? ROOT_FS : autosaveAvailable ? ROOT_AUTOSAVE : ROOT_CODE;
+  return extra.length === 0 ? base : [...base, ...extra];
 }
 
 function rootIndex(hasFs: boolean, autosaveAvailable: boolean, id: string): number {
@@ -118,6 +135,8 @@ export function menuStep(
     autosaveAvailable?: boolean;
     codePages: number;
     text?: UiTextOverrides;
+    /** Game-defined rows appended after the kit's own root rows. */
+    extra?: readonly ExtraRootRow[];
   },
 ): MenuStepResult {
   switch (state.kind) {
@@ -125,7 +144,7 @@ export function menuStep(
       return { state };
 
     case "root": {
-      const rows = saveMenuRootRows(ctx.hasFs, ctx.autosaveAvailable === true);
+      const rows = saveMenuRootRows(ctx.hasFs, ctx.autosaveAvailable === true, ctx.extra);
       const index = Math.min(state.index, rows.length - 1);
       if (action === "up") return { state: { ...state, index: cycle(index, rows.length, -1) } };
       if (action === "down") return { state: { ...state, index: cycle(index, rows.length, 1) } };
@@ -135,7 +154,10 @@ export function menuStep(
         if (id === "slots-save") return { state: { kind: "slots-save", index: 0 } };
         if (id === "slots-load") return { state: { kind: "slots-load", index: 0 } };
         if (id === "code-export") return { state: { kind: "code-export", page: 0 }, command: { op: "open-export" } };
-        return { state: { kind: "code-import" }, command: { op: "open-import" } };
+        if (id === "code-import") return { state: { kind: "code-import" }, command: { op: "open-import" } };
+        // An extra (game-defined) row: the host performs its command; the
+        // menu stays on the root so the game can close or navigate itself.
+        return { state: { kind: "root", index }, command: { op: "extra", id } };
       }
       return { state };
     }

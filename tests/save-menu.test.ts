@@ -9,7 +9,9 @@ import { describe, expect, test } from "bun:test";
 import {
   exportPage,
   menuStep,
+  saveMenuRootRows,
   slotInRange,
+  type ExtraRootRow,
   type MenuState,
 } from "../src/engine/save-menu.ts";
 
@@ -140,5 +142,68 @@ describe("P1⑤ save menu — slot validation", () => {
     expect(slotInRange(0)).toBe(false);
     expect(slotInRange(4)).toBe(false);
     expect(slotInRange(1.5)).toBe(false);
+  });
+});
+
+describe("P1⑤ save menu — extra root rows", () => {
+  const EXTRA: readonly ExtraRootRow[] = [
+    { id: "tuxepedia", label: "Tuxepedia" },
+    { id: "journal", label: "Journal" },
+  ];
+  const FS_EXTRA_CTX = { ...FS_CTX, extra: EXTRA };
+
+  test("saveMenuRootRows appends extra rows after the kit rows", () => {
+    const rows = saveMenuRootRows(true, false, EXTRA);
+    expect(rows.map((r) => r.id)).toEqual([
+      "slots-save",
+      "slots-load",
+      "code-export",
+      "code-import",
+      "tuxepedia",
+      "journal",
+    ]);
+    // Extra rows carry their label and no ui-text key.
+    expect(rows[4]!.label).toBe("Tuxepedia");
+    expect(rows[4]!.textKey).toBeUndefined();
+    // Without extra rows the list is unchanged.
+    expect(saveMenuRootRows(true, false, [])).toHaveLength(4);
+  });
+
+  test("root navigation wraps over the combined rows", () => {
+    // 4 kit rows + 2 extra = 6 rows
+    let s: MenuState = { kind: "root", index: 5 };
+    s = menuStep(s, "down", FS_EXTRA_CTX).state;
+    expect(s).toEqual({ kind: "root", index: 0 });
+    s = menuStep(s, "up", FS_EXTRA_CTX).state;
+    expect(s).toEqual({ kind: "root", index: 5 });
+  });
+
+  test("confirm on an extra row returns the extra command and stays on root", () => {
+    const r = menuStep({ kind: "root", index: 4 }, "confirm", FS_EXTRA_CTX);
+    expect(r.state).toEqual({ kind: "root", index: 4 });
+    expect(r.command).toEqual({ op: "extra", id: "tuxepedia" });
+    const r2 = menuStep({ kind: "root", index: 5 }, "confirm", FS_EXTRA_CTX);
+    expect(r2.command).toEqual({ op: "extra", id: "journal" });
+  });
+
+  test("confirm on a kit row still enters its page with extra rows present", () => {
+    const r = menuStep({ kind: "root", index: 0 }, "confirm", FS_EXTRA_CTX);
+    expect(r.state).toEqual({ kind: "slots-save", index: 0 });
+    expect(r.command).toBeUndefined();
+    // back from a sub-page still lands on the kit row's index
+    expect(menuStep({ kind: "slots-save", index: 0 }, "back", FS_EXTRA_CTX).state)
+      .toEqual({ kind: "root", index: 0 });
+  });
+
+  test("back on root still closes the menu", () => {
+    expect(menuStep({ kind: "root", index: 4 }, "back", FS_EXTRA_CTX).state)
+      .toEqual({ kind: "closed" });
+  });
+
+  test("a code-only target appends extra rows after its two rows", () => {
+    const rows = saveMenuRootRows(false, false, EXTRA);
+    expect(rows.map((r) => r.id)).toEqual(["code-export", "code-import", "tuxepedia", "journal"]);
+    const r = menuStep({ kind: "root", index: 2 }, "confirm", { ...CODE_CTX, extra: EXTRA });
+    expect(r.command).toEqual({ op: "extra", id: "tuxepedia" });
   });
 });
