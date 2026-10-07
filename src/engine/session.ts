@@ -117,7 +117,9 @@ import {
   charsPositionRevision,
   createChars,
   installRoute,
+  latchRouteSpeed,
   placeChar,
+  routeSpeedConfig,
   shareChars,
   stopCharRoute,
   stepCharsInPlace,
@@ -202,6 +204,7 @@ import type {
   MapIndexEntry,
   MapRepository,
   MoveControl,
+  MoveSpeed,
   MoveStep,
   ProjectSource,
   Command,
@@ -246,6 +249,9 @@ export interface PlayerRoute {
   plan: PathPlan | null;
   /** Remaining replans for the current path step; survives plan rebuilds. */
   pathRetriesLeft: number | null;
+  /** A speed grade latched for this route only (routeSpeed control);
+   *  absent = the player's resolved speed. Dies with the route. */
+  speed?: MoveSpeed;
 }
 
 /** One source-owned tile crossing. It exists only between a proven opening's
@@ -1497,16 +1503,30 @@ function applyTargetMoveControl(
   if (target === "player") {
     applyMoveControl(ensureMoveControls(s).player, control);
     if (control.kind === "stop") stopPlayerRoute(s);
+    else if (control.kind === "routeSpeed" && s.playerRoute) {
+      // Latch onto the running route; nothing stays pending for later routes.
+      s.playerRoute.speed = control.value;
+      delete ensureMoveControls(s).player.routeSpeed;
+    }
     return;
   }
   const override = eventMoveOverride(s, target.event);
   if (!override) return;
   applyMoveControl(override, control);
-  if (control.kind !== "stop") return;
-  const stopped = stopCharRoute(s.chars, target.event);
-  s.chars = stopped.state;
-  if (stopped.displacedWaiter) {
-    s.interp = continueExternal(s.interp, stopped.displacedWaiter);
+  if (control.kind === "stop") {
+    const stopped = stopCharRoute(s.chars, target.event);
+    s.chars = stopped.state;
+    if (stopped.displacedWaiter) {
+      s.interp = continueExternal(s.interp, stopped.displacedWaiter);
+    }
+    return;
+  }
+  if (control.kind === "routeSpeed") {
+    // Latch onto a running forced route; otherwise the grade stays pending
+    // (in the override) for the next route install to consume.
+    const latched = latchRouteSpeed(s.chars, target.event, control.value);
+    s.chars = latched.state;
+    if (latched.latched) delete override.routeSpeed;
   }
 }
 
@@ -3244,6 +3264,8 @@ function applyMoveRequest(sess: Session, s: SessionState, req: PendingMoveOperat
       s.interp = continueExternal(s.interp, s.playerRoute.waiter);
     }
     if (s.interp.moveControls) resumeMoveRoute(s.interp.moveControls.player);
+    // A pending routeSpeed is consumed by the route it was waiting for.
+    const playerSpeed = s.interp.moveControls?.player.routeSpeed;
     s.playerRoute = {
       steps: req.route.steps,
       pc: 0,
@@ -3255,7 +3277,11 @@ function applyMoveRequest(sess: Session, s: SessionState, req: PendingMoveOperat
       takeOver: s.move.moving,
       plan: null,
       pathRetriesLeft: null,
+      ...(playerSpeed !== undefined ? { speed: playerSpeed } : {}),
     };
+    if (playerSpeed !== undefined && s.interp.moveControls) {
+      delete s.interp.moveControls.player.routeSpeed;
+    }
     return;
   }
   // A route to an event with no live character (no active page, or it
@@ -3268,14 +3294,18 @@ function applyMoveRequest(sess: Session, s: SessionState, req: PendingMoveOperat
   }
   const override = s.interp.moveControls?.events[req.eventId];
   if (override) resumeMoveRoute(override);
+  // A pending routeSpeed is consumed by the route it was waiting for.
+  const routeSpeed = override?.routeSpeed;
   const installed = installRoute(
     s.chars,
     req.eventId,
     req.route,
     req.wait ? req.fiber : null,
     sess.cfg,
+    routeSpeed,
   );
   s.chars = installed.state;
+  if (routeSpeed !== undefined && override) delete override.routeSpeed;
   if (installed.displacedWaiter) {
     s.interp = continueExternal(s.interp, installed.displacedWaiter);
   }
@@ -3383,7 +3413,7 @@ function stepPlayerRoute(
   const r = s.playerRoute!;
   const cfg = sess.cfg;
   const m = s.move;
-  const desiredCfg = movementConfigFor(cfg, settings);
+  const desiredCfg = routeSpeedConfig(cfg, settings, r.speed);
   const stepCfg = r.phase > 0
     ? activeStepConfig({ tx: m.tx, ty: m.ty, px: m.px, py: m.py, phase: r.phase }, desiredCfg)
     : desiredCfg;
@@ -3460,6 +3490,12 @@ function stepPlayerRoute(
   // --- turn / path steps ---------------------------------------------------
   if (typeof step === "object") {
     if ("control" in step) {
+      if (step.control.kind === "routeSpeed") {
+        // Scoped to this route: latch the grade, skip the persistent override.
+        r.speed = step.control.value;
+        advance();
+        return;
+      }
       applyMoveControl(ensureMoveControls(s).player, step.control);
       if (step.control.kind === "stop") endPlayerRoute(s);
       else advance();
@@ -3582,7 +3618,9 @@ function stepPlayerPath(
   const r = s.playerRoute!;
   const m = s.move;
   const cfg = sess.cfg;
-  const moveCfg = movementConfigFor(cfg, settings);
+  // Path steps run at the route's latched grade, the same way event routes
+  // and the plain step path above resolve their speed.
+  const moveCfg = routeSpeedConfig(cfg, settings, r.speed);
 
   if (r.plan === null) {
     let gx: number;

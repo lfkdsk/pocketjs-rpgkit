@@ -212,10 +212,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // path in each bundle; they do not add a runtime loop or audio dependency.
 // PocketJS's socket module adds its entry to the shared platform capability
 // table, 192 B in each: 609,564, 977,221 and 774,917. Re-measure after
-// every shared-path change.
-const EXPECTED_MEADOW_BYTES = 609_564;
-const EXPECTED_SUNSTONE_QOA_BYTES = 977_221;
-const EXPECTED_WAV_FIXTURE_BYTES = 774_917;
+// every shared-path change. The routeSpeed movement control adds 1,964 to
+// the Meadow and WAV bundles and 2,495 to Sunstone (measured).
+const EXPECTED_MEADOW_BYTES = 611_528;
+const EXPECTED_SUNSTONE_QOA_BYTES = 979_716;
+const EXPECTED_WAV_FIXTURE_BYTES = 776_881;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

@@ -656,6 +656,8 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
         "state.interp.moveControls.player.facingMode: followMovement|locked|scripted required"],
       ["cooldown", (snapshot) => { snapshot.interp.moveControls.player.cooldown = -1; },
         "state.interp.moveControls.player.cooldown: non-negative integer required"],
+      ["routeSpeed", (snapshot) => { snapshot.interp.moveControls.player.routeSpeed = 9; },
+        "state.interp.moveControls.player.routeSpeed: movement speed grade 1..6 required"],
     ];
     for (const [label, mutate, expected] of invalidOverrides) {
       const bad = structuredClone(valid);
@@ -708,5 +710,419 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
   test("creating a move-control state is prototype-safe", () => {
     const state = createMoveControlState();
     expect(Object.getPrototypeOf(state.events)).toBeNull();
+  });
+});
+
+describe("KM1 route-scoped speed (routeSpeed)", () => {
+  test("a pending routeSpeed latches onto the next forced route and is gone when it ends", () => {
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const driver = event("driver", 2, 3, [
+      page("action", [
+        { op: "moveControl", target: { event: "runner" }, control: { kind: "routeSpeed", value: 6 } },
+        {
+          op: "moveRoute",
+          target: { event: "runner" },
+          route: { steps: ["moveRight", "moveRight", "moveRight"], repeat: false, skippable: false },
+        },
+        { op: "selfSwitch", key: "A", value: true },
+      ]),
+      page("action", [
+        {
+          op: "moveRoute",
+          target: { event: "runner" },
+          route: { steps: ["moveRight"], repeat: false, skippable: false },
+        },
+      ], { condition: { selfSwitch: "A" } }),
+    ]);
+    const p = project([map("a", [driver, runner])]);
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    // The pending grade is consumed at install; nothing stays behind.
+    expect(out.interp.moveControls?.events.runner?.routeSpeed).toBeUndefined();
+    expect(out.chars.chars.runner?.route?.speed).toBe(6);
+    // Grade 6 takes four reference ticks per tile (page speed 4 would take 16).
+    out = fold(session, out, 3);
+    expect(out.chars.chars.runner).toMatchObject({ tx: 1, phase: 3, px: 28 });
+    out = fold(session, out, 9); // 3 tiles at 4 ticks each, route ends
+    expect(out.chars.chars.runner).toMatchObject({ tx: 4, phase: 0, px: 64 });
+    expect(out.chars.chars.runner?.route).toBeNull();
+    expect(out.interp.moveControls?.events.runner?.routeSpeed).toBeUndefined();
+    // A later route without routeSpeed uses the page speed again (grade 4).
+    out = action(session, out);
+    out = fold(session, out, 15);
+    expect(out.chars.chars.runner).toMatchObject({ tx: 4, phase: 15, px: 79 });
+    out = stepSession(session, out, { buttons: 0 });
+    expect(out.chars.chars.runner).toMatchObject({ tx: 5, phase: 0, px: 80 });
+  });
+
+  test("a routeSpeed set while a route runs latches onto that route only", () => {
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const booster = event("booster", 8, 7, [page("parallel", [
+      { op: "wait", seconds: 20 / 60 },
+      { op: "moveControl", target: { event: "runner" }, control: { kind: "routeSpeed", value: 6 } },
+      { op: "exit" },
+    ])]);
+    const p = project([map("a", [controller([
+      {
+        op: "moveRoute",
+        target: { event: "runner" },
+        route: { steps: ["moveRight", "moveRight", "moveRight", "moveRight"], repeat: false, skippable: false },
+      },
+    ]), runner, booster])]);
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    // Tile 1 runs at page speed 4 (16 ticks); the boost lands mid tile 2 and
+    // latches, so tile 2 finishes at its own pace and tiles 3-4 take 4 ticks.
+    out = fold(session, out, 31);
+    expect(out.chars.chars.runner).toMatchObject({ tx: 2, phase: 15, px: 47 });
+    out = stepSession(session, out, { buttons: 0 });
+    expect(out.chars.chars.runner).toMatchObject({ tx: 3, phase: 0, px: 48 });
+    expect(out.chars.chars.runner?.route?.speed).toBe(6);
+    expect(out.interp.moveControls?.events.runner?.routeSpeed).toBeUndefined();
+    out = fold(session, out, 8); // two tiles at grade 6
+    expect(out.chars.chars.runner).toMatchObject({ tx: 5, phase: 0, px: 80 });
+    expect(out.chars.chars.runner?.route).toBeNull();
+  });
+
+  test("a route-step routeSpeed scopes the grade to its own route", () => {
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const commands: Command[] = [
+      {
+        op: "moveRoute",
+        target: { event: "runner" },
+        route: {
+          steps: [
+            { control: { kind: "routeSpeed", value: 6 } },
+            "moveRight",
+            "moveRight",
+          ],
+          repeat: false,
+          skippable: false,
+        },
+      },
+    ];
+    const p = project([map("a", [controller(commands), runner])]);
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    // The control step is instant; tile 1 already runs at grade 6.
+    out = fold(session, out, 4);
+    expect(out.chars.chars.runner).toMatchObject({ tx: 1, phase: 3, px: 28 });
+    out = fold(session, out, 5);
+    expect(out.chars.chars.runner).toMatchObject({ tx: 3, phase: 0, px: 48 });
+    expect(out.chars.chars.runner?.route).toBeNull();
+    // The persistent override was never touched.
+    expect(out.interp.moveControls?.events.runner?.routeSpeed).toBeUndefined();
+  });
+
+  test("routeSpeed on the player scopes to the player's forced route", () => {
+    const p = project([map("a", [event("driver", 3, 2, [page("action", [
+      { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 6 } },
+      {
+        op: "moveRoute",
+        target: "player",
+        route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
+      },
+    ])])])], { map: "a", x: 2, y: 2, dir: "right" });
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    expect(out.playerRoute?.speed).toBe(6);
+    expect(out.interp.moveControls?.player.routeSpeed).toBeUndefined();
+    out = fold(session, out, 3);
+    expect(out.move).toMatchObject({ tx: 2, px: 44, moving: true });
+    expect(out.playerRoute?.phase).toBe(3);
+    out = fold(session, out, 4); // two tiles at grade 6, route ends
+    expect(out.move).toMatchObject({ tx: 4, px: 64, moving: false });
+    expect(out.playerRoute).toBeNull();
+    // Autonomous movement after the route uses the resolved speed (grade 5).
+    out = stepSession(session, out, { buttons: BTN.RIGHT });
+    expect(out.move).toMatchObject({ phase: 1, px: 66 });
+  });
+
+  test("routeSpeed on the player also scopes to pathTo steps", () => {
+    const p = project([map("a", [event("driver", 3, 2, [page("action", [
+      { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 6 } },
+      {
+        op: "moveRoute",
+        target: "player",
+        route: {
+          steps: [{ pathTo: { x: 5, y: 2 } }],
+          repeat: false,
+          skippable: false,
+        },
+      },
+    ])])])], { map: "a", x: 2, y: 2, dir: "right" });
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    expect(out.playerRoute?.speed).toBe(6);
+    expect(out.interp.moveControls?.player.routeSpeed).toBeUndefined();
+    // The first route tick builds the plan, finishes the BFS (80 cells <
+    // 250/tick) and commits the first pixel at the latched grade: grade 6
+    // is 4 px/tick, not the player's resolved grade 5 (2 px/tick).
+    out = fold(session, out, 1);
+    expect(out.move).toMatchObject({ tx: 2, px: 36, moving: true });
+    expect(out.playerRoute?.phase).toBe(1);
+    // Three movement beats at grade 6 land 12 px into the tile.
+    out = fold(session, out, 2);
+    expect(out.move).toMatchObject({ tx: 2, px: 44, moving: true });
+    expect(out.playerRoute?.phase).toBe(3);
+    // Three tiles at grade 6: the route runs to (5, 2) and ends.
+    out = fold(session, out, 7);
+    expect(out.move).toMatchObject({ tx: 5, px: 80, moving: false });
+    expect(out.playerRoute).toBeNull();
+  });
+
+  test("routeSpeed on the player also scopes to approach steps", () => {
+    const npc = event("npc", 5, 2, [page("action", [], { moveType: "static" })]);
+    const p = project([map("a", [event("driver", 3, 2, [page("action", [
+      { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 6 } },
+      {
+        op: "moveRoute",
+        target: "player",
+        route: {
+          steps: [{ approach: { target: { event: "npc" } } }],
+          repeat: false,
+          skippable: false,
+        },
+      },
+    ])]), npc])], { map: "a", x: 2, y: 2, dir: "right" });
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    expect(out.playerRoute?.speed).toBe(6);
+    out = fold(session, out, 1); // plan + search + first pixel at grade 6
+    expect(out.move).toMatchObject({ tx: 2, px: 36, moving: true });
+    // Two tiles to the stand tile (4, 2), then face the target and finish.
+    out = fold(session, out, 6);
+    expect(out.move).toMatchObject({ tx: 4, px: 64, moving: false, facing: 3 });
+    expect(out.playerRoute).toBeNull();
+  });
+
+  test("player routeSpeed pathTo routes are byte-deterministic at 60/30/20/4 Hz", () => {
+    // A 20x20 map keeps the BFS multi-tick and the route long enough that a
+    // 30-reference-tick checkpoint lands mid-route at every hz.
+    const big = map("a", [event("driver", 3, 2, [page("action", [
+      { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 6 } },
+      {
+        op: "moveRoute",
+        target: "player",
+        route: {
+          steps: [{ pathTo: { x: 19, y: 19 } }],
+          repeat: false,
+          skippable: false,
+        },
+      },
+    ])])], undefined, 20, 20);
+    const p = project([big], { map: "a", x: 2, y: 2, dir: "right" });
+    const projections = ([60, 30, 20, 4] as const).map((hz) => {
+      const { session, state } = boot(p, hz);
+      let out = action(session, state);
+      const mid = foldReferenceTicks(session, out, 30 - session.ticksPerFrame);
+      out = foldReferenceTicks(session, mid, 240 - 30);
+      return { mid, midProj: motionProjection(mid), endProj: motionProjection(out) };
+    });
+    for (const value of projections.slice(1)) {
+      expect(value.midProj).toEqual(projections[0].midProj);
+      expect(value.endProj).toEqual(projections[0].endProj);
+    }
+    expect(projections[0].mid.playerRoute?.speed).toBe(6);
+    expect(projections[0].mid.playerRoute).not.toBeNull();
+    const end = (projections[0].endProj as any).move;
+    expect(end).toMatchObject({ tx: 19, ty: 19, px: 304, py: 304, moving: false });
+  });
+
+  test("a latched routeSpeed on a player pathTo route survives save/load and resumes identically", () => {
+    // 400 cells > 250/tick, so the BFS stays in flight after its first tick
+    // and the plan (search included) is live while the player rests at a
+    // manual-save boundary (route phase 0). A parallel page installs the
+    // route so the interpreter's main fiber never parks.
+    const big = map("a", [event("driver", 0, 0, [page("parallel", [
+      { op: "wait", seconds: 2 / 60 },
+      { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 6 } },
+      {
+        op: "moveRoute",
+        target: "player",
+        route: {
+          steps: [{ pathTo: { x: 19, y: 19 } }],
+          repeat: false,
+          skippable: false,
+        },
+      },
+      { op: "exit" },
+    ])])], undefined, 20, 20);
+    const p = project([big], { map: "a", x: 2, y: 2, dir: "right" });
+    const run = boot(p);
+    const controlled = fold(run.session, run.state, 4); // search in flight, phase 0
+    expect(controlled.playerRoute?.speed).toBe(6);
+    expect(controlled.playerRoute?.plan?.search).not.toBeNull();
+    expect(controlled.playerRoute?.phase).toBe(0);
+    const encoded = encodeEnvelope(createSessionSnapshot(run.session, controlled, 0));
+    const decoded = decodeEnvelopeText(encoded);
+    const restored = restoreSessionSnapshot(run.session, decoded);
+    expect(restored.playerRoute?.speed).toBe(6);
+    expect(restored.playerRoute?.plan?.search).not.toBeNull();
+    const a = fold(run.session, controlled, 60);
+    const b = fold(run.session, restored, 60);
+    expect(motionProjection(b)).toEqual(motionProjection(a));
+
+    const good = createSessionSnapshot(run.session, controlled, 0) as any;
+    expect(validateSnapshot(good)).toBeNull();
+    const badRoute = structuredClone(good);
+    badRoute.mapRuntime.playerRoute.speed = 9;
+    expect(validateSnapshot(badRoute)).toBe(
+      "state.mapRuntime.playerRoute.speed: movement speed grade 1..6 required",
+    );
+    const badStep = structuredClone(good);
+    badStep.mapRuntime.playerRoute.steps[0] = { control: { kind: "routeSpeed", value: 9 } };
+    expect(validateSnapshot(badStep)).toBe(
+      "state.mapRuntime.playerRoute.steps[0].control.value: movement speed grade 1..6 required",
+    );
+  });
+
+  test("rewind over a player routeSpeed pathTo route restores identical state", () => {
+    const driver = event("driver", 0, 0, [
+      page("autorun", [
+        { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 6 } },
+        {
+          op: "moveRoute",
+          target: "player",
+          route: {
+            steps: [{ pathTo: { x: 9, y: 2 } }],
+            repeat: false,
+            skippable: false,
+          },
+        },
+        { op: "selfSwitch", key: "A", value: true },
+      ]),
+      page("parallel", [], { condition: { selfSwitch: "A" } }),
+    ]);
+    const p = project([map("a", [driver])], { map: "a", x: 2, y: 2, dir: "right" });
+    const tape = new Array<number>(600).fill(0);
+    const options = {
+      hz: 60,
+      tapeHz: 60,
+      idleFrames: 60_000,
+      endHoldFrames: 60_000,
+      rewindSeconds: 0.5,
+      keyframeIntervalFrames: 17,
+    };
+    const keyed = new AttractController(p, tape, options);
+    const fromZero = new AttractController(p, tape, { ...options, keyframeMaxBytes: 0 });
+    keyed.startAttract();
+    fromZero.startAttract();
+    for (let i = 0; i < 140; i++) {
+      keyed.step(0);
+      fromZero.step(0);
+    }
+    keyed.step(BTN.L);
+    fromZero.step(BTN.L);
+    expect(keyed.state).toEqual(fromZero.state);
+    expect(keyed.state.move.tx).toBe(9);
+  });
+
+  test("routeSpeed routes are byte-deterministic at 60/30/20/4 Hz", () => {
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const booster = event("booster", 8, 7, [page("parallel", [
+      { op: "wait", seconds: 12 / 60 },
+      { op: "moveControl", target: { event: "runner" }, control: { kind: "routeSpeed", value: 3 } },
+      { op: "exit" },
+    ])]);
+    const p = project([map("a", [controller([
+      { op: "moveControl", target: { event: "runner" }, control: { kind: "routeSpeed", value: 6 } },
+      {
+        op: "moveRoute",
+        target: { event: "runner" },
+        route: {
+          steps: ["moveRight", "moveRight", "moveRight", "moveRight", "moveRight", "moveRight"],
+          repeat: false,
+          skippable: false,
+        },
+      },
+    ]), runner, booster])]);
+    const projections = ([60, 30, 20, 4] as const).map((hz) => {
+      const { session, state } = boot(p, hz);
+      let out = action(session, state);
+      out = foldReferenceTicks(session, out, 240 - session.ticksPerFrame);
+      return motionProjection(out);
+    });
+    for (const value of projections.slice(1)) expect(value).toEqual(projections[0]);
+    const ch = (projections[0] as any).chars.chars.runner;
+    expect(ch.route).toBeNull();
+    expect(ch.tx).toBe(7);
+  });
+
+  test("a latched routeSpeed survives save/load and resumes identically", () => {
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const p = project([map("a", [controller([
+      { op: "moveControl", target: { event: "runner" }, control: { kind: "routeSpeed", value: 6 } },
+      {
+        op: "moveRoute",
+        target: { event: "runner" },
+        wait: false,
+        route: { steps: ["moveRight", "moveRight", "moveRight", "moveRight"], repeat: false, skippable: false },
+      },
+    ]), runner])]);
+    const run = boot(p);
+    const controlled = fold(run.session, action(run.session, run.state), 6); // mid tile 2
+    const encoded = encodeEnvelope(createSessionSnapshot(run.session, controlled, 0));
+    const decoded = decodeEnvelopeText(encoded);
+    const restored = restoreSessionSnapshot(run.session, decoded);
+    expect(restored.chars.chars.runner?.route?.speed).toBe(6);
+    const a = fold(run.session, controlled, 40);
+    const b = fold(run.session, restored, 40);
+    expect(motionProjection(b)).toEqual(motionProjection(a));
+
+    const good = createSessionSnapshot(run.session, controlled, 0) as any;
+    expect(validateSnapshot(good)).toBeNull();
+    const badRoute = structuredClone(good);
+    badRoute.mapRuntime.chars.chars.runner.route.speed = 9;
+    expect(validateSnapshot(badRoute)).toBe(
+      "state.mapRuntime.chars.chars.runner.route.speed: movement speed grade 1..6 required",
+    );
+    const badStep = structuredClone(good);
+    badStep.mapRuntime.chars.chars.runner.route.steps[0] = { control: { kind: "routeSpeed", value: 9 } };
+    expect(validateSnapshot(badStep)).toBe(
+      "state.mapRuntime.chars.chars.runner.route.steps[0].control.value: movement speed grade 1..6 required",
+    );
+  });
+
+  test("rewind over a routeSpeed route restores identical state", () => {
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const driver = event("driver", 0, 0, [
+      page("autorun", [
+        { op: "moveControl", target: { event: "runner" }, control: { kind: "routeSpeed", value: 6 } },
+        {
+          op: "moveRoute",
+          target: { event: "runner" },
+          route: {
+            steps: ["moveRight", "moveRight", "moveRight", "moveRight", "moveRight", "moveRight"],
+            repeat: false,
+            skippable: false,
+          },
+        },
+        { op: "selfSwitch", key: "A", value: true },
+      ]),
+      page("parallel", [], { condition: { selfSwitch: "A" } }),
+    ]);
+    const p = project([map("a", [driver, runner])]);
+    const tape = new Array<number>(600).fill(0);
+    const options = {
+      hz: 60,
+      tapeHz: 60,
+      idleFrames: 60_000,
+      endHoldFrames: 60_000,
+      rewindSeconds: 0.5,
+      keyframeIntervalFrames: 17,
+    };
+    const keyed = new AttractController(p, tape, options);
+    const fromZero = new AttractController(p, tape, { ...options, keyframeMaxBytes: 0 });
+    keyed.startAttract();
+    fromZero.startAttract();
+    for (let i = 0; i < 140; i++) {
+      keyed.step(0);
+      fromZero.step(0);
+    }
+    keyed.step(BTN.L);
+    fromZero.step(BTN.L);
+    expect(keyed.state).toEqual(fromZero.state);
+    expect(keyed.state.chars.chars.runner?.tx).toBe(7);
   });
 });

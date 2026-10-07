@@ -342,6 +342,10 @@ function validateMoveControl(v: unknown, path: string): string | null {
       return isNonNegInt(v.value) && v.value >= 1 && v.value <= 6
         ? null
         : fail(`${path}.value`, "movement speed grade 1..6 required");
+    case "routeSpeed":
+      return isNonNegInt(v.value) && v.value >= 1 && v.value <= 6
+        ? null
+        : fail(`${path}.value`, "movement speed grade 1..6 required");
     case "frequency":
       return isNonNegInt(v.value) && v.value >= 1 && v.value <= 5
         ? null
@@ -1694,7 +1698,7 @@ function validatePlacements(v: unknown, path: string): string | null {
 
 const MOVE_OVERRIDE_KEYS = new Set([
   "moveType", "bounds", "speed", "frequency", "running",
-  "directionFix", "through", "facingMode", "routeStopped", "cooldown",
+  "directionFix", "through", "facingMode", "routeStopped", "cooldown", "routeSpeed",
 ]);
 
 function validateMoveOverride(v: unknown, path: string, event: boolean): string | null {
@@ -1718,6 +1722,9 @@ function validateMoveOverride(v: unknown, path: string, event: boolean): string 
   }
   if (v.speed !== undefined && (!isNonNegInt(v.speed) || v.speed < 1 || v.speed > 6)) {
     return fail(`${path}.speed`, "movement speed grade 1..6 required");
+  }
+  if (v.routeSpeed !== undefined && (!isNonNegInt(v.routeSpeed) || v.routeSpeed < 1 || v.routeSpeed > 6)) {
+    return fail(`${path}.routeSpeed`, "movement speed grade 1..6 required");
   }
   if (v.frequency !== undefined && (!isNonNegInt(v.frequency) || v.frequency < 1 || v.frequency > 5)) {
     return fail(`${path}.frequency`, "movement frequency grade 1..5 required");
@@ -2103,6 +2110,9 @@ function validateRouteCommon(v: Record<string, unknown>, path: string): string |
   }
   if (v.pathRetriesLeft !== null && !isNonNegInt(v.pathRetriesLeft)) {
     return fail(`${path}.pathRetriesLeft`, "null or non-negative integer required");
+  }
+  if (v.speed !== undefined && (!isNonNegInt(v.speed) || v.speed < 1 || v.speed > 6)) {
+    return fail(`${path}.speed`, "movement speed grade 1..6 required");
   }
   return validatePathPlan(v.plan, `${path}.plan`);
 }

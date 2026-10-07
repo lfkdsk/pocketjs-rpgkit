@@ -77,6 +77,7 @@ import type {
   MapDef,
   MoveControl,
   MoveRoute,
+  MoveSpeed,
   MoveStep,
 } from "./types.ts";
 
@@ -162,6 +163,12 @@ export interface RouteRun {
    *  the route, not PathPlan, because replanning deliberately discards and
    *  rebuilds the plan. Null outside a path step. */
   pathRetriesLeft: number | null;
+  /** A speed grade latched for THIS route only (a routeSpeed control).
+   *  Absent means the route uses the actor's resolved speed. It is set when
+   *  the route installs (consuming a pending override) or by a routeSpeed
+   *  control while the route runs, and dies with the route, so the next
+   *  route and autonomous movement are unaffected. */
+  speed?: MoveSpeed;
 }
 
 export interface CharState {
@@ -533,6 +540,7 @@ export function installRoute(
   route: MoveRoute,
   waiter: string | null,
   cfg: MovementConfig,
+  speed?: MoveSpeed,
 ): { state: CharsState; displacedWaiter: string | null } {
   const s = cloneChars(s0);
   const ch = s.chars[eventId];
@@ -548,6 +556,7 @@ export function installRoute(
       waitLeft: 0,
       plan: null,
       pathRetriesLeft: null,
+      ...(speed !== undefined ? { speed } : {}),
     };
     ch.phase = 0;
     ch.moving = false;
@@ -556,6 +565,36 @@ export function installRoute(
     ch.py = ch.ty * cfg.tile;
   }
   return { state: s, displacedWaiter };
+}
+
+/** The per-tick movement config for a route actor: its resolved settings,
+ *  except while the route carries a latched routeSpeed grade, which
+ *  replaces the speed component for that route only (running still adds
+ *  its grade). The routeSpeed field is absent everywhere else, so the
+ *  common path is one optional-field read. Event routes pass
+ *  `ch.route?.speed`; the player route passes `playerRoute.speed`. */
+export function routeSpeedConfig(
+  cfg: MovementConfig,
+  settings: ResolvedMoveSettings,
+  speed: MoveSpeed | undefined,
+): MovementConfig {
+  if (speed === undefined) return movementConfigFor(cfg, settings);
+  return movementConfigFor(cfg, { speed, running: settings.running });
+}
+
+/** Latch a routeSpeed grade onto a character's ACTIVE forced route. Returns
+ *  false when the character has no forced route running (the caller then
+ *  keeps the grade pending for the next route install). */
+export function latchRouteSpeed(
+  s0: CharsState,
+  eventId: string,
+  speed: MoveSpeed,
+): { state: CharsState; latched: boolean } {
+  const active = s0.chars[eventId]?.route;
+  if (!active || active.patrol) return { state: s0, latched: false };
+  const s = cloneChars(s0);
+  s.chars[eventId]!.route!.speed = speed;
+  return { state: s, latched: true };
 }
 
 /** Stop the active route without cutting a committed tile in half. The
@@ -841,7 +880,7 @@ export function stepCharsInPlace(
       ch.route = cloneRoute(ch.patrol);
     }
 
-    const desiredCfg = movementConfigFor(cfg, settings);
+    const desiredCfg = routeSpeedConfig(cfg, settings, ch.route?.speed);
 
     // Mid-step: interpolate. Nothing interrupts a step once committed
     // (locks and page changes snap at boundaries via syncPages).
@@ -1142,6 +1181,13 @@ function stepRoute(
       return;
     }
     if ("control" in step) {
+      if (step.control.kind === "routeSpeed") {
+        // A route step scopes the grade to THIS route: latch it directly
+        // instead of writing the persistent override.
+        route.speed = step.control.value;
+        advanceRouteStep(ch, finishedWaiters);
+        return;
+      }
       if (step.control.kind === "stop") {
         options.applyControl?.(ch.id, step.control);
         releaseRoute(ch, finishedWaiters);

@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "a749a871f1eb32969ae58ff186871e21ff1ca4fb26390088512ee2bca927f82a";
+export const MAP_SCHEMA_HASH = "dddabaa88780fa1e117a911c88e191b5958bd390b41739e8b6bc1fd0f41ed4e0";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -59,6 +59,9 @@ export const MAP_SCHEMA_HASH = "a749a871f1eb32969ae58ff186871e21ff1ca4fb26390088
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: the `routeSpeed` moveControl variant — a speed grade
+  // scoped to one forced route; older documents never use it
+  "a749a871f1eb32969ae58ff186871e21ff1ca4fb26390088512ee2bca927f82a",
   // superseded by: optional editor-facing switch and variable declarations;
   // undeclared ids keep their existing sparse-bank runtime semantics
   "1127febbfb43f2f33b1bd7a2df8c554efbbdc56e1e9a35f26558dbda4f8261b9",

@@ -141,12 +141,17 @@ export interface WanderBounds {
 
 /** A persistent (for the current map/page visit) movement-setting change.
  *  A route step wraps one of these as `{control}` and applies it to its own
- *  actor; the standalone moveControl command names any actor. */
+ *  actor; the standalone moveControl command names any actor.
+ *  `routeSpeed` is the exception: it scopes a speed grade to exactly one
+ *  forced route — latching onto the actor's active route, or held pending
+ *  until the next forced route installs — and is gone when that route ends,
+ *  so later routes and autonomous movement keep their resolved speed. */
 export type MoveControl =
   | { kind: "wander"; bounds?: WanderBounds; frequency?: MoveFrequency }
   | { kind: "moveType"; value: "page" | "static" | "approach" }
   | { kind: "stop" }
   | { kind: "speed"; value: MoveSpeed }
+  | { kind: "routeSpeed"; value: MoveSpeed }
   | { kind: "run"; value: boolean }
   | { kind: "frequency"; value: MoveFrequency }
   | { kind: "directionFix"; value: boolean }

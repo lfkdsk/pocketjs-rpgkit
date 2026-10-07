@@ -34,6 +34,11 @@ export interface MoveOverride {
   routeStopped?: boolean;
   /** Player/runtime-wander decision cooldown in 60 Hz reference ticks. */
   cooldown?: number;
+  /** A speed grade pending for the actor's NEXT forced route. It is moved
+   *  onto that route when it installs (or latched onto a route already
+   *  running), and deleted on consumption, so it never outlives the route
+   *  it was meant for. */
+  routeSpeed?: MoveSpeed;
 }
 
 export interface EventMoveOverride extends MoveOverride {
@@ -124,6 +129,9 @@ export function applyMoveControl(override: MoveOverride, control: MoveControl): 
       return;
     case "speed":
       override.speed = control.value;
+      return;
+    case "routeSpeed":
+      override.routeSpeed = control.value;
       return;
     case "run":
       override.running = control.value;

@@ -1655,6 +1655,15 @@
           "additionalProperties": false,
           "required": ["kind", "value"],
           "properties": {
+            "kind": { "const": "routeSpeed" },
+            "value": { "type": "integer", "minimum": 1, "maximum": 6 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
             "kind": { "const": "run" },
             "value": { "type": "boolean" }
           }
@@ -1696,7 +1705,7 @@
           }
         }
       ],
-      "description": "A movement override or wander request for a player/event target. It persists for the map visit; an event page switch clears that event's overrides."
+      "description": "A movement override or wander request for a player/event target. It persists for the map visit; an event page switch clears that event's overrides. routeSpeed is the exception: it scopes a speed grade to exactly one forced route (latching onto the active route, or held pending until the next route installs) and is gone when that route ends."
     },
     "moveStep": {
       "oneOf": [

@@ -508,8 +508,10 @@ simDescribe("sunstone — render budget", () => {
     // tap-to-walk module, pointer-line drain and per-frame route fold)
     // adds 7,270: measured 975,980 B. The per-reference-tick route resolver
     // (the session/attract hook that keeps a turn from overshooting at 4 Hz)
-    // adds 977: measured 976,957 B. Keep a narrow margin.
-    expect(jsBytes).toBeLessThan(978_000);
+    // adds 977: measured 976,957 B. The routeSpeed movement control (the
+    // MoveControl variant, per-route speed field and latching) adds 2,874:
+    // measured 979,831 B. Keep a narrow margin.
+    expect(jsBytes).toBeLessThan(981_000);
   });
 });
 

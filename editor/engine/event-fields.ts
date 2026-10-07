@@ -538,7 +538,7 @@ export function commandFields(
       const fields = [
         field("target", "TARGET", target(command.target)),
         field("control.kind", "CONTROL", command.control.kind, "enum", [
-          "wander", "moveType", "stop", "speed", "run", "frequency", "directionFix", "through", "facingMode",
+          "wander", "moveType", "stop", "speed", "routeSpeed", "run", "frequency", "directionFix", "through", "facingMode",
         ]),
       ];
       switch (command.control.kind) {
@@ -554,6 +554,7 @@ export function commandFields(
           fields.push(field("control.value", "VALUE", command.control.value, "enum", ["page", "static", "approach"]));
           break;
         case "speed":
+        case "routeSpeed":
         case "frequency":
           fields.push(field("control.value", "VALUE", command.control.value, "integer"));
           break;
@@ -1074,7 +1075,7 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       }
       if (key === "control.kind") {
         const kind = enumValue(raw, [
-          "wander", "moveType", "stop", "speed", "run", "frequency", "directionFix", "through", "facingMode",
+          "wander", "moveType", "stop", "speed", "routeSpeed", "run", "frequency", "directionFix", "through", "facingMode",
         ] as const, "control kind");
         if (!kind.ok) return kind;
         switch (kind.value) {
@@ -1082,6 +1083,7 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
           case "moveType": return good({ ...command, control: { kind: "moveType", value: "page" } });
           case "stop": return good({ ...command, control: { kind: "stop" } });
           case "speed": return good({ ...command, control: { kind: "speed", value: 4 } });
+          case "routeSpeed": return good({ ...command, control: { kind: "routeSpeed", value: 4 } });
           case "run": return good({ ...command, control: { kind: "run", value: false } });
           case "frequency": return good({ ...command, control: { kind: "frequency", value: 3 } });
           case "directionFix": return good({ ...command, control: { kind: "directionFix", value: false } });
@@ -1105,7 +1107,8 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
             const value = enumValue(raw, ["page", "static", "approach"] as const, "move type");
             return value.ok ? good({ ...command, control: { ...command.control, value: value.value } }) : value;
           }
-          case "speed": {
+          case "speed":
+          case "routeSpeed": {
             const value = integer(raw, "speed", 1, 6);
             return value.ok ? good({ ...command, control: { ...command.control, value: value.value as 1 | 2 | 3 | 4 | 5 | 6 } }) : value;
           }
