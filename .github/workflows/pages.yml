@@ -55,7 +55,10 @@ jobs:
       - name: Build the wasm core
         run: bun run build:wasm
 
+      # wander-online on the published site talks to the hosted server.
       - name: Build the site
+        env:
+          WANDER_ONLINE_URL: wss://wander-online.lfk-dsk.workers.dev/ws
         run: bun run web
 
       # Serves dist/web at / and under /pocket-rpgkit/, plays every game in

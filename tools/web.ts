@@ -62,6 +62,7 @@ import {
   type PlatformContractRegistry,
 } from "../vendor/pocketjs/contracts/spec/platforms.ts";
 import { APPS, LOCAL_ONLY_APPS } from "./build-example.ts";
+import { writeOnlineUrl } from "./lib/online-url.ts";
 import { appDirOf, fontLicenseFiles } from "./lib/font-licenses.ts";
 import type { Size, ViewportConfig } from "./web/fit.ts";
 import { writeSiteIcons } from "./web/icon.ts";
@@ -207,6 +208,20 @@ export interface WebGameEntry {
   /** Per-language page text (chapter titles/descriptions, the game
    *  description, a chapters-unavailable notice), keyed by declared code. */
   i18n?: Record<string, WebGameI18n>;
+  /** OAuth sign-in config. When present, the player page shows a
+   *  "Sign in with GitHub" control and hands the token to the game. */
+  auth?: WebAuthConfig;
+}
+
+/** GitHub OAuth config for a game's player page. The clientId is public
+ *  (it ships in the page); the token exchange happens server-side. */
+export interface WebAuthConfig {
+  github: {
+    /** OAuth App client id (public). */
+    clientId: string;
+    /** The lfkdsk-auth worker base URL, e.g. https://auth.lfkdsk.org/wander-online */
+    worker: string;
+  };
 }
 
 export interface WebSiteConfig {
@@ -270,6 +285,7 @@ export interface WebGame {
    *  switcher and translates its own chrome. */
   languages?: WebLanguageConfig;
   i18n?: Record<string, WebGameI18n>;
+  auth?: WebAuthConfig;
 }
 
 /** The settings a player page hands tools/web/player.js. */
@@ -292,6 +308,8 @@ export interface PlayerConfig {
     storageKey: string;
     examples: Array<{ id: string; title: string; url: string }>;
   };
+  /** OAuth sign-in config (games that declare auth in web.json). */
+  auth?: WebAuthConfig;
 }
 
 // ---- configuration ---------------------------------------------------------
@@ -484,6 +502,18 @@ function validateEntry(id: string, entry: WebGameEntry, source: string): void {
       (typeof entry.languageSwitch.storage !== "string" || entry.languageSwitch.storage.trim().length === 0)
     ) {
       throw new Error(`web: ${source}: games.${id}.languageSwitch.storage is a localStorage key`);
+    }
+  }
+  if (entry.auth !== undefined) {
+    if (!entry.auth || typeof entry.auth !== "object" || Array.isArray(entry.auth) || !entry.auth.github || typeof entry.auth.github !== "object") {
+      throw new Error(`web: ${source}: games.${id}.auth is { github: { clientId, worker } }`);
+    }
+    const gh = entry.auth.github;
+    if (typeof gh.clientId !== "string" || !/^[A-Za-z0-9_]+$/.test(gh.clientId)) {
+      throw new Error(`web: ${source}: games.${id}.auth.github.clientId is the OAuth App client id`);
+    }
+    if (typeof gh.worker !== "string" || !/^https:\/\/[^\s]+$/.test(gh.worker)) {
+      throw new Error(`web: ${source}: games.${id}.auth.github.worker is an https URL`);
     }
   }
   if (entry.i18n !== undefined) {
@@ -723,6 +753,7 @@ export function resolveGame(projectRoot: string, config: WebSiteConfig, id: stri
         }
       : {}),
     ...(entry.i18n ? { i18n: entry.i18n } : {}),
+    ...(entry.auth ? { auth: entry.auth } : {}),
   };
 }
 
@@ -1362,6 +1393,14 @@ export async function buildWebSite(options: BuildOptions): Promise<WebGame[]> {
   const config = loadSiteConfig(projectRoot, options.config);
   const ids = options.games.length > 0 ? [...new Set(options.games)] : defaultGameIds(projectRoot);
   if (ids.length === 0) throw new Error(`web: no games found under ${projectRoot}`);
+  // wander-online reads its server URL from its pak config; the published
+  // site bakes the hosted server's URL in (pages.yml sets the variable),
+  // while local builds keep the committed loopback default.
+  const onlineUrl = process.env.WANDER_ONLINE_URL;
+  if (onlineUrl && ids.includes("wander-online")) {
+    writeOnlineUrl(projectRoot, onlineUrl);
+    console.log(`web: wander-online connects to ${onlineUrl}`);
+  }
   const games = cardOrder(ids, config).map((id) => resolveGame(projectRoot, config, id));
   if (config.studio && games.some((game) => game.id === STUDIO_ID)) {
     throw new Error(`web: a game named "${STUDIO_ID}" would share Studio's directory`);
@@ -1449,6 +1488,7 @@ export async function buildWebSite(options: BuildOptions): Promise<WebGame[]> {
       simHz: 60,
       autosaveStorageKey: `pocket-rpgkit:${game.plan.app.id}:autosave:v1`,
       keys: keyMasks(game.keymap),
+      ...(game.auth ? { auth: game.auth } : {}),
       ...(game.documents
         ? {
             editor: {

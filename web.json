@@ -10,20 +10,90 @@
       "preview": "docs/screenshots/showcase-lobby.png",
       "viewport": "fixed",
       "chapters": [
-        { "id": "showcase-screen-effects", "title": "1. Night Garden", "description": "Watch daylight fade through dusk, lightning, camera moves and title-card backdrops.", "preview": "docs/screenshots/showcase-01-screen-effects.png" },
-        { "id": "showcase-map-animations", "title": "2. Fountain Magic", "description": "Layer Tuxemon spell rings over tiles, actors and moving targets.", "preview": "docs/screenshots/showcase-02-map-animations.png" },
-        { "id": "showcase-runtime-visuals", "title": "3. Costume Workshop", "description": "Swap character art, translucent layers and live passage rules.", "preview": "docs/screenshots/showcase-03-runtime-visuals.png" },
-        { "id": "showcase-movement-controls", "title": "4. Town Park", "description": "Meet wandering, running and approaching characters on controlled routes.", "preview": "docs/screenshots/showcase-04-movement-controls.png" },
-        { "id": "showcase-extensions", "title": "5. Oracle's Room", "description": "Try extension-owned choices driven by live game state.", "preview": "docs/screenshots/showcase-05-extensions.png" },
-        { "id": "showcase-battle", "title": "6. Tuxemon Arena", "description": "Fight Bamboon with Bigfin through win, loss and escape branches.", "preview": "docs/screenshots/showcase-06-battle.png" },
-        { "id": "showcase-shop", "title": "7. Market Square", "description": "Buy and sell items while finite stock and the party wallet update.", "preview": "docs/screenshots/showcase-07-shop.png" },
-        { "id": "hall-streaming", "title": "8. Endless Grove", "description": "Walk through streamed chunks, animated water and tall sprites.", "preview": "docs/screenshots/showcase-08-streaming.png" },
-        { "id": "hall-theme", "title": "9. Portrait Library", "description": "Switch dialog themes live and meet portrait-bearing speakers.", "preview": "docs/screenshots/showcase-09-theme.png" },
-        { "id": "showcase-input-and-idle", "title": "10. Cutscene Stage", "description": "See input locks and world-idle gates coordinate a small scene.", "preview": "docs/screenshots/showcase-10-input-and-idle.png" },
-        { "id": "hall-save", "title": "11. Post Office", "description": "Export a real save code and verify its round trip in the Save Menu.", "preview": "docs/screenshots/showcase-11-save.png" },
-        { "id": "hall-attract", "title": "12. Tour Pavilion", "description": "Let the guided tour play, take control, then rewind three seconds.", "preview": "docs/screenshots/showcase-12-attract.png" },
-        { "id": "hall-audio", "title": "13. Sound Studio", "description": "Mix town music, ambience, fanfares and sound effects on one clock.", "preview": "docs/screenshots/showcase-13-audio.png" },
-        { "id": "hall-registration", "title": "14. Registration Desk", "description": "Register a player name with the built-in name-input scene, then see it used in later dialogue.", "preview": "docs/screenshots/showcase-14-registration.png" }
+        {
+          "id": "showcase-screen-effects",
+          "title": "1. Night Garden",
+          "description": "Watch daylight fade through dusk, lightning, camera moves and title-card backdrops.",
+          "preview": "docs/screenshots/showcase-01-screen-effects.png"
+        },
+        {
+          "id": "showcase-map-animations",
+          "title": "2. Fountain Magic",
+          "description": "Layer Tuxemon spell rings over tiles, actors and moving targets.",
+          "preview": "docs/screenshots/showcase-02-map-animations.png"
+        },
+        {
+          "id": "showcase-runtime-visuals",
+          "title": "3. Costume Workshop",
+          "description": "Swap character art, translucent layers and live passage rules.",
+          "preview": "docs/screenshots/showcase-03-runtime-visuals.png"
+        },
+        {
+          "id": "showcase-movement-controls",
+          "title": "4. Town Park",
+          "description": "Meet wandering, running and approaching characters on controlled routes.",
+          "preview": "docs/screenshots/showcase-04-movement-controls.png"
+        },
+        {
+          "id": "showcase-extensions",
+          "title": "5. Oracle's Room",
+          "description": "Try extension-owned choices driven by live game state.",
+          "preview": "docs/screenshots/showcase-05-extensions.png"
+        },
+        {
+          "id": "showcase-battle",
+          "title": "6. Tuxemon Arena",
+          "description": "Fight Bamboon with Bigfin through win, loss and escape branches.",
+          "preview": "docs/screenshots/showcase-06-battle.png"
+        },
+        {
+          "id": "showcase-shop",
+          "title": "7. Market Square",
+          "description": "Buy and sell items while finite stock and the party wallet update.",
+          "preview": "docs/screenshots/showcase-07-shop.png"
+        },
+        {
+          "id": "hall-streaming",
+          "title": "8. Endless Grove",
+          "description": "Walk through streamed chunks, animated water and tall sprites.",
+          "preview": "docs/screenshots/showcase-08-streaming.png"
+        },
+        {
+          "id": "hall-theme",
+          "title": "9. Portrait Library",
+          "description": "Switch dialog themes live and meet portrait-bearing speakers.",
+          "preview": "docs/screenshots/showcase-09-theme.png"
+        },
+        {
+          "id": "showcase-input-and-idle",
+          "title": "10. Cutscene Stage",
+          "description": "See input locks and world-idle gates coordinate a small scene.",
+          "preview": "docs/screenshots/showcase-10-input-and-idle.png"
+        },
+        {
+          "id": "hall-save",
+          "title": "11. Post Office",
+          "description": "Export a real save code and verify its round trip in the Save Menu.",
+          "preview": "docs/screenshots/showcase-11-save.png"
+        },
+        {
+          "id": "hall-attract",
+          "title": "12. Tour Pavilion",
+          "description": "Let the guided tour play, take control, then rewind three seconds.",
+          "preview": "docs/screenshots/showcase-12-attract.png"
+        },
+        {
+          "id": "hall-audio",
+          "title": "13. Sound Studio",
+          "description": "Mix town music, ambience, fanfares and sound effects on one clock.",
+          "preview": "docs/screenshots/showcase-13-audio.png"
+        },
+        {
+          "id": "hall-registration",
+          "title": "14. Registration Desk",
+          "description": "Register a player name with the built-in name-input scene, then see it used in later dialogue.",
+          "preview": "docs/screenshots/showcase-14-registration.png"
+        }
       ],
       "features": [
         "1. Screen Effects — screenFade / screenTint / screenFlash / screenShake / camera / balloon / screenBackdrop",
@@ -92,6 +162,30 @@
         }
       ],
       "pointer": "Click or tap a tile to walk there."
+    },
+    "wander-online": {
+      "title": "Wander Online",
+      "description": "A shared multiplayer world: sign in with GitHub, create a character, and walk with others in real time.",
+      "controls": [
+        {
+          "button": "DPAD",
+          "action": "Walk"
+        },
+        {
+          "button": "CIRCLE",
+          "action": "Confirm"
+        },
+        {
+          "button": "CROSS",
+          "action": "Cancel / back"
+        }
+      ],
+      "auth": {
+        "github": {
+          "clientId": "Ov23liCg29llKxJ7b0jv",
+          "worker": "https://auth.lfkdsk.org/wander-online"
+        }
+      }
     },
     "sunstone": {
       "title": "The Sunstone of Bramble Hollow",

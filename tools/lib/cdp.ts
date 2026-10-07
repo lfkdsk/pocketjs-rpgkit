@@ -66,8 +66,15 @@ export async function launchChrome(
       reader.releaseLock();
       const port = new URL(match[1]!).port;
       const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as any[];
-      const page = targets.find((t) => t.type === "page");
-      if (!page) throw new Error("Chrome started without a page target");
+      // Prefer the blank tab Chrome was started with: newer headless Chrome
+      // also lists internal pages, and navigating one of those never
+      // answers. Without a blank tab, open a fresh one.
+      let page = targets.find((t) => t.type === "page" && t.url === "about:blank");
+      if (!page) {
+        const created = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });
+        if (created.ok) page = await created.json();
+      }
+      if (!page?.webSocketDebuggerUrl) throw new Error("Chrome started without a page target");
       return { proc, ws: page.webSocketDebuggerUrl };
     }
   }

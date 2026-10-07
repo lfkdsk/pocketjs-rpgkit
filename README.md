@@ -193,10 +193,10 @@ bun tools/desktop.ts wander-online                  # a desktop client (run twic
 bun tools/web.ts wander-online                      # a browser tab (serve dist/web)
 ```
 
-`bun run web` with no game named leaves wander-online out
-(`LOCAL_ONLY_APPS` in `tools/build-example.ts`), so the published site
-never lists a page that has no server to reach; the command above builds it
-on purpose.
+Local builds connect to the loopback server above. The published site sets
+`WANDER_ONLINE_URL` for `bun run web` (`.github/workflows/pages.yml`), which
+bakes the hosted server's URL into the page; playing there needs a GitHub
+sign-in.
 
 - **Prediction.** The client builds the same frozen window from the
   WELCOME seed and folds every held input through the kit's `stepSession`

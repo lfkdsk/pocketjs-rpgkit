@@ -79,8 +79,8 @@ function urls(html: string): string[] {
 describe("games", () => {
   test("with no names, this repository builds every example, the editor and the preview host", () => {
     expect(defaultGameIds(KIT_ROOT)).toEqual([...APPS.filter((id) => !LOCAL_ONLY_APPS.includes(id)), PREVIEW_APP_ID]);
-    // A loopback-only demo never reaches the published site by default.
-    expect(defaultGameIds(KIT_ROOT)).not.toContain("wander-online");
+    // wander-online talks to its hosted server, so the published site lists it.
+    expect(defaultGameIds(KIT_ROOT)).toContain("wander-online");
   });
 
   test("cards follow the metadata table, then the rest in build order", () => {

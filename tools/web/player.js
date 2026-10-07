@@ -176,6 +176,98 @@ const $ = (id) => {
 // the English fallback keeps pages without a switcher unchanged.
 const t = (key, fallback) => (typeof globalThis.__pocketI18n === "function" ? globalThis.__pocketI18n(key) : fallback);
 
+// --- GitHub OAuth (games that declare auth in web.json) --------------------
+// The lfkdsk-auth worker redirects back to this page with the token in the
+// fragment: /#oauth_token=...&state=... . We validate the state, strip the
+// fragment immediately (the token never enters history/sentry/analytics) and
+// hand the token to the game once, via globalThis.__pocketAuth. The page
+// itself never persists the GitHub token.
+//
+// State validation fails closed: a token is accepted only when a state saved
+// by startGithubSignIn exists and matches the callback's state exactly. No
+// saved state (sessionStorage unavailable, or a replay after the one-time
+// state was consumed) rejects the callback; the check is never skipped. On a
+// successful match the saved state is deleted, so a replayed fragment cannot
+// be accepted twice. A mismatched callback keeps the saved state (a later
+// legitimate callback with the right state still works) but is rejected all
+// the same; every rejection clears the fragment.
+const OAUTH_STATE_KEY = "pocket-rpgkit:oauth-state";
+
+function oauthFromFragment() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get("oauth_token");
+  const state = params.get("state");
+  const error = params.get("oauth_error");
+  // Only fragments that look like an OAuth callback (token, error or state
+  // parameter) are ours; leave every other fragment untouched.
+  if (!token && !error && !state) return null;
+  // Strip the fragment right away, before anything else can read it.
+  history.replaceState(null, "", location.pathname + location.search);
+  if (error) return { error };
+  if (!token || !state) return { error: "invalid-fragment" };
+  let saved = null;
+  try {
+    saved = sessionStorage.getItem(OAUTH_STATE_KEY);
+  } catch {
+    // sessionStorage unavailable: the state cannot be validated, so the
+    // callback is rejected below rather than accepted on trust.
+  }
+  if (saved !== state) return { error: "state-mismatch" };
+  try {
+    sessionStorage.removeItem(OAUTH_STATE_KEY);
+  } catch {
+    // ignore
+  }
+  return { token };
+}
+
+function startGithubSignIn(auth) {
+  const state = crypto.getRandomValues(new Uint8Array(16)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "");
+  try {
+    sessionStorage.setItem(OAUTH_STATE_KEY, state);
+  } catch {
+    // private mode: the redirect still happens, but the callback's state
+    // cannot be stored or validated, so oauthFromFragment rejects it
+    // (fail closed) rather than skipping the check.
+  }
+  const url = new URL("https://github.com/login/oauth/authorize");
+  url.searchParams.set("client_id", auth.github.clientId);
+  url.searchParams.set("redirect_uri", `${auth.github.worker}/callback`);
+  url.searchParams.set("scope", "");
+  url.searchParams.set("state", state);
+  location.href = url.toString();
+}
+
+// Wire the sign-in button in the control bar, if the game declares auth.
+function initAuthUI(config) {
+  const auth = config.auth;
+  if (!auth?.github) return;
+  const bar = document.querySelector(".bar");
+  if (!bar) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "auth-signin";
+  btn.className = "bar-button";
+  setAuthUI(btn, "signed-out");
+  btn.addEventListener("click", () => startGithubSignIn(auth));
+  bar.insertBefore(btn, bar.querySelector(".audio-controls"));
+  // The game reports login/logout through this event hook.
+  globalThis.__pocketAuthEvent = (ev) => {
+    if (ev.type === "login") {
+      btn.textContent = t("auth.signed-in", "Signed in as {name}").replace("{name}", ev.login);
+      btn.disabled = true;
+    } else if (ev.type === "logout") {
+      setAuthUI(btn, "signed-out");
+    }
+  };
+}
+
+function setAuthUI(btn, state) {
+  btn.textContent = state === "signed-out" ? t("auth.signin", "Sign in with GitHub") : t("auth.signed-out", "Signed out");
+  btn.disabled = false;
+}
+
+
 /**
  * Pointer ids -> touch contacts. The guest reads a level snapshot every
  * frame, so the pool holds contacts rather than events and every step packs
@@ -953,6 +1045,13 @@ class Player {
   async boot() {
     const { config } = this;
     const base = document.baseURI;
+    // Consume an OAuth callback before starting any wasm, pack or bundle
+    // request. __pocketWeb is an explicit guest-readable platform marker;
+    // unlike the one-time OAuth token, it is present on ordinary page loads.
+    const oauth = oauthFromFragment();
+    globalThis.__pocketWeb = true;
+    globalThis.__pocketAuth = oauth?.token ? { token: oauth.token } : undefined;
+    if (oauth?.error) console.warn("OAuth:", oauth.error);
     const [wasmBytes, pak, source] = await Promise.all([
       fetchOk(new URL(config.wasm, base), "The PocketJS core").then((r) => r.arrayBuffer()),
       config.pak ? fetchOk(new URL(config.pak, base), "The asset pack").then((r) => r.arrayBuffer()) : undefined,
@@ -983,7 +1082,12 @@ class Player {
     );
     globalThis.__rpgkitBoot = rpgkitBootFromSearch(location.search);
     globalThis.__rpgkitDemo = undefined;
+    // The web ticket store for auth-enabled games: the desktop QuickJS
+    // guest has no localStorage global, so the game reads it through this
+    // bridge (and uses its save directory on desktop).
+    globalThis.__wanderOnlineWebStore = globalThis.localStorage ?? undefined;
     globalThis.frame = undefined;
+    initAuthUI(config);
     new Function(`${source}\n//# sourceURL=${config.app}.js`)();
     if (typeof globalThis.frame !== "function") {
       throw new Error(`${config.app}.js ran but did not install frame()`);
