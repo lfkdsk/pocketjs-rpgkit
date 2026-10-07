@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `11227c99d75fe0ec833b77499bec30022f046383c4eeb9349a3f590bbc4ce801` | optional switch declaration `writtenBy: "host"` — marks a switch the host or an extension writes at runtime, so the static checker does not flag it as read-never-set; declarations without the marker are still checked | additive |
 | `dddabaa88780fa1e117a911c88e191b5958bd390b41739e8b6bc1fd0f41ed4e0` | `routeSpeed` moveControl variant: a speed grade scoped to one forced route (latches onto the active route or is held pending for the next, and is gone when the route ends); documents that never use it move unchanged | additive |
 | `a749a871f1eb32969ae58ff186871e21ff1ca4fb26390088512ee2bca927f82a` | optional editor-facing `switches` and `variables` declaration directories; undeclared ids retain the same sparse runtime semantics | additive |
 | `1127febbfb43f2f33b1bd7a2df8c554efbbdc56e1e9a35f26558dbda4f8261b9` | optional `text` layout fields: `position` (top/center/bottom, the four corners, left/right), `align`, `valign` and `background` (window/dim/transparent); a text without them draws the same box as before | additive |

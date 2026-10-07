@@ -160,6 +160,63 @@ describe("rpgkit-check lint: switch/variable usage", () => {
     expect(f[0]!.severity).toBe("warning");
   });
 
+  test("switch declared writtenBy:\"host\" is not flagged read-never-set", () => {
+    // The host/extension writes it at runtime: the document read is fine.
+    const p = cleanProject();
+    p.switches = [{ id: "ghost", name: "Ghost", writtenBy: "host" }];
+    p.maps[0]!.events![0]!.pages[0]!.commands.push({
+      op: "if",
+      if: { kind: "switch", id: "ghost" },
+      then: [{ op: "text", lines: ["?"] }],
+    });
+    const report = lint(p);
+    expect(findingsOf(report, "lint/switch-read-never-set")).toEqual([]);
+    expect(findingsOf(report, "lint/switch-hostwritten-also-set")).toEqual([]);
+  });
+
+  test("switch declared in the directory without the marker is still flagged", () => {
+    // A bare catalog declaration does not prove the switch is ever written:
+    // the directory must not become a blanket exemption, or typos hide.
+    const p = cleanProject();
+    p.switches = [{ id: "ghost", name: "Ghost" }];
+    p.maps[0]!.events![0]!.pages[0]!.commands.push({
+      op: "if",
+      if: { kind: "switch", id: "ghost" },
+      then: [{ op: "text", lines: ["?"] }],
+    });
+    const f = findingsOf(lint(p), "lint/switch-read-never-set");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.severity).toBe("warning");
+  });
+
+  test("host-written switch also set by a document command → info hint", () => {
+    // The marker is redundant while the document sets the switch: either the
+    // marker or the set is probably a mistake. Info, never a warning.
+    const p = cleanProject();
+    p.switches = [{ id: "both", writtenBy: "host" }];
+    p.maps[0]!.events![0]!.pages[0]!.commands.push(
+      { op: "switch", id: "both", value: true },
+      { op: "if", if: { kind: "switch", id: "both" }, then: [{ op: "text", lines: ["?"] }] },
+    );
+    const report = lint(p);
+    expect(findingsOf(report, "lint/switch-read-never-set")).toEqual([]);
+    const hint = findingsOf(report, "lint/switch-hostwritten-also-set");
+    expect(hint).toHaveLength(1);
+    expect(hint[0]!.severity).toBe("info");
+    expect(hint[0]!.message).toContain('"both"');
+  });
+
+  test("host-written switch set but never read → the redundancy hint replaces set-never-read", () => {
+    const p = cleanProject();
+    p.switches = [{ id: "written-only", writtenBy: "host" }];
+    p.maps[0]!.events![0]!.pages[0]!.commands.push({ op: "switch", id: "written-only", value: true });
+    const report = lint(p);
+    expect(findingsOf(report, "lint/switch-set-never-read")).toEqual([]);
+    const hint = findingsOf(report, "lint/switch-hostwritten-also-set");
+    expect(hint).toHaveLength(1);
+    expect(hint[0]!.severity).toBe("info");
+  });
+
   test("switch set never read → info", () => {
     const p = cleanProject();
     p.maps[0]!.events![0]!.pages[0]!.commands.push({ op: "switch", id: "dead", value: true });

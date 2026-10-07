@@ -170,8 +170,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
     },
     "switches": {
       "type": "array",
-      "items": { "$ref": "#/$defs/catalogName" },
-      "description": "Optional editor-facing switch names. Event switch ids remain valid when undeclared."
+      "items": { "$ref": "#/$defs/switchDef" },
+      "description": "Optional editor-facing switch names. Event switch ids remain valid when undeclared. An entry with writtenBy:\"host\" declares a switch the host or an extension writes at runtime."
     },
     "variables": {
       "type": "array",
@@ -378,6 +378,20 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
         "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "switchDef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "writtenBy": {
+          "type": "string",
+          "enum": ["host"],
+          "description": "Declares that the host or an extension writes this switch at runtime, so the static checker does not flag it as read-never-set. A declaration without this marker is still checked."
+        }
       }
     },
     "item": {

@@ -145,6 +145,36 @@ describe("project catalog operations", () => {
     }
   });
 
+  test("switch declarations carry writtenBy through add/update, variables never do", () => {
+    // `writtenBy: "host"` marks a switch the host or an extension writes at
+    // runtime; the static checker honors it. It is a switch-only field.
+    const added = success(executeEditOperation(source(), "add-switch", {
+      switch: { id: "host-switch", name: "Host Switch", writtenBy: "host" },
+    }));
+    expect(added.changed).toBe(true);
+    const addedProject = JSON.parse(added.output!) as Project;
+    expect(addedProject.switches).toContainEqual({ id: "host-switch", name: "Host Switch", writtenBy: "host" });
+    // null removes the marker; the declaration stays.
+    const unmarked = success(executeEditOperation(added.output!, "update-switch", {
+      switch: "host-switch", changes: { writtenBy: null },
+    }));
+    expect(unmarked.changed).toBe(true);
+    const unmarkedProject = JSON.parse(unmarked.output!) as Project;
+    expect(unmarkedProject.switches).toContainEqual({ id: "host-switch", name: "Host Switch" });
+    const remarked = success(executeEditOperation(unmarked.output!, "update-switch", {
+      switch: "host-switch", changes: { writtenBy: "host" },
+    }));
+    expect((JSON.parse(remarked.output!) as Project).switches).toContainEqual({ id: "host-switch", name: "Host Switch", writtenBy: "host" });
+    // A bad enum value is refused by schema validation, not silently stored.
+    expect(failure(executeEditOperation(source(), "add-switch", {
+      switch: { id: "bad-switch", writtenBy: "extension" },
+    })).code).toBe("INVALID_EDIT");
+    // Variables have no writtenBy field: the update whitelist rejects it.
+    expect(failure(executeEditOperation(source(), "update-variable", {
+      variable: "score", changes: { writtenBy: "host" },
+    })).code).toBe("INVALID_ARGUMENT");
+  });
+
   test("add-sprite rejects an id alongside the catalog shape instead of ignoring it", () => {
     const json = source();
     // The proposal-flow shape {id, sprite: def} stays accepted.

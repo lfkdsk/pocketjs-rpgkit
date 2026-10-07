@@ -608,7 +608,10 @@ export function mutateCatalog(
       return addArrayEntry(project, kind, values, value, assign);
     }
     if (action === "update") {
-      return updateArrayEntry(project, kind, values, selector, args.changes, ["name"], [], assign);
+      // `writtenBy` is a switch-only declaration (the host/extension writes
+      // the switch at runtime); variables stay name-only.
+      return updateArrayEntry(project, kind, values, selector, args.changes,
+        kind === "switch" ? ["name", "writtenBy"] : ["name"], [], assign);
     }
     return removeArrayEntry(project, kind, values, selector, assign);
   }

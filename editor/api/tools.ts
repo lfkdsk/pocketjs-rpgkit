@@ -280,6 +280,24 @@ const catalogNameChanges = {
   type: "object", additionalProperties: false, minProperties: 1,
   properties: { name: { type: ["string", "null"], minLength: 1, maxLength: 80 } },
 };
+// Switch declarations additionally carry `writtenBy: "host"`: a declaration
+// that the host or an extension writes the switch at runtime, which the
+// static checker honors (no read-never-set warning).
+const switchValue = {
+  type: "object", additionalProperties: false, required: ["id"],
+  properties: {
+    id: { type: "string", pattern: "^[A-Za-z0-9_.-]+$" },
+    name: { type: "string", minLength: 1, maxLength: 80 },
+    writtenBy: { type: "string", enum: ["host"], description: "Declare that the host or an extension writes this switch at runtime; the static checker then does not flag it as read-never-set." },
+  },
+};
+const switchChanges = {
+  type: "object", additionalProperties: false, minProperties: 1,
+  properties: {
+    name: { type: ["string", "null"], minLength: 1, maxLength: 80 },
+    writtenBy: { type: ["string", "null"], enum: ["host", null], description: "\"host\" declares a runtime-written switch; null removes the declaration." },
+  },
+};
 
 const patchSide = {
   oneOf: [
@@ -401,8 +419,8 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_sheet_remove", "Remove tile sheet", "remove-sheet", "Remove an unreferenced tile sheet. RESOURCE_IN_USE returns every known reference without changing the project.", { sheet }, ["sheet"], true),
   tool("rpgkit_switches_list", "List switches", "list-switches", "List declared switch names plus ids used implicitly by event content."),
   tool("rpgkit_switch_get", "Get switch", "get-switch", "Read one declared or implicit switch and every known read/write reference.", { switch: switchId }, ["switch"]),
-  tool("rpgkit_switch_add", "Add switch", "add-switch", "Add an optional named switch declaration; runtime switch ids remain sparse.", { switch: catalogNameValue }, ["switch"], true),
-  tool("rpgkit_switch_update", "Update switch", "update-switch", "Update the name of a declared switch without renaming its id. null removes the name.", { switch: switchId, changes: catalogNameChanges }, ["switch", "changes"], true),
+  tool("rpgkit_switch_add", "Add switch", "add-switch", "Add an optional named switch declaration; runtime switch ids remain sparse. writtenBy:\"host\" declares a switch the host or an extension writes at runtime, so the static checker does not flag it as read-never-set.", { switch: switchValue }, ["switch"], true),
+  tool("rpgkit_switch_update", "Update switch", "update-switch", "Update the name or writtenBy marker of a declared switch without renaming its id. null removes an optional field.", { switch: switchId, changes: switchChanges }, ["switch", "changes"], true),
   tool("rpgkit_switch_remove", "Remove switch", "remove-switch", "Remove an unreferenced switch declaration. RESOURCE_IN_USE returns every known reference without changing the project.", { switch: switchId }, ["switch"], true),
   tool("rpgkit_variables_list", "List variables", "list-variables", "List declared variable names plus ids used implicitly by event content."),
   tool("rpgkit_variable_get", "Get variable", "get-variable", "Read one declared or implicit variable and every known read/write reference.", { variable }, ["variable"]),

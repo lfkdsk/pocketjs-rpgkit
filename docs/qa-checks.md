@@ -486,8 +486,9 @@ build:wasm`); a missing wasm is a thrown error (exit 2).
 
 | code | severity | meaning | typical fix |
 | --- | --- | --- | --- |
-| `lint/switch-read-never-set` | warning | a switch is read by a condition but never set in the document | it always evaluates to its default; if a save or an extension seeds it, ignore the finding |
+| `lint/switch-read-never-set` | warning | a switch is read by a condition but never set in the document | it always evaluates to its default; if a save or an extension seeds it, ignore the finding. A switch declared with `writtenBy: "host"` in `project.switches` is never flagged: the declaration says the host or an extension writes it at runtime. A bare declaration without the marker is still checked, so the directory does not hide typos |
 | `lint/switch-set-never-read` | info | a switch is set but never read | dead write within the document; external code may still read it |
+| `lint/switch-hostwritten-also-set` | info | a switch declared `writtenBy: "host"` is also set by a document command | the marker is redundant while the document sets the switch (read-never-set would not fire anyway) — remove the marker or the document set |
 | `lint/variable-read-never-set` | info | a variable is read but never set | may be seeded by a save or extension; otherwise it always reads its default |
 | `lint/variable-set-never-read` | info | a variable is set but never read | dead write within the document |
 | `lint/selfswitch-read-never-set` | warning | a page requires self switch K=true that no page of the event ever sets | the page can never win; add a `selfSwitch` set or drop the condition |

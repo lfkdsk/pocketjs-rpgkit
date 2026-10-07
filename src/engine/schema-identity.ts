@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "dddabaa88780fa1e117a911c88e191b5958bd390b41739e8b6bc1fd0f41ed4e0";
+export const MAP_SCHEMA_HASH = "11227c99d75fe0ec833b77499bec30022f046383c4eeb9349a3f590bbc4ce801";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -59,6 +59,11 @@ export const MAP_SCHEMA_HASH = "dddabaa88780fa1e117a911c88e191b5958bd390b41739e8
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: the optional switch declaration `writtenBy: "host"` —
+  // marks a switch the host or an extension writes at runtime, so the
+  // static checker skips its read-never-set warning; older documents never
+  // carry the field and behave identically
+  "dddabaa88780fa1e117a911c88e191b5958bd390b41739e8b6bc1fd0f41ed4e0",
   // superseded by: the `routeSpeed` moveControl variant — a speed grade
   // scoped to one forced route; older documents never use it
   "a749a871f1eb32969ae58ff186871e21ff1ca4fb26390088512ee2bca927f82a",

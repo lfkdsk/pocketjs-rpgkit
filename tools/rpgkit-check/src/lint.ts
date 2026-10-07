@@ -5,7 +5,13 @@
 //
 // Checks:
 //   lint/switch-read-never-set      switch read by a condition but never set
+//                                   (skipped for switches declared
+//                                   writtenBy:"host" — the host/extension
+//                                   writes them at runtime)
 //   lint/switch-set-never-read      switch set but never read
+//   lint/switch-hostwritten-also-set  switch declared writtenBy:"host" is
+//                                   also set by a document command, so the
+//                                   marker is redundant (info)
 //   lint/variable-read-never-set    variable read but never set (may be seeded
 //                                   by a save/extension — info, not error)
 //   lint/variable-set-never-read    variable set but never read
@@ -906,14 +912,42 @@ export function lintGlobal(ctx: LintContext, project: Project): void {
 
   // ---- usage findings -----------------------------------------------------
 
+  // Switches declared `writtenBy: "host"` are written into the switch bank
+  // by the host or an extension at runtime (a sim seeding growth state, a
+  // host bridge, …), so "read but never set in the document" is true by
+  // construction and must not warn. A bare catalog declaration without the
+  // marker is NOT exempt: the directory alone does not prove the switch is
+  // ever written, so typos still surface.
+  const hostWrittenSwitches = new Set<string>();
+  for (const sw of project.switches ?? []) {
+    if (sw.writtenBy === "host") hostWrittenSwitches.add(sw.id);
+  }
+
   const usageFindings = (
     usage: Map<string, Usage>,
     readCheck: string,
     writeCheck: string,
     readSeverity: "warning" | "info",
     label: string,
+    hostWritten?: Set<string>,
   ): void => {
     for (const [id, entry] of usage) {
+      if (hostWritten?.has(id)) {
+        // The host/extension seeds this switch outside the document.
+        if (entry.writes.length > 0) {
+          // The document also sets it: the marker is then redundant (a
+          // document write already keeps read-never-set quiet), so either
+          // the marker or the set is probably a mistake. Info, not warning.
+          ctx.findings.push(makeFinding(
+            "lint/switch-hostwritten-also-set",
+            "info",
+            `${label} ${JSON.stringify(id)} is declared writtenBy:"host" but a document command also sets it`,
+            "the marker is redundant while the document sets the switch — remove the marker or the document set",
+            entry.writes[0]!,
+          ));
+        }
+        continue;
+      }
       if (entry.reads.length > 0 && entry.writes.length === 0) {
         ctx.findings.push(makeFinding(
           readCheck,
@@ -933,7 +967,7 @@ export function lintGlobal(ctx: LintContext, project: Project): void {
       }
     }
   };
-  usageFindings(ctx.switches, "lint/switch-read-never-set", "lint/switch-set-never-read", "warning", "switch");
+  usageFindings(ctx.switches, "lint/switch-read-never-set", "lint/switch-set-never-read", "warning", "switch", hostWrittenSwitches);
   usageFindings(ctx.variables, "lint/variable-read-never-set", "lint/variable-set-never-read", "info", "variable");
 
   // ---- item sprites reference tile sheets ---------------------------------

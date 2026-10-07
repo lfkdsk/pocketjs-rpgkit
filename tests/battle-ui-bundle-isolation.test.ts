@@ -205,8 +205,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // the shared platform table adds 192: measured 977,221. The routeSpeed
 // movement control (the MoveControl variant, the per-route speed field and
 // its latching on the shared movement path) adds 2,495: measured 979,716.
+// The switch catalog's writtenBy:"host" marker (a dedicated switchDef $def
+// in the embedded project schema) adds 72: measured 979,788.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 979_716;
+const EXPECTED_BYTES = 979_788;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

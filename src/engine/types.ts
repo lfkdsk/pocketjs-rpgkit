@@ -963,6 +963,13 @@ export interface Item {
 export interface SwitchDef {
   id: string;
   name?: string;
+  /** Declares that this switch is written into the switch bank by the host
+   *  or an extension at runtime, never by a document command (a sim seeding
+   *  growth state, a host bridging native code, …). The static checker then
+   *  does not flag it as read-never-set. A bare catalog declaration without
+   *  this marker is still checked — the directory alone does not prove the
+   *  switch is ever written, so typos still surface. */
+  writtenBy?: "host";
 }
 
 /** Optional editor-facing declaration for an event variable. Variable ids

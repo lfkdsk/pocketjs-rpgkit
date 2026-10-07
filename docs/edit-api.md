@@ -478,7 +478,7 @@ MCP tools below for both inline projects and sharded `ProjectShell` projects.
 | sprites | `list-sprites` | `sprite` | `sprite`: id, `value`: complete sprite definition | `sprite`: id, `value`: replacement definition |
 | audio | `list-audio` | `audio` | `audio`: id, `value`: pak entry | `audio`: id, `value`: replacement pak entry |
 | sheets | `list-sheets` | `sheet` | `sheet`: complete sheet object | `sheet`: id, `changes`: sheet fields |
-| switches | `list-switches` | `switch` | `switch`: `{ "id": "…", "name"?: "…" }` | `switch`: id, `changes`: `{ "name"?: string|null }` |
+| switches | `list-switches` | `switch` | `switch`: `{ "id": "…", "name"?: "…", "writtenBy"?: "host" }` | `switch`: id, `changes`: `{ "name"?: string\|null, "writtenBy"?: "host"\|null }` |
 | variables | `list-variables` | `variable` | `variable`: `{ "id": "…", "name"?: "…" }` | `variable`: id, `changes`: `{ "name"?: string|null }` |
 
 Every list command takes no arguments and returns deterministic rows:
@@ -504,6 +504,16 @@ an event but absent from the declaration array is still listed and can be read
 with `declared: false` and `value: { id }`. Adding a declaration does not
 initialize or otherwise change the runtime's sparse switch/variable bank.
 Only declared entries can be updated or removed.
+
+A switch declaration may carry `writtenBy: "host"`: a declaration that the
+host or an extension writes the switch into the bank at runtime (a sim
+seeding growth state, a host bridge, …). The static checker then does not
+flag the switch as read-never-set, since no document command is expected to
+set it. A declaration without the marker is still checked, so the directory
+does not become a blanket exemption that hides typos. If a document command
+also sets a marked switch, the checker reports an info hint that the marker
+is redundant. `writtenBy` is a switch-only field; variable declarations stay
+name-only.
 
 `add-*` rejects an existing id with `DUPLICATE_RESOURCE`; `get-*`, `update-*`
 and `remove-*` report `RESOURCE_NOT_FOUND` when their applicable entry is

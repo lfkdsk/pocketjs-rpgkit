@@ -510,7 +510,9 @@ simDescribe("sunstone — render budget", () => {
     // (the session/attract hook that keeps a turn from overshooting at 4 Hz)
     // adds 977: measured 976,957 B. The routeSpeed movement control (the
     // MoveControl variant, per-route speed field and latching) adds 2,874:
-    // measured 979,831 B. Keep a narrow margin.
+    // measured 979,831 B. The switch catalog's writtenBy:"host" marker (a
+    // dedicated switchDef $def in the embedded project schema) adds 72:
+    // measured 979,903 B. Keep a narrow margin.
     expect(jsBytes).toBeLessThan(981_000);
   });
 });
