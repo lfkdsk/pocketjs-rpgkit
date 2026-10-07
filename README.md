@@ -172,8 +172,11 @@ for one tick leave no edge), and a held takeover mask wins a same-tick
 race with a tap. An `onTick` hook exposes each folded tick's digest for
 tick-for-tick comparisons. The example bakes no new
 terrain: it points at grow's PNGs in place (`../grow/assets/...`) and adds
-only whole-stamp and 64 px fill composites of them
-(`bun examples/wander/gen-assets.ts`).
+whole-stamp and 64 px fill composites of them. Villagers and the player
+draw from a pool of 16 Ninja Adventure walkers (CC0) with 4 palettes each,
+shipped as one on-demand CLUT8 tileset per walker; a villager's look is a
+pure function of the seed, its region and its index. Both kinds of asset
+come from `bun examples/wander/gen-assets.ts`.
 
 ### `examples/wander-online` — local multiplayer with prediction and interpolation
 
