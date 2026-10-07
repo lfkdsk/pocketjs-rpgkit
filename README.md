@@ -117,13 +117,37 @@ woods and meadows are grow's coordinate-hashed Ninja stamps.
   held direction. A wall blocked on both sides still holds the player in
   place, facing it; auto-wander and tap-to-walk keep their own paths.
 - **Attract.** An auto-wander driver (A* over the window, preferring
-  roads) walks from town to town by itself. A d-pad, **CIRCLE**, **CROSS**,
-  shoulder or **START** press takes over; ten idle seconds hand the walk
-  back. **SQUARE** grows a new seed, **TRIANGLE** toggles fast travel,
-  **SELECT** hands back at once, and a tap walks to the tapped tile. The HUD
-  shows the seed, world
-  coordinates, the chunk minimap (rendered / resident / queued / evicted,
-  with the load and unload rings) and the residency counters.
+  roads) walks from town to town and landmark to landmark by itself. A d-pad, **CIRCLE**, **CROSS**,
+  shoulder or **START** press takes over; ten idle seconds hand the walk back. **SQUARE** grows a new seed,
+  **TRIANGLE** toggles fast travel, **SELECT** hands back at once, **CROSS**
+  is context-sensitive (on a plaza it accepts or delivers an errand;
+  elsewhere it pages the travel log), and a tap walks to the tapped tile. The HUD shows the
+  seed, world coordinates, the chunk minimap (rendered / resident / queued /
+  evicted, with the load and unload rings, and gold dots for discovered
+  landmarks) and the residency counters.
+- **Landmarks and the travel log.** A pure roll of (seed, region) places a
+  rare landmark — standing stones, a ruined arch, a strange tree, a cold
+  spring, a giant boulder, an old camp — in towns and in the wild alike. It is
+  discovered when its centre enters the viewport and recorded in a bounded
+  travel log (64 entries, older ones folded into per-kind counts, serializable
+  for a future save). The bottom line shows the log total and a RUMOR pointing
+  at the nearest undiscovered landmark; the driver detours to them, so a long
+  auto-wander keeps finding new things instead of circling one cluster.
+- **Talking towns and errands.** Every villager has their own lines — one of
+  eight roles (farmer, baker, elder, traveler, guard, herbalist, child,
+  mason), each citing two of four facts: the biome's needs, the town's size,
+  a road-linked neighbour's name, or the nearest landmark rumor. Town names
+  come from a 64×64×9 space (qualifier + root + suffix), so a long walk
+  rarely repeats one. Every town may offer an errand — carry something to a
+  road-linked neighbouring town, or go and see a nearby landmark — pure in (seed,
+  region). **CROSS** on a plaza accepts or delivers; a helped town gains
+  walkable plaza flowers that survive plan eviction (a 32-town exact set plus
+  a 1024-bit Bloom that never forgets). The auto-walker runs errands and
+  stops at every town it reaches to talk to one villager, once per recent
+  town (a bounded FIFO of 24, so a town revisited after 24 newer ones may be
+  talked again). The errand
+  session state (one active errand, the helped set, the Bloom, the talked
+  towns) serializes to under 1 KiB with a validated, bounded restore.
 
 Generation, discovery and the window swap all happen per 60 Hz reference
 tick, so the world, its residency and the auto-wander trajectory are
