@@ -162,10 +162,11 @@ Conventions:
 - **Per-visit locals:** a switch or variable id prefixed `local.`
   is reset on every map entry; it never survives a transfer.
 - **Runtime appearance:** `appearance` changes the effective player/event
-  walking sprite, 0..255 opacity, or visibility. Player state is project-wide
-  and saveable; `saveDefault:true` replaces its reset baseline. Event state is
-  tied to the issuing page and is removed on page change. The matching
-  condition compares the effective sprite key.
+  walking sprite, 0..255 opacity, or visibility. For the player it can also
+  select the game-owned battle `combatSheet`. Player state is project-wide
+  and saveable; `saveDefault:true` replaces the reset baseline, including the
+  battle sheet. Event state is tied to the issuing page and is removed on page
+  change. The matching condition compares the effective walking sprite key.
 - **Runtime visual layers:** `layer` stores a named layer's visibility and/or
   prepackaged variant for this map visit. The UI resolves those names through
   immutable `GameAssets.layers`; every transfer clears the selections.
@@ -315,8 +316,12 @@ Conventions:
   Manual saves keep their tile-boundary gate. Autosave is independent of the
   player-facing `saveAccess` flag.
 - **Names and map banners:** `changeName` writes the saved player name used by
-  later `{name}` expansion. `system.mapNameDisplay:true` seeds a persistent
-  flag; each map entry starts a saved 180-tick banner from `MapDef.name`.
+  later `{name}` expansion. It may instead target `"this"` or `{event:id}`;
+  those sparse, map-scoped names survive saves and rewind, and an opted-in
+  project can display them through `{char:this}` / `{char:<event-id>}`.
+  A `{variable:id}` name operand supports scene-driven input.
+  `system.mapNameDisplay:true` seeds a persistent flag; each map entry starts
+  a saved 180-tick banner from `MapDef.name`.
   `mapNameDisplay:false` clears the flag and dismisses the current banner.
 - `isBusy(state)` is true while a blocking (action / playerTouch / eventTouch / autorun)
   fiber runs. The mover freezes for its whole duration. PARALLEL pages run
@@ -447,6 +452,12 @@ flags refresh, so the resolver runs once per open, not per tick. A line
 with no `{x:}`, a session with no resolver and a project without the
 declaration all take the pre-`{x:}` path, so games that never use the
 token pay nothing.
+
+`project.system.characterNames:true` separately opts into built-in
+`{char:player}`, `{char:this}` and `{char:<event-id>}` expansion. Event names
+use the current map's saved `changeName` override, then the authored event
+name, then its id. `this` resolves from the fiber that opened the box. Without
+the opt-in these braces remain literal, preserving older documents.
 
 ## P1④ session (multi-map) fold
 

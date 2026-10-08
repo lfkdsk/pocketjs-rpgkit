@@ -390,6 +390,9 @@ export type Command =
       sprite?: string | null;
       opacity?: number | null;
       visible?: boolean | null;
+      /** Player only: battle back-sheet slug, or null to restore the
+       *  `saveDefault` baseline. */
+      combatSheet?: string | null;
       saveDefault?: boolean;
     }
   /** Change one named visual layer for this map visit. A null field restores
@@ -511,8 +514,11 @@ export type Command =
   | { op: "autosave" }
   | { op: "gameOver" }
   | { op: "returnTitle" }
-  /** Change the player name used by the `{name}` text token. */
-  | { op: "changeName"; name: string }
+  /** Change a runtime character name. Missing `target` keeps the legacy
+   *  player-only spelling. An event name is map-scoped and is visible
+   *  through `{char:<eventId>}` / `{char:this}` text tokens. A variable
+   *  operand lets a name-input scene feed the command without host code. */
+  | { op: "changeName"; target?: RouteTarget; name: string | VariableRef }
   /** Enable/disable automatic map-name banners on subsequent map entries. */
   | { op: "mapNameDisplay"; visible: boolean }
   /** Enable/disable the host's menu entry (RPG Maker 135). Default enabled;
@@ -1100,6 +1106,10 @@ export interface ProjectSystem {
    *  live value of variable `id` (0 when unset). Off by default, so text
    *  authored before the token existed keeps showing its braces verbatim. */
   textVariables?: boolean;
+  /** Expand built-in `{char:<eventId>}`, `{char:this}` and `{char:player}`
+   *  tokens from runtime character names. Off by default so older project
+   *  text containing those braces remains literal. */
+  characterNames?: boolean;
   /** Allowlist of `{x:<key>}` text-token keys the game's session resolver
    *  answers. Declaring it is the explicit opt-in that switches `{x:}`
    *  expansion on (like `textVariables`): without it the braces print

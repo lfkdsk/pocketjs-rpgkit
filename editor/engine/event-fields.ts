@@ -712,7 +712,15 @@ export function commandFields(
         field("itemType", "TYPE", command.itemType, "enum", ["regular", "key", "hiddenA", "hiddenB"]),
       ];
     case "changeName":
-      return [field("name", "NAME", command.name)];
+      // Keep the legacy player/literal form editable. Event targets and
+      // variable-fed names are represented faithfully but read-only until
+      // the inspector has a two-axis target/source editor.
+      return command.target === undefined && typeof command.name === "string"
+        ? [field("name", "NAME", command.name)]
+        : [
+            field("target", "TARGET", target(command.target ?? "player"), "text", undefined, true),
+            field("name", "NAME", typeof command.name === "string" ? command.name : `$${command.name.variable}`, "text", undefined, true),
+          ];
     case "mapNameDisplay":
       return [field("visible", "VISIBLE", command.visible, "boolean", BOOLS)];
     case "menuAccess":
@@ -1472,6 +1480,9 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       break;
     }
     case "changeName": {
+      if (command.target !== undefined || typeof command.name !== "string") {
+        return bad("event-target and variable-fed changeName commands are read-only");
+      }
       if (key === "name") return raw.length >= 1 && raw.length <= 24
         ? good({ ...command, name: raw })
         : bad("name needs 1-24 characters");

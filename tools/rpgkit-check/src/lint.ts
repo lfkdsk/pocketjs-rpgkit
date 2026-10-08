@@ -137,6 +137,15 @@ export function textTokenKeys(text: string): string[] {
   return out;
 }
 
+/** Built-in runtime character-name tokens. */
+const TEXT_CHARACTER_NAME_TOKEN = /\{char:([^{}]*)\}/g;
+
+/** Character targets used by `{char:<target>}` tokens, in source order. */
+export function characterNameTargets(text: string): string[] {
+  if (!text.includes("{char:")) return [];
+  return [...text.matchAll(TEXT_CHARACTER_NAME_TOKEN)].map((match) => match[1]!);
+}
+
 /** The player-visible strings of one command that the runtime expands
  *  tokens in: text lines, a choices prompt and its option rows, an
  *  extChoice prompt (its rows come from the extension at runtime). */
@@ -176,6 +185,7 @@ export interface LintContext {
   mapIds: Set<string>;
   commonIds: Set<string>;
   textVariables: boolean;
+  characterNames: boolean;
   textTokenAllowlist: Set<string> | null;
   switches: Map<string, Usage>;
   variables: Map<string, Usage>;
@@ -214,6 +224,7 @@ export function createLintContext(project: Project): LintContext {
     mapIds: new Set(project.maps.map((m) => m.id)),
     commonIds: new Set((project.commonEvents ?? []).map((c) => c.id)),
     textVariables: project.system?.textVariables === true,
+    characterNames: project.system?.characterNames === true,
     textTokenAllowlist: project.system?.textTokens ? new Set(project.system.textTokens) : null,
     switches: new Map(),
     variables: new Map(),
@@ -409,6 +420,16 @@ function walkCommandTree(
         cloc,
       ));
     }
+    const charTargets = new Set(commandTexts(command).flatMap(characterNameTargets));
+    if (!ctx.characterNames && charTargets.size > 0) {
+      ctx.findings.push(makeFinding(
+        "lint/character-name-token-off",
+        "warning",
+        `${command.op} text holds ${[...charTargets].map((target) => `{char:${target}}`).join(", ")} but project.system.characterNames is off, so the token prints verbatim`,
+        "set project.system.characterNames to true to expand runtime character names, or remove the token",
+        cloc,
+      ));
+    }
     switch (command.op) {
       case "switch":
         note(ctx, "switches", command.id, "writes", cloc);
@@ -433,6 +454,11 @@ function walkCommandTree(
       case "selectItem":
         // The scene writes the chosen item's numeric id (0 on cancel).
         note(ctx, "variables", command.variable, "writes", cloc);
+        break;
+      case "changeName":
+        if (typeof command.name === "object") {
+          note(ctx, "variables", command.name.variable, "reads", cloc);
+        }
         break;
       case "locationInfo":
         // Writes the cell fact; variable coordinates are live reads.

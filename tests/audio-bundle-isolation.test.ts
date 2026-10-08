@@ -220,14 +220,16 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 72 B to the shared schema path in each bundle: 611,672, 979,860 and
 // 777,025. Live playerMoving page conditions plus source-compatible command
 // wander clocks, observation pauses and exact intervals then add 3,535 B to
-// Meadow and the WAV fixture, and 4,152 B to Sunstone (whose save/demo graph
-// also validates the added movement state). These merged deltas are 72 B
-// below the source branch's measurements because its two unpublished schema
-// generations collapse into one compatible predecessor here. The totals are
-// 615,207, 984,012 and 780,560.
-const EXPECTED_MEADOW_BYTES = 615_207;
-const EXPECTED_SUNSTONE_QOA_BYTES = 984_012;
-const EXPECTED_WAV_FIXTURE_BYTES = 780_560;
+// Meadow and the WAV fixture, and 4,152 B to Sunstone. Runtime identity
+// support (combatSheet/random/characterNames schema, sparse map-event names,
+// save/COW validation, {char:} expansion, targeted/variable-fed changeName
+// and the scene-selection bridge) adds a measured 3,641 B, 5,527 B and
+// 4,407 B respectively to the movement-enabled main bundles. The integrated
+// totals are therefore 618,848, 989,539 and 784,967 B. The name-input view
+// remains tree-shaken from the ordinary Sunstone graph.
+const EXPECTED_MEADOW_BYTES = 618_848;
+const EXPECTED_SUNSTONE_QOA_BYTES = 989_539;
+const EXPECTED_WAV_FIXTURE_BYTES = 784_967;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

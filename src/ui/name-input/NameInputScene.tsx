@@ -17,11 +17,13 @@
 
 import { Text, View } from "@pocketjs/framework/components";
 import { onFrame } from "@pocketjs/framework/lifecycle";
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, For } from "solid-js";
 import type { JsonValue } from "../../engine/types.ts";
 import { breakText, hasForcedBreak } from "../../engine/text-break.ts";
 import {
   NAME_INPUT_UI_TEXT,
+  nameInputActionCount,
+  nameInputActionKey,
   nameInputCharAt,
   type NameInputState,
 } from "../../engine/name-input.ts";
@@ -29,9 +31,6 @@ import { withUiText, type UiTextOverrides } from "../../engine/ui-text.ts";
 import { fitBounded, marqueeOffset } from "../list-window.ts";
 import { BoundedLine } from "../BoundedLine.tsx";
 import { slotMeasure, TEXT_2XS_SLOT } from "../text-measure.ts";
-
-/** BACK, OK, CANCEL: the cells after the charset. */
-const ACTION_KEYS = ["nameInput.back", "nameInput.ok", "nameInput.cancel"] as const;
 /** Font slot of `text-sm`. */
 const TEXT_SM_SLOT = 1;
 /** Font slot of `text-xs` (12 px). */
@@ -97,6 +96,12 @@ export interface NameInputSceneProps {
   state: JsonValue;
   width: number;
   height: number;
+  /** False while GameView retains this scene off-screen. Hidden cells stop
+   *  participating in global focus traversal as well as hit testing. */
+  active?: boolean;
+  /** UI input bridge supplied by GameView. The reducer validates the index,
+   *  moves its cursor and activates the entry in one deterministic fold. */
+  onSelectIndex?: (index: number) => void;
   /** The game's replacements of the kit's words (GameView passes them). */
   uiText?: UiTextOverrides;
 }
@@ -118,7 +123,8 @@ export function NameInputScene(props: NameInputSceneProps) {
   // is 252 px, the grid starts at y = 80 + drop and each row is 20 px, so
   // the caption may grow to floor((172 - rows*20) / 18) + 1 rows. A longer
   // caption scrolls sideways (a marquee) instead of pushing the grid out.
-  const gridRowCount = (): number => Math.ceil((st().charset.length + ACTION_KEYS.length) / st().columns);
+  const gridRowCount = (): number =>
+    Math.ceil((st().charset.length + nameInputActionCount(st())) / st().columns);
   const maxTitleRows = (): number => Math.max(1, Math.floor((172 - gridRowCount() * 20) / 18) + 1);
   const titleCell = createMemo(() => {
     const state = st();
@@ -137,12 +143,14 @@ export function NameInputScene(props: NameInputSceneProps) {
   const entryLabel = (index: number): string => {
     const state = st();
     if (index < state.charset.length) return nameInputCharAt(state, index);
-    const key = ACTION_KEYS[index - state.charset.length];
+    const key = nameInputActionKey(state, index);
     return key ? text()[key] : "";
   };
 
-  // Each action cell's layout, recomputed only when its label changes.
-  const actionLayouts = [0, 1, 2].map((i) =>
+  // Each action cell's layout, recomputed only when its label changes. The
+  // RANDOM cell (index 3) exists only when the state resolved a candidate
+  // list; its memo stays mounted but the cell is never drawn.
+  const actionLayouts = [0, 1, 2, 3].map((i) =>
     createMemo(
       () => {
         const state = st();
@@ -158,7 +166,7 @@ export function NameInputScene(props: NameInputSceneProps) {
   const focusedOverflow = createMemo(() => {
     const state = st();
     const actionIndex = state.cursor - state.charset.length;
-    if (actionIndex < 0 || actionIndex >= ACTION_KEYS.length) return 0;
+    if (actionIndex < 0 || actionIndex >= nameInputActionCount(state)) return 0;
     return actionLayouts[actionIndex]?.().overflow ?? 0;
   });
   onFrame(() => {
@@ -184,7 +192,36 @@ export function NameInputScene(props: NameInputSceneProps) {
 
   const entries = (): number[] => {
     const state = st();
-    return Array.from({ length: state.charset.length + ACTION_KEYS.length }, (_, i) => i);
+    return Array.from(
+      { length: state.charset.length + nameInputActionCount(state) },
+      (_, i) => i,
+    );
+  };
+
+  /** Stable, paint-free hit cell. Visual cells keep their existing render
+   *  lifecycle (and exact pixels); this keyed layer survives the reducer
+   *  state update between a touch release and deferred onPress delivery. */
+  const hitCell = (index: number) => {
+    const state = st();
+    const g = grid();
+    const p = panel();
+    const row = Math.floor(index / state.columns);
+    const col = index % state.columns;
+    return (
+      <View
+        class="absolute"
+        style={{
+          posType: 1,
+          insetL: g.x - p.x + col * g.cellW,
+          insetT: g.y - p.y + row * g.cellH,
+          width: g.cellW,
+          height: g.cellH,
+        }}
+        focusable={props.active !== false && props.onSelectIndex !== undefined}
+        onPress={() => props.onSelectIndex?.(index)}
+        debugName={`rpgkit-name-input-hit-${index}`}
+      />
+    );
   };
 
   /** A charset cell's text (single character, fixed 20 px row). */
@@ -217,7 +254,11 @@ export function NameInputScene(props: NameInputSceneProps) {
     const offset = () => (cursor() ? marqueeOffset(layout().overflow, tick()) : 0);
     const debug = `rpgkit-name-input-cell-${index}`;
     return (
-      <View class="absolute items-center justify-center" style={cellStyle(index)} debugName={debug}>
+      <View
+        class="absolute items-center justify-center"
+        style={cellStyle(index)}
+        debugName={debug}
+      >
         {layout().kind === "clip" ? (
           <View
             style={{ width: grid().cellW - 4 * s(), height: ONE_ROW_H * s(), overflow: 1 }}
@@ -350,6 +391,7 @@ export function NameInputScene(props: NameInputSceneProps) {
         </View>
 
         {entries().map((index) => (index < st().charset.length ? charsetCell(index) : actionCell(index)))}
+        <For each={entries()}>{(index) => hitCell(index)}</For>
       </View>
     </View>
   );

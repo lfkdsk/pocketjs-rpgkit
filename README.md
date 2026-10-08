@@ -1287,7 +1287,7 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `openMenu` / `openSave` | request a game-owned menu or save screen through `GameView.hostActions` |
 | `autosave` | publish a normalized snapshot from this reference tick when v1 can resume it; otherwise coalesce requests and publish at the first resumable reference tick while the fiber keeps running |
 | `gameOver` / `returnTitle` | request a game-owned game-over or title transition through `GameView.hostActions` |
-| `changeName` | replace the player name used by the `{name}` text token |
+| `changeName` | replace the player name used by `{name}`, or a map event's saved runtime name consumed by opted-in `{char:...}` text; the name may come from a variable |
 | `mapNameDisplay` | enable or disable the automatic three-second banner on subsequent map entries |
 | `menuAccess` / `saveAccess` | enable or disable the host menu/save entry (default enabled; a disabled entry drops the matching `openMenu`/`openSave` request) |
 | `wait` | virtual-time pause (seconds, compiled against `simulationHz`) |
@@ -1559,7 +1559,12 @@ the player-facing save entry and `openSave`, not authored autosaves. Normal
 forward attract playback forwards the request, while rewind's internal refold
 does not repeat host writes.
 
-`changeName` immediately changes subsequent `{name}` expansion.
+`changeName` immediately changes subsequent `{name}` expansion. Its optional
+`target` uses the same `"player"` / `"this"` / `{event:id}` spelling as
+appearance and routes; an event name is sparse, scoped to its map and saved.
+Its `name` may be `{variable:id}`. Set `project.system.characterNames:true`
+to expand `{char:player}`, `{char:this}` and `{char:<event-id>}` in later text
+and choices; without that opt-in the braces remain literal.
 `project.system.mapNameDisplay:true` opts into a three-second banner on each
 map entry. `mapNameDisplay` changes that persistent flag for later entries;
 turning it off also dismisses the current banner. Banner text comes from the
@@ -1947,7 +1952,8 @@ The kit ships two built-in scene pairs: the fixed-width
 MV-style name entry (not a byte-for-byte port of MV or Tuxemon — see the
 differences below). `{ op:"scene", id:"rpgkit.nameInput", args:{...} }` with args
 `{ variable?, maxLength?, default?, title?, charset?, columns?, allowEmpty?,
-swallowCancel? }`: without `variable` the committed name replaces the player
+swallowCancel?, randomNames?, randomNamesKey?, randomNamesKeyVariable?,
+randomNamesFallbackKey? }`: without `variable` the committed name replaces the player
 name (the `{name}` text token); with one it writes that variable. The buffer
 prefills from the variable's current value, the current player name, or
 `default`; an empty buffer cannot be committed (unless `allowEmpty` with a
@@ -1963,6 +1969,14 @@ cursor is identical at 60/30/20/4 Hz for the same virtual time. MV's
 back-key-deletes-char and empty-confirm-restores-default are not implemented;
 Tuxemon's empty player initial and species-name monster initial are reached
 by passing `default`.
+
+`randomNames` is either one candidate list or a keyed table. A static key, or
+the string/number value of `randomNamesKeyVariable`, selects a row; an absent
+or empty row uses `randomNamesFallbackKey`. A non-empty resolved row adds a
+RANDOM cell after CANCEL. Its deterministic per-scene RNG replaces the buffer
+with one candidate, and is part of the saved/rewound scene state. The grid is
+directly tappable in `GameView` at both 480×272 and integer-scaled viewports;
+pointer selection goes through the same scene reducer as controller input.
 
 Variable-addressed transfers validate their live map, coordinate, and
 direction operands when the command executes. An unset/wrong-typed operand or
@@ -3186,7 +3200,7 @@ player-name token of message text is separate and not used here.
 | `save.loadingTitle` `save.loadingBody` `save.loadSlotFailedTitle` `save.loadCodeFailedTitle` `save.loadAutosaveFailedTitle` | Save-loading progress and failure titles | `{map}`, `{slot}` |
 | `save.loadErrorContent` `save.loadErrorChecksum` `save.loadErrorVersion` `save.loadErrorInvalid` `save.loadErrorShape` `save.loadErrorRead` | Save-loading error details | |
 | `save.loadedSlotToast` `save.loadedCodeToast` `save.loadedAutosaveToast` | Successful-load notices | `{slot}` |
-| `nameInput.title` `nameInput.back` `nameInput.ok` `nameInput.cancel` | Name input caption (when the `scene` sets no `title`) and its three action cells | |
+| `nameInput.title` `nameInput.back` `nameInput.ok` `nameInput.cancel` `nameInput.random` | Name input caption (when the `scene` sets no `title`) and its action cells | |
 | `demo.badge` `demo.control` `demo.rewind` | Attract badge, takeover and rewind notices | `{frame}` (zero-padded), `{frames}`, `{seconds}` |
 | `demo.menuTitle` `demo.tabChapters` `demo.tabWarp` `demo.tabAutoplay` `demo.tabSelected` `demo.empty` `demo.speed` `demo.speedHint` `demo.legend` `demo.legendBack` `demo.loading` `demo.warped` `demo.error` `demo.badLink` `demo.errorUnknownChapter` `demo.errorUnknownMap` `demo.errorUnknownAutoplay` `demo.errorXY` `demo.badLinkChooseOne` `demo.badLinkSpeed` | Demo menu (`pocket-rpgkit/ui/demo`); the error sentence templates replace the fixed English reasons a bad chapter/map/link produces | `{tab}`, `{speed}`, `{id}` |
 | `battle.statValue` | `StatBar` readout | `{current}`, `{max}` |

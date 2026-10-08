@@ -808,10 +808,13 @@ function validateProg(prog: unknown, path: string): string | null {
         break;
       }
       case "appearance": {
-        const target = validateAppearanceTarget(ins.target, `${here}.target`);
+        const target = validateAppearanceTarget(ins.target ?? "player", `${here}.target`);
         if (target) return target;
         if (ins.sprite !== undefined && ins.sprite !== null && typeof ins.sprite !== "string") {
           return fail(`${here}.sprite`, "string or null required");
+        }
+        if (ins.combatSheet !== undefined && ins.combatSheet !== null && typeof ins.combatSheet !== "string") {
+          return fail(`${here}.combatSheet`, "string or null required");
         }
         if (ins.opacity !== undefined && ins.opacity !== null &&
             (!isNonNegInt(ins.opacity) || ins.opacity > 255)) {
@@ -1053,10 +1056,21 @@ function validateProg(prog: unknown, path: string): string | null {
         }
         break;
       case "changeName":
-        if (typeof ins.name !== "string" || ins.name.length < 1 || ins.name.length > 24) {
-          return fail(`${here}.name`, "string of length 1..24 required");
+        {
+        // Older compiled saves predate event targets and therefore omit the
+        // field. The public command still defaults that spelling to player.
+        const target = validateAppearanceTarget(ins.target ?? "player", `${here}.target`);
+        if (target) return target;
+        if (typeof ins.name === "string") {
+          if (ins.name.length < 1 || ins.name.length > 24) {
+            return fail(`${here}.name`, "string of length 1..24 required");
+          }
+        } else {
+          const ref = validateVariableRef(ins.name, `${here}.name`);
+          if (ref) return ref;
         }
         break;
+        }
       case "mapNameDisplay":
         if (typeof ins.visible !== "boolean") return fail(`${here}.visible`, "boolean required");
         break;
@@ -1639,6 +1653,20 @@ function validateSwitchState(v: unknown, path: string): string | null {
       return fail(`${path}.playerName`, "string of length 1..24 required");
     }
   }
+  // Runtime event names are map-scoped. Saves omit the sparse record until
+  // an event has actually been renamed. Strict keys prevent ambiguous
+  // cross-map identity and values share changeName's player-name bound.
+  if (v.eventNames !== undefined) {
+    if (!isRecord(v.eventNames)) return fail(`${path}.eventNames`, "record required");
+    for (const [key, value] of Object.entries(v.eventNames)) {
+      if (!/^[a-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(key)) {
+        return fail(`${path}.eventNames.${key}`, "map/event key required");
+      }
+      if (typeof value !== "string" || value.length < 1 || value.length > 24) {
+        return fail(`${path}.eventNames.${key}`, "string of length 1..24 required");
+      }
+    }
+  }
   if (v.timer !== undefined) {
     const timer = v.timer;
     if (!isRecord(timer)) return fail(`${path}.timer`, "timer object required");
@@ -1665,7 +1693,7 @@ function validateSwitchState(v: unknown, path: string): string | null {
   }
   if (v.playerAppearance !== undefined) {
     if (!isRecord(v.playerAppearance)) return fail(`${path}.playerAppearance`, "object required");
-    for (const field of ["defaultSprite", "sprite"] as const) {
+    for (const field of ["defaultSprite", "sprite", "defaultCombatSheet", "combatSheet"] as const) {
       const value = v.playerAppearance[field];
       if (value !== undefined && (typeof value !== "string" || value.length === 0)) {
         return fail(`${path}.playerAppearance.${field}`, "non-empty string required");

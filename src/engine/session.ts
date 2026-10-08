@@ -367,7 +367,11 @@ export function isSessionWorldIdle(state: SessionState, menuOpen = false): boole
     isWorldIdle(state.interp, sessionWorldIdleBlockers(state, menuOpen));
 }
 
-export interface SessionInput extends BattleInput {}
+export interface SessionInput extends BattleInput {
+  /** Direct entry selected by the active game-scene view (for example a
+   *  tapped name-input cell). Ignored outside a scene. */
+  selectIndex?: number;
+}
 
 /** A host lifecycle request observed at the reference tick that emitted it.
  * Autosave alone carries data: a fully normalized SaveSnapshot detached from
@@ -856,6 +860,7 @@ export function createSession(
   const worldOptions: WorldOptions = {
     messageBlocksPlayer: project.system?.messageBlocksPlayer === true,
     textVariables: project.system?.textVariables === true,
+    characterNames: project.system?.characterNames === true,
     // Declaring system.textTokens (the key allowlist) is the explicit {x:}
     // opt-in: a document without it keeps the pre-{x:} literal behavior.
     textTokensEnabled: Array.isArray(project.system?.textTokens),
@@ -1573,11 +1578,15 @@ function battleInput(input: SessionInput): Readonly<BattleInput> {
 /** KG1: scene input adds the horizontal edges name-input grids navigate
  *  with; battle scenes receive the battleInput subset instead. */
 function sceneInput(input: SessionInput): Readonly<SceneInput> {
-  return {
+  const out: SceneInput = {
     ...battleInput(input),
     leftEdge: input.leftEdge === true,
     rightEdge: input.rightEdge === true,
   };
+  // Avoid allocating an empty conditional-spread object on every active
+  // scene frame in projects that never use direct pointer selection.
+  if (input.selectIndex !== undefined) out.selectIndex = input.selectIndex;
+  return out;
 }
 
 /** Validate and compile the game-owned BattleStart.audio contract. undefined
@@ -1646,6 +1655,9 @@ function startBattleScene(sess: Session, s: SessionState, request: PendingBattle
       items: keyedRecord(s.interp.sw.items),
       gold: s.interp.sw.gold,
       playerName: s.interp.sw.playerName,
+      ...(s.interp.sw.playerAppearance
+        ? { playerAppearance: s.interp.sw.playerAppearance }
+        : {}),
     },
   );
   if (started === null) {

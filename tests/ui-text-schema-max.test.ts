@@ -24,7 +24,7 @@ const H = 272;
 type Route =
   | "idle" | "shop-message" | "shop-buy" | "shop-sell"
   | "save-root" | "save-slots-save" | "save-slots-load" | "save-message"
-  | "save-export" | "save-import" | "save-runtime-message" | "name"
+  | "save-export" | "save-import" | "save-runtime-message" | "name" | "name-random"
   | "demo-menu" | "demo-autoplay" | "demo-empty" | "demo-busy" | "demo-toast"
   | "demo-runtime-error" | "demo-attract" | "demo-control" | "demo-rewind"
   | "boot-choose" | "boot-autoplay" | "boot-map" | "boot-xy" | "boot-speed"
@@ -104,6 +104,7 @@ const CASES = {
   "nameInput.back": { route: "name", target: "rpgkit-name-input-cell-67", panel: "rpgkit-name-input-panel", control: "rpgkit-name-input-cell-69" },
   "nameInput.ok": { route: "name", target: "rpgkit-name-input-cell-68", panel: "rpgkit-name-input-panel", control: "rpgkit-name-input-cell-69" },
   "nameInput.cancel": { route: "name", target: "rpgkit-name-input-cell-69", panel: "rpgkit-name-input-panel", control: "rpgkit-name-input-cell-67" },
+  "nameInput.random": { route: "name-random", target: "rpgkit-name-input-cell-70", panel: "rpgkit-name-input-panel", control: "rpgkit-name-input-cell-69" },
   "demo.menuTitle": { route: "demo-menu", target: "rpgkit-demo-menu-title", panel: "rpgkit-demo-menu-panel", control: "rpgkit-demo-menu-legend" },
   "demo.tabChapters": { route: "demo-menu", target: "rpgkit-demo-menu-tabs", panel: "rpgkit-demo-menu-panel", control: "rpgkit-demo-menu-legend" },
   "demo.tabWarp": { route: "demo-menu", target: "rpgkit-demo-menu-tabs", panel: "rpgkit-demo-menu-panel", control: "rpgkit-demo-menu-legend" },
@@ -350,7 +351,7 @@ function verify(world: BoundGameWorld, recording: Recording, key: UiTextKey, alr
   if (translated) {
     const parent = parentOf(root, element!.i);
     expect(parent, `${key} marquee clip parent`).toBeDefined();
-    const clipWidthFromLayout = key === "nameInput.back" || key === "nameInput.ok" || key === "nameInput.cancel"
+    const clipWidthFromLayout = key === "nameInput.back" || key === "nameInput.ok" || key === "nameInput.cancel" || key === "nameInput.random"
       ? 36
       : undefined;
     const clipBox = clipWidthFromLayout === undefined
@@ -414,8 +415,8 @@ function verifyRoute(world: BoundGameWorld, recording: Recording, route: Route):
 }
 
 simDescribe("all schema uiText values render at maxLength", () => {
-  test("the schema iteration and exhaustive screen map cover exactly all 84 keys", () => {
-    expect(SCHEMA_KEYS).toHaveLength(84);
+  test("the schema iteration and exhaustive screen map cover exactly all 85 keys", () => {
+    expect(SCHEMA_KEYS).toHaveLength(85);
     expect(new Set(SCHEMA_KEYS)).toEqual(new Set(Object.keys(CASES) as UiTextKey[]));
     for (const key of SCHEMA_KEYS) {
       expect(Number.isSafeInteger(UI_TEXT_SCHEMA[key].maxLength), `${key} maxLength is an integer`).toBe(true);
@@ -491,6 +492,18 @@ simDescribe("all schema uiText values render at maxLength", () => {
         const scene = world.probes().state.scene as unknown as { state: { cursor: number } };
         expect(scene.state.cursor, `${key} is focused`).toBe(67 + action);
       }
+      verify(world, recording, key);
+    });
+  }
+
+  for (const key of routeKeys("name-random")) {
+    test(`name input: ${key} at maxLength`, async () => {
+      const [world, recording] = await boot("name-random");
+      // The 71-entry grid (67 charset + BACK/OK/CANCEL/RANDOM) wraps: from
+      // index 0, LEFT 1 lands exactly on RANDOM (70).
+      tap(world, BTN.LEFT);
+      const scene = world.probes().state.scene as unknown as { state: { cursor: number } };
+      expect(scene.state.cursor, `${key} is focused`).toBe(70);
       verify(world, recording, key);
     });
   }

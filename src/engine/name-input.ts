@@ -26,6 +26,7 @@
 
 import { deepClone } from "./clone.ts";
 import type { ExtensionReadContext } from "./extensions.ts";
+import { rngNext } from "./interpreter.ts";
 import type { SceneCompletion, SceneRules, SceneStart } from "./scene.ts";
 import type { JsonValue } from "./types.ts";
 import type { UiTextTable } from "./ui-text.ts";
@@ -45,23 +46,31 @@ const DEFAULT_COLUMNS = 10;
 export const NAME_INPUT_DEFAULT_TITLE = "Name";
 
 /** English defaults of NameInputScene's words (engine/ui-text.ts keys):
- *  the default caption and the BACK / OK / CANCEL cells. */
+ *  the default caption and the BACK / OK / CANCEL / RANDOM cells. */
 export const NAME_INPUT_UI_TEXT = {
   "nameInput.title": NAME_INPUT_DEFAULT_TITLE,
   "nameInput.back": "<",
   "nameInput.ok": "OK",
   "nameInput.cancel": "X",
+  "nameInput.random": "RANDOM",
 } as const satisfies Partial<UiTextTable>;
 const DEFAULT_TITLE = NAME_INPUT_DEFAULT_TITLE;
 /** 67 chars + BACK/OK/CANCEL = 70 entries = a neat 7×10 grid. */
 const DEFAULT_CHARSET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'-.!?";
 
-const ACTION_COUNT = 3;
-/** Action entries follow the charset: BACK, OK, CANCEL. */
+/** BACK, OK, CANCEL always follow the charset; RANDOM joins them only when
+ *  the scene resolved a non-empty random-name candidate list. */
 export const NAME_INPUT_ACTION_BACK = 0;
 export const NAME_INPUT_ACTION_OK = 1;
 export const NAME_INPUT_ACTION_CANCEL = 2;
+export const NAME_INPUT_ACTION_RANDOM = 3;
+
+/** Action entries following the charset: BACK, OK, CANCEL, and RANDOM when
+ *  the scene carries a candidate list. */
+export function nameInputActionCount(state: Readonly<NameInputState>): number {
+  return state.random ? 4 : 3;
+}
 
 export interface NameInputArgs {
   /** Variable id to write the committed name to. Omitted → write the
@@ -87,6 +96,22 @@ export interface NameInputArgs {
    *  escape_key_exits=False (rename_player/rename_monster). Default false:
    *  cancel closes the scene and runs onCancel. */
   swallowCancel?: boolean;
+  /** Random-name candidates. A flat list is used directly. A table is
+   *  indexed by `randomNamesKey` (static) or by the string value of
+   *  `randomNamesKeyVariable` at scene start; a key absent from the table
+   *  falls back to `randomNamesFallbackKey`. When the resolved list is
+   *  non-empty, a RANDOM action cell appears after CANCEL: each confirm on
+   *  it draws one candidate through the scene's own seeded RNG cursor and
+   *  replaces the buffer (truncated to maxLength), so save/load and rewind
+   *  reproduce the same pick. */
+  randomNames?: string[] | Record<string, string[]>;
+  /** Static key into a `randomNames` table. */
+  randomNamesKey?: string;
+  /** Variable whose string value selects a `randomNames` table row at
+   *  scene start. Ignored when `randomNamesKey` is set. */
+  randomNamesKeyVariable?: string;
+  /** Table key used when the selected key is absent or its row is empty. */
+  randomNamesFallbackKey?: string;
 }
 
 export interface NameInputState {
@@ -113,6 +138,15 @@ export interface NameInputState {
   holdDir: number;
   holdTicks: number;
   lastButtons: number;
+  /** Per-scene mulberry32 cursor, seeded once from the session RNG. Advances
+   *  only on a RANDOM pick, so the drawn name is a pure function of the
+   *  state and reproduces under save/load and rewind. */
+  rng: number;
+  /** True when the RANDOM action cell is present (a non-empty candidate
+   *  list resolved at start). */
+  random: boolean;
+  /** The resolved candidate list, stored in state for deterministic replay. */
+  randomPool: string[];
   ext: JsonValue;
 }
 
@@ -171,12 +205,40 @@ function prefill(args: Record<string, JsonValue>, ctx: ExtensionReadContext, max
   return text.slice(0, maxLength);
 }
 
+/** Keep only non-empty strings from a JSON value claimed to be a name list. */
+function nameList(value: JsonValue | undefined): string[] {
+  return Array.isArray(value)
+    ? value.filter((n): n is string => typeof n === "string" && n.length > 0)
+    : [];
+}
+
+/** Resolve the random-name candidate list per the args documented on
+ *  NameInputArgs. A flat list is used directly; a table is indexed by the
+ *  static key or the key variable's live string value, falling back to the
+ *  fallback key's row. Returns [] when no candidate is available. */
+function resolveRandomPool(args: Record<string, JsonValue>, ctx: ExtensionReadContext): string[] {
+  const raw = args.randomNames;
+  if (Array.isArray(raw)) return nameList(raw);
+  if (raw === null || typeof raw !== "object") return [];
+  const table = raw as Record<string, JsonValue>;
+  let key = typeof args.randomNamesKey === "string" ? args.randomNamesKey : "";
+  if (!key && typeof args.randomNamesKeyVariable === "string") {
+    const v = ctx.variables[args.randomNamesKeyVariable];
+    key = typeof v === "string" || typeof v === "number" ? String(v) : "";
+  }
+  const pool = nameList(table[key]);
+  if (pool.length > 0) return pool;
+  return typeof args.randomNamesFallbackKey === "string"
+    ? nameList(table[args.randomNamesFallbackKey])
+    : [];
+}
+
 function stateOf(value: JsonValue): NameInputState {
   return value as unknown as NameInputState;
 }
 
 function moveCursor(state: NameInputState, delta: number): void {
-  const total = state.charset.length + ACTION_COUNT;
+  const total = state.charset.length + nameInputActionCount(state);
   state.cursor = (state.cursor + delta + total) % total;
 }
 
@@ -184,7 +246,7 @@ function moveCursor(state: NameInputState, delta: number): void {
  *  `{ [NAME_INPUT_SCENE_ID]: nameInputRules }` in createSession's `scenes`
  *  and `NameInputScene` in GameView's `sceneViews`. */
 export const nameInputRules: SceneRules = {
-  start(ext, rawArgs, _seed, ctx): SceneStart {
+  start(ext, rawArgs, seed, ctx): SceneStart {
     const args = record(rawArgs);
     const maxLength = clampArgInt(args.maxLength, 1, 24, DEFAULT_MAX_LENGTH);
     const columns = clampInt(args.columns, 1, 20, DEFAULT_COLUMNS);
@@ -193,12 +255,13 @@ export const nameInputRules: SceneRules = {
       ? args.variable
       : null;
     const titleArg = typeof args.title === "string" && args.title.length > 0 ? args.title : null;
+    const randomPool = resolveRandomPool(args, ctx);
     const state: NameInputState = {
       buffer: prefill(args, ctx, maxLength),
       cursor: 0,
       charset,
       columns,
-      rows: Math.ceil((charset.length + ACTION_COUNT) / columns),
+      rows: Math.ceil((charset.length + (randomPool.length > 0 ? 4 : 3)) / columns),
       maxLength,
       title: titleArg ?? DEFAULT_TITLE,
       titleIsDefault: titleArg === null,
@@ -210,6 +273,9 @@ export const nameInputRules: SceneRules = {
       holdDir: 0,
       holdTicks: 0,
       lastButtons: 0,
+      rng: seed >>> 0,
+      random: randomPool.length > 0,
+      randomPool,
       ext: deepClone(ext),
     };
     return { ext: deepClone(ext), state: state as unknown as JsonValue };
@@ -221,7 +287,23 @@ export const nameInputRules: SceneRules = {
     const buttons = input.buttons >>> 0;
     state.lastButtons = buttons;
 
-    if (input.cancelEdge === true) {
+    // A pointer/touch selects and activates one cell atomically. Keeping the
+    // index in reducer input (rather than mutating view state) makes the
+    // resulting edit reproducible by any host that records semantic scene
+    // input. A malformed index is ignored and cannot accidentally activate
+    // the previously focused cell.
+    const totalEntries = state.charset.length + nameInputActionCount(state);
+    const hasSelection = input.selectIndex !== undefined;
+    const selected = Number.isInteger(input.selectIndex) &&
+      input.selectIndex! >= 0 && input.selectIndex! < totalEntries;
+    if (hasSelection && !selected) return rawState;
+    if (selected) {
+      state.cursor = input.selectIndex!;
+      state.holdDir = 0;
+      state.holdTicks = 0;
+    }
+
+    if (!selected && input.cancelEdge === true) {
       // swallowCancel (Tuxemon escape_key_exits=False): the cancel key is
       // consumed but does not close the scene.
       if (!state.swallowCancel) {
@@ -238,7 +320,8 @@ export const nameInputRules: SceneRules = {
         : dir === 0x0040 ? state.columns
           : dir === 0x0080 ? -1
             : 1;
-    const edgeDir = input.upEdge ? 0x0010
+    const edgeDir = selected ? 0
+      : input.upEdge ? 0x0010
       : input.downEdge ? 0x0040
       : input.leftEdge ? 0x0080
       : input.rightEdge ? 0x0020
@@ -263,7 +346,7 @@ export const nameInputRules: SceneRules = {
       state.holdTicks = 0;
     }
 
-    if (input.confirmEdge !== true) return rawState;
+    if (!selected && input.confirmEdge !== true) return rawState;
     if (state.cursor < state.charset.length) {
       if (state.buffer.length < state.maxLength) {
         state.buffer += state.charset[state.cursor]!;
@@ -282,6 +365,14 @@ export const nameInputRules: SceneRules = {
         state.phase = "done";
         state.cancelled = true;
       }
+    } else if (action === NAME_INPUT_ACTION_RANDOM && state.randomPool.length > 0) {
+      // One mulberry32 draw per pick, cursor kept in state: the same scene
+      // state always draws the same name (save/load, rewind, replay).
+      const draw = rngNext(state.rng);
+      state.rng = draw.next;
+      const pick = state.randomPool[Math.floor(draw.value * state.randomPool.length)] ?? "";
+      // Upstream InputController.set_string truncates to the char limit.
+      state.buffer = pick.slice(0, state.maxLength);
     }
     return rawState;
   },
@@ -300,4 +391,24 @@ export const nameInputRules: SceneRules = {
  *  uses this to label grid cells. */
 export function nameInputCharAt(state: Readonly<NameInputState>, index: number): string {
   return index >= 0 && index < state.charset.length ? state.charset[index]! : "";
+}
+
+/** Ui-text keys of the action cells in grid order: BACK, OK, CANCEL, then
+ *  RANDOM when the scene resolved a candidate list. */
+export const NAME_INPUT_ACTION_KEYS = [
+  "nameInput.back",
+  "nameInput.ok",
+  "nameInput.cancel",
+  "nameInput.random",
+] as const;
+
+/** The ui-text key of the action cell at a state cursor, or null for a
+ *  charset cell. Index 3 (RANDOM) exists only when state.random. */
+export function nameInputActionKey(
+  state: Readonly<NameInputState>,
+  index: number,
+): (typeof NAME_INPUT_ACTION_KEYS)[number] | null {
+  const action = index - state.charset.length;
+  if (action < 0 || action >= nameInputActionCount(state)) return null;
+  return NAME_INPUT_ACTION_KEYS[action] ?? null;
 }

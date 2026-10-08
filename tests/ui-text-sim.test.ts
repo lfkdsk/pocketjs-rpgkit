@@ -400,6 +400,12 @@ simDescribe("a game's words replace the kit's", () => {
     expect(pixel(frame, 300, 50)).toEqual([...panelBg]);
     expect(pixel(frame, 300, 60)).toEqual([0x0b, 0x16, 0x26]);
     await golden("name-input", frame);
+
+    // RANDOM is conditional, so exercise a second real name-input scene
+    // whose candidate list makes the fourth action cell visible.
+    const randomWorld = await boot("name-random");
+    pump(randomWorld, 10);
+    expectWord(randomWorld, "rpgkit-name-input-cell-70", "nameInput.random");
   });
 
   test("event-error screen title", async () => {

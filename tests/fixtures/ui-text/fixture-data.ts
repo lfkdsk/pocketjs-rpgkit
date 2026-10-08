@@ -82,6 +82,7 @@ export const ZH_UI_TEXT: UiTextTable = {
   "nameInput.back": "删",
   "nameInput.ok": "确定",
   "nameInput.cancel": "取消",
+  "nameInput.random": "随机",
   "demo.menuTitle": "演示控制",
   "demo.tabChapters": "章节",
   "demo.tabWarp": "地图跳转",
@@ -118,7 +119,7 @@ export const ITEMS: Item[] = [
 ];
 
 /** What the fixture's autorun page does on map entry. */
-export type Scenario = "shop" | "name" | "idle" | "error";
+export type Scenario = "shop" | "name" | "name-random" | "idle" | "error";
 
 function autorun(scenario: Scenario): GameEvent["pages"][number]["commands"] {
   switch (scenario) {
@@ -131,6 +132,13 @@ function autorun(scenario: Scenario): GameEvent["pages"][number]["commands"] {
       ];
     case "name":
       return [{ op: "scene", id: "rpgkit.nameInput", args: { maxLength: 8 } as never }];
+    case "name-random":
+      // A candidate list makes the RANDOM action cell appear after CANCEL.
+      return [{
+        op: "scene",
+        id: "rpgkit.nameInput",
+        args: { maxLength: 8, randomNames: ["上上下下左右左右BA"] } as never,
+      }];
     case "error":
       return [{ op: "transfer", map: "nowhere", x: 1, y: 1 }];
     case "idle":

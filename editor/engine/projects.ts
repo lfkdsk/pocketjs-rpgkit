@@ -58,6 +58,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
       "properties": {
         "messageBlocksPlayer": { "type": "boolean", "description": "While any fiber's text or choices box is open (a parallel page's included), the player cannot move and no action, playerTouch or eventTouch page starts; autorun and parallel pages keep running. Default false." },
         "textVariables": { "type": "boolean", "description": "Expand {v:<id>} tokens in text lines and choice prompts/rows with the live value of variable id (0 when unset). Default false: braces show verbatim." },
+        "characterNames": { "type": "boolean", "description": "Expand built-in {char:<eventId>}, {char:this} and {char:player} tokens from saved runtime character names. Default false: braces show verbatim." },
         "textTokens": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true, "description": "Allowlist of {x:<key>} text-token keys the game's session resolver answers. Declaring it makes rpgkit-check warn on any {x:} key not listed; omit it to skip the check. Tokens are resolved at box open by the game's SessionOptions.textTokens function; an unanswered token shows ???." },
         "mapNameDisplay": { "type": "boolean", "description": "Show MapDef.name in the built-in banner on map entry. Default false." },
         "inventory": {
@@ -145,6 +146,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "nameInput.back": {"type": "string", "maxLength": 200, "description": "Default: \"<\""},
         "nameInput.ok": {"type": "string", "maxLength": 200, "description": "Default: \"OK\""},
         "nameInput.cancel": {"type": "string", "maxLength": 200, "description": "Default: \"X\""},
+        "nameInput.random": {"type": "string", "maxLength": 200, "description": "Default: \"RANDOM\""},
         "demo.menuTitle": {"type": "string", "maxLength": 200, "description": "Default: \"DEMO CONTROLS\""},
         "demo.tabChapters": {"type": "string", "maxLength": 200, "description": "Default: \"CHAPTERS\""},
         "demo.tabWarp": {"type": "string", "maxLength": 200, "description": "Default: \"MAP WARP\""},
@@ -914,7 +916,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
           "anyOf": [
             { "required": ["sprite"] },
             { "required": ["opacity"] },
-            { "required": ["visible"] }
+            { "required": ["visible"] },
+            { "required": ["combatSheet"] }
           ],
           "properties": {
             "op": { "const": "appearance" },
@@ -922,6 +925,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "sprite": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
             "opacity": { "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 255 }, { "type": "null" }] },
             "visible": { "oneOf": [{ "type": "boolean" }, { "type": "null" }] },
+            "combatSheet": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }], "description": "Player only: the battle back-sheet slug. With saveDefault, remembered as the baseline restored by combatSheet:null." },
             "saveDefault": { "type": "boolean", "description": "Player only: remember sprite as the baseline restored by sprite:null." }
           },
           "allOf": [
@@ -1219,9 +1223,11 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
           "type": "object",
           "additionalProperties": false,
           "required": ["op", "name"],
+          "description": "Change a runtime character name. target defaults to player; an event target is map-scoped. A variable operand supports scene-driven name input.",
           "properties": {
             "op": { "const": "changeName" },
-            "name": { "type": "string", "minLength": 1, "maxLength": 24 }
+            "target": { "$ref": "#/$defs/routeTarget" },
+            "name": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 24 }, { "$ref": "#/$defs/variableRef" }] }
           }
         },
         {

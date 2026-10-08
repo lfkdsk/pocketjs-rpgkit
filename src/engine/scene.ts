@@ -21,6 +21,11 @@ export interface SceneInput {
   downEdge?: boolean;
   leftEdge?: boolean;
   rightEdge?: boolean;
+  /** Optional direct-selection gesture from a scene view. The meaning of
+   *  an index is scene-specific; reducers must range-check it. It stays
+   *  outside the button mask so recorded controller tapes keep their
+   *  existing byte format. */
+  selectIndex?: number;
 }
 
 export interface SceneTransfer {

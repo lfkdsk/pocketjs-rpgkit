@@ -19,6 +19,7 @@ import {
 } from "../src/engine/session.ts";
 import {
   NAME_INPUT_SCENE_ID,
+  nameInputActionCount,
   nameInputRules,
   type NameInputState,
 } from "../src/engine/name-input.ts";
@@ -119,7 +120,7 @@ function nameState(state: SessionState): NameInputState {
 /** Drive the grid cursor to entry `target` with right-edge presses. */
 function gotoEntry(session: Session, state: SessionState, target: number): SessionState {
   let next = state;
-  const total = nameState(next).charset.length + 3;
+  const total = nameState(next).charset.length + nameInputActionCount(nameState(next));
   let cur = nameState(next).cursor;
   const moves = (target - cur + total) % total;
   for (let i = 0; i < moves; i++) next = step(session, next, { right: true });
@@ -467,5 +468,116 @@ describe("KG1 built-in name input", () => {
     if (modal?.kind === "text") {
       expect(modal.lines).toEqual(["Hi Hero!"]);
     }
+  });
+
+  test("random: a candidate list adds a RANDOM cell after CANCEL", () => {
+    const p = nameInputProject({ variable: "nick", randomNames: ["Alpha", "Beta"] });
+    const session = makeSession(p);
+    const state = openScene(session, startSession(p, session));
+    const ns = nameState(state);
+    expect(ns.random).toBe(true);
+    expect(ns.randomPool).toEqual(["Alpha", "Beta"]);
+    // 67 charset + BACK/OK/CANCEL/RANDOM = 71 entries; RANDOM is index 70.
+    expect(ns.rows).toBe(Math.ceil(71 / ns.columns));
+    // LEFT from 0 wraps to 70 (RANDOM).
+    let next = step(session, state, { left: true });
+    expect(nameState(next).cursor).toBe(70);
+  });
+
+  test("random: no candidate list keeps the three-action grid", () => {
+    for (const args of [{}, { randomNames: [] }, { randomNames: {} }]) {
+      const p = nameInputProject({ variable: "nick", ...args });
+      const session = makeSession(p);
+      const state = openScene(session, startSession(p, session));
+      const ns = nameState(state);
+      expect(ns.random).toBe(false);
+      expect(ns.randomPool).toEqual([]);
+      expect(ns.cursor).toBe(0);
+      // LEFT from 0 wraps to 69 (CANCEL), not 70.
+      const next = step(session, state, { left: true });
+      expect(nameState(next).cursor).toBe(69);
+    }
+  });
+
+  test("random: a confirm on RANDOM draws a candidate and advances the cursor", () => {
+    const p = nameInputProject({ variable: "nick", randomNames: ["Alpha", "Beta", "Gamma"] });
+    const session = makeSession(p);
+    let state = openScene(session, startSession(p, session));
+    const rngBefore = nameState(state).rng;
+    state = gotoEntry(session, state, 70); // RANDOM
+    state = step(session, state, { confirm: true });
+    const ns = nameState(state);
+    expect(ns.buffer).toBeTruthy();
+    expect(["Alpha", "Beta", "Gamma"]).toContain(ns.buffer);
+    expect(ns.rng).not.toBe(rngBefore); // the per-scene cursor advanced
+    // A second pick draws again through the advanced cursor.
+    const first = ns.buffer;
+    state = step(session, state, { confirm: true });
+    // The buffer is one of the candidates (may equal the first by chance).
+    expect(["Alpha", "Beta", "Gamma"]).toContain(nameState(state).buffer);
+    expect(first).toBeTruthy();
+  });
+
+  test("random: the pick is a pure function of the scene state (rewind-safe)", () => {
+    // Two sessions opened from the same switch state draw the same name,
+    // because the scene seeds its cursor once from the session RNG.
+    const p = nameInputProject({ variable: "nick", randomNames: ["Alpha", "Beta", "Gamma", "Delta"] });
+    const draws: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const session = makeSession(p);
+      let state = openScene(session, startSession(p, session));
+      state = gotoEntry(session, state, 70); // RANDOM
+      state = step(session, state, { confirm: true });
+      draws.push(nameState(state).buffer);
+    }
+    expect(draws[0]).toBe(draws[1]);
+  });
+
+  test("random: a name longer than maxLength is truncated (upstream set_string)", () => {
+    const p = nameInputProject({ variable: "nick", maxLength: 4, randomNames: ["Alphabeta"] });
+    const session = makeSession(p);
+    let state = openScene(session, startSession(p, session));
+    state = gotoEntry(session, state, 70); // RANDOM
+    state = step(session, state, { confirm: true });
+    expect(nameState(state).buffer).toBe("Alph");
+  });
+
+  test("random: a keyed table resolves through a variable, with fallback", () => {
+    // The key variable selects the row; an unknown key falls back.
+    const table = { male: ["M1"], female: ["F1"], neutral: ["N1", "N2"] };
+    const p = nameInputProject({
+      variable: "nick",
+      randomNames: table,
+      randomNamesKeyVariable: "gender",
+      randomNamesFallbackKey: "neutral",
+    });
+    const session = makeSession(p);
+    // gender=male -> the male row.
+    let state = openScene(session, startSession(p, session, createSwitchState({ variables: { gender: "male" } })));
+    expect(nameState(state).randomPool).toEqual(["M1"]);
+    // gender=female -> the female row.
+    state = openScene(session, startSession(p, session, createSwitchState({ variables: { gender: "female" } })));
+    expect(nameState(state).randomPool).toEqual(["F1"]);
+    // gender=nonbinary (not a table key) -> the fallback neutral row.
+    state = openScene(session, startSession(p, session, createSwitchState({ variables: { gender: "nonbinary" } })));
+    expect(nameState(state).randomPool).toEqual(["N1", "N2"]);
+    // gender unset -> the fallback neutral row.
+    state = openScene(session, startSession(p, session));
+    expect(nameState(state).randomPool).toEqual(["N1", "N2"]);
+  });
+
+  test("random: a static key overrides the key variable", () => {
+    const table = { male: ["M1"], female: ["F1"] };
+    const p = nameInputProject({
+      variable: "nick",
+      randomNames: table,
+      randomNamesKey: "female",
+      randomNamesKeyVariable: "gender",
+      randomNamesFallbackKey: "male",
+    });
+    const session = makeSession(p);
+    // The static key wins even though the variable says male.
+    const state = openScene(session, startSession(p, session, createSwitchState({ variables: { gender: "male" } })));
+    expect(nameState(state).randomPool).toEqual(["F1"]);
   });
 });

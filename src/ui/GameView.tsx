@@ -847,6 +847,10 @@ export interface BattleSceneViewProps {
   /** False while the once-mounted scene is hidden between battles. Resource
    * scopes use this edge to release the completed battle's texture pins. */
   active: boolean;
+  /** Game-scene-only UI bridge. A renderer may request one indexed entry;
+   *  GameView folds it through SessionInput on the next live-play frame.
+   *  Battle renderers and attract playback receive no callback. */
+  onSelectIndex?: (index: number) => void;
   /** The kit's words replaced by the game (project `uiText` under
    *  GameView's prop), for scene views that draw kit text such as the name
    *  input. Undefined when the game replaces none. */
@@ -1029,9 +1033,10 @@ function SceneRenderer(props: {
   /** False while the once-mounted scene is hidden (same contract as the
    *  battle view's active prop). */
   active: boolean;
+  onSelectIndex?: (index: number) => void;
   uiText: UiTextOverrides | undefined;
 }) {
-  return <props.view state={props.state} width={props.width} height={props.height} active={props.active} uiText={props.uiText} />;
+  return <props.view state={props.state} width={props.width} height={props.height} active={props.active} onSelectIndex={props.onSelectIndex} uiText={props.uiText} />;
 }
 
 export function GameView(props: GameViewProps) {
@@ -1501,6 +1506,22 @@ export function GameView(props: GameViewProps) {
   // (confirm, cancel, choices up/down) is derived from the folded button
   // mask (one unified input stream), so the view never fires edges itself.
   const edge = { confirm: false, cancel: false };
+  // A Focusable press is delivered after frame hooks. Retain it for exactly
+  // the next reducer fold, tagged with its scene so a close/swap cannot send
+  // a stale index elsewhere. Classic CIRCLE also fires Focusable.onPress;
+  // ignore that callback because the same frame already carried the normal
+  // confirm edge. A touch tap releases with no CIRCLE bit and enters here.
+  let scenePressButtons = 0;
+  let pendingSceneSelect: { id: string; index: number } | null = null;
+  const selectSceneIndex = (id: string, index: number): void => {
+    if (
+      attract ||
+      activeSceneId() !== id ||
+      (scenePressButtons & BTN.CIRCLE) !== 0 ||
+      !Number.isInteger(index)
+    ) return;
+    pendingSceneSelect = { id, index };
+  };
   const confirm = attract ? undefined : () => { edge.confirm = true; };
   const cancel = attract ? undefined : () => { edge.cancel = true; };
   const actions = useActions(createMemo(() => {
@@ -1734,6 +1755,7 @@ export function GameView(props: GameViewProps) {
 
   onFrame((buttons) => {
     frameProfileMark("frame:start");
+    scenePressButtons = buttons;
     const pressed = buttons & ~prevButtons;
     const upEdge = !!(pressed & BTN.UP);
     const downEdge = !!(pressed & BTN.DOWN);
@@ -1805,6 +1827,9 @@ export function GameView(props: GameViewProps) {
     if (tapped) handleTap(tapped.x, tapped.y);
     const { bit: tapBit, hook: tapHook } = tapWalkFrame(buttons);
     const frameButtons = blocked?.buttons ?? (buttons | tapBit);
+    const selected = pendingSceneSelect?.id === activeSceneId()
+      ? pendingSceneSelect.index
+      : undefined;
     const input: SessionInput = blocked?.input ?? {
       buttons: frameButtons,
       confirmEdge: edge.confirm,
@@ -1814,6 +1839,7 @@ export function GameView(props: GameViewProps) {
       leftEdge,
       rightEdge,
     };
+    if (selected !== undefined && blocked?.input === undefined) input.selectIndex = selected;
     try {
       frameProfileMark("reducer:start");
       frameHostEffects.length = 0;
@@ -1825,6 +1851,7 @@ export function GameView(props: GameViewProps) {
       } else {
         state = stepSession(session, state, input, effects, tapHook);
       }
+      pendingSceneSelect = null;
       frameProfileMark("reducer:end");
       dispatchGameViewHostEffects(frameHostEffects, props.hostActions, sessionHost);
       prevButtons = frameButtons;
@@ -2261,6 +2288,7 @@ export function GameView(props: GameViewProps) {
                 width={viewport().w}
                 height={viewport().h}
                 active={activeSceneId() === id}
+                onSelectIndex={attract ? undefined : (index) => selectSceneIndex(id, index)}
                 uiText={uiTextOverrides()}
               />
             </ProfileMount>

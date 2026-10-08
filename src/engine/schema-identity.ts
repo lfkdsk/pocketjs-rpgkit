@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d09097f1ef662788af2c";
+export const MAP_SCHEMA_HASH = "70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a705fb3a3cd5531905";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -59,6 +59,10 @@ export const MAP_SCHEMA_HASH = "c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d090
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: optional `nameInput.random`, `appearance.combatSheet` and
+  // `system.characterNames`, plus event/variable forms of `changeName`;
+  // older documents use none of them and retain literal `{char:...}` text
+  "c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d09097f1ef662788af2c",
   // superseded by: the `playerMoving` condition and optional exact
   // `intervalTicks` on command-started wander; older documents never carry
   // either addition and retain their existing behavior

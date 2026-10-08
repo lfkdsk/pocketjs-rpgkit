@@ -211,6 +211,12 @@ export type SelfKey = "A" | "B" | "C" | "D";
 export interface PlayerAppearanceState {
   defaultSprite?: string;
   sprite?: string;
+  /** Battle back-sheet baseline saved by `appearance … saveDefault:true`;
+   *  restored by `combatSheet:null`. Absent is the project's baked sheet. */
+  defaultCombatSheet?: string;
+  /** Current battle back-sheet override (MV-style). `combatSheet:null`
+   *  clears it, restoring `defaultCombatSheet`. */
+  combatSheet?: string;
   opacity?: number;
   visible?: boolean;
 }
@@ -273,6 +279,10 @@ export interface SwitchState {
   /** The player's name, substituted for the {name} text token. Part of the
    *  save snapshot; a fresh session seeds it from Project.playerName. */
   playerName: string;
+  /** Sparse runtime names of map events, keyed by `${mapId}/${eventId}`.
+   *  Missing entries fall back to the event's authored name (then id).
+   *  Kept in the switch bank so save/load and rewind preserve identity. */
+  eventNames?: Record<string, string>;
   /** Global countdown. Omitted while stopped so games that never use the
    * timer keep their prior reducer/save shape. */
   timer?: TimerState;
@@ -311,6 +321,9 @@ export function createSwitchState(init?: Partial<SwitchState>): SwitchState {
     playerName: init?.playerName ?? DEFAULT_PLAYER_NAME,
     rng: init?.rng ?? 0x12345678,
   };
+  if (init?.eventNames && Object.keys(init.eventNames).length > 0) {
+    state.eventNames = keyedRecord(init.eventNames);
+  }
   if (init?.playerAppearance) state.playerAppearance = { ...init.playerAppearance };
   if (init?.timer?.running) {
     state.timer = {
@@ -344,6 +357,13 @@ export function effectivePlayerAppearance(s: SwitchState): EffectiveAppearance {
     opacity: a?.opacity ?? 255,
     visible: a?.visible ?? true,
   };
+}
+
+/** Effective player battle back-sheet slug: the runtime override, else the
+ *  saved race baseline, else null (the project's baked sheet). */
+export function effectivePlayerCombatSheet(s: SwitchState): string | null {
+  const a = s.playerAppearance;
+  return a?.combatSheet ?? a?.defaultCombatSheet ?? null;
 }
 
 /** Effective event appearance for a known active page. An override is
@@ -623,6 +643,16 @@ export function eventKey(mapId: string, eventId: string): string {
   return `${mapId}/${eventId}`;
 }
 
+/** Visible name of one map event: the saved runtime override, then the
+ *  authored display name, then the stable event id. */
+export function runtimeEventName(
+  sw: Readonly<SwitchState>,
+  mapId: string,
+  event: Pick<GameEvent, "id" | "name">,
+): string {
+  return sw.eventNames?.[eventKey(mapId, event.id)] ?? event.name ?? event.id;
+}
+
 /** Explicit UTF-16 code-unit ordering for event ids. String.localeCompare is
  *  host-locale dependent: Bun and the desktop QuickJS guest order "-" (U+002D)
  *  and "_" (U+005F) differently, so the same JSON picked a different event on
@@ -719,6 +749,9 @@ export type Instr =
       sprite?: string | null;
       opacity?: number | null;
       visible?: boolean | null;
+      /** Player only: battle back-sheet slug, or null to restore the
+       *  `defaultCombatSheet` baseline. */
+      combatSheet?: string | null;
       saveDefault: boolean;
     }
   | { op: "layer"; layer: string; visible?: boolean | null; variant?: string | null }
@@ -793,7 +826,7 @@ export type Instr =
   | { op: "timer"; action: "stop" }
   | { op: "timer"; action: "read"; variable: string }
   | { op: "hostAction"; action: HostAction }
-  | { op: "changeName"; name: string }
+  | { op: "changeName"; target?: RouteTarget; name: string | VariableRef }
   | { op: "mapNameDisplay"; visible: boolean }
   | { op: "menuAccess"; enabled: boolean }
   | { op: "saveAccess"; enabled: boolean }
@@ -1061,6 +1094,7 @@ function compileScoped(
             ...(c.sprite === undefined ? {} : { sprite: c.sprite }),
             ...(c.opacity === undefined ? {} : { opacity: c.opacity }),
             ...(c.visible === undefined ? {} : { visible: c.visible }),
+            ...(c.combatSheet === undefined ? {} : { combatSheet: c.combatSheet }),
             saveDefault: c.saveDefault ?? false,
           });
           break;
@@ -1247,7 +1281,11 @@ function compileScoped(
           emit({ op: "hostAction", action: "title" });
           break;
         case "changeName":
-          emit({ op: "changeName", name: c.name });
+          emit({
+            op: "changeName",
+            target: typeof c.target === "object" ? { ...c.target } : c.target ?? "player",
+            name: typeof c.name === "object" ? { ...c.name } : c.name,
+          });
           break;
         case "mapNameDisplay":
           emit({ op: "mapNameDisplay", visible: c.visible });
@@ -2176,6 +2214,9 @@ export interface World {
   messageBlocksPlayer?: boolean;
   /** Project.system.textVariables: text and choices expand {v:<id>}. */
   textVariables?: boolean;
+  /** Project.system.characterNames: text and choices expand built-in
+   *  {char:<eventId>} / {char:this} / {char:player} tokens. */
+  characterNames?: boolean;
   /** Project.system.textTokens is declared: text and choices expand {x:<key>}
    *  through the session's resolver. Absent: {x:…} braces print verbatim,
    *  the pre-{x:} behavior, so a document without the declaration is
@@ -2204,6 +2245,8 @@ export interface World {
 export interface WorldOptions {
   messageBlocksPlayer?: boolean;
   textVariables?: boolean;
+  /** Project.system.characterNames: switches built-in {char:} expansion on. */
+  characterNames?: boolean;
   /** Project.system.textTokens is declared: switches {x:<key>} expansion on.
    *  Absent: {x:…} prints verbatim. */
   textTokensEnabled?: boolean;
@@ -2740,6 +2783,7 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     inventory: resolvedInventory,
     messageBlocksPlayer: options.messageBlocksPlayer === true,
     textVariables: options.textVariables === true,
+    characterNames: options.characterNames === true,
     textTokensEnabled: options.textTokensEnabled === true,
     textTokens: options.textTokens,
     onFiberStart: options.onFiberStart,
@@ -2837,6 +2881,7 @@ type SwitchRecord = "switches" | "self" | "items" | "variables" | "shopStock";
  *  wrote keeps its record identities from state to state, and a record a
  *  state was returned with is never written again. */
 const SHARED_RECORDS = new WeakMap<SwitchState, Set<SwitchRecord>>();
+const SHARED_EVENT_NAMES = new WeakSet<SwitchState>();
 const RECORD_REVISIONS = new WeakMap<object, object>();
 
 /** Stable identity for a record until a write occurs. */
@@ -2852,6 +2897,19 @@ export function ownRecord<K extends SwitchRecord>(sw: SwitchState, k: K): Switch
   if (shared?.delete(k)) sw[k] = keyedRecord(sw[k] as Record<string, unknown>) as SwitchState[K];
   else RECORD_REVISIONS.set(sw[k], {});
   return sw[k];
+}
+
+/** Sparse event-name record with the same copy-on-write ownership contract
+ *  as the always-present switch-bank records. */
+function ownEventNames(sw: SwitchState): Record<string, string> {
+  if (!sw.eventNames) {
+    sw.eventNames = keyedRecord();
+  } else if (SHARED_EVENT_NAMES.delete(sw)) {
+    sw.eventNames = keyedRecord(sw.eventNames);
+  } else {
+    RECORD_REVISIONS.set(sw.eventNames, {});
+  }
+  return sw.eventNames;
 }
 
 /** Deep-copy interpreter state for a snapshot or a non-in-place fold. The
@@ -2872,6 +2930,7 @@ export function cloneInterp(s0: InterpState): InterpState {
   // Conditional assignment (not a conditional spread) so a project without
   // playerAppearance allocates no empty-object literal on the clone path.
   if (s0.sw.playerAppearance) sw.playerAppearance = { ...s0.sw.playerAppearance };
+  if (s0.sw.eventNames) sw.eventNames = keyedRecord(s0.sw.eventNames);
   if (s0.sw.timer) sw.timer = { ...s0.sw.timer };
   if (s0.sw.mapNameDisplay === true) sw.mapNameDisplay = true;
   if (s0.sw.menuAccess === false) sw.menuAccess = false;
@@ -2897,6 +2956,11 @@ export function shareInterp(s0: InterpState, immutable = false): InterpState {
   // working copy allocates no empty-object literal when playerAppearance
   // is absent.
   if (s0.sw.playerAppearance) sw.playerAppearance = { ...s0.sw.playerAppearance };
+  if (s0.sw.eventNames) {
+    sw.eventNames = s0.sw.eventNames;
+    SHARED_EVENT_NAMES.add(sw);
+    if (immutable) trackStateMetadata(SHARED_EVENT_NAMES, sw);
+  }
   if (s0.sw.timer) sw.timer = { ...s0.sw.timer };
   if (s0.sw.mapNameDisplay === true) sw.mapNameDisplay = true;
   if (s0.sw.menuAccess === false) sw.menuAccess = false;
@@ -4644,9 +4708,20 @@ function applyAppearanceCommand(
       if (ins.sprite === null) delete next.defaultSprite;
       else next.defaultSprite = ins.sprite!;
       delete next.sprite;
-    } else if (ins.sprite !== undefined) {
-      if (ins.sprite === null) delete next.sprite;
-      else next.sprite = ins.sprite;
+      if (ins.combatSheet !== undefined) {
+        if (ins.combatSheet === null) delete next.defaultCombatSheet;
+        else next.defaultCombatSheet = ins.combatSheet;
+        delete next.combatSheet;
+      }
+    } else {
+      if (ins.sprite !== undefined) {
+        if (ins.sprite === null) delete next.sprite;
+        else next.sprite = ins.sprite;
+      }
+      if (ins.combatSheet !== undefined) {
+        if (ins.combatSheet === null) delete next.combatSheet;
+        else next.combatSheet = ins.combatSheet;
+      }
     }
     if (ins.opacity !== undefined) {
       if (ins.opacity === null || ins.opacity === 255) delete next.opacity;
@@ -4882,7 +4957,19 @@ function textTokenView(s: InterpState, w: World, ext: JsonValue): TextTokenView 
 }
 
 /** One box string with its text tokens expanded from live state. */
-function boxText(s: InterpState, w: World, text: string, ext: JsonValue): string {
+function characterNameInFiber(
+  s: InterpState,
+  w: World,
+  fiber: string,
+  target: string,
+): string | undefined {
+  if (target === "player") return s.sw.playerName ?? DEFAULT_PLAYER_NAME;
+  const id = target === "this" ? targetEventId("this", fiber) : target;
+  const event = worldEventById(w, id);
+  return event ? runtimeEventName(s.sw, w.map.id, event) : undefined;
+}
+
+function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: string): string {
   const xEnabled = w.textTokensEnabled === true;
   const resolver = xEnabled ? (w.textTokens ?? null) : null;
   return expandTextTokens(
@@ -4892,10 +4979,18 @@ function boxText(s: InterpState, w: World, text: string, ext: JsonValue): string
     resolver,
     resolver ? textTokenView(s, w, ext) : null,
     xEnabled,
+    w.characterNames ? (target) => characterNameInFiber(s, w, fiber, target) : null,
+    w.characterNames === true,
   );
 }
 
-function boxLines(s: InterpState, w: World, lines: readonly string[], ext: JsonValue): string[] {
+function boxLines(
+  s: InterpState,
+  w: World,
+  lines: readonly string[],
+  ext: JsonValue,
+  fiber: string,
+): string[] {
   const xEnabled = w.textTokensEnabled === true;
   const resolver = xEnabled ? (w.textTokens ?? null) : null;
   return expandTextLines(
@@ -4905,6 +5000,8 @@ function boxLines(s: InterpState, w: World, lines: readonly string[], ext: JsonV
     resolver,
     resolver ? textTokenView(s, w, ext) : null,
     xEnabled,
+    w.characterNames ? (target) => characterNameInFiber(s, w, fiber, target) : null,
+    w.characterNames === true,
   );
 }
 
@@ -4969,7 +5066,7 @@ function runFiber(
       // does not retype it (RPG Maker converts escapes once).
       const open = s.modal?.kind === "text"
         ? s.modal
-        : openTextModal(w, f.key, boxLines(s, w, ins.lines, extension.ext), ins.box);
+        : openTextModal(w, f.key, boxLines(s, w, ins.lines, extension.ext, f.key), ins.box);
       // The typewriter counts code points (one per drawn glyph), not UTF-16
       // units: a supplementary character is one step. Same as .length for
       // text without surrogate pairs. It types the open page only.
@@ -5026,8 +5123,8 @@ function runFiber(
         const opened: ChoiceModal = {
           kind: "choices",
           fiber: f.key,
-          prompt: boxText(s, w, ins.prompt, extension.ext),
-          options: ins.texts.map((text) => boxText(s, w, text, extension.ext)),
+          prompt: boxText(s, w, ins.prompt, extension.ext, f.key),
+          options: ins.texts.map((text) => boxText(s, w, text, extension.ext, f.key)),
           index: 0,
           cancellable: ins.cancel !== null,
         };
@@ -5090,7 +5187,7 @@ function runFiber(
         s.modal = {
           kind: "choices",
           fiber: f.key,
-          prompt: previous ? previous.prompt : boxText(s, w, ins.prompt, extension.ext),
+          prompt: previous ? previous.prompt : boxText(s, w, ins.prompt, extension.ext, f.key),
           options: options.map((option) => option.label),
           keys: options.map((option) => option.key),
           enabled: options.map((option) => option.enabled),
@@ -5565,13 +5662,29 @@ function runFiber(
         if (ins.action === "autosave") return;
         break;
       case "changeName":
-        if (ins.name.length < 1 || ins.name.length > 24) {
+        {
+        const target = ins.target ?? "player";
+        const name = variableRef(ins.name) ? s.sw.variables[ins.name.variable] : ins.name;
+        if (typeof name !== "string" || name.length < 1 || name.length > 24) {
           s.error = { kind: "content", message: `changeName in ${f.key}: name must contain 1..24 characters` };
           return;
         }
-        s.sw.playerName = ins.name;
+        if (target === "player") {
+          s.sw.playerName = name;
+        } else {
+          const eventId = targetEventId(target, f.key);
+          if (!worldEventById(w, eventId)) {
+            s.error = {
+              kind: "content",
+              message: `changeName in ${f.key}: event ${JSON.stringify(eventId)} does not exist`,
+            };
+            return;
+          }
+          ownEventNames(s.sw)[eventKey(w.map.id, eventId)] = name;
+        }
         top.pc++;
         break;
+        }
       case "mapNameDisplay":
         if (ins.visible) s.sw.mapNameDisplay = true;
         else {
@@ -5737,7 +5850,7 @@ function runFiber(
         if (s.modal) return;
         f.mode = "text";
         f.since = s.frame;
-        const firstLines = boxLines(s, w, ins.lines, extension.ext);
+        const firstLines = boxLines(s, w, ins.lines, extension.ext, f.key);
         s.modal = openTextModal(w, f.key, firstLines, ins.box);
         return;
       case "choices": {
@@ -5747,8 +5860,8 @@ function runFiber(
         const opened: ChoiceModal = {
           kind: "choices",
           fiber: f.key,
-          prompt: boxText(s, w, ins.prompt, extension.ext),
-          options: ins.texts.map((text) => boxText(s, w, text, extension.ext)),
+          prompt: boxText(s, w, ins.prompt, extension.ext, f.key),
+          options: ins.texts.map((text) => boxText(s, w, text, extension.ext, f.key)),
           index: 0,
           cancellable: ins.cancel !== null,
         };
@@ -5770,7 +5883,7 @@ function runFiber(
         s.modal = {
           kind: "choices",
           fiber: f.key,
-          prompt: boxText(s, w, ins.prompt, extension.ext),
+          prompt: boxText(s, w, ins.prompt, extension.ext, f.key),
           options: options.map((option) => option.label),
           keys: options.map((option) => option.key),
           enabled: options.map((option) => option.enabled),

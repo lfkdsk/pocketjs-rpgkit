@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a705fb3a3cd5531905` | optional `nameInput.random` ui-text word; optional `appearance.combatSheet` player battle back-sheet field with its `saveDefault` baseline; optional `system.characterNames` opt-in for `{char:player\|this\|eventId}` text; and `changeName` event targets/variable-fed names. Documents without the opt-in keep `{char:...}` literal, and older `changeName` commands retain their player/literal meaning | additive |
 | `c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d09097f1ef662788af2c` | `playerMoving` condition, plus optional exact `intervalTicks` cadence for command-started wander; projects without either addition retain their existing behavior and MV frequency-grade cadence | additive |
 | `e763f4898c37c59c111618d57feb35d93b4ba67932cfb2094406388f1efedb45` | optional `uiText` entries for manual-save refusal, save/load progress, success and failure feedback; documents without them keep the English defaults | additive |
 | `11227c99d75fe0ec833b77499bec30022f046383c4eeb9349a3f590bbc4ce801` | optional switch declaration `writtenBy: "host"` — marks a switch the host or an extension writes at runtime, so the static checker does not flag it as read-never-set; declarations without the marker are still checked | additive |

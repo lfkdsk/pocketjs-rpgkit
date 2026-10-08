@@ -18,6 +18,18 @@ export interface ExtensionReadContext {
   /** KG1: the live player name, so a scene (name input) can prefill its
    *  edit buffer from the current value. */
   readonly playerName: string;
+  /** The player's sparse appearance state (walking sprite baseline/override,
+   *  battle back-sheet baseline/override), so a scene (battle) can read the
+   *  current combat sheet. Populated by the session for scene/battle starts;
+   *  absent for extension command/condition contexts. Read-only snapshot. */
+  readonly playerAppearance?: Readonly<{
+    defaultSprite?: string;
+    sprite?: string;
+    defaultCombatSheet?: string;
+    combatSheet?: string;
+    opacity?: number;
+    visible?: boolean;
+  }>;
   /** The project's immutable item catalog (id, name, type, …), for scenes
    *  that list items (the built-in select-item scene). Absent for extension
    *  command/condition contexts, which only see the backpack counts. */

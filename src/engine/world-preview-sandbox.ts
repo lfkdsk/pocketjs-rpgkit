@@ -627,7 +627,7 @@ type SwitchField = keyof SwitchState;
  * context field, so a new one does not compile until it is stamped here. */
 export const SANDBOX_PREVIEW_STAMPED_CONTEXT: {
   readonly [K in keyof Required<ExtensionReadContext>]: K extends SwitchField
-    ? SwitchState[K] extends object ? "record" : "value"
+    ? NonNullable<SwitchState[K]> extends object ? "record" : "value"
     : "ext" | "project";
 } = {
   ext: "ext",
@@ -636,6 +636,7 @@ export const SANDBOX_PREVIEW_STAMPED_CONTEXT: {
   items: "record",
   gold: "value",
   playerName: "value",
+  playerAppearance: "record",
   itemCatalog: "project",
 };
 
@@ -771,9 +772,11 @@ export function createSandboxPreviewReader(
     let changed = false;
     for (let i = 0; i < STAMPED_RECORDS.length; i++) {
       const was = stamp.records[i]!;
-      const now = sw[STAMPED_RECORDS[i]!] as Readonly<Record<string, unknown>>;
+      // playerAppearance is an optional sparse object; normalize an absent
+      // value to null so the record comparison never sees undefined.
+      const now = (sw[STAMPED_RECORDS[i]!] ?? null) as Readonly<Record<string, unknown>> | null;
       if (was === now) continue;
-      if (was === null || !sameDurableRecord(was, now)) changed = true;
+      if (was === null || now === null || !sameDurableRecord(was, now)) changed = true;
       stamp.records[i] = now;
     }
     for (let i = 0; i < STAMPED_VALUES.length; i++) {

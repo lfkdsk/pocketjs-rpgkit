@@ -5,6 +5,7 @@ import {
   createInterpState,
   createWorld,
   effectivePlayerAppearance,
+  effectivePlayerCombatSheet,
   stepInterp,
   type InterpInput,
 } from "../src/engine/interpreter.ts";
@@ -146,6 +147,40 @@ describe("KV1 appearance reducer", () => {
     expect(state.sw.playerAppearance).toEqual({ defaultSprite: "hero", opacity: 0, visible: false });
     expect(effectivePlayerAppearance(state.sw)).toEqual({ sprite: "hero", opacity: 0, visible: false });
     expect(createInterpState(state.sw).sw.playerAppearance).toEqual(state.sw.playerAppearance);
+  });
+
+  test("player combat sheet: saveDefault baseline, runtime override, and restore", () => {
+    const commands: Command[] = [
+      // The race choice saves the combat-sheet baseline (and the walking one).
+      { op: "appearance", target: "player", sprite: "heroine", combatSheet: "heroineblack", saveDefault: true },
+      // A runtime override (e.g. a scripted sheet swap).
+      { op: "appearance", target: "player", combatSheet: "adventurer" },
+      // combatSheet:null clears the override, restoring the saved baseline.
+      { op: "appearance", target: "player", combatSheet: null },
+    ];
+    const world = createWorld(map("v", [event("touch", 2, 2, [page("playerTouch", commands)])]));
+    let state = stepInterp(world, createInterpState(), input({ prevCell: { x: 2, y: 3 } }));
+    expect(state.sw.playerAppearance).toEqual({ defaultSprite: "heroine", defaultCombatSheet: "heroineblack" });
+    expect(effectivePlayerCombatSheet(state.sw)).toBe("heroineblack");
+
+    // Re-run just the override to observe the mid-state.
+    const world2 = createWorld(map("v", [event("touch", 2, 2, [page("playerTouch", [
+      { op: "appearance", target: "player", sprite: "heroine", combatSheet: "heroineblack", saveDefault: true },
+      { op: "appearance", target: "player", combatSheet: "adventurer" },
+    ])])]));
+    state = stepInterp(world2, createInterpState(), input({ prevCell: { x: 2, y: 3 } }));
+    expect(state.sw.playerAppearance).toMatchObject({ defaultCombatSheet: "heroineblack", combatSheet: "adventurer" });
+    expect(effectivePlayerCombatSheet(state.sw)).toBe("adventurer");
+
+    // No appearance at all: the baked sheet (null).
+    expect(effectivePlayerCombatSheet(createInterpState().sw)).toBeNull();
+  });
+
+  test("schema accepts combatSheet and rejects a non-string", () => {
+    const ok: Command = { op: "appearance", target: "player", combatSheet: "heroine", saveDefault: false };
+    expect(validateSchema(schema, project([map("a", [event("valid", 1, 1, [page("action", [ok])])])]))).toEqual([]);
+    const bad = { op: "appearance", target: "player", combatSheet: 42, saveDefault: false } as unknown as Command;
+    expect(validateSchema(schema, project([map("a", [event("bad", 1, 1, [page("action", [bad])])])])).length).toBeGreaterThan(0);
   });
 
   test("another event's effective appearance is writable and testable in the same tick", () => {

@@ -599,7 +599,11 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
     case "returnTitle":
       return "Return to title";
     case "changeName":
-      return `Change player name to ${text(command.name)}`;
+      return `Change ${targetSummary(command.target ?? "player")} name to ${
+        typeof command.name === "string"
+          ? text(command.name)
+          : `variable ${text(isRecord(command.name) ? command.name.variable : command.name)}`
+      }`;
     case "mapNameDisplay":
       return `Map name display ${boolText(command.visible)}`;
     case "menuAccess":

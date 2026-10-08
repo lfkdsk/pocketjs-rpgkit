@@ -51,8 +51,13 @@ export function substituteLines(lines: readonly string[], name: string): string[
 // the pre-{x:} behavior — its braces print verbatim — so the schema change
 // is purely additive. The opt-in is the `xEnabled` flag below.
 
-/** A `{v:<id>}` or `{x:<key>}` token: the id/key runs to the next brace. */
-const TEXT_TOKEN = /\{name\}|\{v:([^{}]*)\}|\{x:([^{}]*)\}/g;
+/** A built-in character-name token resolver. `target` is `player`, `this`,
+ *  or a map event id. Returning undefined displays UNKNOWN_TEXT_TOKEN. */
+export type CharacterNameResolver = (target: string) => string | undefined;
+
+/** A `{v:<id>}`, `{x:<key>}` or `{char:<target>}` token: the selector runs
+ *  to the next brace. */
+const TEXT_TOKEN = /\{name\}|\{v:([^{}]*)\}|\{x:([^{}]*)\}|\{char:([^{}]*)\}/g;
 
 /** What an unanswered `{x:<key>}` token shows (no resolver, or the
  *  resolver returns undefined for the key). */
@@ -124,13 +129,24 @@ export function expandTextTokens(
   resolver?: TextTokenResolver | null,
   view?: TextTokenView | null,
   xEnabled = true,
+  characterName?: CharacterNameResolver | null,
+  characterNamesEnabled = true,
 ): string {
-  if (resolver == null && !text.includes("{x:")) {
+  if (resolver == null && !text.includes("{x:") && !text.includes("{char:")) {
     if (variables === null) return substitutePlayerName(text, name);
     if (!text.includes("{")) return text;
   }
   if (!text.includes("{")) return text;
-  return text.replace(TEXT_TOKEN, (token, vid: string | undefined, xkey: string | undefined) => {
+  return text.replace(TEXT_TOKEN, (
+    token,
+    vid: string | undefined,
+    xkey: string | undefined,
+    charTarget: string | undefined,
+  ) => {
+    if (charTarget !== undefined) {
+      if (!characterNamesEnabled) return token;
+      return characterName?.(charTarget) ?? UNKNOWN_TEXT_TOKEN;
+    }
     if (xkey !== undefined) {
       if (!xEnabled) return token; // no declaration: braces print verbatim
       if (resolver == null) return UNKNOWN_TEXT_TOKEN;
@@ -154,6 +170,9 @@ export function expandTextLines(
   resolver?: TextTokenResolver | null,
   view?: TextTokenView | null,
   xEnabled = true,
+  characterName?: CharacterNameResolver | null,
+  characterNamesEnabled = true,
 ): string[] {
-  return lines.map((line) => expandTextTokens(line, name, variables, resolver, view, xEnabled));
+  return lines.map((line) =>
+    expandTextTokens(line, name, variables, resolver, view, xEnabled, characterName, characterNamesEnabled));
 }

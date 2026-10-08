@@ -110,6 +110,7 @@ export interface UiTextTable {
   "nameInput.back": string;
   "nameInput.ok": string;
   "nameInput.cancel": string;
+  "nameInput.random": string;
 
   // DEMO_MENU_UI_TEXT (ui/demo/text.ts): the demo menu and its toast.
   "demo.menuTitle": string;
