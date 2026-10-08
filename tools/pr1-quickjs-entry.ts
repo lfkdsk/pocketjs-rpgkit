@@ -1,19 +1,19 @@
 // Pure engine workloads bundled once per compared checkout and evaluated by
 // tools/pr1-quickjs-bench.rs in PocketJS's real desktop QuickJS guest.
 
-import { WanderSim } from "../examples/wander/wander-sim.ts";
 import { buildGame } from "../examples/sunstone/game-data.ts";
 import type { BattleRules } from "../src/engine/battle.ts";
 import { createSession, startSession, stepSession } from "../src/engine/session.ts";
 import type { JsonValue } from "../src/engine/types.ts";
 import { battleEvent, MAP, MAP_ID } from "../tests/fixtures/kb4-battle/fixture-data.ts";
 import { kb4BattleRules } from "../tests/fixtures/kb4-battle/rules.ts";
+import { StreamedRoam } from "./pr1-streamed-roam.ts";
 
 type BenchName =
   | "sunstoneIdle"
   | "sunstoneWalk"
   | "sunstoneControlWalk"
-  | "wanderAuto"
+  | "streamedRoam"
   | "battleScene"
   | "sunstoneIdleImmutable"
   | "sunstoneControlWalkImmutable"
@@ -53,8 +53,8 @@ for (let frame = 0; frame < 180; frame++) {
   );
 }
 
-const wander = new WanderSim({ seed: 0x5eed0001, hz: 60, viewW: 480, viewH: 272 });
-for (let frame = 0; frame < 360; frame++) wander.step(0);
+const streamedRoam = new StreamedRoam();
+for (let frame = 0; frame < 720; frame++) streamedRoam.step();
 
 const battleMap = { ...MAP, events: [battleEvent({ enemyHp: 999_999 })] };
 const battleProject = {
@@ -121,9 +121,8 @@ const benches: Record<BenchName, () => number> = {
     controlWalkState = stepSession(controlWalkSession, controlWalkState, { buttons });
     return controlWalkState.frame;
   },
-  wanderAuto: () => {
-    wander.step(0);
-    return wander.now;
+  streamedRoam: () => {
+    return streamedRoam.step();
   },
   battleScene: () => {
     battleState = stepSession(battleSession, battleState, { buttons: 0 });

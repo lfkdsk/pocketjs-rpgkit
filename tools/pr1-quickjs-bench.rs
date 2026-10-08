@@ -59,7 +59,7 @@ mod pr1_quickjs_bench {
             "sunstoneIdle",
             "sunstoneWalk",
             "sunstoneControlWalk",
-            "wanderAuto",
+            "streamedRoam",
             "battleScene",
             "sunstoneIdleImmutable",
             "sunstoneControlWalkImmutable",

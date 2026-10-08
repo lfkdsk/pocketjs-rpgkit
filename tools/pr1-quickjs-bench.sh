@@ -60,7 +60,7 @@ cpu="${PR1_QJS_CPU:-}"
 iters="${PR1_QJS_ITERS:-2000}"
 rows="$scratch/rows.log"
 cases=( \
-  sunstoneIdle sunstoneWalk sunstoneControlWalk wanderAuto battleScene \
+  sunstoneIdle sunstoneWalk sunstoneControlWalk streamedRoam battleScene \
   sunstoneIdleImmutable sunstoneControlWalkImmutable battleSceneImmutable
 )
 selected_case="${PR1_BENCH_CASE:-}"
@@ -85,6 +85,7 @@ cleanup() {
 trap cleanup EXIT
 
 cp "$root/tools/pr1-quickjs-entry.ts" "$baseline/tools/pr1-quickjs-entry.ts"
+cp "$root/tools/pr1-streamed-roam.ts" "$baseline/tools/pr1-streamed-roam.ts"
 bun build "$baseline/tools/pr1-quickjs-entry.ts" --target=browser --format=iife --minify --outfile="$scratch/main.js" >/dev/null
 bun build "$root/tools/pr1-quickjs-entry.ts" --target=browser --format=iife --minify --outfile="$scratch/candidate.js" >/dev/null
 
