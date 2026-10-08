@@ -1092,10 +1092,10 @@ class Player {
     );
     globalThis.__rpgkitBoot = rpgkitBootFromSearch(location.search);
     globalThis.__rpgkitDemo = undefined;
-    // The web ticket store for auth-enabled games: the desktop QuickJS
-    // guest has no localStorage global, so the game reads it through this
-    // bridge (and uses its save directory on desktop).
-    globalThis.__wanderOnlineWebStore = globalThis.localStorage ?? undefined;
+    // A generic, browser-only storage bridge for games that need small
+    // app-owned values beyond the kit autosave slot. Desktop QuickJS has no
+    // localStorage global, so games use their ordinary save directory there.
+    globalThis.__pocketWebStore = globalThis.localStorage ?? undefined;
     globalThis.frame = undefined;
     initAuthUI(config);
     new Function(`${source}\n//# sourceURL=${config.app}.js`)();

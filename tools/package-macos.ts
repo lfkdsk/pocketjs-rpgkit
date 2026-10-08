@@ -56,7 +56,6 @@ const example = args.find((a) => !a.startsWith("--"));
 const EXAMPLE_DEFAULTS: Record<string, { name: string; icon?: string; crop?: string }> = {
   sunstone: { name: "Sunstone", icon: "tests/goldens/sunstone-game.40.png", crop: "224,96,48,48" },
   grow: { name: "Grow", icon: "tests/goldens/grow.2028.png", crop: "8,56,128,128" },
-  wander: { name: "Wander", icon: "tests/goldens/wander.960.2100.png", crop: "440,180,160,160" },
   meadow: { name: "Meadow" },
 };
 

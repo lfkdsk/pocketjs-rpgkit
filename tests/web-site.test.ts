@@ -79,13 +79,13 @@ function urls(html: string): string[] {
 describe("games", () => {
   test("with no names, this repository builds every example, the editor and the preview host", () => {
     expect(defaultGameIds(KIT_ROOT)).toEqual([...APPS.filter((id) => !LOCAL_ONLY_APPS.includes(id)), PREVIEW_APP_ID]);
-    // wander-online talks to its hosted server, so the published site lists it.
-    expect(defaultGameIds(KIT_ROOT)).toContain("wander-online");
+    expect(defaultGameIds(KIT_ROOT)).not.toContain("wander");
+    expect(defaultGameIds(KIT_ROOT)).not.toContain("wander-online");
   });
 
   test("cards follow the metadata table, then the rest in build order", () => {
     // "later" stands for an example with no web.json entry yet.
-    expect(cardOrder(["meadow", "sunstone", "later", "grow", "wander"], config)).toEqual(["wander", "sunstone", "grow", "meadow", "later"]);
+    expect(cardOrder(["meadow", "sunstone", "later", "grow"], config)).toEqual(["sunstone", "grow", "meadow", "later"]);
     expect(cardOrder(["later", "meadow"], config)).toEqual(["meadow", "later"]);
   });
 
@@ -398,10 +398,13 @@ describe("pages", () => {
     );
     const order = [...html.matchAll(/<h2><a href="[^"]*">([^<]+)<\/a><\/h2>/g)].map((m) => m[1]);
     expect(order[0]).toBe(games.find((game) => game.featured)!.title);
-    expect(order[1]).toBe("Pocket Tuxemon");
-    expect(order[2]).toBe("Wander: an Endless Grown World");
+    expect(order.slice(1, 4)).toEqual([
+      "Pocket Tuxemon",
+      "Wander: an Endless Grown World",
+      "Wander Online",
+    ]);
     expect(order.at(-1)).toBe("Pocket RPG Kit Editor");
-    expect(order.length).toBe(1 + published.length);
+    expect(order.length).toBe(config.showcase!.length + published.length);
   });
 
   test("a card without a preview gets a placeholder, not a broken image", () => {

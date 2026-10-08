@@ -70,160 +70,19 @@ grow`; Metal, captured on an Apple M5 Pro):
 | --- | --- |
 | ![Sunstone takeover on macOS](docs/screenshots/macos-sunstone-takeover.png) | ![Grow on macOS](docs/screenshots/macos-grow-growing.png) |
 
-### `examples/wander` — an endless world that grows as you walk
+### Wander and Wander Online — their own repository
 
-| | |
-| --- | --- |
-| ![Wander at 960x544: a grown town beside a snow border](tests/goldens/wander.960.2100.png) | ![Wander on macOS: a snow town, walking to a clicked tile](docs/screenshots/macos-wander.png) |
-| A grown town beside a snow border (sim golden) | On the macOS desktop host (`bun run desktop wander`), walking to a clicked tile |
-
-An unbounded 2D world streams in and out of memory around the walker.
-Nothing about it is stored: every 32×32-tile chunk is a pure function of
-the seed and its coordinates (tested byte-identical in any generation
-order, after eviction, and at (±100000, ±100000)), so the only state is a
-cache. Biomes are low-frequency 2D noise cut into snow, grass, mud and
-sand, with grow's transition / blend / fringe seam art on every border;
-woods and meadows are grow's coordinate-hashed Ninja stamps.
-
-- **Regions and gates.** Every 96×96-tile region holds at most one town,
-  placed by hashed jitter with a chance by biome, and grown with grow's
-  rules in 2D (plaza, main and cross street, road-facing lots and a back
-  lane, the biome's work plot, one resident per house walking a road
-  route). Each shared region edge has a hashed gate that both sides
-  compute identically; each region runs its own trunk road from its town
-  (or a signposted crossroads) to its gates, so roads meet across region
-  borders without any global state.
-- **Growth.** When a town first enters the growth ring ahead of the
-  walker it grows over a few seconds — roads, then houses, fields,
-  residents — and its state at *t* seconds after discovery is "every cell
-  born by then". A bounded Bloom filter remembers what was seen; a region
-  met again shows complete.
-- **Rings.** The render ring (viewport plus overscan) is the only thing
-  mounted, as pooled native nodes with a hard cap (whole-stamp trees and
-  houses, 256 and 64 px fills, 16 px seams and roads). The load ring
-  generates chunks, the unload ring (load + hysteresis) evicts them, and a
-  hard LRU cap and byte estimate bound the cache. Generation is a work
-  queue ordered by distance to the focus (the walker plus a lead) and
-  alignment with the heading, spent in slices under a per-tick budget; an
-  unready chunk shows its biome's fill and fills in when it arrives.
-- **Walking.** The kit's unchanged engine plays a sliding 3×3-chunk window
-  emitted as a normal `rpgkit-project/v1` document. Entering a new chunk
-  re-centres it (a floating origin): the next window is built in budgeted
-  slices and the session state is translated, so positions stay small and
-  exact and nothing on screen moves. Houses, fences, props and tree trunks
-  block; canopies are walked under; residents walk their routes. When a
-  held d-pad direction catches an obstacle corner, manual control takes a
-  short, bounded side step around the nearer opening and then resumes the
-  held direction. A wall blocked on both sides still holds the player in
-  place, facing it; auto-wander and tap-to-walk keep their own paths.
-- **Attract.** An auto-wander driver (A* over the window, preferring
-  roads) walks from town to town and landmark to landmark by itself. A d-pad, **CIRCLE**, **CROSS**,
-  shoulder or **START** press takes over; ten idle seconds hand the walk back. **SQUARE** grows a new seed,
-  **TRIANGLE** toggles fast travel, **SELECT** hands back at once, **CROSS**
-  is context-sensitive (on a plaza it accepts or delivers an errand;
-  elsewhere it pages the travel log), and a tap walks to the tapped tile. The HUD shows the
-  seed, world coordinates, the chunk minimap (rendered / resident / queued /
-  evicted, with the load and unload rings, and gold dots for discovered
-  landmarks) and the residency counters.
-- **Landmarks and the travel log.** A pure roll of (seed, region) places a
-  rare landmark — standing stones, a ruined arch, a strange tree, a cold
-  spring, a giant boulder, an old camp — in towns and in the wild alike. It is
-  discovered when its centre enters the viewport and recorded in a bounded
-  travel log (64 entries, older ones folded into per-kind counts, serializable
-  for a future save). The bottom line shows the log total and a RUMOR pointing
-  at the nearest undiscovered landmark; the driver detours to them, so a long
-  auto-wander keeps finding new things instead of circling one cluster.
-- **Talking towns and errands.** Every villager has their own lines — one of
-  eight roles (farmer, baker, elder, traveler, guard, herbalist, child,
-  mason), each citing two of four facts: the biome's needs, the town's size,
-  a road-linked neighbour's name, or the nearest landmark rumor. Town names
-  come from a 64×64×9 space (qualifier + root + suffix), so a long walk
-  rarely repeats one. Every town may offer an errand — carry something to a
-  road-linked neighbouring town, or go and see a nearby landmark — pure in (seed,
-  region). **CROSS** on a plaza accepts or delivers; a helped town gains
-  walkable plaza flowers that survive plan eviction (a 32-town exact set plus
-  a 1024-bit Bloom that never forgets). The auto-walker runs errands and
-  stops at every town it reaches to talk to one villager, once per recent
-  town (a bounded FIFO of 24, so a town revisited after 24 newer ones may be
-  talked again). The errand
-  session state (one active errand, the helped set, the Bloom, the talked
-  towns) serializes to under 1 KiB with a validated, bounded restore.
-
-Generation, discovery and the window swap all happen per 60 Hz reference
-tick, so the world, its residency and the auto-wander trajectory are
-identical at 60/30/20/4 Hz. Every live input — taps, d-pad holds, SQUARE
-reseed, TRIANGLE and SELECT — is sampled once per host frame and enqueued
-on the sim's scheduled tape at that frame's first reference tick
-(`WanderSim.enqueue`), so live play and replays are the same code path;
-the recorded tape (`globalThis.__wanderTape`) replays a session
-tick-for-tick at any host rate. A frame that reseeds (SQUARE, or a
-seed-plate tap) starts a new session clock at 0, so the rest of that
-frame's mask changes and taps are enqueued at the new session's tick 0 —
-not the old session's `now`, which would park them at the tape's front
-until the new session caught up — and the held mask carries across the
-reseed without re-firing as a fresh press. The per-frame sampling is the
-engine's documented input contract (`src/engine/motion-clock.ts`): a slow
-host observes a click later than a fast one, but the same recorded inputs
-produce the same per-reference-tick trajectory at every rate. Tapes can
-also be authored directly (`WanderSim.schedule`) with exact-tick taps,
-holds and reseeds; same-tick semantics: edges run from the previous
-tick's final mask to this tick's final mask (a press and release queued
-for one tick leave no edge), and a held takeover mask wins a same-tick
-race with a tap. An `onTick` hook exposes each folded tick's digest for
-tick-for-tick comparisons. The example bakes no new
-terrain: it points at grow's PNGs in place (`../grow/assets/...`) and adds
-whole-stamp and 64 px fill composites of them. Villagers and the player
-draw from a pool of 16 Ninja Adventure walkers (CC0) with 4 palettes each,
-shipped as one on-demand CLUT8 tileset per walker; a villager's look is a
-pure function of the seed, its region and its index. Both kinds of asset
-come from `bun examples/wander/gen-assets.ts`.
-
-### `examples/wander-online` — local multiplayer with prediction and interpolation
-
-A local multiplayer demo: the wander world shared by a small authoritative
-server, with client-side prediction and remote interpolation. Two desktop
-windows and a browser tab on the same machine see each other walk around
-the same frozen window. **Localhost only** — the server binds `127.0.0.1`
-and never listens on a non-loopback interface; there are no accounts, no
-persistence and no anti-cheat.
-
-```sh
-bun run examples/wander-online/server/server.ts     # 20 Hz authoritative, 10 Hz AOI snapshots
-bun tools/desktop.ts wander-online                  # a desktop client (run twice for two windows)
-bun tools/web.ts wander-online                      # a browser tab (serve dist/web)
-```
-
-Local builds connect to the loopback server above. The published site sets
-`WANDER_ONLINE_URL` for `bun run web` (`.github/workflows/pages.yml`), which
-bakes the hosted server's URL into the page; playing there needs a GitHub
-sign-in.
-
-- **Prediction.** The client builds the same frozen window from the
-  WELCOME seed and folds every held input through the kit's `stepSession`
-  locally, one reference tick per INPUT. Pressing a key moves the local
-  player on the same frame — no input latency, even with 150 ms of injected
-  one-way latency (the server is 300 ms round-trip away; the client is not).
-- **Reconciliation.** Every snapshot carries `ackSeq`, the last INPUT
-  sequence the server applied for the recipient. The client keeps a
-  128-entry ring of predicted states; on a snapshot it compares the
-  predicted mover at `ackSeq` with the authoritative one. A mismatch
-  rolls the whole movement state (position, phase, walking, stepDir) back
-  and replays the unacked inputs. With a reliable in-order transport and
-  no server underflow, corrections stay at zero after the join.
-- **Interpolation.** Remote players render 100 ms behind real time,
-  interpolated between the two snapshots bracketing that time. One dropped
-  packet costs nothing; snapshots are idempotent.
-- **Recovery.** A socket close reconnects with exponential backoff and
-  re-joins; a server restart looks the same. Two seconds without a snapshot
-  freezes local gameplay and starts a fresh join.
-
-The wire format is a single source in
-[`examples/wander-online/net/protocol.ts`](examples/wander-online/net/protocol.ts):
-INPUT is 7 bytes (sequence + buttons), STATE is a 10-byte header plus
-12 bytes per entity (id, tile, pixel offset, facing, phase, stepDir, flags),
-capped at 255 entities per snapshot. See
-[`examples/wander-online/README.md`](examples/wander-online/README.md) for
-the architecture and the test list.
+The endless grown world and the local multiplayer demo now live in
+**[pocketjs-wander](https://github.com/lfkdsk/pocketjs-wander)**
+([play Wander](https://lfkdsk.github.io/pocketjs-wander/) or
+[Wander Online](https://lfkdsk.github.io/pocketjs-wander/wander-online/)): an
+unbounded world streamed in chunks around the player, towns that grow as
+you reach them, landmarks, rumors and errands, an auto-walker that hands
+over to you and back, and a hosted authoritative multiplayer world with
+GitHub sign-in, character creation, prediction and interpolation. The engine and UI modules they use
+(`session`, `passability`, `motion-clock`, `movement`, `DialogBox`,
+`PlayerSprite`, `TileTextureCache`) and grow's art stay in this kit; the
+example code, its tests and their history moved with the repository.
 
 **`examples/meadow`** is the minimal example: one 20×12 map and four
 events proving the package boots, renders, replays deterministically,
@@ -341,11 +200,11 @@ bun run build:example    # build showcase and the other examples, editor and tes
 bun test                 # full suite incl. sim journeys and pixel goldens
 bunx tsc --noEmit        # typecheck, exit 0
 bun run desktop sunstone # build for the desktop host and open a window
-                         # (also: grow, wander, meadow; needs a Rust toolchain)
+                         # (also: grow, meadow; needs a Rust toolchain)
 bun run web              # the browser site in dist/web (see above)
 ```
 
-On a Mac, `bun run package:macos sunstone` (or `grow`, `wander`, `meadow`) makes a
+On a Mac, `bun run package:macos sunstone` (or `grow`, `meadow`) makes a
 double-clickable `dist/macos/<Name>.app` plus a zip to hand around: the
 desktop host, the example's bundle and pak, an icon cropped from its
 golden frame, and the licenses. It is built for the Mac's own
@@ -3270,8 +3129,8 @@ tools/           example/editor build driver, desktop and editor launchers,
                  macOS packager (package-macos.ts), web site builder
                  (web.ts, web/, web-verify.ts)
 examples/        meadow (minimal), sunstone (game + attract + QOA), grow
-                 (demo), wander (endless streamed world), showcase (feature
-                 gallery);
+                 (demo), showcase (feature gallery); the endless Wander and
+                 Wander Online apps live at github.com/lfkdsk/pocketjs-wander
                  each has its entry, data, assets/src, gen-assets.ts,
                  images.json, pocket.json and ATTRIBUTION.md
 editor/          map/event editor (preview): app, engine/, ui/, its cooker

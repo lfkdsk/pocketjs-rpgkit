@@ -62,7 +62,6 @@ import {
   type PlatformContractRegistry,
 } from "../vendor/pocketjs/contracts/spec/platforms.ts";
 import { APPS, LOCAL_ONLY_APPS } from "./build-example.ts";
-import { writeOnlineUrl } from "./lib/online-url.ts";
 import { appDirOf, fontLicenseFiles } from "./lib/font-licenses.ts";
 import type { Size, ViewportConfig } from "./web/fit.ts";
 import { writeSiteIcons } from "./web/icon.ts";
@@ -1393,14 +1392,6 @@ export async function buildWebSite(options: BuildOptions): Promise<WebGame[]> {
   const config = loadSiteConfig(projectRoot, options.config);
   const ids = options.games.length > 0 ? [...new Set(options.games)] : defaultGameIds(projectRoot);
   if (ids.length === 0) throw new Error(`web: no games found under ${projectRoot}`);
-  // wander-online reads its server URL from its pak config; the published
-  // site bakes the hosted server's URL in (pages.yml sets the variable),
-  // while local builds keep the committed loopback default.
-  const onlineUrl = process.env.WANDER_ONLINE_URL;
-  if (onlineUrl && ids.includes("wander-online")) {
-    writeOnlineUrl(projectRoot, onlineUrl);
-    console.log(`web: wander-online connects to ${onlineUrl}`);
-  }
   const games = cardOrder(ids, config).map((id) => resolveGame(projectRoot, config, id));
   if (config.studio && games.some((game) => game.id === STUDIO_ID)) {
     throw new Error(`web: a game named "${STUDIO_ID}" would share Studio's directory`);
