@@ -73,6 +73,37 @@ export interface UiTextTable {
   "save.codeHint": string;
   "save.importTitle": string;
   "save.importHint": string;
+  "save.refusedTitle": string;
+  "save.refusedEventError": string;
+  "save.refusedBattle": string;
+  "save.refusedConversation": string;
+  "save.refusedMapChange": string;
+  "save.refusedScene": string;
+  "save.refusedWalking": string;
+  "save.snapshotFailed": string;
+  "save.failedTitle": string;
+  "save.failedBody": string;
+  /** {slot} */
+  "save.savedTitle": string;
+  /** {map} {x} {y} */
+  "save.savedBody": string;
+  "save.loadingTitle": string;
+  /** {map} */
+  "save.loadingBody": string;
+  /** {slot} */
+  "save.loadSlotFailedTitle": string;
+  "save.loadCodeFailedTitle": string;
+  "save.loadAutosaveFailedTitle": string;
+  "save.loadErrorContent": string;
+  "save.loadErrorChecksum": string;
+  "save.loadErrorVersion": string;
+  "save.loadErrorInvalid": string;
+  "save.loadErrorShape": string;
+  "save.loadErrorRead": string;
+  /** {slot} */
+  "save.loadedSlotToast": string;
+  "save.loadedCodeToast": string;
+  "save.loadedAutosaveToast": string;
 
   // NAME_INPUT_UI_TEXT (engine/name-input.ts): NameInputScene.
   "nameInput.title": string;

@@ -3171,6 +3171,11 @@ player-name token of message text is separate and not used here.
 | `save.slotsSaveTitle` `save.slotsLoadTitle` `save.autosave` `save.slotEmpty` `save.slotDamaged` `save.slotSummary` | Slot pages | `{map}`, `{frame}` |
 | `save.emptyTitle` `save.emptyBody` | `menuStep`'s empty-slot message | `{slot}` |
 | `save.codeTitle` `save.codeHint` `save.importTitle` `save.importHint` | Save code export and import pages | `{page}`, `{pages}` |
+| `save.refusedTitle` `save.refusedEventError` `save.refusedBattle` `save.refusedConversation` `save.refusedMapChange` `save.refusedScene` `save.refusedWalking` `save.snapshotFailed` | Reasons a manual save is unavailable | |
+| `save.failedTitle` `save.failedBody` `save.savedTitle` `save.savedBody` | Manual-save failure and success messages | `{slot}`, `{map}`, `{x}`, `{y}` |
+| `save.loadingTitle` `save.loadingBody` `save.loadSlotFailedTitle` `save.loadCodeFailedTitle` `save.loadAutosaveFailedTitle` | Save-loading progress and failure titles | `{map}`, `{slot}` |
+| `save.loadErrorContent` `save.loadErrorChecksum` `save.loadErrorVersion` `save.loadErrorInvalid` `save.loadErrorShape` `save.loadErrorRead` | Save-loading error details | |
+| `save.loadedSlotToast` `save.loadedCodeToast` `save.loadedAutosaveToast` | Successful-load notices | `{slot}` |
 | `nameInput.title` `nameInput.back` `nameInput.ok` `nameInput.cancel` | Name input caption (when the `scene` sets no `title`) and its three action cells | |
 | `demo.badge` `demo.control` `demo.rewind` | Attract badge, takeover and rewind notices | `{frame}` (zero-padded), `{frames}`, `{seconds}` |
 | `demo.menuTitle` `demo.tabChapters` `demo.tabWarp` `demo.tabAutoplay` `demo.tabSelected` `demo.empty` `demo.speed` `demo.speedHint` `demo.legend` `demo.legendBack` `demo.loading` `demo.warped` `demo.error` `demo.badLink` `demo.errorUnknownChapter` `demo.errorUnknownMap` `demo.errorUnknownAutoplay` `demo.errorXY` `demo.badLinkChooseOne` `demo.badLinkSpeed` | Demo menu (`pocket-rpgkit/ui/demo`); the error sentence templates replace the fixed English reasons a bad chapter/map/link produces | `{tab}`, `{speed}`, `{id}` |

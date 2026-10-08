@@ -29,12 +29,12 @@ import { slotMeasure } from "../../../src/ui/text-measure.ts";
 import { useMarqueeTick } from "../../../src/ui/use-marquee-tick.ts";
 import { createDemo } from "../../../src/ui/demo/index.ts";
 import { NAME_INPUT_SCENE_ID, nameInputRules } from "../../../src/engine/name-input.ts";
-import { menuStep, type MenuAction, type MenuState } from "../../../src/engine/save-menu.ts";
+import { SAVE_MENU_UI_TEXT, menuStep, type MenuAction, type MenuState, type SaveMenuTextKey } from "../../../src/engine/save-menu.ts";
 import { createSession, startSession } from "../../../src/engine/session.ts";
 import { createSessionSnapshot } from "../../../src/engine/save.ts";
 import { createJsonMapRepository } from "../../../src/engine/map-repository.ts";
 import { splitProjectMaps } from "../../../tools/lib/map-project.ts";
-import type { UiTextOverrides, UiTextTable } from "../../../src/engine/ui-text.ts";
+import { formatUiText, type UiTextOverrides, type UiTextTable } from "../../../src/engine/ui-text.ts";
 import type { GameViewOverlayConfig } from "../../../src/ui/demo-contract.ts";
 import { GAME_ASSETS } from "./assets-game.ts";
 import { fixtureProject, MAP_ID, MAP_ID_2, PARTIAL_UI_TEXT, SAVE_CODE, ZH_UI_TEXT, type Scenario } from "./fixture-data.ts";
@@ -55,6 +55,10 @@ declare global {
    *  test): the next frame draws the new words. */
   // eslint-disable-next-line no-var
   var __uiTextSetProp: ((table: Partial<UiTextTable> | undefined) => void) | undefined;
+  /** Put one save-runtime string on the real SaveMenu message page. The
+   *  schema-max test uses this after replacing that key with its marker. */
+  // eslint-disable-next-line no-var
+  var __uiTextShowSaveMessage: ((key: SaveMenuTextKey) => void) | undefined;
 }
 
 const scenario: FixtureScenario = globalThis.__uiTextScenario ?? "idle";
@@ -121,6 +125,17 @@ const saveOverlay: GameViewOverlayConfig = {
     const [code, setCode] = createSignal("");
     const osk = createOsk({ value: code, setValue: setCode, onCommit: () => {} });
     let text: UiTextOverrides | undefined;
+    globalThis.__uiTextShowSaveMessage = (key) => {
+      const template = text?.[key] ?? SAVE_MENU_UI_TEXT[key];
+      const value = formatUiText(template, { slot: 3, map: MAP_ID, x: 2, y: 2 });
+      const inTitle = key.endsWith("Title");
+      setMenu({
+        kind: "message",
+        title: inTitle ? value : "MESSAGE",
+        body: inTitle ? "Message body." : value,
+        back: { kind: "closed" },
+      });
+    };
     const fold = (action: MenuAction): void => {
       const next = menuStep(menu(), action, {
         hasFs: true,

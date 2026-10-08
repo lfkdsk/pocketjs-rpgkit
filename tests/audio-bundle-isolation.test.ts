@@ -216,10 +216,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // the Meadow and WAV bundles and 2,495 to Sunstone (measured). The switch
 // catalog's writtenBy:"host" marker (a dedicated switchDef $def in the
 // embedded project schema) adds 72 B to each bundle: 611,600, 979,788 and
-// 776,953.
-const EXPECTED_MEADOW_BYTES = 611_600;
-const EXPECTED_SUNSTONE_QOA_BYTES = 979_788;
-const EXPECTED_WAV_FIXTURE_BYTES = 776_953;
+// 776,953. The optional save-runtime uiText keys add a further measured
+// 72 B to the shared schema path in each bundle.
+const EXPECTED_MEADOW_BYTES = 611_672;
+const EXPECTED_SUNSTONE_QOA_BYTES = 979_860;
+const EXPECTED_WAV_FIXTURE_BYTES = 777_025;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

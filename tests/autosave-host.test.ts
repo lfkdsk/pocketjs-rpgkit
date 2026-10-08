@@ -7,10 +7,11 @@ import {
   createSimAutosaveBridge,
   inspectAutosaveHost,
   loadAutosaveHost,
+  type AutosaveBridge,
   writeAutosaveHost,
 } from "../src/host/autosave.ts";
 
-const globals = globalThis as { __rpgkitAutosave?: ReturnType<typeof createSimAutosaveBridge> };
+const globals = globalThis as { __rpgkitAutosave?: AutosaveBridge };
 
 afterEach(() => {
   delete globals.__rpgkitAutosave;
@@ -41,5 +42,16 @@ describe("autosave host bridge", () => {
     expect(writeAutosaveHost(second)).toBe(true);
     expect(loadAutosaveHost()).toEqual(second);
     expect(bridge.text()).toContain('"map":"second"');
+  });
+
+  test("inspection shows a host read failure while loading still throws", () => {
+    globals.__rpgkitAutosave = {
+      read() {
+        throw new Error("memory stick read failed");
+      },
+      write: () => true,
+    };
+    expect(inspectAutosaveHost()).toEqual({ slot: 0, error: "memory stick read failed" });
+    expect(() => loadAutosaveHost()).toThrow("memory stick read failed");
   });
 });

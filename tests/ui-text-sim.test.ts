@@ -22,7 +22,7 @@ import { decodePng } from "../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { KIT_UI_TEXT, formatUiText, type UiTextKey, type UiTextTable } from "../src/engine/ui-text.ts";
-import { SAVE_MENU_UI_TEXT } from "../src/engine/save-menu.ts";
+import { SAVE_MENU_UI_TEXT, type SaveMenuTextKey } from "../src/engine/save-menu.ts";
 import { NAME_INPUT_UI_TEXT } from "../src/engine/name-input.ts";
 import { DEMO_MENU_UI_TEXT } from "../src/ui/demo/text.ts";
 import { STAT_BAR_UI_TEXT } from "../src/ui/battle/text.ts";
@@ -340,6 +340,45 @@ simDescribe("a game's words replace the kit's", () => {
     expectWord(world, "rpgkit-import-title", "save.importTitle");
     expectWord(world, "rpgkit-import-hint", "save.importHint");
     expectNoEnglish(world, ["save.importTitle", "save.importHint"]);
+  });
+
+  test("save runtime feedback uses the translated templates on real message pages", async () => {
+    const world = await boot("idle");
+    const keys: readonly SaveMenuTextKey[] = [
+      "save.refusedTitle",
+      "save.refusedEventError",
+      "save.refusedBattle",
+      "save.refusedConversation",
+      "save.refusedMapChange",
+      "save.refusedScene",
+      "save.refusedWalking",
+      "save.snapshotFailed",
+      "save.failedTitle",
+      "save.failedBody",
+      "save.savedTitle",
+      "save.savedBody",
+      "save.loadingTitle",
+      "save.loadingBody",
+      "save.loadSlotFailedTitle",
+      "save.loadCodeFailedTitle",
+      "save.loadAutosaveFailedTitle",
+      "save.loadErrorContent",
+      "save.loadErrorChecksum",
+      "save.loadErrorVersion",
+      "save.loadErrorInvalid",
+      "save.loadErrorShape",
+      "save.loadErrorRead",
+      "save.loadedSlotToast",
+      "save.loadedCodeToast",
+      "save.loadedAutosaveToast",
+    ];
+    const params = { slot: 3, map: MAP_ID, x: 2, y: 2 };
+    const show = (globalThis as unknown as { __uiTextShowSaveMessage(key: SaveMenuTextKey): void }).__uiTextShowSaveMessage;
+    for (const key of keys) {
+      show(key);
+      pump(world, 2);
+      expectWord(world, key.endsWith("Title") ? "rpgkit-message-title" : "rpgkit-message-body", key, params);
+    }
   });
 
   test("name input: the default caption wraps and pushes the grid down; action cells", async () => {

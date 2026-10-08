@@ -24,7 +24,7 @@ const H = 272;
 type Route =
   | "idle" | "shop-message" | "shop-buy" | "shop-sell"
   | "save-root" | "save-slots-save" | "save-slots-load" | "save-message"
-  | "save-export" | "save-import" | "name"
+  | "save-export" | "save-import" | "save-runtime-message" | "name"
   | "demo-menu" | "demo-autoplay" | "demo-empty" | "demo-busy" | "demo-toast"
   | "demo-runtime-error" | "demo-attract" | "demo-control" | "demo-rewind"
   | "boot-choose" | "boot-autoplay" | "boot-map" | "boot-xy" | "boot-speed"
@@ -74,6 +74,32 @@ const CASES = {
   "save.codeHint": { route: "save-export", target: "rpgkit-code-hint", panel: "rpgkit-save-panel", control: "rpgkit-code-row" },
   "save.importTitle": { route: "save-import", target: "rpgkit-import-title", panel: "rpgkit-save-panel", control: "rpgkit-import-hint" },
   "save.importHint": { route: "save-import", target: "rpgkit-import-hint", panel: "rpgkit-save-panel", control: "rpgkit-import-title" },
+  "save.refusedTitle": { route: "save-runtime-message", target: "rpgkit-message-title", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.refusedEventError": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.refusedBattle": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.refusedConversation": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.refusedMapChange": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.refusedScene": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.refusedWalking": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.snapshotFailed": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.failedTitle": { route: "save-runtime-message", target: "rpgkit-message-title", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.failedBody": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.savedTitle": { route: "save-runtime-message", target: "rpgkit-message-title", panel: "rpgkit-save-panel", control: "rpgkit-message-legend", params: { slot: 3 } },
+  "save.savedBody": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend", params: { map: MAP_ID, x: 2, y: 2 } },
+  "save.loadingTitle": { route: "save-runtime-message", target: "rpgkit-message-title", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadingBody": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend", params: { map: MAP_ID } },
+  "save.loadSlotFailedTitle": { route: "save-runtime-message", target: "rpgkit-message-title", panel: "rpgkit-save-panel", control: "rpgkit-message-legend", params: { slot: 3 } },
+  "save.loadCodeFailedTitle": { route: "save-runtime-message", target: "rpgkit-message-title", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadAutosaveFailedTitle": { route: "save-runtime-message", target: "rpgkit-message-title", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadErrorContent": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadErrorChecksum": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadErrorVersion": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadErrorInvalid": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadErrorShape": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadErrorRead": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadedSlotToast": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend", params: { slot: 3 } },
+  "save.loadedCodeToast": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
+  "save.loadedAutosaveToast": { route: "save-runtime-message", target: "rpgkit-message-body", panel: "rpgkit-save-panel", control: "rpgkit-message-legend" },
   "nameInput.title": { route: "name", target: "rpgkit-name-input-panel", panel: "rpgkit-name-input-panel", control: "rpgkit-name-input-cell-69" },
   "nameInput.back": { route: "name", target: "rpgkit-name-input-cell-67", panel: "rpgkit-name-input-panel", control: "rpgkit-name-input-cell-69" },
   "nameInput.ok": { route: "name", target: "rpgkit-name-input-cell-68", panel: "rpgkit-name-input-panel", control: "rpgkit-name-input-cell-69" },
@@ -388,8 +414,8 @@ function verifyRoute(world: BoundGameWorld, recording: Recording, route: Route):
 }
 
 simDescribe("all schema uiText values render at maxLength", () => {
-  test("the schema iteration and exhaustive screen map cover exactly all 58 keys", () => {
-    expect(SCHEMA_KEYS).toHaveLength(58);
+  test("the schema iteration and exhaustive screen map cover exactly all 84 keys", () => {
+    expect(SCHEMA_KEYS).toHaveLength(84);
     expect(new Set(SCHEMA_KEYS)).toEqual(new Set(Object.keys(CASES) as UiTextKey[]));
     for (const key of SCHEMA_KEYS) {
       expect(Number.isSafeInteger(UI_TEXT_SCHEMA[key].maxLength), `${key} maxLength is an integer`).toBe(true);
@@ -443,6 +469,16 @@ simDescribe("all schema uiText values render at maxLength", () => {
     tap(world, BTN.START); tap(world, BTN.DOWN); tap(world, BTN.DOWN); tap(world, BTN.DOWN); tap(world, BTN.CIRCLE);
     verifyRoute(world, recording, "save-import");
   });
+
+  for (const key of routeKeys("save-runtime-message")) {
+    test(`save runtime message: ${key} at maxLength`, async () => {
+      const [world, recording] = await boot("idle");
+      setMarker(world, key, marker(key));
+      (globalThis as unknown as { __uiTextShowSaveMessage(key: UiTextKey): void }).__uiTextShowSaveMessage(key);
+      pump(world, 2);
+      verify(world, recording, key, true);
+    });
+  }
 
   for (const key of routeKeys("name")) {
     test(`name input: ${key} at maxLength`, async () => {

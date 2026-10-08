@@ -74,9 +74,9 @@ export function inspectAutosaveHost(
 ): AutosaveSlotStatus {
   const bridge = autosaveBridge();
   if (!bridge) return null;
-  const text = bridge.read();
-  if (text === null) return null;
   try {
+    const text = bridge.read();
+    if (text === null) return null;
     const summary = summarizeEnvelope(0, text, content);
     return { ...summary, slot: 0 };
   } catch (error) {
