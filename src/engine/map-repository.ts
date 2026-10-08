@@ -138,9 +138,16 @@ export const mapChecksum = (map: MapDef): string => sha256Text(canonicalMapJson(
  * schema-identity.ts for the rules. */
 export { MAP_SCHEMA_COMPATIBLE_HASHES, MAP_SCHEMA_HASH, describeMapSchemaRefusal, isCompatibleMapSchemaHash };
 
-export interface MapContentIdentity {
+export interface MapContentVersion {
   manifest: string;
   schema: string;
+}
+
+/** Current content version plus exact older game builds whose saves this
+ * application has explicitly tested and elected to migrate. The compatible
+ * pairs are load-only: newly written envelopes always stamp the current pair. */
+export interface MapContentIdentity extends MapContentVersion {
+  compatible?: readonly MapContentVersion[];
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;

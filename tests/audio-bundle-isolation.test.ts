@@ -220,16 +220,17 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 72 B to the shared schema path in each bundle: 611,672, 979,860 and
 // 777,025. Live playerMoving page conditions plus source-compatible command
 // wander clocks, observation pauses and exact intervals then add 3,535 B to
-// Meadow and the WAV fixture, and 4,152 B to Sunstone. Runtime identity
-// support (combatSheet/random/characterNames schema, sparse map-event names,
-// save/COW validation, {char:} expansion, targeted/variable-fed changeName
-// and the scene-selection bridge) adds a measured 3,641 B, 5,527 B and
-// 4,407 B respectively to the movement-enabled main bundles. The integrated
-// totals are therefore 618,848, 989,539 and 784,967 B. The name-input view
-// remains tree-shaken from the ordinary Sunstone graph.
-const EXPECTED_MEADOW_BYTES = 618_848;
-const EXPECTED_SUNSTONE_QOA_BYTES = 989_539;
-const EXPECTED_WAV_FIXTURE_BYTES = 784_967;
+// Meadow and the WAV fixture, and 4,152 B to Sunstone: 615,207, 984,012 and
+// 780,560 B. Runtime character identity (combatSheet/random/characterNames,
+// sparse names, token expansion and targeted/variable-fed changeName) adds a
+// measured 3,641, 5,527 and 4,407 B. Transfer-persistent presentation plus
+// the exact-pair save hook adds another measured 1,492, 2,107 and 1,667 B.
+// The integrated totals are 620,340, 991,646 and 786,634 B. The name-input
+// and battle views remain tree-shaken from the ordinary Sunstone graph.
+// Re-measure after every shared-path change.
+const EXPECTED_MEADOW_BYTES = 620_340;
+const EXPECTED_SUNSTONE_QOA_BYTES = 991_646;
+const EXPECTED_WAV_FIXTURE_BYTES = 786_634;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

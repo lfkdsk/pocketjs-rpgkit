@@ -97,7 +97,7 @@ export const PRESENTATION_HALLS: HallDefinition[] = [
       { op: "screenBackdrop", layer: "backdrop", variant: "gallery" },
       text("Backdrops persist beneath dialog."),
       { op: "screenBackdrop", layer: "backdrop", variant: "stars" },
-      text("A second variant swaps without a transfer."),
+      text("An exposed backdrop is replaced by the next selection."),
       { op: "screenBackdrop", layer: "backdrop", variant: null },
       text("All presentation effects are clear again."),
     ],

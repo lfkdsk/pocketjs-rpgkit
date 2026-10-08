@@ -81,6 +81,7 @@ const ICON_FRAMES = ["0", "1", "2"] as const;
 const PICTURE_ORIGINS = ["topLeft", "center"] as const;
 const PICTURE_BLENDS = ["normal", "add", "multiply", "screen"] as const;
 const PICTURE_EASINGS = ["linear", "easeIn", "easeOut", "easeInOut"] as const;
+const BACKDROP_MODAL_OPEN = [OMIT, "ignore"] as const;
 /** The text window's optional layout fields (schema order) with the value an
  * absent key means. Choosing that default removes the key, so a default text
  * keeps its exact JSON. The hint names the field in Chinese and English. */
@@ -656,6 +657,7 @@ export function commandFields(
       return [
         resourceField("layer", "LAYER", command.layer, resources.layers, "Authored backdrop layers"),
         resourceField("variant", "BACKGROUND", optionValue(command.variant), resources.layerVariants[command.layer] ?? [], `Authored backgrounds for ${command.layer}; use ${NULL} or ${OMIT} to close`),
+        field("whenModalOpen", "WHEN MODAL OPEN", command.whenModalOpen ?? OMIT, "enum", BACKDROP_MODAL_OPEN),
       ];
     case "showPicture":
       return [
@@ -1330,6 +1332,12 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       if (key === "variant") {
         const value = optionalString(raw, "variant", true);
         return value.ok ? good(setOptional(command, "variant", value.value)) : value;
+      }
+      if (key === "whenModalOpen") {
+        if (raw === OMIT || raw.trim() === "") return good(setOptional(command, "whenModalOpen", undefined));
+        return raw === "ignore"
+          ? good({ ...command, whenModalOpen: "ignore" })
+          : bad(`whenModalOpen must be ignore or ${OMIT}`);
       }
       break;
     }

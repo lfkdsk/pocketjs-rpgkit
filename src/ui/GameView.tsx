@@ -87,6 +87,7 @@ import type {
   WorldLayout,
   WorldTraversalMode,
 } from "../engine/types.ts";
+import type { MapContentVersion } from "../engine/map-repository.ts";
 import { PlayerSprite, playerImageKey } from "./PlayerSprite.tsx";
 import { startTapWalk, stepTapWalk, TAP_WALK_DIR_BITS, type TapWalkRoute } from "./tap-to-walk.ts";
 import { walkPose, type WalkPose } from "../engine/movement.ts";
@@ -913,6 +914,9 @@ export interface GameViewProps {
   /** Required with ProjectShell; omitted for backwards-compatible inline
    * projects. Local repositories acquire synchronously. */
   maps?: MapRepository;
+  /** Exact older application builds whose saves were reviewed as compatible
+   * with the current map content. They remain load-only identities. */
+  compatibleSaveContent?: readonly MapContentVersion[];
   /** Pure game registrations forwarded to createSession(). */
   extensions?: ExtensionOptions;
   battle?: BattleRules;
@@ -1160,6 +1164,7 @@ export function GameView(props: GameViewProps) {
     ? new AttractController(project, [...(props.attractTape ?? [])], {
         hz,
         maps: props.maps,
+        compatibleSaveContent: props.compatibleSaveContent,
         extensions: props.extensions,
         battle: props.battle,
         scenes: props.scenes,
@@ -1178,6 +1183,7 @@ export function GameView(props: GameViewProps) {
     ? attract.getSession()
     : createSession(project, hz, {
         maps: props.maps,
+        compatibleSaveContent: props.compatibleSaveContent,
         extensions: props.extensions,
         battle: props.battle,
         scenes: props.scenes,

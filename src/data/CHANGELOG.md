@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `5eecc57a1acad4721139225b1bed1e35ae581706c29e611909d58b2c90efb41b` | optional `screenBackdrop.whenModalOpen: "ignore"` policy for sources whose state stack preserves a covered backdrop, plus optional `system.transferPresentation: "retain"` for world-owned map animations, camera focus and player balloons; documents without either field keep unconditional backdrop replacement and the original per-map presentation lifetime | additive |
 | `70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a705fb3a3cd5531905` | optional `nameInput.random` ui-text word; optional `appearance.combatSheet` player battle back-sheet field with its `saveDefault` baseline; optional `system.characterNames` opt-in for `{char:player\|this\|eventId}` text; and `changeName` event targets/variable-fed names. Documents without the opt-in keep `{char:...}` literal, and older `changeName` commands retain their player/literal meaning | additive |
 | `c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d09097f1ef662788af2c` | `playerMoving` condition, plus optional exact `intervalTicks` cadence for command-started wander; projects without either addition retain their existing behavior and MV frequency-grade cadence | additive |
 | `e763f4898c37c59c111618d57feb35d93b4ba67932cfb2094406388f1efedb45` | optional `uiText` entries for manual-save refusal, save/load progress, success and failure feedback; documents without them keep the English defaults | additive |
@@ -531,10 +532,12 @@ Three optional, backwards-compatible additions from Scout S1 §5–6
   the fiber until one playthrough completes (one-shot) or until `stopAnim`
   stops the instance (looping). `stopAnim` stops one instance by `id`,
   every instance of an animation name, or all live instances.
-- Instances are per-map-visit interpreter state keyed by `id` with the saved
-  frame clock as their origin: playback is identical under rewind and after
-  a save/load, a same-id replay restarts the instance, and a transfer clears
-  all instances. A playing (non-waited) animation does not make the world
+- Instances are interpreter state keyed by `id` with the saved frame clock as
+  their origin: playback is identical under rewind and after a save/load, a
+  same-id replay restarts the instance, and a transfer rebases live instances
+  onto the fresh map clock without changing their visible phase. Event-bound
+  instances pin to their last source-map cell; player-bound instances keep
+  following the player. A playing (non-waited) animation does not make the world
   busy; stopping a waited instance resumes its fiber. Older saves without the
   field keep it absent (no `anims` key), not an empty list. The normative
   schema identity is refreshed as usual.
@@ -606,11 +609,19 @@ v1.0/v1.1 document stays valid; the new command is optional.
   shake. `balloon` shows a `project.animations` entry over a character, either
   for a finite duration or persistently until cleared by omitting `icon`.
 - `screenBackdrop` selects or closes a named `placement:"screen"` layer
-  variant. Backdrop/tint/flash are below dialogs and independent fade is above
-  dialogs. A backdrop blocks player movement and action (`worldIdle` is false)
-  while autorun and parallel events continue, allowing scripted closure.
-- Fade, tint, and backdrop survive transfer; flash, shake, camera, and balloons
-  are scoped to the current map visit. All state is saveable and rewound by the
+  variant. A non-null selection replaces the current backdrop by default.
+  The optional `whenModalOpen:"ignore"` policy instead preserves an existing
+  backdrop under an active modal, while still replacing when no modal is
+  open. Backdrop/tint/flash are below dialogs and independent fade is above
+  dialogs. A backdrop
+  blocks player movement and action (`worldIdle` is false) while autorun and
+  parallel events continue, allowing scripted closure.
+- Fade, tint and backdrop survive transfer. With
+  `system.transferPresentation:"retain"`, live map animations, fixed camera
+  focus and the player's balloon survive too; without that explicit opt-in
+  they keep their original per-map lifetime. Flash, shake and event balloons
+  are always scoped to the current map visit. All
+  state is saveable and rewound by the
   ordinary pure reducer history. Default-frozen battle scenes pause these
   clocks and own the visible frame; `scene.worldContinues:true` keeps them
   advancing in the hidden background. Existing documents and saves omit the

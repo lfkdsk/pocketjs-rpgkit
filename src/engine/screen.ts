@@ -467,17 +467,26 @@ export function advanceScreenEffects(
   return screenEffectsEmpty(screen) ? undefined : screen;
 }
 
-/** Preserve long-lived presentation layers across a transfer. Camera,
- * character balloons and transient flash/shake are map-local and clear. */
+/** Preserve global layers across a transfer. Projects may opt their camera
+ * and player balloon into world ownership; otherwise both keep the original
+ * per-map lifetime. Event balloons always name map-local characters. */
 export function screenEffectsAfterTransfer(
   source: ScreenEffectsState | undefined,
+  retainPresentation = false,
 ): ScreenEffectsState | undefined {
   const screen = cloneScreenEffects(source);
   if (!screen) return undefined;
   delete screen.flash;
   delete screen.shake;
-  delete screen.camera;
-  delete screen.balloons;
+  if (!retainPresentation) {
+    delete screen.camera;
+    delete screen.balloons;
+  } else if (screen.balloons) {
+    for (const id of Object.keys(screen.balloons)) {
+      if (screen.balloons[id]!.target !== "player") delete screen.balloons[id];
+    }
+    if (Object.keys(screen.balloons).length === 0) delete screen.balloons;
+  }
   delete screen.mapNameBanner;
   return screenEffectsEmpty(screen) ? undefined : screen;
 }

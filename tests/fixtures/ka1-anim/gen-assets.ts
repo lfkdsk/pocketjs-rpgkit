@@ -14,7 +14,11 @@ import {
 import { loadWalkerSheet } from "../../../tools/lib/bake.ts";
 import { loadAnimationSheet } from "../../../tools/lib/anim-sheet.ts";
 import { CHUNK_PX, TILE } from "../../../src/engine/tiles.ts";
-import { KA1_MAP, KA1_MAP_ID, KA1_MAP_SIZE, KA1_PROJECT } from "./fixture-data.ts";
+import {
+  KA1_MAP_SIZE,
+  KA1_PROJECT,
+  KS1_PERSIST_PROJECT,
+} from "./fixture-data.ts";
 
 const HERE = import.meta.dir;
 const ASSETS = join(HERE, "assets");
@@ -33,16 +37,20 @@ for (let y = 0; y < TILE; y++) {
   }
 }
 
-const baked = bakeMapChunks(KA1_MAP, () => ground, ground);
 const imageMeta: Record<string, { psm: number }> = {};
-const chunkCount = baked.columns * baked.rows;
-for (let i = 0; i < chunkCount; i++) {
-  const groundName = groundChunkAsset(KA1_MAP_ID, i, chunkCount);
-  const upperName = upperChunkAsset(KA1_MAP_ID, i, chunkCount);
-  writeFileSync(join(HERE, groundName), encodePNG(baked.ground[i]!, CHUNK_PX, CHUNK_PX));
-  writeFileSync(join(HERE, upperName), encodePNG(baked.upper[i]!, CHUNK_PX, CHUNK_PX));
-  imageMeta[groundName] = { psm: 3 };
-  imageMeta[upperName] = { psm: 3 };
+let chunkCount = 0;
+for (const map of KS1_PERSIST_PROJECT.maps) {
+  const baked = bakeMapChunks(map, () => ground, ground);
+  const mapChunkCount = baked.columns * baked.rows;
+  chunkCount += mapChunkCount;
+  for (let i = 0; i < mapChunkCount; i++) {
+    const groundName = groundChunkAsset(map.id, i, mapChunkCount);
+    const upperName = upperChunkAsset(map.id, i, mapChunkCount);
+    writeFileSync(join(HERE, groundName), encodePNG(baked.ground[i]!, CHUNK_PX, CHUNK_PX));
+    writeFileSync(join(HERE, upperName), encodePNG(baked.upper[i]!, CHUNK_PX, CHUNK_PX));
+    imageMeta[groundName] = { psm: 3 };
+    imageMeta[upperName] = { psm: 3 };
+  }
 }
 
 // A minimal 3x4 walker sheet: one body colour per facing, a 2px foot marker
@@ -170,7 +178,12 @@ writeFileSync(
   gameManifestSource({
     generator: "tests/fixtures/ka1-anim/gen-assets.ts",
     typesImport: "../../../src/ui/game-assets.ts",
-    maps: [{ id: KA1_MAP_ID, width: KA1_MAP_SIZE.width, height: KA1_MAP_SIZE.height, events: KA1_MAP.events }],
+    maps: KS1_PERSIST_PROJECT.maps.map((map) => ({
+      id: map.id,
+      width: map.width,
+      height: map.height,
+      events: map.events,
+    })),
     npcSrc: [],
     player: {
       idle: poseFrames.idle,

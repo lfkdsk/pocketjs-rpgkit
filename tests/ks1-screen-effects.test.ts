@@ -92,6 +92,7 @@ describe("KS1 deterministic screen presentation", () => {
       { op: "balloon", target: "this", icon: "pulse", duration: 0.4, wait: true },
       { op: "balloon", target: "player" },
       { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
+      { op: "screenBackdrop", layer: "cutscene", variant: "blue", whenModalOpen: "ignore" },
       { op: "screenBackdrop", layer: "cutscene", variant: null },
     ];
     expect(validateSchema(schema, project(commands))).toEqual([]);
@@ -106,6 +107,7 @@ describe("KS1 deterministic screen presentation", () => {
       { op: "balloon", target: "player", wait: true },
       { op: "balloon", target: "player", icon: "pulse", duration: 0, wait: true },
       { op: "screenBackdrop", layer: "", variant: "blue" },
+      { op: "screenBackdrop", layer: "cutscene", variant: "blue", whenModalOpen: "replace" },
     ];
     for (const command of malformed) {
       const invalid = project([command as Command]);
@@ -244,7 +246,7 @@ describe("KS1 deterministic screen presentation", () => {
     });
   });
 
-  test("transfer retains fade, named tints and backdrop but clears map-local transients", () => {
+  test("transfer retains fixed camera and player balloon but clears map-local transients", () => {
     const p = withAnimations(project([
       { op: "screenFade", direction: "out", duration: 0 },
       { op: "screenTint", layer: "night", color: { r: 10, g: 20, b: 80, a: 128 }, duration: 0 },
@@ -252,6 +254,7 @@ describe("KS1 deterministic screen presentation", () => {
       { op: "screenShake", strength: 8, speed: 4, duration: 5 },
       { op: "camera", target: { x: 4, y: 4 }, duration: 5 },
       { op: "balloon", target: "player", icon: "pulse" },
+      { op: "balloon", target: { event: "director" }, icon: "pulse" },
       { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
       { op: "transfer", map: "next", x: 2, y: 2, dir: "down", fade: 0 },
     ]));
@@ -260,19 +263,117 @@ describe("KS1 deterministic screen presentation", () => {
       ground: new Array(64).fill("plain.0"), events: [],
     };
     p.maps.push(next);
+    p.system = { transferPresentation: "retain" };
     const session = createSession(p, 60);
     const state = run(session, startSession(p, session), 1);
     expect(state.mapId).toBe("next");
     expect(state.interp.screen).toMatchObject({
       fade: { clear: false, left: 0 },
       tints: { night: { left: 0 } },
+      camera: { mode: "fixed", toX: 72, toY: 72 },
+      balloons: { player: { icon: "pulse", target: "player" } },
       backdrop: { layer: "cutscene", variant: "blue" },
     });
     expect(state.interp.screen?.flash).toBeUndefined();
     expect(state.interp.screen?.shake).toBeUndefined();
+    expect(state.interp.screen?.balloons?.["event:director"]).toBeUndefined();
+    expect(screenEffectsAfterTransfer(state.interp.screen, true)).toEqual(state.interp.screen);
+  });
+
+  test("transfer keeps the original per-map presentation lifetime without an opt-in", () => {
+    const p = withAnimations(project([
+      { op: "mapAnim", id: "pulse", anim: "pulse", target: "player", loop: true },
+      { op: "camera", target: { x: 4, y: 4 }, duration: 0 },
+      { op: "balloon", target: "player", icon: "pulse" },
+      { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
+      { op: "transfer", map: "next", x: 2, y: 2, dir: "down", fade: 0 },
+    ]));
+    p.maps.push({
+      id: "next", name: "next", width: 8, height: 8, sheets: ["plain"],
+      ground: new Array(64).fill("plain.0"), events: [],
+    });
+    const session = createSession(p, 60);
+    const state = run(session, startSession(p, session), 1);
+    expect(state.mapId).toBe("next");
+    expect(state.interp.anims).toBeUndefined();
     expect(state.interp.screen?.camera).toBeUndefined();
     expect(state.interp.screen?.balloons).toBeUndefined();
-    expect(screenEffectsAfterTransfer(state.interp.screen)).toEqual(state.interp.screen);
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "blue" });
+  });
+
+  test("whenModalOpen ignore still replaces an exposed backdrop", () => {
+    const p = project([
+      { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+      { op: "screenBackdrop", layer: "cutscene", variant: "second", whenModalOpen: "ignore" },
+      { op: "switch", id: "opened", value: true },
+    ]);
+    const session = createSession(p, 60);
+    let state = run(session, startSession(p, session), 1);
+    expect(state.sw.switches.opened).toBe(true);
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "second" });
+
+    const closer = project([
+      { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+      { op: "screenBackdrop", layer: "cutscene", variant: null },
+      { op: "screenBackdrop", layer: "cutscene", variant: "second", whenModalOpen: "ignore" },
+    ]);
+    const closerSession = createSession(closer, 60);
+    state = run(closerSession, startSession(closer, closerSession), 1);
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "second" });
+  });
+
+  test("screenBackdrop without whenModalOpen replaces below an active modal", () => {
+    const p = project([
+      { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+      { op: "text", lines: ["Keep this dialog open while another fiber replaces the backdrop."], cps: 1 },
+    ]);
+    p.maps[0]!.events!.push({
+      id: "backdrop-replacer",
+      x: 0,
+      y: 0,
+      pages: [{
+        trigger: "parallel",
+        blocks: false,
+        commands: [
+          { op: "wait", seconds: 0.05 },
+          { op: "screenBackdrop", layer: "cutscene", variant: "second" },
+          { op: "switch", id: "replacement-attempted", value: true },
+          { op: "wait", seconds: 30 },
+        ],
+      }],
+    });
+    const session = createSession(p, 60);
+    const state = run(session, startSession(p, session), 8);
+    expect(state.sw.switches["replacement-attempted"]).toBe(true);
+    expect(state.interp.modal?.kind).toBe("text");
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "second" });
+  });
+
+  test("whenModalOpen ignore preserves an existing backdrop below an active modal", () => {
+    const p = project([
+      { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+      { op: "text", lines: ["Keep this dialog and backdrop open."], cps: 1 },
+    ]);
+    p.maps[0]!.events!.push({
+      id: "backdrop-replacer",
+      x: 0,
+      y: 0,
+      pages: [{
+        trigger: "parallel",
+        blocks: false,
+        commands: [
+          { op: "wait", seconds: 0.05 },
+          { op: "screenBackdrop", layer: "cutscene", variant: "second", whenModalOpen: "ignore" },
+          { op: "switch", id: "replacement-attempted", value: true },
+          { op: "wait", seconds: 30 },
+        ],
+      }],
+    });
+    const session = createSession(p, 60);
+    const state = run(session, startSession(p, session), 8);
+    expect(state.sw.switches["replacement-attempted"]).toBe(true);
+    expect(state.interp.modal?.kind).toBe("text");
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "first" });
   });
 
   test("an active backdrop blocks free movement and worldIdle but not event execution", () => {

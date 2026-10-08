@@ -23,7 +23,7 @@ import {
   type SaveSnapshot,
 } from "../src/engine/save.ts";
 import { restoreSessionSnapshot } from "../src/engine/save-restore.ts";
-import { MAP_SCHEMA_COMPATIBLE_HASHES, MAP_SCHEMA_HASH } from "../src/engine/schema-identity.ts";
+import { MAP_SCHEMA_HASH } from "../src/engine/schema-identity.ts";
 import { validateSnapshot } from "../src/engine/save-validate.ts";
 import { initialMovement } from "../src/engine/movement.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
@@ -340,22 +340,15 @@ describe("KRM3V empty-name parallax save recovery", () => {
     return snapshot;
   }
 
-  const current = { manifest: "test-manifest", schema: MAP_SCHEMA_HASH };
-  const cases: ReadonlyArray<readonly [string, { manifest: string; schema: string }]> = [
-    ["the current schema identity", current],
-    ["a compatible older schema identity", { manifest: current.manifest, schema: MAP_SCHEMA_COMPATIBLE_HASHES[0]! }],
-  ];
-
-  for (const [label, content] of cases) {
-    test(`a save encoded under ${label} restores no parallax and never accumulates`, () => {
-      const session = createSession(project([map("a")]));
-      const decoded = decodeEnvelopeText(encodeEnvelope(emptyNameSnapshot(), content), current);
-      expect(decoded.interp.parallax).toBeUndefined();
-      const restored = restoreSessionSnapshot(session, decoded);
-      expect(restored.interp.parallax).toBeUndefined();
-      // One tick on the restored state: no parallax means no phase growth.
-      const next = stepSession(session, restored, { buttons: 0 });
-      expect(next.interp.parallax).toBeUndefined();
-    });
-  }
+  test("a save encoded under the current schema identity restores no parallax and never accumulates", () => {
+    const content = { manifest: "test-manifest", schema: MAP_SCHEMA_HASH };
+    const session = createSession(project([map("a")]));
+    const decoded = decodeEnvelopeText(encodeEnvelope(emptyNameSnapshot(), content), content);
+    expect(decoded.interp.parallax).toBeUndefined();
+    const restored = restoreSessionSnapshot(session, decoded);
+    expect(restored.interp.parallax).toBeUndefined();
+    // One tick on the restored state: no parallax means no phase growth.
+    const next = stepSession(session, restored, { buttons: 0 });
+    expect(next.interp.parallax).toBeUndefined();
+  });
 });

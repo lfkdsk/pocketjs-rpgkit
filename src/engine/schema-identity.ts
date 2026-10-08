@@ -24,12 +24,15 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a705fb3a3cd5531905";
+export const MAP_SCHEMA_HASH = "5eecc57a1acad4721139225b1bed1e35ae581706c29e611909d58b2c90efb41b";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
  *
  * History of cleared lists (each break refuses every identity before it):
+ * - `70564328…` → current adds the optional `screenBackdrop.whenModalOpen`
+ *   policy and `system.transferPresentation` opt-in; documents without them
+ *   keep unconditional backdrop replacement and per-map presentation state.
  * - `49d96a25…` → current only added optional parallax and animation timing
  *   data, their commands, and the `mapAnim` `this` target, so it is listed.
  * - `bc4e7242…` → current only added the optional project `worldTraversal`
@@ -59,6 +62,10 @@ export const MAP_SCHEMA_HASH = "70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a7
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: optional modal-open handling for screenBackdrop and an
+  // optional transfer-presentation opt-in; old documents omit both and keep
+  // unconditional replacement plus the original per-map presentation lifetime
+  "70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a705fb3a3cd5531905",
   // superseded by: optional `nameInput.random`, `appearance.combatSheet` and
   // `system.characterNames`, plus event/variable forms of `changeName`;
   // older documents use none of them and retain literal `{char:...}` text

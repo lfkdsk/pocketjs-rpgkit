@@ -56,6 +56,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
       "additionalProperties": false,
       "description": "Project-wide runtime options. Every field is optional; an absent field keeps the v1 behavior.",
       "properties": {
+        "transferPresentation": { "const": "retain", "description": "Keep live map animations, camera focus and the player's balloon across map transfer. Omit for the original per-map lifetime." },
         "messageBlocksPlayer": { "type": "boolean", "description": "While any fiber's text or choices box is open (a parallel page's included), the player cannot move and no action, playerTouch or eventTouch page starts; autorun and parallel pages keep running. Default false." },
         "textVariables": { "type": "boolean", "description": "Expand {v:<id>} tokens in text lines and choice prompts/rows with the live value of variable id (0 when unset). Default false: braces show verbatim." },
         "characterNames": { "type": "boolean", "description": "Expand built-in {char:<eventId>}, {char:this} and {char:player} tokens from saved runtime character names. Default false: braces show verbatim." },
@@ -1045,7 +1046,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "duration": { "type": "number", "minimum": 0 },
             "wait": { "type": "boolean" }
           },
-          "description": "Scroll viewport focus to a tile or character, or return it to live player follow."
+          "description": "Scroll viewport focus to a tile or character, or return it to live player follow. With system.transferPresentation: retain, the current focus and any in-flight move survive map transfer; otherwise entry restores player follow."
         },
         {
           "type": "object",
@@ -1080,7 +1081,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
               }
             }
           ],
-          "description": "Show an animation over a character. Omitting icon clears it; omitting duration makes it persistent."
+          "description": "Show an animation over a character. Omitting icon clears it; omitting duration makes it persistent. With system.transferPresentation: retain, a player balloon survives map transfer; event balloons always clear because their targets are map-local."
         },
         {
           "type": "object",
@@ -1089,9 +1090,10 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
           "properties": {
             "op": { "const": "screenBackdrop" },
             "layer": { "type": "string", "minLength": 1 },
-            "variant": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] }
+            "variant": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+            "whenModalOpen": { "const": "ignore" }
           },
-          "description": "Select a persistent full-screen cutscene backdrop. Omitting or nulling variant closes it."
+          "description": "Select a persistent full-screen cutscene backdrop. Omitting or nulling variant closes it. By default a non-null selection always replaces the current backdrop; whenModalOpen: ignore preserves an existing backdrop while a text, choice, or shop modal is active above it."
         },
         {
           "type": "object",
@@ -1517,7 +1519,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "loop": { "type": "boolean", "description": "Overrides the animation's default loop behavior." },
             "wait": { "type": "boolean", "description": "Park the fiber until the playthrough completes (one-shot) or the instance is stopped (looping: blocks until stopAnim, MV 'Wait for Completion' parity)." }
           },
-          "description": "Play a frame animation on a tile or following a character (Tuxemon play_map_animation/play_tile_animation, MV Show Animation). State-driven: the instance starts on the run tick with the saved frame clock as its origin, so playback is identical under rewind and after a save/load. A transfer clears all instances."
+          "description": "Play a frame animation on a tile or following a character (Tuxemon play_map_animation/play_tile_animation, MV Show Animation). State-driven: the instance starts on the run tick with the saved frame clock as its origin, so playback is identical under rewind and after a save/load. With system.transferPresentation: retain, live instances keep their phase across transfer; player targets keep following, while event targets pin to their last source-map cell. Otherwise transfer clears them."
         },
         {
           "type": "object",

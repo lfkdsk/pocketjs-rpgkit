@@ -95,6 +95,7 @@ const NEW_COMMANDS: Command[] = [
   { op: "returnTitle" },
   { op: "changeName", name: "Alicia" },
   { op: "mapNameDisplay", visible: false },
+  { op: "screenBackdrop", layer: "cutscene", variant: "intro", whenModalOpen: "ignore" },
   { op: "if", if: { kind: "timer", op: "<=", seconds: 10 }, then: [] },
 ];
 
@@ -255,6 +256,7 @@ describe("KRM2 save validation", () => {
       ["host action", { op: "hostAction", action: "quit" }, ".action"],
       ["empty name", { op: "changeName", name: "" }, ".name"],
       ["map-name visible", { op: "mapNameDisplay", visible: "yes" }, ".visible"],
+      ["backdrop modal policy", { op: "screenBackdrop", layer: "cutscene", variant: "intro", whenModalOpen: "replace" }, ".whenModalOpen"],
     ];
     for (const [label, instruction, expectedPath] of badInstructions) {
       expect(validateSnapshot(snapshotWithProgram([instruction])), label).toContain(expectedPath);

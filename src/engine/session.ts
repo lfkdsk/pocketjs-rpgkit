@@ -79,6 +79,7 @@ import {
   type InterpInput,
   type Instr,
   type InterpState,
+  type MapAnimInstance,
   type HostAction,
   type SoundCue,
   type PendingBattle,
@@ -195,6 +196,7 @@ import {
   resolveMapManifestHash,
   validateMapIndex,
   type MapContentIdentity,
+  type MapContentVersion,
 } from "./map-repository.ts";
 import type {
   CommonEvent,
@@ -422,6 +424,8 @@ export interface Session {
   mapIndex: ReadonlyMap<string, MapIndexEntry> | null;
   /** Content identity copied into save envelopes for sharded projects. */
   content: MapContentIdentity | null;
+  /** Explicit project opt-in for world-owned animation/camera/balloon state. */
+  transferPresentation: boolean;
   repository: MapRepository | null;
   /** Partially prepared maps (transfer targets and seamless-world imminent
    *  targets), keyed by map id. Derived only: never serialized or exposed
@@ -463,6 +467,10 @@ export interface SessionOptions {
    * output in a trusted app package uses the declared build identity directly
    * by default; shells without one are always hashed. */
   verifyMapManifest?: boolean;
+  /** Exact older content identities this application has tested as safe to
+   * load into the current maps. This never weakens arbitrary manifest/schema
+   * mismatches and is never copied into newly written save envelopes. */
+  compatibleSaveContent?: readonly MapContentVersion[];
   extensions?: ExtensionOptions;
   battle?: BattleRules;
   /** KG1: scene reducers keyed by namespaced id ("game.pc",
@@ -903,9 +911,16 @@ export function createSession(
       tables: new Map(),
       runtimeTables: new Map(),
       mapIndex: index,
-      content: { manifest, schema: MAP_SCHEMA_HASH },
+      content: {
+        manifest,
+        schema: MAP_SCHEMA_HASH,
+        ...(options.compatibleSaveContent?.length
+          ? { compatible: options.compatibleSaveContent.map((identity) => ({ ...identity })) }
+          : {}),
+      },
+      transferPresentation: project.system?.transferPresentation === "retain",
       repository: maps,
-    preparingMaps: new Map(),
+      preparingMaps: new Map(),
       sheets,
       commonEvents,
       worldOptions,
@@ -948,6 +963,7 @@ export function createSession(
     runtimeTables: new Map(),
     mapIndex: null,
     content: null,
+    transferPresentation: project.system?.transferPresentation === "retain",
     repository: null,
     preparingMaps: new Map(),
     sheets,
@@ -1048,9 +1064,13 @@ function enterMap(
   y: number,
   facing: Facing,
   cfg: MovementConfig,
+  retainPresentation: boolean,
 ): void {
-  const screen = screenEffectsAfterTransfer(s.interp.screen);
+  const screen = screenEffectsAfterTransfer(s.interp.screen, retainPresentation);
   const audio = s.interp.audio;
+  const anims = retainPresentation
+    ? mapAnimsAfterTransfer(s.interp.anims, s.interp.frame)
+    : undefined;
   clearLocalBank(s.sw);
   s.mapId = map.id;
   s.move = initialMovement(x, y, facing, cfg);
@@ -1058,10 +1078,28 @@ function enterMap(
   s.interp = createInterpState(s.sw, map.parallax);
   if (screen) s.interp.screen = screen;
   if (audio) s.interp.audio = audio;
+  if (anims) s.interp.anims = anims;
   s.sw = s.interp.sw;
   s.playerRoute = null;
   delete s.handoff;
   delete s.leftMap;
+}
+
+/** An opted-in Tuxemon-style world owns map effects on its persistent
+ * MapRenderer rather than on a map object. Rebase immutable instances onto
+ * the fresh interpreter's zero clock so their visible phase survives both
+ * ordinary transfers and seamless handoffs. Event-following instances pin
+ * to their last source-map cell; only the player identity crosses maps. */
+function mapAnimsAfterTransfer(
+  source: readonly MapAnimInstance[] | undefined,
+  sourceFrame: number,
+): MapAnimInstance[] | undefined {
+  if (!source || source.length === 0) return undefined;
+  return source.map((instance) => ({
+    ...instance,
+    start: instance.start - sourceFrame,
+    target: instance.target === "player" ? "player" : null,
+  }));
 }
 
 /** Neighbour preview sandbox (world-preview-sandbox.ts): a private working
@@ -1097,7 +1135,7 @@ export function enterSessionMapIsolated(
       ext: cloneExtension(sess.extensions, s0.ext),
       scene: null,
     };
-    enterMap(s, map, x, y, facing, sess.cfg);
+    enterMap(s, map, x, y, facing, sess.cfg, sess.transferPresentation);
     showMapNameBanner(s, map);
     return s;
   } finally {
@@ -2722,6 +2760,7 @@ function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: 
     handoff.targetY,
     handoff.direction,
     sess.cfg,
+    sess.transferPresentation,
   );
   showMapNameBanner(s, target);
   // Entry dropped any older snapshot (including the target's own, when the
@@ -3412,7 +3451,7 @@ function applyTransfer(
 ): void {
   const map = acquireSessionMap(sess, mapId);
   const facing: Facing = dir === "keep" ? s.move.facing : DIR_INDEX[dir];
-  enterMap(s, map, x, y, facing, sess.cfg);
+  enterMap(s, map, x, y, facing, sess.cfg, sess.transferPresentation);
   showMapNameBanner(s, map);
   // A seamless project has an external layered cache owner (the same owner
   // that is required for seamless handoffs). Let it choose and evict the

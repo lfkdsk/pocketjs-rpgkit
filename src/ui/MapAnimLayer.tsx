@@ -4,8 +4,8 @@
 // node, and the frame is selected per frame from the saved reference tick
 // (animFrameIndex). Playback is therefore identical under rewind and after a
 // save/load, and a looping or static instance costs no node churn while it
-// plays: the node set changes only when an instance starts or stops (or the
-// map transfers, which clears the instance list). Position and src updates
+// plays: the node set changes only when an instance starts, stops or finishes.
+// A transfer keeps the instance ids and rebases their clocks. Position and src updates
 // skip unchanged values, so an animation holding a frame emits nothing.
 //
 // One instance paints one z-band: `above=false` mounts just above the ground
@@ -156,7 +156,7 @@ export function MapAnimLayer(props: MapAnimLayerProps): SolidJSX.Element {
     const cooked = props.assets.anims;
     const instances = interp.anims ?? [];
 
-    // Release slots whose instance disappeared (stop/transfer/finish-prune).
+    // Release slots whose instance disappeared (stop/finish-prune).
     const seen = new Set<string>();
     for (const inst of instances) {
       if ((inst.layer === "above") !== props.above) continue;

@@ -537,7 +537,7 @@ export function encodeEnvelope(
     version: SAVE_VERSION,
     frame: state.interp.frame,
     checksum: fnv1aText(canonicalJson(state)),
-    ...(content ? { content: { ...content } } : {}),
+    ...(content ? { content: { manifest: content.manifest, schema: content.schema } } : {}),
     state,
   };
   return JSON.stringify(envelope);
@@ -813,12 +813,16 @@ function decodeEnvelopeTextUnchecked(
     if (!envelope.content) {
       throw new SaveError("content", "save has no content identity for this sharded project");
     }
-    if (envelope.content.manifest !== expectedContent.manifest) {
+    const exactCompatible = expectedContent.compatible?.some((identity) =>
+      identity.manifest === envelope.content!.manifest &&
+      identity.schema === envelope.content!.schema
+    ) === true;
+    if (!exactCompatible && envelope.content.manifest !== expectedContent.manifest) {
       throw new SaveError("content", "save map manifest hash does not match this content build");
     }
     // A save from a listed, purely additive predecessor schema still loads;
     // it is rewritten under the current identity the next time it is saved.
-    if (envelope.content.schema !== expectedContent.schema && !(
+    if (!exactCompatible && envelope.content.schema !== expectedContent.schema && !(
       expectedContent.schema === MAP_SCHEMA_HASH && isCompatibleMapSchemaHash(envelope.content.schema)
     )) {
       const why = expectedContent.schema === MAP_SCHEMA_HASH ? `: ${describeMapSchemaRefusal(envelope.content.schema)}` : "";

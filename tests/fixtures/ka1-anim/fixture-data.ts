@@ -208,6 +208,7 @@ export const KS1_PROJECT: Project = {
           trigger: "action",
           commands: [
             { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
+            { op: "switch", id: "ks1.backdrop.covered", value: true },
             { op: "text", lines: ["Backdrop keeps dialogue readable."], cps: 120 },
             { op: "switch", id: "ks1.stage.3", value: true },
           ],
@@ -238,6 +239,71 @@ export const KS1_PROJECT: Project = {
           commands: [],
         },
       ],
+    }, {
+      id: "covered-backdrop-replacer",
+      x: 0,
+      y: 0,
+      pages: [{
+        condition: { switch: "ks1.backdrop.covered" },
+        trigger: "parallel",
+        blocks: false,
+        commands: [
+          { op: "wait", seconds: 0.05 },
+          { op: "screenBackdrop", layer: "cutscene", variant: "red", whenModalOpen: "ignore" },
+          { op: "switch", id: "ks1.backdrop.attempted", value: true },
+          { op: "wait", seconds: 30 },
+        ],
+      }],
     }],
   }],
+};
+
+export const KS1_PERSIST_TARGET_ID = "ks1-persist-target";
+
+/** Two-map visual fixture for transfer-persistent presentation. The source
+ * action starts animation/camera/balloon state and transfers immediately;
+ * the target's parallel page later opens two exposed backdrops so replacement
+ * can be captured separately without hiding the world effects. */
+export const KS1_PERSIST_PROJECT: Project = {
+  ...KA1_PROJECT,
+  title: "KS1 transfer-persistent presentation fixture",
+  system: { ...KA1_PROJECT.system, transferPresentation: "retain" },
+  maps: [
+    {
+      ...KA1_MAP,
+      events: [{
+        id: "persist-source",
+        x: PLAYER_START.x,
+        y: PLAYER_START.y + 1,
+        pages: [{
+          trigger: "action",
+          commands: [
+            { op: "mapAnim", id: "persist-pulse", anim: "pulse", target: "player", loop: true },
+            { op: "camera", target: { x: 35, y: PLAYER_START.y }, duration: 0 },
+            { op: "balloon", target: "player", icon: "pulse" },
+            { op: "transfer", map: KS1_PERSIST_TARGET_ID, x: PLAYER_START.x, y: PLAYER_START.y, dir: "down", fade: 0 },
+          ],
+        }],
+      }],
+    },
+    {
+      ...KA1_MAP,
+      id: KS1_PERSIST_TARGET_ID,
+      name: "Persistent presentation target",
+      events: [{
+        id: "persist-backdrop",
+        x: 0,
+        y: 0,
+        pages: [{
+          trigger: "parallel",
+          commands: [
+            { op: "wait", seconds: 0.5 },
+            { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
+            { op: "screenBackdrop", layer: "cutscene", variant: "red" },
+            { op: "wait", seconds: 30 },
+          ],
+        }],
+      }],
+    },
+  ],
 };

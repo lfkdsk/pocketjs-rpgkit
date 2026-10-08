@@ -621,7 +621,7 @@ describe("seamless-v1 opening handoff", () => {
     expect(Object.keys(state.chars.chars).sort()).toEqual(["target-autorun", "target-parallel"]);
   });
 
-  test("reuses legacy map-entry cleanup and preserves only transfer-safe screen/audio state", () => {
+  test("reuses legacy map-entry cleanup and preserves transfer-safe screen/audio state", () => {
     const setup: Command[] = [
       { op: "variable", id: "local.visit", set: { op: "set", value: 9 } },
       { op: "switch", id: "local.flag", value: true },
@@ -637,23 +637,27 @@ describe("seamless-v1 opening handoff", () => {
         route: { steps: ["moveUp"], repeat: false, skippable: false },
       },
     ];
-    const make = (seamless: boolean): Project => handoffProject({
-      start: { map: "west", x: 2, y: 1, dir: "right" },
-      sourceEvent: {
-        id: "entry-semantics",
-        x: 3,
-        y: 1,
-        pages: [{
-          trigger: "playerTouch",
-          commands: [
-            ...setup,
-            seamless
-              ? markedTransfer("east", 0, 1, "right", SAFE_EAST)
-              : { op: "transfer", map: "east", x: 0, y: 1, dir: "right" },
-          ],
-        }],
-      },
-    });
+    const make = (seamless: boolean): Project => {
+      const project = handoffProject({
+        start: { map: "west", x: 2, y: 1, dir: "right" },
+        sourceEvent: {
+          id: "entry-semantics",
+          x: 3,
+          y: 1,
+          pages: [{
+            trigger: "playerTouch",
+            commands: [
+              ...setup,
+              seamless
+                ? markedTransfer("east", 0, 1, "right", SAFE_EAST)
+                : { op: "transfer", map: "east", x: 0, y: 1, dir: "right" },
+            ],
+          }],
+        },
+      });
+      project.system = { ...project.system, transferPresentation: "retain" };
+      return project;
+    };
 
     const legacyProject = make(false);
     const legacyRuntime = runtime(legacyProject);
@@ -676,9 +680,16 @@ describe("seamless-v1 opening handoff", () => {
       expect(state.interp.frame).toBe(0);
       expect(state.interp.screen).toMatchObject({ tints: { night: { left: 0 } } });
       expect(state.interp.screen?.flash).toBeUndefined();
-      expect(state.interp.screen?.camera).toBeUndefined();
+      expect(state.interp.screen?.camera).toMatchObject({
+        mode: "fixed",
+        toX: 24,
+        toY: 24,
+        total: 300,
+      });
       expect(state.interp.audio?.bgm?.id).toBe("route");
     }
+    expect(legacy.interp.screen?.camera?.left).toBe(300);
+    expect(seamless.interp.screen?.camera?.left).toBe(292);
     expect(legacy.interp.audio?.bgm?.positionTicks).toBe(0);
     expect(seamless.interp.audio?.bgm?.positionTicks).toBe(8);
   });

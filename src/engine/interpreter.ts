@@ -791,7 +791,7 @@ export type Instr =
       frames: number | null;
       wait: boolean;
     }
-  | { op: "screenBackdrop"; layer: string; variant: string | null }
+  | { op: "screenBackdrop"; layer: string; variant: string | null; whenModalOpen?: "ignore" }
   | {
       op: "showPicture";
       id: number;
@@ -1190,7 +1190,12 @@ function compileScoped(
           });
           break;
         case "screenBackdrop":
-          emit({ op: "screenBackdrop", layer: c.layer, variant: c.variant ?? null });
+          emit({
+            op: "screenBackdrop",
+            layer: c.layer,
+            variant: c.variant ?? null,
+            ...(c.whenModalOpen ? { whenModalOpen: c.whenModalOpen } : {}),
+          });
           break;
         case "showPicture":
           emit({
@@ -1999,9 +2004,10 @@ interface Fiber {
 }
 
 /** A live map animation instance (InterpState.anims). The list changes
- *  only when a mapAnim/stopAnim command runs or the map is entered (the
- *  interpreter rebuilds on entry, so animations never survive a transfer,
- *  matching Tuxemon's per-map AnimationManager). During playback the
+ *  only when a mapAnim/stopAnim command runs or the map is entered. An
+ *  opted-in Session carries live instances into the next map and rebases
+ *  `start` against the fresh interpreter clock, matching Tuxemon's
+ *  world-owned AnimationManager. During playback the
  *  UI derives the frame from `start` and the compiled timing
  *  (animFrameIndex); the reducer only scans an authored timing list when
  *  one exists, so playback is identical under rewind and save/load. */
@@ -2011,7 +2017,9 @@ export interface MapAnimInstance {
   id: string;
   /** AnimationDef id. */
   anim: string;
-  /** Reference tick (interp frame) on which the instance starts playing. */
+  /** Reference tick (interp frame) on which the instance starts playing.
+   *  This can be negative after a transfer so `frame - start` preserves the
+   *  already elapsed phase on the fresh map clock. */
   start: number;
   /** Fixed tile position (target === null). For a following instance this
    *  is the target's last live cell: it is written at creation and refreshed
@@ -2350,9 +2358,10 @@ export interface InterpState {
    *  field is allocated lazily so an old project that never uses a control
    *  retains its byte-for-byte reducer/save shape. */
   moveControls?: MoveControlState;
-  /** Live map animation instances (mapAnim/stopAnim). Per map visit: the
-   *  interpreter rebuilds on entry, so a transfer clears them. The list
-   *  changes only on a start/stop command; playback itself is frame-derived
+  /** Live map animation instances (mapAnim/stopAnim). An opted-in Session
+   *  rebases and retains them across map entry; otherwise entry clears them.
+   *  The list changes only on a start/stop command or transfer; playback is
+   *  frame-derived
    *  (animFrameIndex), so a save mid-animation restores pixel-identical.
    *  Omitted when empty so a project without animations keeps byte-identical
    *  state (and saves) against older builds. */
@@ -2367,8 +2376,8 @@ export interface InterpState {
   /** Row-major cell index -> runtime passage/edge replacement. */
   tileProperties?: Record<string, TilePropertyOverride>;
   /** Sparse, deterministic screen/camera/balloon presentation. Global
-   * overlays are retained explicitly across map entry by Session; camera
-   * and character balloons are scoped to the current map visit. */
+   * overlays are retained across map entry. An opted-in Session also retains
+   * camera and the player's balloon; event balloons stay source-map-local. */
   screen?: ScreenEffectsState;
   /** Sound cues emitted on this frame; the host drains them after step. */
   cues: SoundCue[];
@@ -5574,7 +5583,14 @@ function runFiber(
             delete s.screen.backdrop;
             if (screenEffectsEmpty(s.screen)) delete s.screen;
           }
-        } else {
+        } else if (
+          ins.whenModalOpen !== "ignore" ||
+          s.screen?.backdrop === undefined ||
+          s.modal === null
+        ) {
+          // Replacement is the legacy/default contract. Sources with a
+          // stacked image state can opt in to preserving an existing
+          // backdrop while a modal covers it; its owner still resolves it.
           ensureScreen(s).backdrop = { layer: ins.layer, variant: ins.variant };
         }
         top.pc++;

@@ -857,11 +857,14 @@ shell manifest and map-schema identities; `restoreSessionEnvelope` rejects a
 different content build before acquiring the saved map, or reacquires that
 map if it was evicted. Shells and saves from an earlier schema whose changes
 since were purely additive still load (`MAP_SCHEMA_COMPATIBLE_HASHES`; see
-[Schema identities](src/data/CHANGELOG.md#schema-identities); today that is
-the four additive predecessors before KRM2 commands, loops/event touch,
-world layouts, and optional choice icons; older ones are refused
-with an error naming the accepted identities), and the next save is stamped
-with the current identity. A non-zero transfer fade lets the standard synchronous
+[Schema identities](src/data/CHANGELOG.md#schema-identities)); older ones are
+refused with an error naming the accepted identities, and the next save is
+stamped with the current identity. A game migrating map content may pass
+`compatibleSaveContent` to `createSession`, `GameView`, or attract mode: each
+entry is one exact, reviewed `{ manifest, schema }` predecessor pair accepted
+for save loading only. It does not admit an old shell or any neighbouring
+manifest/schema combination, and a rewritten save carries only the current
+identity. A non-zero transfer fade lets the standard synchronous
 repository prepare one fixed unit per reference tick (read/optional byte decode/parse,
 validation, then world/passage compilation); the map is still published on
 the original fully-black tick. A zero-fade transfer keeps its single-frame
@@ -1402,10 +1405,16 @@ persistent. A waited balloon requires an icon and a positive finite duration;
 placement is `screen` and sits above the map but below dialogs. Tint and flash
 also sit below dialogs; the independent fade sits above them.
 
-Screen state is part of saves and attract rewind. Transfer retains fade,
-named tints, and backdrop, but clears flash, shake, scripted camera, and
-character balloons. A backdrop blocks player movement/action and makes
-`worldIdle` false while autorun/parallel fibers can close it. A default-frozen
+Screen state is part of saves and attract rewind. Transfer always retains
+fade, named tints and backdrop, and always clears flash, shake and event
+balloons. `system.transferPresentation:"retain"` additionally keeps live map
+animations, scripted camera and the player's balloon; without it those keep
+their original per-map lifetime. A non-null `screenBackdrop` replaces the
+current backdrop by default, including below an active modal. Set
+`whenModalOpen:"ignore"` to preserve an existing backdrop while a text,
+choice, or shop modal is active above it; with no modal it still replaces.
+A backdrop blocks player movement/action and makes `worldIdle`
+false while autorun/parallel fibers can close it. A default-frozen
 battle pauses map presentation clocks and owns the visible scene; with
 `scene.worldContinues:true` those clocks advance in the background. Camera
 focus is saved in world pixels, clamped against the current viewport at
@@ -2783,9 +2792,10 @@ Instances are reducer state keyed by `id` with the saved frame clock as
 their origin: playback is identical under rewind and after a save/load, and
 a same-id replay restarts the instance. `stopAnim` stops one instance by
 `id`, every instance of an animation name, or all live instances; a fiber
-parked on a stopped instance's `wait` resumes. Animations are per-map-visit
-state — a transfer clears them — and a playing (non-waited) animation does
-not make the world busy. `GameAssets.anims` maps each animation id to its
+parked on a stopped instance's `wait` resumes. A transfer retains live
+instances and their phase; player-bound effects keep following, while an
+event-bound effect pins to its last source-map cell. A playing (non-waited)
+animation does not make the world busy. `GameAssets.anims` maps each animation id to its
 cooked frame refs plus optional `offsetX`/`offsetY` placement; `MapAnimLayer`
 mounts instances from a pooled node set, so playback itself costs no per-frame
 node churn. Optional frame `timings` emit an ordered sound cue and/or a

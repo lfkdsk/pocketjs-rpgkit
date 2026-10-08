@@ -438,7 +438,9 @@ export type Command =
    * per virtual second; the reference-tick triangle wave uses no RNG. */
   | { op: "screenShake"; strength: number; speed: number; duration: number; wait?: boolean }
   /** Scroll the viewport focus to a tile/character, or return to live player
-   * follow. The reducer stores world focus, never resolution-specific clamp. */
+   * follow. The reducer stores world focus, never resolution-specific clamp.
+   * `system.transferPresentation: "retain"` keeps the current focus and any
+   * in-flight move across transfer; otherwise entry restores player follow. */
   | { op: "camera"; target: CameraTarget; duration: number; wait?: boolean }
   /** RPG Maker Scroll Map: move the current camera focus by `distance`
    * tiles. `speed` is the MV/MZ 1..6 exponential scroll level. Camera
@@ -447,12 +449,22 @@ export type Command =
   | { op: "scrollMap"; direction: Dir; distance: number; speed: MoveSpeed; wait?: boolean }
   /** Show one project animation above a character, replacing that target's
    * previous balloon. Omit `icon` to clear it. With duration omitted it
-   * persists (and loops) until cleared; a waited balloon needs a duration. */
+   * persists (and loops) until cleared; a waited balloon needs a duration.
+   * `system.transferPresentation: "retain"` keeps player balloons across
+   * transfer; event balloons are always map-local. */
   | { op: "balloon"; target: RouteTarget; icon?: string; duration?: number; wait?: boolean }
   /** Persistent full-screen cutscene backdrop, rendered below dialogs and
    * retained across transfers. The named asset must be a screen layer;
-   * omitting/nulling variant closes the backdrop. */
-  | { op: "screenBackdrop"; layer: string; variant?: string | null }
+   * omitting/nulling variant closes the backdrop. A non-null selection
+   * replaces the current backdrop even below a modal. `whenModalOpen` is an
+   * opt-in for sources whose state stack ignores replacement when a modal
+   * covers an existing backdrop. */
+  | {
+      op: "screenBackdrop";
+      layer: string;
+      variant?: string | null;
+      whenModalOpen?: "ignore";
+    }
   /** Numbered viewport pictures. Coordinates are viewport pixels and can be
    * read from variables when the command executes. Percent scales use 100 as
    * identity; opacity is 0..255. */
@@ -638,8 +650,10 @@ export type Command =
    *  under them. `loop` overrides the AnimationDef default. `wait` parks
    *  the fiber until one playthrough completes for a one-shot animation,
    *  or until `stopAnim` stops the instance for a looping one; stopping
-   *  the instance releases the wait early either way. Animations are
-   *  per-map-visit state: a transfer clears them. */
+   *  the instance releases the wait early either way. With
+   *  `system.transferPresentation: "retain"`, live instances retain their
+   *  phase across transfer: player targets keep following and event targets
+   *  pin to their last source-map cell. Otherwise transfer clears them. */
   | {
       op: "mapAnim";
       id: string;
@@ -1095,6 +1109,10 @@ export interface AnimationDef {
 /** Project-wide runtime options (RPG Maker's System settings). Every field
  *  is optional and its absence keeps the v1 behavior. */
 export interface ProjectSystem {
+  /** Keep live map animations, camera focus and the player's balloon when a
+   * transfer rebuilds the map interpreter. Omit for the original per-map
+   * lifetime; `retain` is an explicit world-owned presentation opt-in. */
+  transferPresentation?: "retain";
   /** While ANY fiber's text or choices box is open — a parallel page's
    *  included — the player cannot move and no action, playerTouch or
    *  eventTouch page starts, so the confirm that advances the box never also talks to the

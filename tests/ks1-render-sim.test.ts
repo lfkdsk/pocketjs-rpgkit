@@ -9,6 +9,7 @@ import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { fnv1a } from "../vendor/pocketjs/hosts/sim/sim.ts";
 import { TILE } from "../src/engine/tiles.ts";
 import { PLAYER_START } from "./fixtures/ka1-anim/fixture-data.ts";
+import { KS1_PERSIST_TARGET_ID } from "./fixtures/ka1-anim/fixture-data.ts";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
 import {
   bootGameWorld,
@@ -132,6 +133,12 @@ simDescribe("KS1 rendered screen effects", () => {
       action(world);
       expect(world.probes().state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "blue" });
       expect(world.probes().state.interp.modal?.kind).toBe("text");
+      for (let frame = 0; frame < 10 && !world.probes().state.sw.switches["ks1.backdrop.attempted"]; frame++) {
+        pump(world, 1);
+      }
+      expect(world.probes().state.sw.switches["ks1.backdrop.attempted"]).toBe(true);
+      expect(world.probes().state.interp.modal?.kind).toBe("text");
+      expect(world.probes().state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "blue" });
       const backed = world.render().slice();
       expectPixel(backed, viewport.width, 4, 4, [15, 64, 142, 255]);
       expect(rgbaAt(backed, viewport.width, viewport.width >> 1, viewport.height - 20))
@@ -155,6 +162,73 @@ simDescribe("KS1 rendered screen effects", () => {
       for (let i = 0; i < 70 && !world.probes().state.sw.switches["ks1.stage.5"]; i++) pump(world, 1);
       expect(world.probes().state.sw.switches["ks1.stage.5"]).toBe(true);
       expect(world.probes().state.interp.screen).toBeUndefined();
+    }, 30_000);
+  }
+
+  for (const viewport of [
+    {
+      width: 480,
+      height: 272,
+      camera: { x: 160, y: 64 },
+      animPixel: { x: 168, y: 136 },
+      balloonPixel: { x: 168, y: 104 },
+    },
+    {
+      width: 960,
+      height: 544,
+      camera: { x: 0, y: 0 },
+      animPixel: { x: 488, y: 272 },
+      balloonPixel: { x: 488, y: 240 },
+    },
+  ] as const) {
+    test(`transfer-persistent presentation at ${viewport.width}x${viewport.height}`, async () => {
+      const world = await bootGameWorld(
+        appBundle("ka1-anim"),
+        60,
+        { __ka1Persist: true },
+        undefined,
+        viewport,
+      );
+      pump(world, 1);
+      action(world);
+
+      const landed = world.probes();
+      expect(landed.state.mapId).toBe(KS1_PERSIST_TARGET_ID);
+      expect(landed.camera).toMatchObject(viewport.camera);
+      expect(landed.state.interp.anims).toContainEqual(expect.objectContaining({
+        id: "persist-pulse",
+        target: "player",
+        loop: true,
+      }));
+      expect(landed.state.interp.screen).toMatchObject({
+        camera: { mode: "fixed", left: 0 },
+        balloons: { player: { target: "player", icon: "pulse", left: null } },
+      });
+      expect(findNode(world.getTree(), "rpgkit-map-anim-above-persist-pulse")).toBeDefined();
+      expect(findNode(world.getTree(), "rpgkit-balloon-player")).toBeDefined();
+
+      const visible = world.render().slice();
+      expectPixel(visible, viewport.width, viewport.animPixel.x, viewport.animPixel.y, [226, 62, 62, 255]);
+      expectPixel(visible, viewport.width, viewport.balloonPixel.x, viewport.balloonPixel.y, [226, 62, 62, 255]);
+      await golden(
+        `ks1-persist-world-${viewport.width}x${viewport.height}`,
+        visible,
+        viewport.width,
+        viewport.height,
+      );
+
+      for (let frame = 0; frame < 40 && !world.probes().state.interp.screen?.backdrop; frame++) pump(world, 1);
+      expect(world.probes().state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "red" });
+      const backdrop = world.render().slice();
+      for (const [x, y] of [[0, 0], [viewport.width - 1, 0], [0, viewport.height - 1], [viewport.width - 1, viewport.height - 1]]) {
+        expectPixel(backdrop, viewport.width, x, y, [112, 24, 24, 255]);
+      }
+      await golden(
+        `ks1-persist-backdrop-${viewport.width}x${viewport.height}`,
+        backdrop,
+        viewport.width,
+        viewport.height,
+      );
     }, 30_000);
   }
 });

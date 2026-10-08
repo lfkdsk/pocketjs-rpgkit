@@ -56,6 +56,7 @@ import { buildPassage } from "../src/engine/passability.ts";
 import { buildMiniProject } from "../examples/meadow/mini-project.ts";
 import type { MapDef, Project } from "../src/engine/types.ts";
 import { createSession, startSession, stepSession, type Session, type SessionState } from "../src/engine/session.ts";
+import { MAP_SCHEMA_HASH, type MapContentIdentity } from "../src/engine/map-repository.ts";
 
 // --- harness: fold the real reducers into a rich saveable state -----------
 
@@ -165,6 +166,34 @@ describe("P1⑤ save — safe-point gate", () => {
 });
 
 describe("P1⑤ save — envelope round trip", () => {
+  test("an exact reviewed predecessor identity loads but new saves stamp only the current identity", () => {
+    const old = {
+      manifest: "1".repeat(64),
+      schema: "c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d09097f1ef662788af2c",
+    };
+    const current: MapContentIdentity = {
+      manifest: "2".repeat(64),
+      schema: MAP_SCHEMA_HASH,
+      compatible: [old],
+    };
+    const snapshot = createSnapshot("meadow", restPlayer(), createInterpState(), 0);
+    const oldEnvelope = encodeEnvelope(snapshot, old);
+
+    expect(decodeEnvelopeText(oldEnvelope, current)).toEqual(snapshot);
+    expect(decodeSaveCode(encodeSaveCode(snapshot, old), current)).toEqual(snapshot);
+    expect(() => decodeEnvelopeText(oldEnvelope, {
+      ...current,
+      compatible: [{ ...old, manifest: "3".repeat(64) }],
+    })).toThrow("save map manifest hash does not match this content build");
+    const wrongSchema = encodeEnvelope(snapshot, { ...old, schema: "4".repeat(64) });
+    expect(() => decodeEnvelopeText(wrongSchema, current)).toThrow(
+      "save map manifest hash does not match this content build",
+    );
+
+    const rewritten = JSON.parse(encodeEnvelope(snapshot, current)) as { content: unknown };
+    expect(rewritten.content).toEqual({ manifest: current.manifest, schema: current.schema });
+  });
+
   test("rich state (switches, self, items, gold, rng, latches) survives", () => {
     let interp = createInterpState(createSwitchState({ gold: 120, items: { key: 2 } }));
     interp = foldInterp(interp, SIGNPOST_READ);

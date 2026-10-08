@@ -731,11 +731,13 @@ describe("mapAnim timing", () => {
 });
 
 describe("mapAnim and map transfer", () => {
-  test("animations are per-map-visit state: a transfer clears them", () => {
+  test("live animations retain their phase across a transfer and save", () => {
     const mapA: MapDef = {
       ...map([
         event("fx", 3, 3, [page("parallel", [
           { op: "mapAnim", id: "fx", anim: "pulse", x: 3, y: 3, loop: true },
+          { op: "mapAnim", id: "player-fx", anim: "pulse", target: "player", loop: true },
+          { op: "mapAnim", id: "event-fx", anim: "pulse", target: "this", loop: true },
           { op: "wait", seconds: 30 },
         ])]),
         event("go", 2, 3, [page("action", [
@@ -754,17 +756,41 @@ describe("mapAnim and map transfer", () => {
       events: [],
     };
     const p = project([mapA, mapB]);
+    p.system = { transferPresentation: "retain" };
     const session: Session = createSession(p);
     let state: SessionState = startSession(p, session);
     const step = (s: SessionState, confirmEdge = false): SessionState =>
       stepSession(session, s, { buttons: 0, confirmEdge });
 
     state = step(state);
-    expect(state.interp.anims).toHaveLength(1);
+    expect(state.interp.anims).toHaveLength(3);
+    const sourceStart = state.interp.anims!.find((animation) => animation.id === "fx")!.start;
     state = step(state, true); // confirm facing the transfer event
     for (let i = 0; i < 10 && state.mapId !== "map-b"; i++) state = step(state);
     expect(state.mapId).toBe("map-b");
-    expect(state.interp.anims).toBeUndefined();
+    expect(state.interp.anims).toHaveLength(3);
+    const retained = state.interp.anims!.find((animation) => animation.id === "fx")!;
+    expect(retained.id).toBe("fx");
+    expect(retained.start).toBeLessThanOrEqual(0);
+    expect(retained.start).toBeLessThan(sourceStart);
+    expect(state.interp.anims!.find((animation) => animation.id === "player-fx")!.target).toBe("player");
+    expect(state.interp.anims!.find((animation) => animation.id === "event-fx")).toMatchObject({
+      target: null,
+      x: 3,
+      y: 3,
+    });
+    const compiled = session.worlds.get("map-b")!.anims.get("pulse")!;
+    const landedFrame = animFrameIndex(compiled, retained, state.interp.frame);
+    expect(landedFrame).toBeGreaterThanOrEqual(0);
+
+    const encoded = encodeEnvelope(createSessionSnapshot(session, state, 0));
+    const restored = restoreSessionEnvelope(session, encoded);
+    expect(restored.interp.anims).toEqual(state.interp.anims);
+    expect(animFrameIndex(
+      compiled,
+      restored.interp.anims!.find((animation) => animation.id === "fx")!,
+      restored.interp.frame,
+    )).toBe(landedFrame);
   });
 });
 

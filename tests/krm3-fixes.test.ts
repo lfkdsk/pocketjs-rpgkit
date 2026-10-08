@@ -28,8 +28,9 @@ import {
   stepSession,
 } from "../src/engine/session.ts";
 import { createJsonMapRepository } from "../src/engine/map-repository.ts";
-import { createSnapshot, encodeEnvelope, type SaveSnapshot } from "../src/engine/save.ts";
+import { createSnapshot, decodeEnvelopeText, encodeEnvelope, type SaveSnapshot } from "../src/engine/save.ts";
 import { restoreSessionEnvelope, saveSession } from "../src/engine/save-restore.ts";
+import { MAP_SCHEMA_HASH } from "../src/engine/schema-identity.ts";
 import { initialMovement } from "../src/engine/movement.ts";
 import { validateSnapshot } from "../src/engine/save-validate.ts";
 import type { BattleRules } from "../src/engine/battle.ts";
@@ -78,6 +79,16 @@ function importerContext(placeholders: "visible" | "silent" = "visible"): EventC
     nextShopId: () => "shop001",
     nextAnimationId: () => "anim001",
   };
+}
+
+function migrateFixtureGeneration(shell: ProjectShell, saveText: string): string {
+  if (typeof shell.mapManifestHash !== "string" || typeof shell.mapSchemaHash !== "string") {
+    throw new Error("schema compatibility fixture is missing its content identity");
+  }
+  const oldContent = { manifest: shell.mapManifestHash, schema: shell.mapSchemaHash };
+  const snapshot = decodeEnvelopeText(saveText, oldContent);
+  shell.mapSchemaHash = MAP_SCHEMA_HASH;
+  return encodeEnvelope(snapshot, { manifest: oldContent.manifest, schema: MAP_SCHEMA_HASH });
 }
 
 function map(events: GameEvent[]): MapDef {
@@ -1106,7 +1117,7 @@ test("a restored pre-unit save rebuilds a common event's label scope", () => {
   expect(state.interp.sw.variables.page).toBe(1);
 });
 
-test("a constructed pre-unit probe rebuilds a common event's label scope", () => {
+test("an explicitly migrated pre-unit probe rebuilds a common event's label scope", () => {
   // The round-4 review probe, honestly relabelled in round 5: the fixture's
   // page root and common event both declare a label named "same", and the
   // common event jumps to it after a waited fade.
@@ -1126,7 +1137,7 @@ test("a constructed pre-unit probe rebuilds a common event's label scope", () =>
   const dir = join(import.meta.dir, "fixtures/schema-compat/inflight-common-constructed");
   const read = (entry: string): string => readFileSync(join(dir, entry), "utf8");
   const shell = JSON.parse(read("project.json")) as ProjectShell;
-  const saveText = read("save.json");
+  const saveText = migrateFixtureGeneration(shell, read("save.json"));
   const expected = JSON.parse(read("expected.json")) as {
     commonLanded: boolean;
     pageLanded: boolean;
@@ -1159,7 +1170,7 @@ test("a constructed pre-unit probe rebuilds a common event's label scope", () =>
   if (expected.mainEnded) expect(state.interp.main).toBeNull();
 });
 
-test("a genuine old-generation in-flight save restores with unchanged behavior", () => {
+test("an explicitly migrated genuine old-generation in-flight save keeps its behavior", () => {
   // The round-5 companion to the constructed probe: a save written naturally
   // by the pre-KRM3 runtime db2de159 (the generation that produced
   // gen-0e510772), which has no label/jumpLabel commands at all. Its main
@@ -1173,7 +1184,7 @@ test("a genuine old-generation in-flight save restores with unchanged behavior",
   const dir = join(import.meta.dir, "fixtures/schema-compat/inflight-common-oldgen");
   const read = (entry: string): string => readFileSync(join(dir, entry), "utf8");
   const shell = JSON.parse(read("project.json")) as ProjectShell;
-  const saveText = read("save.json");
+  const oldSaveText = read("save.json");
   const expected = JSON.parse(read("expected.json")) as {
     commonDone: boolean;
     pageContinued: boolean;
@@ -1182,7 +1193,7 @@ test("a genuine old-generation in-flight save restores with unchanged behavior",
 
   // A genuine pre-KRM3 save: the file on disk has no `unit` markers (the
   // field did not exist yet) and no label/jumpLabel program anywhere.
-  const rawSave = JSON.parse(saveText) as {
+  const rawSave = JSON.parse(oldSaveText) as {
     state: { interp: { main: { stack: { prog: { op: string }[]; unit?: true }[] } } };
   };
   const rawStack = rawSave.state.interp.main.stack;
@@ -1192,6 +1203,7 @@ test("a genuine old-generation in-flight save restores with unchanged behavior",
     prog.some((c) => c.op === "label" || c.op === "jumpLabel");
   expect(rawStack.every((f) => !hasLabel(f.prog))).toBe(true);
 
+  const saveText = migrateFixtureGeneration(shell, oldSaveText);
   const session = createSession(shell, 60, createJsonMapRepository(shell.mapIndex, { read }));
   let state = restoreSessionEnvelope(session, saveText);
 

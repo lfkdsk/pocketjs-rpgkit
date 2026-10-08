@@ -959,6 +959,9 @@ function validateProg(prog: unknown, path: string): string | null {
         if (ins.variant !== null && (typeof ins.variant !== "string" || ins.variant.length === 0)) {
           return fail(`${here}.variant`, "non-empty string or null required");
         }
+        if (ins.whenModalOpen !== undefined && ins.whenModalOpen !== "ignore") {
+          return fail(`${here}.whenModalOpen`, "ignore or absent required");
+        }
         break;
       case "showPicture": {
         const id = validatePictureId(ins.id, `${here}.id`);
@@ -1798,7 +1801,9 @@ function validateMapAnims(v: unknown, path: string): string | null {
     if (seen.has(a.id)) return fail(`${at}.id`, "duplicate animation instance id");
     seen.add(a.id);
     if (typeof a.anim !== "string" || a.anim.length === 0) return fail(`${at}.anim`, "non-empty string required");
-    if (!isNonNegInt(a.start)) return fail(`${at}.start`, "non-negative integer required");
+    if (typeof a.start !== "number" || !Number.isSafeInteger(a.start)) {
+      return fail(`${at}.start`, "safe integer required");
+    }
     if (!isNonNegInt(a.x) || !isNonNegInt(a.y)) return fail(`${at}`, "x/y non-negative integers required");
     if (
       a.target !== null && a.target !== "player" &&

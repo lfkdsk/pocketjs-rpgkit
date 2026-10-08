@@ -512,11 +512,10 @@ simDescribe("sunstone — render budget", () => {
     // MoveControl variant, per-route speed field and latching) adds 2,874:
     // measured 979,831 B. The switch catalog's writtenBy:"host" marker (a
     // dedicated switchDef $def in the embedded project schema) adds 72:
-    // measured 979,903 B. Integrated movement timing and opt-in character
-    // identity (the name-input RANDOM action, sparse runtime character names
-    // and appearance-aware battle presentation) measure 989,539 B. Keep a
-    // narrow margin.
-    expect(jsBytes).toBeLessThan(991_000);
+    // measured 979,903 B. Integrated movement timing, opt-in character
+    // identity and transfer-persistent presentation measure 991,646 B and
+    // remain under this narrow margin.
+    expect(jsBytes).toBeLessThan(993_000);
   });
 });
 

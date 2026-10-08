@@ -241,6 +241,10 @@ Conventions:
   and names a `project.animations` entry; it loops above the live character
   anchor for a finite duration or until a command with no `icon` clears it.
   A waited balloon must name an icon and a positive finite duration.
+  With `system.transferPresentation:"retain"`, fixed camera focus and a player
+  balloon survive map transfer; without it both keep their original per-map
+  lifetime. An event balloon is always discarded because its target identity
+  belongs to the source map.
 - **Relative map scroll:** `scrollMap` starts from the current player/fixed
   focus and moves by `distance` tiles. Speed grade `n` takes
   `distance × 256 / 2^n` reference ticks, matching MV/MZ; projection uses the
@@ -260,11 +264,19 @@ Conventions:
   the host has no portable per-image blend/colour-matrix primitive.
 - **Backdrop, layering, and lifetime:** `screenBackdrop` selects a
   `GameAssets.layers` entry with `placement:"screen"`; omitting/nulling its
-  variant closes it. Backdrop, tint, and flash render over the map but below
+  variant closes it. A non-null selection replaces the current backdrop by
+  default, even below a modal. Set `whenModalOpen:"ignore"` to preserve an
+  existing backdrop while a text, choice, or shop modal is active above it;
+  without a modal it still replaces.
+  Backdrop, tint, and flash render over the map but below
   dialogs; independent fade renders above dialogs. A backdrop prevents free
   movement/action and keeps `worldIdle` false, while autorun/parallel fibers
-  still run. Transfer retains fade, tints, and backdrop, but clears transient
-  flash/shake, scripted camera, and balloons. Default-frozen battles pause all
+  still run. Transfer always retains fade, tints and backdrop, and clears
+  transient flash/shake and event balloons. The optional
+  `system.transferPresentation:"retain"` additionally keeps live map
+  animations, scripted camera and the player's balloon; without it those use
+  the original per-map lifetime.
+  Default-frozen battles pause all
   screen-effect clocks and hide the map presentation; `worldContinues:true`
   advances it behind the battle scene.
 - **Audio state:** `playBgm`, `fadeoutBgm`, `stopBgm`, `pauseBgm`,
@@ -594,6 +606,7 @@ without changing `MAP_SCHEMA_HASH`.
 | option | type | default | purpose |
 | --- | --- | --- | --- |
 | `maps` | `MapRepository` | — | required when the project is a sharded `ProjectShell` (see "Host map source" below); ignored for inline documents |
+| `compatibleSaveContent` | `readonly { manifest: string; schema: string }[]` | none | exact, reviewed predecessor build pairs accepted for save loading only; old shells and neighbouring pairs remain refused, and new saves stamp the current pair |
 | `extensions` | `ExtensionOptions` | none | registered `ext` commands, conditions, `extChoice` providers, and an optional completed-player-tile hook |
 | `battle` | `BattleRules` | `null` | the game-owned scene reducer; a project that uses battle commands without one fails at `createSession` |
 | `scene` | `{ worldContinues?: boolean }` | `{ worldContinues: false }` | let map fibers keep folding while a scene owns the screen |
@@ -609,7 +622,9 @@ baked `MAP_SCHEMA_HASH` or one of `MAP_SCHEMA_COMPATIBLE_HASHES` (earlier
 schemas that differ only by additive changes) or `createSession` throws with
 a message naming the refused and accepted identities; save envelopes follow
 the same rule, and the session always stamps new saves with
-the current identity.
+the current identity. `GameViewProps.compatibleSaveContent` and
+`AttractOptions.compatibleSaveContent` forward the same load-only list so
+live play, restored saves and attract refolds use one policy.
 `assertShellManifestFresh(shell)` exports the matching build/test-time check:
 an application that packages a shell calls it after writing the shell to disk,
 so a stale or hand-edited declared hash fails the build instead of shipping.

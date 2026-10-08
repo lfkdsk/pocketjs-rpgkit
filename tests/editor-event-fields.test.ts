@@ -72,7 +72,7 @@ const NEWER_COMMAND_FIELDS = [
   ["camera", ["target", "duration", "wait"]],
   ["scrollMap", ["direction", "distance", "speed", "wait"]],
   ["balloon", ["target", "icon", "duration", "wait"]],
-  ["screenBackdrop", ["layer", "variant"]],
+  ["screenBackdrop", ["layer", "variant", "whenModalOpen"]],
   ["showPicture", ["id", "layer", "variant", "origin", "x", "y", "scaleX", "scaleY", "opacity", "blend"]],
   ["movePicture", ["id", "origin", "x", "y", "scaleX", "scaleY", "opacity", "blend", "duration", "wait", "easing"]],
   ["rotatePicture", ["id", "speed"]],
@@ -222,7 +222,7 @@ describe("event inspector command fields", () => {
       { op: "camera", field: "target", raw: "tile:1,2", expected: { target: { x: 1, y: 2 } } },
       { op: "scrollMap", field: "speed", raw: "6", expected: { speed: 6 } },
       { op: "balloon", field: "icon", raw: "spark", expected: { icon: "spark" } },
-      { op: "screenBackdrop", field: "variant", raw: "night", expected: { variant: "night" } },
+      { op: "screenBackdrop", field: "whenModalOpen", raw: "ignore", expected: { whenModalOpen: "ignore" } },
       { op: "showPicture", field: "x", raw: "$picture-x", expected: { x: { variable: "picture-x" } } },
       { op: "movePicture", field: "scaleX", raw: "-50", expected: { scaleX: -50 } },
       { op: "rotatePicture", field: "speed", raw: "-1.5", expected: { speed: -1.5 } },
@@ -320,6 +320,7 @@ describe("event inspector command fields", () => {
       { name: "scroll speed", command: defaultCommand("scrollMap"), field: "speed", raw: "7" },
       { name: "waited balloon invariant", command: defaultCommand("balloon"), field: "wait", raw: "true" },
       { name: "backdrop layer", command: defaultCommand("screenBackdrop"), field: "layer", raw: "" },
+      { name: "backdrop modal policy", command: defaultCommand("screenBackdrop"), field: "whenModalOpen", raw: "replace" },
       { name: "show picture id", command: defaultCommand("showPicture"), field: "id", raw: "101" },
       { name: "show picture scale", command: defaultCommand("showPicture"), field: "scaleX", raw: "-2001" },
       { name: "move picture opacity", command: defaultCommand("movePicture"), field: "opacity", raw: "256" },
@@ -404,6 +405,13 @@ describe("event inspector command fields", () => {
     expect(audio).not.toHaveProperty("volume");
     let backdrop: Command = edit(defaultCommand("screenBackdrop"), "variant", "null");
     expect(backdrop).toHaveProperty("variant", null);
+    backdrop = edit(backdrop, "whenModalOpen", "ignore");
+    expect(backdrop).toHaveProperty("whenModalOpen", "ignore");
+    expect(commandFields(backdrop).find((entry) => entry.key === "whenModalOpen")).toMatchObject({
+      value: "ignore", kind: "enum", options: ["(unset)", "ignore"],
+    });
+    backdrop = edit(backdrop, "whenModalOpen", "(unset)");
+    expect(backdrop).not.toHaveProperty("whenModalOpen");
     backdrop = edit(backdrop, "variant", "(unset)");
     expect(backdrop).not.toHaveProperty("variant");
     let animation: Command = edit(defaultCommand("mapAnim"), "loop", "true");

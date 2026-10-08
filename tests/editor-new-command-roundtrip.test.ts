@@ -29,7 +29,7 @@ const NEWER_COMMAND_CASES: readonly {
   { op: "camera", edits: [["target", "tile:2,2"], ["duration", "0.1"]] },
   { op: "scrollMap", edits: [["direction", "right"], ["distance", "2.5"], ["speed", "5"]] },
   { op: "balloon", edits: [["target", "player"], ["icon", "spark"], ["duration", "0.1"], ["wait", "true"]] },
-  { op: "screenBackdrop", edits: [["layer", "cutscene"], ["variant", "dusk"]] },
+  { op: "screenBackdrop", edits: [["layer", "cutscene"], ["variant", "dusk"], ["whenModalOpen", "ignore"]] },
   { op: "showPicture", edits: [["id", "2"], ["layer", "pictures"], ["variant", "portrait"], ["x", "$picture-x"], ["scaleX", "-100"], ["opacity", "128.5"]] },
   { op: "movePicture", edits: [["id", "2"], ["x", "12.5"], ["y", "$picture-y"], ["duration", "0.1"], ["easing", "easeOut"]] },
   { op: "rotatePicture", edits: [["id", "2"], ["speed", "-1.5"]] },

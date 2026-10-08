@@ -37,6 +37,7 @@
 // upper bound on what a shared keyframe actually retains.
 
 import type { MapRepository, ProjectSource, WorldTraversalMode } from "./types.ts";
+import type { MapContentVersion } from "./map-repository.ts";
 import type { WorldHandoffResolver } from "./world-handoff-contract.ts";
 import { textModalPage, type Modal, type TextPaginator, type TextTokenResolver } from "./interpreter.ts";
 import type { ExtensionOptions } from "./extensions.ts";
@@ -165,6 +166,8 @@ export interface AttractOptions {
   /** Required when project is a ProjectShell. Repository cache residency is
    * derived and never enters the rewind timeline. */
   maps?: MapRepository;
+  /** Exact reviewed predecessor builds accepted for save loading. */
+  compatibleSaveContent?: readonly MapContentVersion[];
   /** The same pure game registrations accepted by createSession(). They live
    * outside the rewind timeline; refolds reuse them against fresh state. */
   extensions?: ExtensionOptions;
@@ -413,6 +416,7 @@ export class AttractController {
     this.timelineHz = this.attractEnabled ? (opts.tapeHz ?? ATTRACT_TAPE_HZ) : this.hz;
     this.session = createSession(project, this.timelineHz, {
       maps: opts.maps,
+      compatibleSaveContent: opts.compatibleSaveContent,
       extensions: opts.extensions,
       battle: opts.battle,
       scenes: opts.scenes,

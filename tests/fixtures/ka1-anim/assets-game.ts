@@ -8,23 +8,27 @@ export const MAP_CANVAS_PX = 512;
 
 export const MAP_GROUND: Record<string, readonly string[]> = {
   "ka1-field": ["assets/map-ka1-field-ground-0.png","assets/map-ka1-field-ground-1.png"],
+  "ks1-persist-target": ["assets/map-ks1-persist-target-ground-0.png","assets/map-ks1-persist-target-ground-1.png"],
 };
 
 export const MAP_UPPER: Record<string, readonly string[]> = {
   "ka1-field": ["assets/map-ka1-field-upper-0.png","assets/map-ka1-field-upper-1.png"],
+  "ks1-persist-target": ["assets/map-ks1-persist-target-upper-0.png","assets/map-ks1-persist-target-upper-1.png"],
 };
 
 export const MAP_CHUNK_COLUMNS: Record<string, number> = {
   "ka1-field": 2,
+  "ks1-persist-target": 2,
 };
 
 export const MAP_MAX_CHUNKS = 2;
 
 export const MAP_WORLD: Record<string, { w: number; h: number }> = {
   "ka1-field": { w: 640, h: 400 },
+  "ks1-persist-target": { w: 640, h: 400 },
 };
 
-export const MAP_ORDER: readonly string[] = ["ka1-field"];
+export const MAP_ORDER: readonly string[] = ["ka1-field","ks1-persist-target"];
 
 export const NPC_SRC: Record<string, string> = {
 
@@ -63,7 +67,7 @@ export const GAME_ASSETS: GameAssets = {
   upper: MAP_UPPER,
   chunkColumns: MAP_CHUNK_COLUMNS,
   maxChunks: MAP_MAX_CHUNKS,
-  maxActors: 8,
+  maxActors: 1,
   world: MAP_WORLD,
   order: MAP_ORDER,
   npcSrc: NPC_SRC,
