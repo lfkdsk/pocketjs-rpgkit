@@ -256,33 +256,6 @@ async function sunstoneTraces(root: string): Promise<Trace[]> {
   return traces;
 }
 
-async function wanderTraces(root: string): Promise<Trace[]> {
-  const { WanderSim } = await load(root, "examples/wander/wander-sim.ts");
-  const traces: Trace[] = [];
-  for (const hz of [60, 20]) {
-    const sim = new WanderSim({ seed: 0x5eed0001, hz, viewW: 480, viewH: 272 });
-    const recorder = new Recorder<any>(`wander-auto-${hz}hz`);
-    const capture = (): void => recorder.capture({
-      state: sim.state,
-      now: sim.now,
-      frame: sim.frame,
-      player: sim.playerTile,
-      focus: { ...sim.focus },
-      mode: sim.mode,
-      walked: sim.walked,
-      recentres: sim.recentres,
-      digest: sim.digest(),
-    });
-    capture();
-    for (let frame = 0; frame < hz * 12; frame++) {
-      sim.step(0);
-      capture();
-    }
-    traces.push(recorder.finish({ digest: sim.digest(), stats: sim.stats() }));
-  }
-  return traces;
-}
-
 function numberArrayHash(values: ArrayLike<number>, seed = 0x811c9dc5): number {
   let hash = seed >>> 0;
   for (let i = 0; i < values.length; i++) {
@@ -769,7 +742,6 @@ async function record(rootArg: string): Promise<RunReport> {
   const traces: Trace[] = [];
   const batches: Array<[string, () => Promise<Trace[]>]> = [
     ["sunstone", () => sunstoneTraces(root)],
-    ["wander", () => wanderTraces(root)],
     ["grow", async () => [await growTrace(root)]],
     ["fixtures", () => sessionFixtureTraces(root)],
     ["repository", () => repositoryTraces(root)],
