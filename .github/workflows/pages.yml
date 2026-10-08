@@ -71,6 +71,28 @@ jobs:
           path: dist/web-verify/*.png
           retention-days: 7
 
+      # Wander and Wander Online moved to lfkdsk/pocketjs-wander. Their old
+      # paths here forward to the new site so existing links keep working.
+      - name: Forward the moved Wander pages
+        run: |
+          for app in wander wander-online; do
+            if [ "$app" = wander ]; then
+              target="https://lfkdsk.github.io/pocketjs-wander/"
+            else
+              target="https://lfkdsk.github.io/pocketjs-wander/${app}/"
+            fi
+            mkdir -p "dist/web/${app}"
+            cat > "dist/web/${app}/index.html" <<EOF
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Moved to PocketJS Wander</title>
+          <meta http-equiv="refresh" content="0; url=${target}">
+          <link rel="canonical" href="${target}">
+          <script>location.replace("${target}" + location.hash);</script>
+          <p>This page moved to <a href="${target}">${target}</a>.</p>
+          EOF
+          done
+
       - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v5
