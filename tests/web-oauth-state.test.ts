@@ -130,7 +130,7 @@ ${initAuthUI}
 ${setAuthUI}
 ${boot}
 
-const AUTH_TICKET_KEY = "pocket-rpgkit:wander-online:ticket";
+const AUTH_TICKET_KEY = "pocket-rpgkit:auth-test:ticket";
 let assetLoads = [];
 let assetMode = "stop";
 let bundleSource = "";
@@ -197,8 +197,8 @@ const installGameAuth = (login, ticket) => {
   globalThis.__pocketAuthCommand = (command) => {
     authCommands.push(command);
     if (command !== "signout") return;
-    // This is the real game/page contract: OnlineView's signOut clears the
-    // auth-store ticket, then reports the same logout event used in-game.
+    // This is the real game/page contract: the game clears its own ticket,
+    // then reports the same logout event used by its in-game sign-out path.
     localStorage.removeItem(AUTH_TICKET_KEY);
     globalThis.__pocketAuthEvent?.({ type: "logout" });
   };
