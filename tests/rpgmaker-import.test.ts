@@ -425,7 +425,7 @@ describe("rpgmaker-import: files and determinism", () => {
   });
 
   test("the importer is not part of any game bundle", () => {
-    for (const name of ["sunstone", "meadow", "showcase", "grow", "wander", "rmi-play"]) {
+    for (const name of ["sunstone", "meadow", "showcase", "grow", "rmi-play"]) {
       const bundle = join(ROOT, "dist", `${name}.js`);
       const text = readFileSync(bundle, "utf8");
       expect(text.includes("FLOOR_AUTOTILE_TABLE")).toBe(false);

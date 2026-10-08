@@ -108,24 +108,6 @@ describe("games", () => {
     });
   });
 
-  test("wander-online publishes a stable English/Chinese page language channel", () => {
-    const online = resolveGame(KIT_ROOT, config, "wander-online");
-    expect(online.languages).toEqual({
-      options: [
-        { code: "en", label: "English" },
-        { code: "zh", label: "中文" },
-      ],
-      param: "lang",
-      storage: "pocket-rpgkit:wander-online:lang:v1",
-    });
-    expect(online.i18n?.zh?.description).toContain("GitHub");
-    expect(online.i18n?.zh?.controls).toEqual({
-      "Walk": "行走",
-      "Confirm": "确认",
-      "Cancel / back": "取消 / 返回",
-    });
-  });
-
   test("the browser editor companion cannot be configured without its file host", () => {
     const games = { ...config.games, editor: { ...config.games!.editor } };
     delete games.editor!.documents;

@@ -158,38 +158,6 @@ describe("resolved language settings", () => {
     expect(PLAYER_I18N.zh["chapters"]).toBe("章节");
   });
 
-  test("the published wander-online page exposes its bilingual auth shell", () => {
-    const game = resolveGame(KIT_ROOT, config, "wander-online");
-    expect(game.languages).toEqual({
-      options: [
-        { code: "en", label: "English" },
-        { code: "zh", label: "中文" },
-      ],
-      param: "lang",
-      storage: "pocket-rpgkit:wander-online:lang:v1",
-    });
-    expect(game.i18n?.zh).toMatchObject({
-      description: expect.stringContaining("多人世界"),
-      controls: {
-        "Walk": "行走",
-        "Confirm": "确认",
-        "Cancel / back": "取消 / 返回",
-      },
-    });
-
-    const html = renderPlayer(site, game, playerConfig(game), false);
-    expect(html).toContain('data-lang-code="zh" aria-pressed="false">中文</button>');
-    const json = /<script type="application\/json" id="pocket-i18n">([\s\S]*?)<\/script>/.exec(html)![1]!;
-    const embedded = JSON.parse(json) as {
-      storage: string;
-      ui: Record<string, Record<string, string>>;
-      content: Record<string, { description?: string; controls?: Record<string, string> }>;
-    };
-    expect(embedded.storage).toBe("pocket-rpgkit:wander-online:lang:v1");
-    expect(embedded.ui.en["auth.signed-out"]).toBe("Sign out");
-    expect(embedded.ui.zh["auth.signed-out"]).toBe("退出登录");
-    expect(embedded.content.zh.controls?.["Walk"]).toBe("行走");
-  });
 });
 
 describe("player pages with languages", () => {
@@ -228,6 +196,8 @@ describe("player pages with languages", () => {
     expect(parsed.ui.en["fullscreen"]).toBe("Fullscreen");
     expect(parsed.ui.zh["fullscreen"]).toBe("全屏");
     expect(parsed.ui.zh["demo-controls"]).toBe("演示控制");
+    expect(parsed.ui.en["auth.signed-out"]).toBe("Sign out");
+    expect(parsed.ui.zh["auth.signed-out"]).toBe("退出登录");
     expect(parsed.content.zh).toMatchObject({ description: ZH_TEXT.description });
     expect(parsed.content.zh).toMatchObject({ chapters: { village: { title: "村庄" } } });
   });

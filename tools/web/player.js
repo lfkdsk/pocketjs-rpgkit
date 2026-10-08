@@ -241,8 +241,8 @@ function startGithubSignIn(auth) {
 // Wire sign-in status and sign-out into the control bar, if the game declares
 // auth. The game remains the source of truth: the page sends a command, then
 // waits for the same login/logout event hook used by in-game sign-out. That
-// command also owns credential cleanup (wander-online removes its web ticket
-// through auth-store), so the page never needs to know a game's storage key.
+// command also owns app-specific credential cleanup, so the page never needs
+// to know a game's storage key.
 function initAuthUI(config) {
   const auth = config.auth;
   if (!auth?.github) return;
