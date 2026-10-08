@@ -665,11 +665,15 @@ encoded form. Inline projects validate every namespaced call at
 `ExtensionOptions.playerStep` names one registered extension command and
 optional JSON arguments. The session runs it once after every completed
 player tile, whether input, a forced route, pathfinding or autonomous motion
-drove the landing. For seamless handoff, the source-edge landing counts once
-and the later atomic target placement does not; legacy transfers, blocked
-attempts and `place` do not count. The handler uses the ordinary extension
-command's saved RNG and atomic publication path. When omitted, the session
-performs only a null check and allocates no hook state.
+drove the landing. By default, a seamless handoff's source-edge landing
+counts once and its later atomic target placement does not; legacy transfers,
+blocked attempts and `place` do not count. Setting `displacement: true` adds
+`context.playerStep = { dx, dy, kind }` to each call, with signed tile deltas,
+and emits one additional `kind: "relocation"` call for a seamless handoff,
+legacy transfer or direct player placement whose coordinates changed. The
+handler uses the ordinary extension command's saved RNG and atomic publication
+path. When omitted, the session performs only a null check and allocates no
+hook state.
 
 Condition handlers normally receive defensive clones and are evaluated on
 every relevant read. Setting both `immutableConditions` and

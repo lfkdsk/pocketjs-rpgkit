@@ -225,12 +225,13 @@ const maybeTest = preflight.ok ? test : test.skip;
 // sparse names, token expansion and targeted/variable-fed changeName) adds a
 // measured 3,641, 5,527 and 4,407 B. Transfer-persistent presentation plus
 // the exact-pair save hook adds another measured 1,492, 2,107 and 1,667 B.
-// The integrated totals are 620,340, 991,646 and 786,634 B. The name-input
-// and battle views remain tree-shaken from the ordinary Sunstone graph.
+// Signed player-step displacement adds 1,327 B to each. The integrated totals
+// are 621,667, 992,973 and 787,961 B. The name-input and battle views remain
+// tree-shaken from the ordinary Sunstone graph.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 620_340;
-const EXPECTED_SUNSTONE_QOA_BYTES = 991_646;
-const EXPECTED_WAV_FIXTURE_BYTES = 786_634;
+const EXPECTED_MEADOW_BYTES = 621_667;
+const EXPECTED_SUNSTONE_QOA_BYTES = 992_973;
+const EXPECTED_WAV_FIXTURE_BYTES = 787_961;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

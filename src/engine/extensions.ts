@@ -40,6 +40,14 @@ export interface ExtensionCommandContext extends ExtensionReadContext {
   /** Draw from the session's saved mulberry32 cursor. Calling this is the
    * only supported source of entropy inside an extension handler. */
   random(): number;
+  /** Present only for an opted-in `playerStep` hook. Ordinary landings use
+   * `kind: "step"`; transfers and direct player placements use
+   * `kind: "relocation"`. `dx` and `dy` are signed tile-coordinate deltas. */
+  readonly playerStep?: Readonly<{
+    dx: number;
+    dy: number;
+    kind: "step" | "relocation";
+  }>;
 }
 
 export interface ExtensionCommandResult {
@@ -126,13 +134,16 @@ export interface ExtensionOptions {
   conditions?: Readonly<Record<string, ExtensionConditionHandler>>;
   choices?: Readonly<Record<string, ExtensionChoiceHandler>>;
   /** Optional game-owned command run once after each completed player tile.
-   * A seamless handoff counts only the ordinary landing on its source edge;
-   * its atomic target placement, legacy transfers and direct placements are
-   * not steps. The handler uses the same saved RNG and atomic result contract
-   * as an authored `ext` command. */
+   * The handler uses the same saved RNG and atomic result contract as an
+   * authored `ext` command. By default a seamless handoff counts only the
+   * ordinary landing on its source edge; its atomic target placement, legacy
+   * transfers and direct placements are not steps. Opting into displacement
+   * adds signed dx/dy to the command context and reports those relocations as
+   * one additional hook call. */
   playerStep?: {
     call: string;
     args?: JsonValue;
+    displacement?: boolean;
   };
   codec?: ExtensionCodec;
   validate?: ExtensionValidator;
@@ -148,7 +159,7 @@ export interface ExtensionRuntime {
   readonly commands: Readonly<Record<string, ExtensionCommandHandler>>;
   readonly conditions: Readonly<Record<string, ExtensionConditionHandler>>;
   readonly choices: Readonly<Record<string, ExtensionChoiceHandler>>;
-  readonly playerStep: Readonly<{ call: string; args: JsonValue }> | null;
+  readonly playerStep: Readonly<{ call: string; args: JsonValue; displacement: boolean }> | null;
   readonly codec: ExtensionCodec | null;
   readonly validate: ExtensionValidator | null;
   readonly allowUnknown: boolean;
@@ -221,7 +232,7 @@ export function createExtensionRuntime(options: ExtensionOptions = {}): Extensio
     }
     const args = deepClone(options.playerStep.args ?? {});
     assertJsonValue(args, "playerStep args");
-    playerStep = { call, args };
+    playerStep = { call, args, displacement: options.playerStep.displacement === true };
   }
   const initial = deepClone(options.initial ?? null);
   const runtime: ExtensionRuntime = {

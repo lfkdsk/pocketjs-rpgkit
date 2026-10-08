@@ -15,7 +15,7 @@ import {
 } from "../src/engine/session.ts";
 import { createWorldHandoffResolver } from "../src/engine/world-handoff.ts";
 import type { ExtensionOptions } from "../src/engine/extensions.ts";
-import type { Command, GameEvent, Project } from "../src/engine/types.ts";
+import type { Command, GameEvent, JsonValue, Project } from "../src/engine/types.ts";
 import { splitProjectMaps } from "../tools/lib/map-project.ts";
 import {
   autorunTransfer,
@@ -255,6 +255,53 @@ describe("seamless-v1 opening handoff", () => {
     expect(seamless.state.mapId).toBe("east");
     expect(legacy.state.ext).toEqual({ steps: 1 });
     expect(seamless.state.ext).toEqual({ steps: 1 });
+  });
+
+  test("opted-in playerStep displacement reports the atomic handoff relocation", () => {
+    const hook: ExtensionOptions = {
+      initial: { movements: [] },
+      commands: {
+        "test.player_step": (context) => ({
+          ext: {
+            movements: [
+              ...(context.ext as { movements: JsonValue[] }).movements,
+              context.playerStep ? { ...context.playerStep } : null,
+            ],
+          },
+        }),
+      },
+      playerStep: { call: "test.player_step", displacement: true },
+    };
+    const runRoute = (traversal: Project["worldTraversal"]) => {
+      const project = handoffProject({
+        traversal,
+        start: { map: "west", x: 2, y: 1, dir: "right" },
+        sourceEvent: playerTouchTransfer(
+          "step-displacement",
+          3,
+          1,
+          markedTransfer("east", 0, 1, "right", SAFE_EAST),
+        ),
+      });
+      const session = createSession(project, 60, {
+        extensions: hook,
+        handoff: createWorldHandoffResolver(HANDOFF_LAYOUT),
+      });
+      let state = startSession(project, session);
+      for (let frame = 0; frame < 16; frame++) {
+        state = stepSession(session, state, { buttons: frame < 8 ? 0x0020 : 0 });
+      }
+      return state;
+    };
+
+    for (const traversal of ["legacy-transfer", "seamless-v1"] as const) {
+      const state = runRoute(traversal);
+      expect(state.mapId).toBe("east");
+      expect(state.ext).toEqual({ movements: [
+        { dx: 1, dy: 0, kind: "step" },
+        { dx: -3, dy: 0, kind: "relocation" },
+      ] });
+    }
   });
 
   test("crosses a proven north-south opening", () => {

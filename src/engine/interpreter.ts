@@ -4510,9 +4510,28 @@ export function runExtensionHookInPlace(
   ext0: JsonValue,
   call: string,
   args: JsonValue,
+  playerStep?: Readonly<{
+    dx: number;
+    dy: number;
+    kind: "step" | "relocation";
+  }>,
 ): JsonValue {
   const extension: MutableExtensionScope = { runtime: w.extensions, ext: ext0 };
-  runExtensionCommand(s, w, extension, call, args);
+  const handler = extension.runtime.commands[call];
+  if (!handler) {
+    if (extension.runtime.allowUnknown) return extension.ext;
+    throw new Error(`extension command ${JSON.stringify(call)} is not registered`);
+  }
+  runExtensionMutation(
+    s,
+    w,
+    extension,
+    `extension command ${JSON.stringify(call)}`,
+    (context) => handler(
+      playerStep === undefined ? context : { ...context, playerStep },
+      deepClone(args),
+    ),
+  );
   return extension.ext;
 }
 

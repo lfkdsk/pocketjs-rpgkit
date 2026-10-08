@@ -2762,6 +2762,14 @@ function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: 
     sess.cfg,
     sess.transferPresentation,
   );
+  runPlayerStepHook(
+    sess,
+    s,
+    sess.worlds.get(handoff.targetMapId)!,
+    handoff.targetX - handoff.sourceX,
+    handoff.targetY - handoff.sourceY,
+    "relocation",
+  );
   showMapNameBanner(s, target);
   // Entry dropped any older snapshot (including the target's own, when the
   // player walks back into the map it froze).
@@ -3144,14 +3152,14 @@ function stepReferenceTick(
   const playerStep = sess.extensions.playerStep;
   if (playerStep !== null &&
       (s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY)) {
-    s.ext = runExtensionHookInPlace(
+    runPlayerStepHook(
+      sess,
+      s,
       world,
-      s.interp,
-      s.ext,
-      playerStep.call,
-      playerStep.args,
+      s.move.tx - playerCellBeforeMovementX,
+      s.move.ty - playerCellBeforeMovementY,
+      "step",
     );
-    s.sw = s.interp.sw;
   }
 
   // 4. Interpreter — the displaced-character record supplements the world's
@@ -3429,9 +3437,12 @@ function applyMoveRequest(sess: Session, s: SessionState, req: PendingMoveOperat
 function applyPlacement(sess: Session, s: SessionState, map: MapDef, p: PendingPlacement): void {
   if (!inMapBounds(map.width, map.height, p.x, p.y)) return;
   if ("target" in p) {
+    const oldX = s.move.tx;
+    const oldY = s.move.ty;
     stopPlayerRoute(s);
     const facing = p.dir === null ? s.move.facing : DIR_INDEX[p.dir];
     s.move = initialMovement(p.x, p.y, facing, sess.cfg);
+    runPlayerStepHook(sess, s, sess.worlds.get(s.mapId)!, p.x - oldX, p.y - oldY, "relocation");
     return;
   }
   const placed = placeChar(s.chars, p.eventId, p.x, p.y, p.dir, sess.cfg);
@@ -3449,9 +3460,12 @@ function applyTransfer(
   y: number,
   dir: Dir | "keep",
 ): void {
+  const oldX = s.move.tx;
+  const oldY = s.move.ty;
   const map = acquireSessionMap(sess, mapId);
   const facing: Facing = dir === "keep" ? s.move.facing : DIR_INDEX[dir];
   enterMap(s, map, x, y, facing, sess.cfg, sess.transferPresentation);
+  runPlayerStepHook(sess, s, sess.worlds.get(mapId)!, x - oldX, y - oldY, "relocation");
   showMapNameBanner(s, map);
   // A seamless project has an external layered cache owner (the same owner
   // that is required for seamless handoffs). Let it choose and evict the
@@ -3459,6 +3473,31 @@ function applyTransfer(
   // releasing the source map inside this transfer fold. Legacy projects
   // retain the historical single-map policy.
   if (sess.worldTraversal === "legacy-transfer") releaseSessionMapsExcept(sess, [mapId]);
+}
+
+/** Dispatch the optional post-movement command without charging projects
+ * that omit it. Relocations are an additive opt-in so existing games retain
+ * the historical ordinary-landings-only contract. A zero coordinate delta
+ * is not a movement event, even when it crosses a map boundary. */
+function runPlayerStepHook(
+  sess: Session,
+  s: SessionState,
+  world: World,
+  dx: number,
+  dy: number,
+  kind: "step" | "relocation",
+): void {
+  const hook = sess.extensions.playerStep;
+  if (hook === null || (kind === "relocation" && !hook.displacement) || (dx === 0 && dy === 0)) return;
+  s.ext = runExtensionHookInPlace(
+    world,
+    s.interp,
+    s.ext,
+    hook.call,
+    hook.args,
+    hook.displacement ? { dx, dy, kind } : undefined,
+  );
+  s.sw = s.interp.sw;
 }
 
 /** A transfer destination authored as a live variable cannot be checked at

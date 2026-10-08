@@ -259,6 +259,50 @@ describe("KB1 extension commands and conditions", () => {
     expect(blockedState.ext).toEqual({ steps: 0 });
   });
 
+  test("playerStep displacement reports signed landings and opts relocations in", () => {
+    const hook: ExtensionOptions = {
+      initial: { movements: [] },
+      commands: {
+        "demo.player_step": (context) => ({
+          ext: {
+            movements: [
+              ...(context.ext as { movements: JsonValue[] }).movements,
+              context.playerStep ?? null,
+            ],
+          },
+        }),
+      },
+      playerStep: { call: "demo.player_step", displacement: true },
+    };
+    const p = project([
+      {
+        op: "moveRoute",
+        target: "player",
+        wait: true,
+        route: {
+          steps: ["moveRight", "moveDown", "moveLeft", "moveUp"],
+          repeat: false,
+          skippable: true,
+        },
+      },
+      { op: "place", target: "player", x: 4, y: 3 },
+      { op: "transfer", map: "b", x: 1, y: 5, dir: "down" },
+    ], [map("b")]);
+    const session = createSession(p, 60, { extensions: hook });
+    let state = startSession(p, session);
+    for (let frame = 0; frame < 80 && state.mapId !== "b"; frame++) state = step(session, state);
+
+    expect(state.mapId).toBe("b");
+    expect(state.ext).toEqual({ movements: [
+      { dx: 1, dy: 0, kind: "step" },
+      { dx: 0, dy: 1, kind: "step" },
+      { dx: -1, dy: 0, kind: "step" },
+      { dx: 0, dy: -1, kind: "step" },
+      { dx: 2, dy: 1, kind: "relocation" },
+      { dx: -3, dy: 2, kind: "relocation" },
+    ] });
+  });
+
   test("playerStep registration rejects malformed and missing command hooks", () => {
     expect(() => createExtensionRuntime({
       commands: { "demo.step": () => undefined },
