@@ -30,7 +30,7 @@
     "setup": "git submodule update --init && bun install",
     "test": "bun test tests/",
     "tsc": "bunx tsc --noEmit",
-    "gen-assets": "bun examples/showcase/gen-assets.ts && bun examples/meadow/gen-assets.ts && bun examples/sunstone/gen-assets.ts && bun examples/grow/gen-assets.ts && bun examples/wander/gen-assets.ts && bun editor/gen-assets.ts && bun tools/preview/gen-assets.ts",
+    "gen-assets": "bun examples/showcase/gen-assets.ts && bun examples/meadow/gen-assets.ts && bun examples/sunstone/gen-assets.ts && bun examples/grow/gen-assets.ts && bun editor/gen-assets.ts && bun tools/preview/gen-assets.ts",
     "build:example": "bun tools/build-example.ts",
     "build:editor": "bun tools/build-example.ts editor",
     "build:wasm": "bun vendor/pocketjs/tools/wasm.ts",

@@ -135,82 +135,6 @@
       ],
       "rasterDensity": 2
     },
-    "wander": {
-      "title": "Wander: an Endless Grown World",
-      "description": "An unbounded world streamed in 32×32 chunks around the player: towns grow as you reach them, and chunks load ahead and unload behind within a fixed memory cap. Left alone it wanders by itself; the minimap shows the rings.",
-      "preview": "tests/goldens/wander.960.2100.png",
-      "controls": [
-        {
-          "button": "DPAD",
-          "action": "Walk. Any key takes over from the auto-walk; 10 idle seconds hand it back."
-        },
-        {
-          "button": "TRIANGLE",
-          "action": "Fast travel on or off (TRI on screen)"
-        },
-        {
-          "button": "SQUARE",
-          "action": "New seed (SQR on screen)"
-        },
-        {
-          "button": "SELECT",
-          "action": "Back to the auto-walk"
-        },
-        {
-          "button": "CIRCLE",
-          "action": "Read a town's notice board"
-        }
-      ],
-      "pointer": "Click or tap a tile to walk there."
-    },
-    "wander-online": {
-      "title": "Wander Online",
-      "description": "A shared multiplayer world: sign in with GitHub, create a character, and walk with others in real time.",
-      "controls": [
-        {
-          "button": "DPAD",
-          "action": "Walk"
-        },
-        {
-          "button": "CIRCLE",
-          "action": "Confirm"
-        },
-        {
-          "button": "CROSS",
-          "action": "Cancel / back"
-        }
-      ],
-      "languages": [
-        {
-          "code": "en",
-          "label": "English"
-        },
-        {
-          "code": "zh",
-          "label": "中文"
-        }
-      ],
-      "languageSwitch": {
-        "param": "lang",
-        "storage": "pocket-rpgkit:wander-online:lang:v1"
-      },
-      "i18n": {
-        "zh": {
-          "description": "一个共享的多人世界：使用 GitHub 登录、创建角色，并与其他玩家实时同行。",
-          "controls": {
-            "Walk": "行走",
-            "Confirm": "确认",
-            "Cancel / back": "取消 / 返回"
-          }
-        }
-      },
-      "auth": {
-        "github": {
-          "clientId": "Ov23liCg29llKxJ7b0jv",
-          "worker": "https://auth.lfkdsk.org/wander-online"
-        }
-      }
-    },
     "sunstone": {
       "title": "The Sunstone of Bramble Hollow",
       "description": "A three-map adventure through a village, a forest and a cave. Leave it alone for 10 seconds and it plays itself; press any key to take over.",
@@ -383,6 +307,46 @@
         {
           "button": "CROSS",
           "action": "Back, cancel"
+        }
+      ]
+    },
+    {
+      "title": "Wander: an Endless Grown World",
+      "url": "https://lfkdsk.github.io/pocketjs-wander/",
+      "description": "An unbounded deterministic world streamed around the player: towns grow as you reach them, chunks load ahead and unload behind, and an autonomous walker discovers landmarks and errands.",
+      "preview": "https://lfkdsk.github.io/pocketjs-wander/wander/preview.png",
+      "controls": [
+        {
+          "button": "DPAD",
+          "action": "Walk and take over from auto-walk"
+        },
+        {
+          "button": "CIRCLE",
+          "action": "Read a town notice board"
+        },
+        {
+          "button": "SELECT",
+          "action": "Return to auto-walk"
+        }
+      ]
+    },
+    {
+      "title": "Wander Online",
+      "url": "https://lfkdsk.github.io/pocketjs-wander/wander-online/",
+      "description": "The same grown world shared in real time: sign in with GitHub, create a character, and walk with other players through the hosted authoritative server.",
+      "preview": "https://lfkdsk.github.io/pocketjs-wander/wander-online/preview.png",
+      "controls": [
+        {
+          "button": "DPAD",
+          "action": "Walk"
+        },
+        {
+          "button": "CIRCLE",
+          "action": "Confirm"
+        },
+        {
+          "button": "CROSS",
+          "action": "Cancel, back"
         }
       ]
     }
