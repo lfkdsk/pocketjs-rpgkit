@@ -129,9 +129,6 @@ export const PAGE_I18N_SCRIPT = `(function () {
     } catch (error) { return null; }
   }
   var lang = urlLang() || storedLang() || cfg.default || (options[0] && options[0].code) || "en";
-  // Flip the pending flag before any swap so the page can never stay hidden.
-  document.documentElement.setAttribute("data-page-lang", lang);
-  document.documentElement.lang = lang;
   function dict(code) { return (cfg.ui && cfg.ui[code]) || {}; }
   function t(key) {
     var active = dict(lang);
@@ -139,9 +136,19 @@ export const PAGE_I18N_SCRIPT = `(function () {
     var en = dict("en");
     return en[key] !== undefined ? en[key] : key;
   }
-  // player.js reads this for the strings it sets itself.
-  globalThis.__pocketI18n = t;
-  globalThis.__pocketPageLang = lang;
+  function publishLanguage() {
+    // Flip the pending flag before any swap so the page can never stay hidden.
+    document.documentElement.setAttribute("data-page-lang", lang);
+    document.documentElement.lang = lang;
+    // player.js reads this for the strings it sets itself. Its optional hook
+    // immediately re-renders stateful labels such as the signed-in user.
+    globalThis.__pocketI18n = t;
+    globalThis.__pocketPageLang = lang;
+    if (typeof globalThis.__pocketPageLanguageEvent === "function") {
+      globalThis.__pocketPageLanguageEvent(lang);
+    }
+  }
+  publishLanguage();
   function content() { return (cfg.content && cfg.content[lang]) || {}; }
   function apply() {
     var strings = dict(lang);
@@ -274,6 +281,12 @@ export const PAGE_I18N_SCRIPT = `(function () {
   }
   function switchTo(code) {
     if (!known(code) || code === lang) return;
+    // Translate the live page before navigation. This matters when a host or
+    // test defers the reload, and keeps stateful auth chrome in lockstep with
+    // the static labels rather than waiting for the next login/logout event.
+    lang = code;
+    publishLanguage();
+    apply();
     var persisted = false;
     try { localStorage.setItem(cfg.storage, code); persisted = true; } catch (error) {}
     if (persisted) {

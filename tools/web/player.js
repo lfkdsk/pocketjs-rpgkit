@@ -258,13 +258,20 @@ function initAuthUI(config) {
   signOut.id = "auth-signout";
   signOut.className = "bar-button";
   signOut.addEventListener("click", () => globalThis.__pocketAuthCommand?.("signout"));
-  setAuthUI(signIn, signOut, null);
+  let login = null;
+  const refresh = () => setAuthUI(signIn, signOut, login);
+  refresh();
   const audio = bar.querySelector(".audio-controls");
   bar.insertBefore(signIn, audio);
   bar.insertBefore(signOut, audio);
+  // The page switcher translates static chrome itself. Auth labels carry
+  // runtime state (including the login name), so re-render them through the
+  // same stateful formatter as soon as the active dictionary changes.
+  globalThis.__pocketPageLanguageEvent = refresh;
   // The game reports login/logout through this event hook.
   globalThis.__pocketAuthEvent = (ev) => {
-    setAuthUI(signIn, signOut, ev.type === "login" ? ev.login : null);
+    login = ev.type === "login" ? ev.login : null;
+    refresh();
   };
 }
 
