@@ -1698,7 +1698,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
                 "height": { "type": "integer", "minimum": 1 }
               }
             },
-            "frequency": { "type": "integer", "minimum": 1, "maximum": 5 }
+            "frequency": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "intervalTicks": { "type": "integer", "minimum": 1, "description": "Exact 60 Hz reference-tick interval between movement attempts; takes precedence over frequency." }
           }
         },
         {
@@ -1780,7 +1781,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
           }
         }
       ],
-      "description": "A movement override or wander request for a player/event target. It persists for the map visit; an event page switch clears that event's overrides. routeSpeed is the exception: it scopes a speed grade to exactly one forced route (latching onto the active route, or held pending until the next route installs) and is gone when that route ends."
+      "description": "A movement override or wander request for a player/event target. Wander may carry an exact intervalTicks cadence instead of an MV frequency grade. It persists for the map visit; an event page switch clears that event's overrides. routeSpeed is the exception: it scopes a speed grade to exactly one forced route (latching onto the active route, or held pending until the next route installs) and is gone when that route ends."
     },
     "moveStep": {
       "oneOf": [

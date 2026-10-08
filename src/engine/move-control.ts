@@ -25,6 +25,9 @@ export interface MoveOverride {
   bounds?: WanderBounds;
   speed?: MoveSpeed;
   frequency?: MoveFrequency;
+  /** Exact attempt interval for command-started wander. Absent keeps the
+   *  MV frequency-grade cadence. */
+  wanderIntervalTicks?: number;
   running?: boolean;
   directionFix?: boolean;
   through?: boolean;
@@ -55,6 +58,7 @@ export interface ResolvedMoveSettings {
   bounds: WanderBounds | null;
   speed: MoveSpeed;
   frequency: MoveFrequency;
+  wanderIntervalTicks: number | null;
   running: boolean;
   directionFix: boolean;
   through: boolean;
@@ -77,6 +81,7 @@ export const DEFAULT_MOVE_SETTINGS: Readonly<ResolvedMoveSettings> = Object.free
   bounds: null,
   speed: DEFAULT_MOVE_SPEED,
   frequency: DEFAULT_MOVE_FREQUENCY,
+  wanderIntervalTicks: null,
   running: false,
   directionFix: false,
   through: false,
@@ -113,6 +118,8 @@ export function applyMoveControl(override: MoveOverride, control: MoveControl): 
       override.moveType = "random";
       override.bounds = cloneBounds(control.bounds);
       if (control.frequency !== undefined) override.frequency = control.frequency;
+      if (control.intervalTicks === undefined) delete override.wanderIntervalTicks;
+      else override.wanderIntervalTicks = control.intervalTicks;
       override.routeStopped = false;
       override.cooldown = 0;
       return;
@@ -120,6 +127,7 @@ export function applyMoveControl(override: MoveOverride, control: MoveControl): 
       if (control.value === "page") delete override.moveType;
       else override.moveType = control.value;
       delete override.bounds;
+      delete override.wanderIntervalTicks;
       override.routeStopped = false;
       override.cooldown = 0;
       return;
@@ -138,6 +146,7 @@ export function applyMoveControl(override: MoveOverride, control: MoveControl): 
       return;
     case "frequency":
       override.frequency = control.value;
+      delete override.wanderIntervalTicks;
       override.cooldown = 0;
       return;
     case "directionFix":
@@ -166,6 +175,7 @@ export function resolveMoveSettings(
     bounds: override?.bounds ? { ...override.bounds } : null,
     speed: override?.speed ?? page?.moveSpeed ?? DEFAULT_MOVE_SPEED,
     frequency: override?.frequency ?? page?.moveFrequency ?? DEFAULT_MOVE_FREQUENCY,
+    wanderIntervalTicks: override?.wanderIntervalTicks ?? null,
     running: override?.running === true,
     directionFix: override?.directionFix ?? page?.directionFix ?? false,
     through: override?.through ?? page?.through ?? false,
@@ -193,6 +203,13 @@ export function movementConfigFor(
 /** MV autonomous stop threshold, expressed in fixed 60 Hz reference ticks. */
 export function frequencyDelay(frequency: MoveFrequency): number {
   return 30 * (5 - frequency);
+}
+
+/** Command-started wander may carry a source-exact attempt interval. */
+export function wanderDelay(
+  settings: Pick<ResolvedMoveSettings, "frequency" | "wanderIntervalTicks">,
+): number {
+  return settings.wanderIntervalTicks ?? frequencyDelay(settings.frequency);
 }
 
 /** Movement-driven facing obeys both the MV direction-fix bit and

@@ -147,7 +147,14 @@ export interface WanderBounds {
  *  until the next forced route installs — and is gone when that route ends,
  *  so later routes and autonomous movement keep their resolved speed. */
 export type MoveControl =
-  | { kind: "wander"; bounds?: WanderBounds; frequency?: MoveFrequency }
+  | {
+      kind: "wander";
+      bounds?: WanderBounds;
+      frequency?: MoveFrequency;
+      /** Exact 60 Hz reference-tick interval between wander attempts.
+       *  When present it takes precedence over the MV frequency grade. */
+      intervalTicks?: number;
+    }
   | { kind: "moveType"; value: "page" | "static" | "approach" }
   | { kind: "stop" }
   | { kind: "speed"; value: MoveSpeed }

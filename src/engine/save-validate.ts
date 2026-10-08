@@ -336,6 +336,9 @@ function validateMoveControl(v: unknown, path: string): string | null {
       if (v.frequency !== undefined && (!isNonNegInt(v.frequency) || v.frequency < 1 || v.frequency > 5)) {
         return fail(`${path}.frequency`, "movement frequency grade 1..5 required");
       }
+      if (v.intervalTicks !== undefined && (!isNonNegInt(v.intervalTicks) || v.intervalTicks < 1)) {
+        return fail(`${path}.intervalTicks`, "positive reference-tick interval required");
+      }
       return null;
     case "moveType":
       return ["page", "static", "approach"].includes(v.value as string)
@@ -1702,7 +1705,7 @@ function validatePlacements(v: unknown, path: string): string | null {
 }
 
 const MOVE_OVERRIDE_KEYS = new Set([
-  "moveType", "bounds", "speed", "frequency", "running",
+  "moveType", "bounds", "speed", "frequency", "wanderIntervalTicks", "running",
   "directionFix", "through", "facingMode", "routeStopped", "cooldown", "routeSpeed",
 ]);
 
@@ -1733,6 +1736,10 @@ function validateMoveOverride(v: unknown, path: string, event: boolean): string 
   }
   if (v.frequency !== undefined && (!isNonNegInt(v.frequency) || v.frequency < 1 || v.frequency > 5)) {
     return fail(`${path}.frequency`, "movement frequency grade 1..5 required");
+  }
+  if (v.wanderIntervalTicks !== undefined &&
+      (!isNonNegInt(v.wanderIntervalTicks) || v.wanderIntervalTicks < 1)) {
+    return fail(`${path}.wanderIntervalTicks`, "positive reference-tick interval required");
   }
   for (const key of ["running", "directionFix", "through", "routeStopped"] as const) {
     if (v[key] !== undefined && typeof v[key] !== "boolean") {

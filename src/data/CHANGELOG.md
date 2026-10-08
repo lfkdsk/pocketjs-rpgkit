@@ -39,7 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
-| `674e20dcfa9e608e24362e48a852d786f7dbac27a1ef8830cc463baba2430d88` | `playerMoving` condition: reads whether the player had a committed interpolating tile step at the start of the current reference tick; projects without the new condition retain their existing behavior | additive |
+| `c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d09097f1ef662788af2c` | `playerMoving` condition, plus optional exact `intervalTicks` cadence for command-started wander; projects without either addition retain their existing behavior and MV frequency-grade cadence | additive |
 | `e763f4898c37c59c111618d57feb35d93b4ba67932cfb2094406388f1efedb45` | optional `uiText` entries for manual-save refusal, save/load progress, success and failure feedback; documents without them keep the English defaults | additive |
 | `11227c99d75fe0ec833b77499bec30022f046383c4eeb9349a3f590bbc4ce801` | optional switch declaration `writtenBy: "host"` — marks a switch the host or an extension writes at runtime, so the static checker does not flag it as read-never-set; declarations without the marker are still checked | additive |
 | `dddabaa88780fa1e117a911c88e191b5958bd390b41739e8b6bc1fd0f41ed4e0` | `routeSpeed` moveControl variant: a speed grade scoped to one forced route (latches onto the active route or is held pending for the next, and is gone when the route ends); documents that never use it move unchanged | additive |

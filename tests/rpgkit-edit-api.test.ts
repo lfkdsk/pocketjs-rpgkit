@@ -380,7 +380,12 @@ describe("rpgkit edit command operations and patches", () => {
     const movement: Command = {
       op: "moveControl",
       target: { event: "npc" },
-      control: { kind: "wander", bounds: { x: 1, y: 2, width: 3, height: 4 }, frequency: 2 },
+      control: {
+        kind: "wander",
+        bounds: { x: 1, y: 2, width: 3, height: 4 },
+        frequency: 2,
+        intervalTicks: 18,
+      },
     };
     const moved = success(executeEditOperation(source, "insert-command", {
       ...selection,
@@ -393,7 +398,14 @@ describe("rpgkit edit command operations and patches", () => {
       value: "5",
     }));
     expect((JSON.parse(editedMovement.output) as Project).maps[0]!.events![0]!.pages[0]!.commands[0])
-      .toMatchObject({ control: { kind: "wander", frequency: 5 } });
+      .toMatchObject({ control: { kind: "wander", frequency: 5, intervalTicks: 18 } });
+    const editedInterval = success(executeEditOperation(editedMovement.output, "update-command", {
+      ...selection,
+      field: "control.intervalTicks",
+      value: "30",
+    }));
+    expect((JSON.parse(editedInterval.output) as Project).maps[0]!.events![0]!.pages[0]!.commands[0])
+      .toMatchObject({ control: { kind: "wander", frequency: 5, intervalTicks: 30 } });
   });
 
   test("lists and edits commands inside scene onDone/onCancel branches", () => {

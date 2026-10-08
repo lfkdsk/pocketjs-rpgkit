@@ -57,6 +57,7 @@ import {
   inMapBounds,
   inWanderBounds,
   movementConfigFor,
+  wanderDelay,
   type ResolvedMoveSettings,
 } from "./move-control.ts";
 import type { Dir4, PassageTable } from "./passability.ts";
@@ -525,7 +526,6 @@ export function placeChar(
       ch.facing = DIR4[dir];
       ch.stepDir = ch.facing;
     }
-    ch.thinkIn = 0;
     ch.route = ch.patrol ? { ...ch.patrol, pc: 0, waitLeft: 0 } : null;
   }
   return { state: s, displacedWaiter };
@@ -560,7 +560,6 @@ export function installRoute(
     };
     ch.phase = 0;
     ch.moving = false;
-    ch.thinkIn = 0;
     ch.px = ch.tx * cfg.tile;
     ch.py = ch.ty * cfg.tile;
   }
@@ -609,9 +608,17 @@ export function stopCharRoute(
   const displacedWaiter = ch?.route?.waiter ?? null;
   if (ch) {
     ch.route = null;
-    ch.thinkIn = 0;
   }
   return { state: s, displacedWaiter };
+}
+
+/** Restart a command-started event's autonomous decision clock without
+ *  disturbing a committed step or forced route. Session states share
+ *  untouched character objects between ticks, so the write must go through
+ *  ownChar instead of mutating the table entry directly. */
+export function resetCharThinkInPlace(s: CharsState, eventId: string): void {
+  const ch = s.chars[eventId];
+  if (ch && ch.thinkIn !== 0) ownChar(s, eventId).thinkIn = 0;
 }
 
 const FACE: Record<string, Dir4> = {
@@ -630,6 +637,8 @@ const MOVE: Record<string, Dir4> = {
 export interface PlayerPlace {
   tx: number;
   ty: number;
+  /** Live player facing, used by source-compatible NPC observation pauses. */
+  facing?: Dir4;
   /** Tile the player is stepping INTO this tick (same as tx,ty at rest). */
   destX: number;
   destY: number;
@@ -855,7 +864,10 @@ export function stepCharsInPlace(
     // Characters the branches below leave untouched stay shared: a locked
     // one, and an idle one with no route, no pause and a static page.
     if (!shared.moving) {
-      if (locked.has(shared.id) && !(shared.route && !shared.route.patrol) && !pageRouteNeedsSync) continue;
+      if (
+        locked.has(shared.id) && !(shared.route && !shared.route.patrol) &&
+        !pageRouteNeedsSync && !settings.runtimeWander
+      ) continue;
       if (
         !shared.route && shared.thinkIn === 0 &&
         settings.moveType === "static" && !settings.routeStopped && !pageRouteNeedsSync
@@ -864,12 +876,23 @@ export function stepCharsInPlace(
     const ch = ownChar(s, id);
     others?.set(id, ch);
 
+    // Tuxemon's WanderBehavior advances its clock before every other guard:
+    // movement, a forced path, modal UI, being observed, and a blocked cell
+    // all consume an attempt interval. Only the due attempt itself is skipped.
+    let runtimeWanderDue = false;
+    if (settings.runtimeWander) {
+      if (ch.thinkIn > 0) ch.thinkIn--;
+      if (ch.thinkIn <= 0) {
+        ch.thinkIn = wanderDelay(settings);
+        runtimeWanderDue = true;
+      }
+    }
+
     // A stop command lets an already-committed tile finish, then suppresses
     // the remaining forced/page route. A waiter is released exactly once.
     if (!ch.moving && settings.routeStopped && ch.route) {
       if (ch.route.waiter) finishedWaiters.push(ch.route.waiter);
       ch.route = null;
-      ch.thinkIn = 0;
       continue;
     }
     if (!ch.moving && ch.route?.patrol && settings.runtimeMoveType) ch.route = null;
@@ -936,11 +959,14 @@ export function stepCharsInPlace(
       continue;
     }
 
-    if (ch.thinkIn > 0) {
+    if (!settings.runtimeWander && ch.thinkIn > 0) {
       ch.thinkIn--;
       if (ch.thinkIn > 0) continue; // decide on the tick the pause ends
     }
-    if (settings.runtimeWander && options.modalOpen) continue;
+    if (settings.runtimeWander) {
+      if (!runtimeWanderDue) continue;
+      if (options.modalOpen || playerObservesChar(player, ch)) continue;
+    }
     if (settings.moveType === "random") {
       randomStep(s, ch, table, player, otherChars(), desiredCfg, settings, options);
     } else if (settings.moveType === "approach") {
@@ -1283,7 +1309,6 @@ function randomStep(
   settings: ResolvedMoveSettings,
   options: CharStepOptions,
 ): void {
-  const delay = frequencyDelay(settings.frequency);
   if (settings.runtimeWander) {
     // Tuxemon chooses uniformly from the currently valid exits. It neither
     // consumes RNG nor invents an idle result when no exit exists.
@@ -1296,7 +1321,6 @@ function randomStep(
         exits.push(dir);
       }
     }
-    ch.thinkIn = delay;
     if (exits.length === 0) return;
     const cursor = options.runtimeRng ?? s;
     const r = randInt(cursor.rng, 0, exits.length - 1);
@@ -1305,6 +1329,7 @@ function randomStep(
     return;
   }
 
+  const delay = frequencyDelay(settings.frequency);
   const r = randInt(s.rng, 0, 4);
   s.rng = r.next;
   if (r.value === 4) {
@@ -1324,6 +1349,18 @@ function randomStep(
   }
   noteContact(ch, tx, ty, dir, table, player, settings.through);
   ch.thinkIn = Math.max(THINK_BEATS, delay); // blocked: re-roll later
+}
+
+/** Tuxemon pauses wander attempts while the player occupies one of the four
+ *  adjacent cells and faces the NPC. Diagonals and farther cells do not
+ *  count as observation. */
+function playerObservesChar(player: PlayerPlace, ch: CharState): boolean {
+  if (player.facing === undefined) return false;
+  const dx = ch.tx - player.tx;
+  const dy = ch.ty - player.ty;
+  if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
+  const toward: Dir4 = dy > 0 ? 0 : dx < 0 ? 1 : dy < 0 ? 2 : 3;
+  return player.facing === toward;
 }
 
 function approachStep(

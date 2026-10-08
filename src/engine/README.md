@@ -190,7 +190,10 @@ Conventions:
   page/static/approach autonomous motion, `stop`, speed, run, frequency,
   direction fix, through, or facing mode. `run` raises the effective speed
   grade by one, capped at 6. Frequency grade `n` waits `30 × (5 - n)`
-  reference ticks between autonomous decisions.
+  reference ticks between autonomous decisions. A `wander` control may carry
+  `intervalTicks` instead for a positive reference-tick interval; it takes
+  precedence over the frequency grade. NPCs run that clock continuously;
+  player wander retains its existing pause-while-held clock.
 - **Control lifetime and priority:** settings and `stop` persist for the map
   visit and round-trip through saves. An NPC page switch clears all of that
   actor's overrides; a map transfer clears both player and NPC overrides.
@@ -204,8 +207,11 @@ Conventions:
   and `scripted` use the Tuxemon behavior of blocking movement-driven turns
   while allowing an explicit face step; `followMovement` turns with a step.
 - **Wander holds:** player wander makes `worldIdle` false, while NPC wander
-  does not. Input lock or any dialog pauses player wander. Any dialog pauses
-  runtime NPC wander, independently of `system.messageBlocksPlayer`.
+  does not. Input lock or any dialog pauses player wander. Runtime NPC wander
+  makes no new step while a dialog is open or while the player is cardinally
+  adjacent and facing that NPC, independently of `system.messageBlocksPlayer`.
+  Its attempt clock still advances through those holds, committed movement,
+  forced routes and blocked attempts; skipped attempts consume no RNG.
 - **Input lock:** `lockInput`/`unlockInput` are a cross-event lock:
   while held the mover ignores the d-pad and confirm starts no action
   event, but `autorun`/`parallel` fibers still fold. The lock is per map

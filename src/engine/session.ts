@@ -119,6 +119,7 @@ import {
   installRoute,
   latchRouteSpeed,
   placeChar,
+  resetCharThinkInPlace,
   routeSpeedConfig,
   shareChars,
   stopCharRoute,
@@ -158,7 +159,7 @@ import {
   canFace,
   createMoveControlState,
   DEFAULT_MOVE_SETTINGS,
-  frequencyDelay,
+  wanderDelay,
   inMapBounds,
   inWanderBounds,
   movementConfigFor,
@@ -1463,7 +1464,7 @@ function stepPlayerWander(
       : canStepFrom(table, s.move.tx, s.move.ty, dir);
     if (open) exits.push(dir);
   }
-  override.cooldown = frequencyDelay(settings.frequency);
+  override.cooldown = wanderDelay(settings);
   if (exits.length === 0) return;
   const roll = randInt(s.sw.rng, 0, exits.length - 1);
   s.sw.rng = roll.next;
@@ -1525,6 +1526,7 @@ function applyTargetMoveControl(
   const override = eventMoveOverride(s, target.event);
   if (!override) return;
   applyMoveControl(override, control);
+  if (control.kind === "wander") resetCharThinkInPlace(s.chars, target.event);
   if (control.kind === "stop") {
     const stopped = stopCharRoute(s.chars, target.event);
     s.chars = stopped.state;
@@ -2974,6 +2976,7 @@ function stepReferenceTick(
     const playerPlace = {
       tx: s.move.tx,
       ty: s.move.ty,
+      facing: s.move.facing,
       destX: s.move.moving ? s.move.tx + DX[s.move.stepDir] : s.move.tx,
       destY: s.move.moving ? s.move.ty + DY[s.move.stepDir] : s.move.ty,
       contacts,
@@ -3036,6 +3039,7 @@ function stepReferenceTick(
     const playerPlace = {
       tx: s.move.tx,
       ty: s.move.ty,
+      facing: s.move.facing,
       destX: s.move.moving ? s.move.tx + DX[s.move.stepDir] : s.move.tx,
       destY: s.move.moving ? s.move.ty + DY[s.move.stepDir] : s.move.ty,
       through: playerSettings.through,
@@ -3066,7 +3070,10 @@ function stepReferenceTick(
         settings: eventSettings,
         applyControl: (eventId, control) => {
           const override = eventMoveOverride(s, eventId);
-          if (override) applyMoveControl(override, control);
+          if (override) {
+            applyMoveControl(override, control);
+            if (control.kind === "wander") resetCharThinkInPlace(s.chars, eventId);
+          }
         },
         runtimeRng: s.sw,
         modalOpen: s.interp.modal !== null,

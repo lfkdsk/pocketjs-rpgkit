@@ -550,6 +550,7 @@ export function commandFields(
               ? `${command.control.bounds.x},${command.control.bounds.y},${command.control.bounds.width},${command.control.bounds.height}`
               : OMIT),
             field("control.frequency", "FREQUENCY", command.control.frequency ?? OMIT, "integer"),
+            field("control.intervalTicks", "INTERVAL TICKS", command.control.intervalTicks ?? OMIT, "integer"),
           );
           break;
         case "moveType":
@@ -1101,6 +1102,12 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
         if (key === "control.frequency") {
           const value = optionalInteger(raw, "frequency", 1, 5);
           return value.ok ? good({ ...command, control: setOptional(command.control, "frequency", value.value) }) : value;
+        }
+        if (key === "control.intervalTicks") {
+          const value = optionalInteger(raw, "interval ticks", 1);
+          return value.ok
+            ? good({ ...command, control: setOptional(command.control, "intervalTicks", value.value) })
+            : value;
         }
       }
       if (key === "control.value") {

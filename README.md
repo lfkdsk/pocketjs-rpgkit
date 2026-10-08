@@ -1574,7 +1574,9 @@ grade 5, `directionFix:false`, `through:false`, and
 `facingMode:"followMovement"`. Speed uses RPG Maker MV's 1-6 grades; `run`
 adds one effective grade capped at 6. Frequency uses MV's 1-5 cadence grades
 on the fixed reference-tick clock: grade `n` waits `30 × (5 - n)` reference
-ticks between autonomous decisions.
+ticks between autonomous decisions. `wander` may instead set a positive
+`intervalTicks`; it takes precedence over the grade. NPCs run that clock
+continuously, while player wander keeps its existing pause-while-held clock.
 
 Control settings (including `stop`) persist for the current map visit and
 round-trip through saves. An NPC page switch clears all of that NPC's
@@ -1585,7 +1587,10 @@ new route or motion-mode control resumes it; use `moveType:"static"` to stop
 wandering. `wander` may constrain its random steps to an optional non-empty
 tile rectangle. Player wander makes `worldIdle` false; NPC wander does not.
 Input lock or any open dialog pauses player wander, and any open dialog pauses
-runtime NPC wander.
+runtime NPC wander. An NPC also skips a due attempt while the player is on a
+cardinally adjacent tile facing it. The NPC attempt clock continues through
+these holds, committed movement, forced routes and blocked attempts, and a
+skipped attempt consumes no random draw.
 
 `through` bypasses terrain and character bodies, but never map bounds, and
 touch triggers still fire. `directionFix` prevents every facing change.

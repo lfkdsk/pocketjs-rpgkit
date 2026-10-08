@@ -125,7 +125,7 @@ function motionProjection(state: SessionState): unknown {
 
 describe("KM1 schema and ordered dispatch", () => {
   const ALL_CONTROLS: MoveControl[] = [
-    { kind: "wander", bounds: { x: 1, y: 2, width: 3, height: 4 }, frequency: 3 },
+    { kind: "wander", bounds: { x: 1, y: 2, width: 3, height: 4 }, frequency: 3, intervalTicks: 18 },
     { kind: "moveType", value: "page" },
     { kind: "stop" },
     { kind: "speed", value: 6 },
@@ -458,7 +458,7 @@ describe("KM1 through and deterministic wander", () => {
     expect(out.sw.rng).toBe(rng);
   });
 
-  test("frequency uses MV reference-tick cadence", () => {
+  test("frequency uses MV reference-tick cadence while the clock keeps running mid-step", () => {
     expect(([1, 2, 3, 4, 5] as MoveFrequency[]).map(frequencyDelay)).toEqual([120, 90, 60, 30, 0]);
     const wanderer = event("wanderer", 5, 5, [page("action", [])]);
     const p = project([map("a", [controller([
@@ -470,13 +470,76 @@ describe("KM1 through and deterministic wander", () => {
     ]), wanderer])]);
     const { session, state } = boot(p);
     let out = fold(session, action(session, state), 8);
-    expect(out.chars.chars.wanderer).toMatchObject({ moving: false, thinkIn: 120 });
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: false, thinkIn: 113 });
     const at = [out.chars.chars.wanderer!.tx, out.chars.chars.wanderer!.ty];
-    out = fold(session, out, 119);
+    out = fold(session, out, 112);
     expect([out.chars.chars.wanderer!.tx, out.chars.chars.wanderer!.ty]).toEqual(at);
     expect(out.chars.chars.wanderer!.moving).toBe(false);
     out = stepSession(session, out, { buttons: 0 });
     expect(out.chars.chars.wanderer!.moving).toBe(true);
+  });
+
+  test("an exact wander interval runs through movement and blocked attempts without extra RNG", () => {
+    const wanderer = event("wanderer", 5, 5, [page("action", [])]);
+    const p = project([map("a", [controller([{
+      op: "moveControl",
+      target: { event: "wanderer" },
+      control: {
+        kind: "wander",
+        bounds: { x: 4, y: 5, width: 3, height: 1 },
+        intervalTicks: 18,
+      },
+    }]), wanderer])]);
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    out = stepSession(session, out, { buttons: 0 });
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: true, phase: 1, thinkIn: 18 });
+    out = fold(session, out, 7);
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: false, thinkIn: 11 });
+    const at = [out.chars.chars.wanderer!.tx, out.chars.chars.wanderer!.ty];
+    out = fold(session, out, 10);
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: false, thinkIn: 1 });
+    expect([out.chars.chars.wanderer!.tx, out.chars.chars.wanderer!.ty]).toEqual(at);
+    out = stepSession(session, out, { buttons: 0 });
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: true, phase: 1, thinkIn: 18 });
+
+    const boxed = project([map("a", [controller([{
+      op: "moveControl",
+      target: { event: "wanderer" },
+      control: { kind: "wander", bounds: { x: 5, y: 5, width: 1, height: 1 }, intervalTicks: 3 },
+    }]), wanderer])]);
+    const run = boot(boxed);
+    out = action(run.session, run.state);
+    const rng = out.sw.rng;
+    out = fold(run.session, out, 10);
+    expect(out.chars.chars.wanderer).toMatchObject({ tx: 5, ty: 5, moving: false, thinkIn: 3 });
+    expect(out.sw.rng).toBe(rng);
+  });
+
+  test("an adjacent player facing the NPC suppresses only the due wander attempt", () => {
+    const wanderer = event("wanderer", 5, 5, [page("action", [{
+      op: "moveControl",
+      target: "this",
+      control: {
+        kind: "wander",
+        bounds: { x: 4, y: 5, width: 3, height: 1 },
+        intervalTicks: 3,
+      },
+    }])]);
+    const p = project([map("a", [wanderer])], { map: "a", x: 5, y: 4, dir: "down" });
+    const { session, state } = boot(p);
+    let out = action(session, state);
+    const rng = out.sw.rng;
+    out = stepSession(session, out, { buttons: 0 });
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: false, thinkIn: 3 });
+    out = fold(session, out, 3);
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: false, thinkIn: 3 });
+    expect(out.sw.rng).toBe(rng);
+
+    out = { ...out, move: { ...out.move, facing: 2 } };
+    out = fold(session, out, 3);
+    expect(out.chars.chars.wanderer).toMatchObject({ moving: true, phase: 1, thinkIn: 3 });
+    expect(out.sw.rng).not.toBe(rng);
   });
 
   test("runtime wander is byte-deterministic at 60/30/20/4 Hz", () => {
@@ -545,7 +608,7 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
     expect(isSessionWorldIdle(out)).toBe(false);
 
     const npcProject = project([map("a", [controller([
-      { op: "moveControl", target: { event: "npc" }, control: { kind: "wander" } },
+      { op: "moveControl", target: { event: "npc" }, control: { kind: "wander", intervalTicks: 7 } },
     ]), npc])]);
     run = boot(npcProject);
     out = action(run.session, run.state);
@@ -572,7 +635,7 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
     ], { condition: { switch: "open-dialog" } })]);
     const p = project([map("a", [controller([
       { op: "moveControl", target: "player", control: { kind: "wander" } },
-      { op: "moveControl", target: { event: "npc" }, control: { kind: "wander" } },
+      { op: "moveControl", target: { event: "npc" }, control: { kind: "wander", intervalTicks: 7 } },
       { op: "switch", id: "open-dialog", value: true },
     ]), npc, talker])]);
     const run = boot(p);
@@ -590,7 +653,13 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
     const heldRng = out.sw.rng;
     out = fold(run.session, out, 20);
     expect(out.move).toEqual(heldPlayer);
-    expect(out.chars.chars.npc).toEqual(heldNpc);
+    expect(out.chars.chars.npc).toMatchObject({
+      tx: heldNpc!.tx,
+      ty: heldNpc!.ty,
+      moving: false,
+    });
+    expect(out.chars.chars.npc!.thinkIn).toBeGreaterThan(0);
+    expect(out.chars.chars.npc!.thinkIn).toBeLessThanOrEqual(7);
     expect(out.sw.rng).toBe(heldRng);
   });
 
@@ -599,7 +668,7 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
     const p = project([map("a", [controller([
       { op: "moveControl", target: "player", control: { kind: "speed", value: 4 } },
       { op: "moveControl", target: "player", control: { kind: "wander", bounds: { x: 1, y: 1, width: 4, height: 4 }, frequency: 3 } },
-      { op: "moveControl", target: { event: "npc" }, control: { kind: "through", value: true } },
+      { op: "moveControl", target: { event: "npc" }, control: { kind: "wander", intervalTicks: 17 } },
     ]), npc])]);
     const run = boot(p);
     // Let the first deterministic wander step land so the snapshot is taken
@@ -644,6 +713,8 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
         "state.interp.moveControls.player.bounds: non-empty {x,y,width,height} tile rectangle required"],
       ["frequency", (snapshot) => { snapshot.interp.moveControls.player.frequency = 0; },
         "state.interp.moveControls.player.frequency: movement frequency grade 1..5 required"],
+      ["wander interval", (snapshot) => { snapshot.interp.moveControls.events.npc.wanderIntervalTicks = 0; },
+        "state.interp.moveControls.events.npc.wanderIntervalTicks: positive reference-tick interval required"],
       ["running", (snapshot) => { snapshot.interp.moveControls.player.running = "yes"; },
         "state.interp.moveControls.player.running: boolean required"],
       ["directionFix", (snapshot) => { snapshot.interp.moveControls.player.directionFix = "yes"; },
