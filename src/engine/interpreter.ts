@@ -394,6 +394,9 @@ function tileOverrideFieldMatches(
  * and deliberately never serialized. */
 export interface ConditionContext {
   worldIdle: boolean;
+  /** Whether a player step was already interpolating at this reference
+   *  tick's start. Omitted by callers without a live movement context. */
+  playerMoving?: boolean;
   /** Current persistent audio intent. Omitted means silence. */
   audio?: Readonly<AudioState>;
   /** Current page index and authored sprite for each live map event. */
@@ -467,6 +470,10 @@ export function evalCondition(
       // conservative false result.
       const idle = context?.worldIdle ?? false;
       return c.negate === true ? !idle : idle;
+    }
+    case "playerMoving": {
+      const moving = context?.playerMoving ?? false;
+      return c.negate === true ? !moving : moving;
     }
     case "region": {
       // A region condition needs the map's region table and bounds.
@@ -1554,6 +1561,11 @@ export interface InterpInput {
    *  difference from `facing` is a turn-in-place edge, which re-fires a
    *  facing-reading playerTouch page. Defaults to `facing`. */
   prevFacing?: Facing;
+  /** Player movement sampled before this reference tick's movement fold.
+   *  This ordering matches event conditions that observe an already-live
+   *  velocity before world physics advances. Omitted when the World has no
+   *  playerMoving condition. */
+  playerMoving?: boolean;
   /** Live cells of map characters this frame (P1④ NPC motion); event id ->
    *  cell. Events absent from the record stand on their authored x/y. */
   eventCells?: Record<string, Cell>;
@@ -2121,6 +2133,9 @@ export interface World {
    * per-tick event-page records or tile metadata. */
   needsEventPages?: boolean;
   needsTilePropertyContext?: boolean;
+  /** True when some page or program reads `playerMoving`; the session then
+   *  samples the mover only for this map. */
+  needsPlayerMovingContext?: boolean;
   /** True when some page/condition of the map reads a `region` condition:
    *  the session then populates ConditionContext.regionCells. Maps without
    *  one pay nothing. */
@@ -2432,8 +2447,10 @@ function liveConditionContext(
   w: World,
   blockers: Readonly<WorldIdleBlockers> | undefined,
   eventPages?: Readonly<Record<string, EventPageAppearance>>,
+  playerMoving?: boolean,
 ): ConditionContext {
   const context: ConditionContext = { worldIdle: isWorldIdle(s, blockers) };
+  if (playerMoving !== undefined) context.playerMoving = playerMoving;
   if (s.audio) context.audio = s.audio;
   if (eventPages) {
     context.eventPages = eventPages;
@@ -2456,6 +2473,7 @@ const CONTEXT_EVENT_PAGES = 1;
 const CONTEXT_TILE_PROPERTIES = 2;
 const CONTEXT_MAP_ANIM_TARGET = 4;
 const CONTEXT_REGION = 8;
+const CONTEXT_PLAYER_MOVING = 16;
 
 function conditionContextFlags(condition: Condition): number {
   if (condition.kind === "appearance" && condition.target !== "player") {
@@ -2463,6 +2481,7 @@ function conditionContextFlags(condition: Condition): number {
   }
   if (condition.kind === "tileProperty") return CONTEXT_TILE_PROPERTIES;
   if (condition.kind === "region") return CONTEXT_REGION;
+  if (condition.kind === "playerMoving") return CONTEXT_PLAYER_MOVING;
   return 0;
 }
 
@@ -2710,6 +2729,7 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     needsEventPages: (contextFlags & CONTEXT_EVENT_PAGES) !== 0,
     needsTilePropertyContext: (contextFlags & CONTEXT_TILE_PROPERTIES) !== 0,
     needsRegionContext: (contextFlags & CONTEXT_REGION) !== 0,
+    needsPlayerMovingContext: (contextFlags & CONTEXT_PLAYER_MOVING) !== 0,
     ...(regionCells ? { regionCells } : {}),
     ...(terrainCells ? { terrainCells } : {}),
     ...(tilesCells ? { tilesCells } : {}),
@@ -3185,7 +3205,7 @@ function publishedPage(
     eventId,
     input.facing,
     extension,
-    liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages),
+    liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
   );
   return page === (input.liveChars[eventId]?.pageIndex ?? -1) ? undefined : { page };
 }
@@ -3301,7 +3321,7 @@ function cancelStaleParallels(
     const ev = worldEventById(w, key.slice(w.map.id.length + 1));
     const active = ev && !s.erased[key]
       ? activePage(ev, s.sw, w.map.id, facing, extension,
-          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages))
+          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving))
       : null;
     // Same page still active: keep running. A page change (index differs)
     // cancels; scanTriggers restarts a fiber for the new page on this step.
@@ -3368,6 +3388,7 @@ function pruneStaleQueue<T extends { fiber: string }>(
 export interface PageSelections {
   facing: Facing | undefined;
   worldIdle: boolean;
+  playerMoving?: boolean;
   indices: ReadonlyMap<GameEvent, number>;
 }
 
@@ -3445,13 +3466,21 @@ function scanTriggers(
       delete ownInterpRecord(s, "touched")[key];
     }
   }
-  let selectionContext = liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages);
+  let selectionContext = liveConditionContext(
+    s,
+    w,
+    input.worldIdleBlockers,
+    input.eventPages,
+    input.playerMoving,
+  );
   // Ascending event-id order so parallel starts and the blocking-fiber
   // choice are deterministic across frames. The order is explicit UTF-16
   // code units (eventIdLess), never localeCompare, whose collation differs
   // between the Bun and QuickJS hosts (review C12).
   const candidates = triggerCandidates(s, w, input);
-  const prepared = selected?.facing === input.facing && selected.worldIdle === selectionContext.worldIdle
+  const prepared = selected?.facing === input.facing &&
+      selected.worldIdle === selectionContext.worldIdle &&
+      selected.playerMoving === selectionContext.playerMoving
     ? prepareTriggers(w, candidates, selected)
     : null;
   for (let candidate = 0; candidate < (prepared ?? candidates).length; candidate++) {
@@ -3570,6 +3599,7 @@ interface GuardMemo {
   gold?: number;
   facing?: Facing;
   idle?: boolean;
+  playerMoving?: boolean;
   ext?: unknown;
   playerName?: string;
 }
@@ -3585,6 +3615,7 @@ function guardMask(c: Condition, runtime: ExtensionRuntime): number {
     case "gold": return 16;
     case "facing": return 32;
     case "worldIdle": return 64;
+    case "playerMoving": return 512;
     case "ext":
       return runtime.immutableConditions && runtime.deterministicConditions
         ? 1 | 2 | 8 | 16 | 128 | 256
@@ -3615,7 +3646,8 @@ function guardUnchanged(
     (!(mask & 32) || memo.facing === input.facing) &&
     (!(mask & 64) || memo.idle === isWorldIdle(s, input.worldIdleBlockers)) &&
     (!(mask & 128) || memo.ext === extensionConditionCacheKey(extension.runtime, extension.ext)) &&
-    (!(mask & 256) || memo.playerName === s.sw.playerName);
+    (!(mask & 256) || memo.playerName === s.sw.playerName) &&
+    (!(mask & 512) || memo.playerMoving === input.playerMoving);
 }
 
 function rememberGuard(
@@ -3643,6 +3675,7 @@ function rememberGuard(
     idle: mask & 64 ? isWorldIdle(s, input.worldIdleBlockers) : undefined,
     ext: mask & 128 ? extensionConditionCacheKey(extension.runtime, extension.ext) : undefined,
     playerName: mask & 256 ? s.sw.playerName : undefined,
+    playerMoving: mask & 512 ? input.playerMoving : undefined,
   });
 }
 
@@ -3666,6 +3699,7 @@ interface IdleScanMemo {
   prevY: number;
   facing: Facing;
   prevFacing: Facing | undefined;
+  playerMoving: boolean | undefined;
   cells: InterpInput["eventCells"];
   main: string | undefined;
   mainPage: number | undefined;
@@ -3706,7 +3740,8 @@ function sameIdleScan(
     memo.modal === s.modal?.fiber && memo.modalKind === s.modal?.kind &&
     memo.x === input.playerCell.x && memo.y === input.playerCell.y &&
     memo.prevX === input.prevCell.x && memo.prevY === input.prevCell.y &&
-    memo.facing === input.facing && memo.prevFacing === input.prevFacing && memo.cells === input.eventCells &&
+    memo.facing === input.facing && memo.prevFacing === input.prevFacing &&
+    memo.playerMoving === input.playerMoving && memo.cells === input.eventCells &&
     memo.switches === recordRevision(s.sw.switches) && memo.variables === recordRevision(s.sw.variables) &&
     memo.self === recordRevision(s.sw.self) && memo.items === recordRevision(s.sw.items) &&
     memo.erased === recordRevision(s.erased) && memo.touched === recordRevision(s.touched) &&
@@ -3746,6 +3781,7 @@ function idleScanSnapshot(
     prevY: input.prevCell.y,
     facing: input.facing,
     prevFacing: input.prevFacing,
+    playerMoving: input.playerMoving,
     cells: input.eventCells,
     main: s.main?.key,
     mainPage: s.main?.pageIndex,
@@ -4202,7 +4238,7 @@ function shopRows(
         eventKey,
         undefined,
         extension,
-        liveConditionContext(state, w, input.worldIdleBlockers, input.eventPages),
+        liveConditionContext(state, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
       )) continue;
       const price = resolveGoodsPrice(g, w.items);
       const owned = keyedValue(sw.items, g.item) ?? 0;
@@ -5199,7 +5235,7 @@ function runFiber(
           f.key,
           input.facing,
           extension,
-          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages),
+          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
         ) ? top.pc + 1 : ins.onFalse;
         break;
       case "jmp":
@@ -6012,7 +6048,7 @@ export function stepInterpWithExtensionsInPlace(
               key,
               input.facing,
               extension,
-              liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages),
+              liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
             )
             ? pc + 1
             : ins.onFalse;

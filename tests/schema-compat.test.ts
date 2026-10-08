@@ -260,7 +260,7 @@ describe("shells and saves from earlier schema generations", () => {
         "it comes from before a breaking format change or from a different RPG Kit build, " +
         "see Schema identities in the rpgkit-project CHANGELOG",
     );
-    expect(accepted).toBe("e763f489…, 11227c99…, dddabaa8…, a749a871…, 1127febb…, 5f14109a…, c0e96213…, 3315cbf7…, 1b66bce2…, 3a57e757…, 0e510772…, 3ac9e23f…, 49d96a25…, bc4e7242…, 4a9a8310…, ff6b9237…, ed562c6f…, c0588207…, 0b9fff5b…");
+    expect(accepted).toBe("674e20dc…, e763f489…, 11227c99…, dddabaa8…, a749a871…, 1127febb…, 5f14109a…, c0e96213…, 3315cbf7…, 1b66bce2…, 3a57e757…, 0e510772…, 3ac9e23f…, 49d96a25…, bc4e7242…, 4a9a8310…, ff6b9237…, ed562c6f…, c0588207…, 0b9fff5b…");
     const current = open(readShell(MAP_SCHEMA_COMPATIBLE_HASHES[0]!));
     expect(() => restoreSessionEnvelope(current, readSave(hash))).toThrow(/schema 47cf3d8f… is not one this runtime reads/);
     expect(() => loadValidatedProjectShell(readFileSync(join(genDir(hash), "project.json"), "utf8")))

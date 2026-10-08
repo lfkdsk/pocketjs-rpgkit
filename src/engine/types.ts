@@ -197,7 +197,9 @@ export interface MoveRoute {
  *  `if` folded on the map); elsewhere it evaluates false. `worldIdle` is
  *  likewise a runtime-only derived value: it is never stored in a project
  *  save, and low-level callers without a world-activity context cannot
- *  prove it true. */
+ *  prove it true. `playerMoving` samples the player's interpolating-step
+ *  state at the start of the current reference tick; it is likewise
+ *  derived rather than saved. */
 export type Condition =
   | { kind: "switch"; id: string; value?: boolean }
   | { kind: "variable"; id: string; op: ">=" | "<=" | "==" | "!="; value: number }
@@ -221,6 +223,9 @@ export type Condition =
   /** True only while the map world is the unobstructed top-level state.
    *  `negate` asks for any blocking world state instead. */
   | { kind: "worldIdle"; negate?: boolean }
+  /** True while the player had a committed interpolating tile step at the
+   *  start of this reference tick. `negate` asks for the resting state. */
+  | { kind: "playerMoving"; negate?: boolean }
   /** True when the region id authored at cell (x, y) equals `id`. Cells
    *  without a region read 0, so `{kind:"region", x, y, id: 0}` matches
    *  unmarked cells. Coordinates are literals (like tileProperty); read a

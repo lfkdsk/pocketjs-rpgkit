@@ -401,6 +401,8 @@ export function conditionFields(
       return [field(p("dir"), "DIR", condition.dir, "enum", DIRS)];
     case "worldIdle":
       return [field(p("negate"), "NEGATE", condition.negate ?? false, "boolean", BOOLS)];
+    case "playerMoving":
+      return [field(p("negate"), "NEGATE", condition.negate ?? false, "boolean", BOOLS)];
     case "bgmPlaying":
       return [
         resourceField(p("id"), "BGM", condition.id ?? "(any)", resources.audio, "Project audio ids; use (any) for any BGM"),

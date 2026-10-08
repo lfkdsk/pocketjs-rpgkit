@@ -1951,6 +1951,16 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "playerMoving" },
+            "negate": { "type": "boolean", "description": "Invert the live player-movement result." }
+          },
+          "description": "True while the player had a committed interpolating tile step at the start of the current reference tick. Derived from live movement and never saved."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "x", "y", "id"],
           "properties": {
             "kind": { "const": "region" },

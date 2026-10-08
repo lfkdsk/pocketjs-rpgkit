@@ -235,6 +235,11 @@ function validateCondition(v: unknown, path: string): string | null {
         return fail(`${path}.negate`, "boolean required");
       }
       return null;
+    case "playerMoving":
+      if (v.negate !== undefined && typeof v.negate !== "boolean") {
+        return fail(`${path}.negate`, "boolean required");
+      }
+      return null;
     case "region":
       if (!isNonNegInt(v.x) || !isNonNegInt(v.y)) {
         return fail(`${path}.x`, "non-negative integers required");

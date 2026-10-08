@@ -1025,9 +1025,16 @@ export const CONDITION_KINDS = [
   "ext",
 ] as const;
 
+/** Runtime-derived conditions remain visible and round-trip intact in the
+ * editor, but are not offered by the generic condition form yet. */
+const READ_ONLY_CONDITION_KINDS = ["playerMoving"] as const;
+
 export type ConditionKind = (typeof CONDITION_KINDS)[number];
+type ReadOnlyConditionKind = (typeof READ_ONLY_CONDITION_KINDS)[number];
 type ConditionOf<Kind extends ConditionKind> = Extract<Condition, { kind: Kind }>;
-type _EveryConditionKindIsOwned = AssertNoMissing<Exclude<Condition["kind"], ConditionKind>>;
+type _EveryConditionKindIsOwned = AssertNoMissing<
+  Exclude<Condition["kind"], ConditionKind | ReadOnlyConditionKind>
+>;
 
 export function defaultCondition<Kind extends ConditionKind>(kind: Kind): ConditionOf<Kind> {
   let condition: Condition;
@@ -1105,6 +1112,8 @@ export function conditionSummary(condition: unknown, opts: { full?: boolean } = 
       return `Region ${numberText(condition.id)} at (${numberText(condition.x)}, ${numberText(condition.y)})`;
     case "worldIdle":
       return condition.negate === true ? "World is busy" : "World is idle";
+    case "playerMoving":
+      return condition.negate === true ? "Player is resting" : "Player is moving";
     case "bgmPlaying": {
       const target = typeof condition.id === "string" && condition.id.length > 0
         ? `BGM ${condition.id}`

@@ -152,6 +152,13 @@ Conventions:
   Trigger/page selection samples it before fibers run; an `if` instruction
   recomputes it from the live working state, so later fibers see locks,
   modals and external requests published earlier in that same tick.
+- **Live player movement conditions:** `{kind:"playerMoving", negate?}` is
+  shared by `condition.all` and `if`. It reads whether a tile step was
+  already interpolating at the start of this reference tick. Sampling before
+  the movement fold means the press that commits a new step is still false,
+  while the tick that lands an existing step remains true. The value is
+  derived, never saved, and maps without this condition do not build or pass
+  its context.
 - **Per-visit locals:** a switch or variable id prefixed `local.`
   is reset on every map entry; it never survives a transfer.
 - **Runtime appearance:** `appearance` changes the effective player/event

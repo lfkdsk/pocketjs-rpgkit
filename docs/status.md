@@ -26,7 +26,7 @@ The links point to where each feature is described in detail.
 | Choice icons: a character sprite left of each `choices` option label | Done | Opt-in `ChoiceIconBox` (`pocket-rpgkit/ui/choice-icons`, GameView `choiceIcons`); 1× icons in 24 px rows, 16×32 walkers lose their top 8 pixel rows; missing sprites draw a `?` and fail `rpgkit-check`; editable in the editor and `rpgkit-edit update-command`. See [Choice icons](../README.md#choice-icons) |
 | Switches, self switches, items, gold | Done | |
 | Variables: set/add/sub, seeded random ranges, arithmetic against another variable | Done | Numbers only |
-| Page and `if` conditions on switches, variables, self switches, items, gold, facing, appearance, tile-property overrides, cell region ids, `worldIdle`, `bgmPlaying`, the timer, or an extension predicate | Done | |
+| Page and `if` conditions on switches, variables, self switches, items, gold, facing, appearance, tile-property overrides, cell region ids, `worldIdle`, live player movement, `bgmPlaying`, the timer, or an extension predicate | Done | `playerMoving` samples the committed interpolation state at reference-tick start, so a new press is false and a landing step remains true; maps that do not use it skip the context path. See the [engine contract](../src/engine/README.md) |
 | Cross-event input lock (`lockInput` / `unlockInput`) | Done | |
 | Map transfers with an optional fade and variable targets | Done | |
 | Game extensions | Done | Namespaced pure commands (`ext`), choice boxes whose rows come from an extension (`extChoice`), and an opt-in completed-player-tile command hook; see [Game extensions and Battle Processing](../README.md#game-extensions-and-battle-processing) |

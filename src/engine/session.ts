@@ -1238,8 +1238,10 @@ function sessionConditionContext(
   world: ReturnType<typeof createWorld>,
   s: SessionState,
   eventPages: Readonly<Record<string, EventPageAppearance>> | undefined,
+  playerMoving = world.needsPlayerMovingContext ? s.move.moving : undefined,
 ): ConditionContext {
   const context: ConditionContext = { worldIdle: isSessionWorldIdle(s) };
+  if (playerMoving !== undefined) context.playerMoving = playerMoving;
   if (s.interp.audio) context.audio = s.interp.audio;
   if (eventPages) {
     context.eventPages = eventPages;
@@ -1258,7 +1260,11 @@ function sessionConditionContext(
  *  frame, or a command earlier in this tick). The guard at the call sites
  *  means a scene-free project (empty queues) never reaches here, so the
  *  condition-context build below costs nothing on the hot path. */
-function pruneStaleQueuedScenes(sess: Session, s: SessionState): void {
+function pruneStaleQueuedScenes(
+  sess: Session,
+  s: SessionState,
+  playerMoving?: boolean,
+): void {
   const world = sess.worlds.get(s.mapId);
   const map = sess.maps.get(s.mapId);
   if (!world || !map) return;
@@ -1266,7 +1272,13 @@ function pruneStaleQueuedScenes(sess: Session, s: SessionState): void {
   const eventPages = world.needsEventPages === true || s.interp.eventAppearances !== undefined
     ? eventPagesOf(map, s.chars)
     : undefined;
-  pruneStaleQueuedRequests(s.interp, world, s.move.facing, extension, sessionConditionContext(world, s, eventPages));
+  pruneStaleQueuedRequests(
+    s.interp,
+    world,
+    s.move.facing,
+    extension,
+    sessionConditionContext(world, s, eventPages, playerMoving),
+  );
 }
 
 /** The baked map table plus blocking-character bodies, held as a sparse
@@ -2284,6 +2296,7 @@ interface EntryPageDependencies {
   facing: boolean;
   playerAppearance: boolean;
   worldIdle: boolean;
+  playerMoving: boolean;
   bgm: boolean;
   timer: boolean;
   extension: readonly { call: string; args: JsonValue }[];
@@ -2330,6 +2343,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
   let facing = false;
   let playerAppearance = false;
   let worldIdle = false;
+  let playerMoving = false;
   let bgm = false;
   let timer = false;
   const extension: { call: string; args: JsonValue }[] = [];
@@ -2353,6 +2367,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
             if (clause.target === "player") playerAppearance = true;
             break;
           case "worldIdle": worldIdle = true; break;
+          case "playerMoving": playerMoving = true; break;
           case "bgmPlaying": bgm = true; break;
           case "timer": timer = true; break;
           case "ext": extension.push({ call: clause.call, args: clause.args }); break;
@@ -2363,7 +2378,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
   }
   return {
     switches: [...switches], self: [...self], variables: [...variables], items: [...items],
-    gold, facing, playerAppearance, worldIdle, bgm, timer, extension,
+    gold, facing, playerAppearance, worldIdle, playerMoving, bgm, timer, extension,
   };
 }
 
@@ -2386,6 +2401,7 @@ function entryPageSignature(
     signature.push(s.sw.playerAppearance?.sprite ?? s.sw.playerAppearance?.defaultSprite ?? null);
   }
   if (dependencies.worldIdle) signature.push(worldIdle);
+  if (dependencies.playerMoving) signature.push(s.move.moving);
   if (dependencies.bgm) {
     signature.push(s.interp.audio?.bgm?.id, s.interp.audio?.bgm?.paused === true,
       s.interp.audio?.me !== undefined);
@@ -2437,8 +2453,9 @@ function pageSyncSignature(
   s: SessionState,
   worldIdle: boolean,
   extensions: ExtensionRuntime,
+  playerMoving?: boolean,
 ): readonly unknown[] {
-  return [
+  const signature: unknown[] = [
     recordRevision(s.sw.switches),
     recordRevision(s.sw.self),
     recordRevision(s.sw.variables),
@@ -2463,6 +2480,10 @@ function pageSyncSignature(
     s.interp.audio?.bgm?.paused === true,
     s.interp.audio?.me !== undefined,
   ];
+  // Keep this outside the fixed signature: ordinary projects retain the
+  // pre-feature memo shape and avoid a movement dependency altogether.
+  if (playerMoving !== undefined) signature.push(playerMoving);
+  return signature;
 }
 
 function sameSignature(a: readonly unknown[], b: readonly unknown[]): boolean {
@@ -2790,12 +2811,24 @@ function stepReferenceTick(
   //    external fiber cannot deadlock.
   const erased = s.interp.erased;
   const world = sess.worlds.get(s.mapId)!;
+  // Tuxemon-style live movement conditions run before world physics. Keep
+  // this tick-start sample through the later interpreter fold: a newly
+  // pressed step is not moving yet, while a step that lands this tick still
+  // reports the velocity it had on entry.
+  const playerMovingAtTickStart = world.needsPlayerMovingContext
+    ? s.move.moving
+    : undefined;
   const needsMovementControlPath =
     world.needsMovementControlPath === true || s.interp.moveControls !== undefined;
   const extension: ExtensionScope = { runtime: sess.extensions, ext: s.ext };
   const needsEventPages = world.needsEventPages === true || s.interp.eventAppearances !== undefined;
   const previousEventPages = needsEventPages ? eventPagesOf(map, s.chars) : undefined;
-  let conditionContext = sessionConditionContext(world, s, previousEventPages);
+  let conditionContext = sessionConditionContext(
+    world,
+    s,
+    previousEventPages,
+    playerMovingAtTickStart,
+  );
   const syncFacing = s.move.facing;
   let syncMotion = keyedRecord<MotionType>();
   const keyed = keyedEventsOf(world);
@@ -2824,7 +2857,12 @@ function stepReferenceTick(
     : undefined;
   const reuseEntry = reusableEntry !== undefined;
   const signature = cacheablePages
-    ? pageSyncSignature(s, conditionContext.worldIdle ?? false, sess.extensions)
+    ? pageSyncSignature(
+        s,
+        conditionContext.worldIdle ?? false,
+        sess.extensions,
+        conditionContext.playerMoving,
+      )
     : undefined;
   const memo = cacheablePages ? pageSyncMemo.get(world) : undefined;
   const reusePages = !reuseEntry && memo !== undefined && memo.runtime === sess.extensions &&
@@ -2878,7 +2916,12 @@ function stepReferenceTick(
   }
   if (cacheablePages && !reusePages) {
     pageSyncMemo.set(world, {
-      signature: pageSyncSignature(s, conditionContext.worldIdle ?? false, sess.extensions),
+      signature: pageSyncSignature(
+        s,
+        conditionContext.worldIdle ?? false,
+        sess.extensions,
+        conditionContext.playerMoving,
+      ),
       motion: syncMotion,
       pages: selectedPages!,
       runtime: sess.extensions,
@@ -2886,7 +2929,7 @@ function stepReferenceTick(
   }
   const eventPages = needsEventPages ? eventPagesOf(map, s.chars) : undefined;
   if (eventPages && s.interp.eventAppearances) clearStaleEventAppearances(s.interp, eventPages);
-  conditionContext = sessionConditionContext(world, s, eventPages);
+  conditionContext = sessionConditionContext(world, s, eventPages, playerMovingAtTickStart);
   for (const waiter of synced.abortedWaiters) {
     s.interp = continueExternal(s.interp, waiter);
   }
@@ -3075,6 +3118,9 @@ function stepReferenceTick(
     prevCell: prevCellIn,
     facing: s.move.facing,
     prevFacing,
+    ...(playerMovingAtTickStart === undefined
+      ? {}
+      : { playerMoving: playerMovingAtTickStart }),
     eventCells,
     ...(liveEventCells ? { liveEventCells } : {}),
     eventPages,
@@ -3088,7 +3134,14 @@ function stepReferenceTick(
     interpInput,
     s.ext,
     cacheablePages
-      ? { indices: selectedPages!, facing: syncFacing, worldIdle: conditionContext.worldIdle ?? false }
+      ? {
+          indices: selectedPages!,
+          facing: syncFacing,
+          worldIdle: conditionContext.worldIdle ?? false,
+          ...(conditionContext.playerMoving === undefined
+            ? {}
+            : { playerMoving: conditionContext.playerMoving }),
+        }
       : undefined,
     sess.immutableState,
   );
@@ -3144,11 +3197,11 @@ function stepReferenceTick(
     for (let i = 0; i <= routes.length; i++) {
       while (next < placements.length && (i === routes.length || (placements[next]!.afterRoutes ?? 0) <= i)) {
         const p = placements[next++]!;
-        syncRequestedPage(sess, s, keyed, syncFacing, p);
+        syncRequestedPage(sess, s, keyed, syncFacing, p, playerMovingAtTickStart);
         applyPlacement(sess, s, map, p);
       }
       if (i === routes.length) break;
-      syncRequestedPage(sess, s, keyed, syncFacing, routes[i]!);
+      syncRequestedPage(sess, s, keyed, syncFacing, routes[i]!, playerMovingAtTickStart);
       applyMoveRequest(sess, s, routes[i]!);
     }
   }
@@ -3161,7 +3214,7 @@ function stepReferenceTick(
     // B2: a command earlier in this tick's fold may have invalidated a
     // queued parallel's page after cancelStaleParallels ran; re-check
     // against the post-fold switch bank before the end-of-tick consumption.
-    pruneStaleQueuedScenes(sess, s);
+    pruneStaleQueuedScenes(sess, s, playerMovingAtTickStart);
   }
   if (!handoffAtStart && s.scene === null && s.interp.pendingBattles.length > 0) {
     startNextBattleScene(sess, s);
@@ -3216,6 +3269,7 @@ function syncRequestedPage(
   keyed: ReturnType<typeof keyedEventsOf>,
   facing: Facing,
   req: PendingMoveOperation | PendingPlacement,
+  playerMoving?: boolean,
 ): void {
   if (!("eventId" in req) || req.page === undefined || req.page < 0) return;
   const { eventId: id, page } = req;
@@ -3226,7 +3280,7 @@ function syncRequestedPage(
   const eventPages = world.needsEventPages === true || s.interp.eventAppearances !== undefined
     ? eventPagesOf(map, s.chars)
     : undefined;
-  const context = sessionConditionContext(world, s, eventPages);
+  const context = sessionConditionContext(world, s, eventPages, playerMoving);
   if (eventPageAt(world, s.sw, id, facing, extension, context) !== page) return;
   const erased = s.interp.erased;
   const synced = syncPagesInPlace(

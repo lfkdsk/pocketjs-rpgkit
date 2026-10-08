@@ -1260,7 +1260,7 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `switch` | set a global switch |
 | `variable` | set/add/sub, a seeded random range, or arithmetic against another variable (copy/add/sub/mul/div/mod) |
 | `selfSwitch` | set the event-local A/B/C/D flag |
-| `if` | condition over switch/variable/selfSwitch/item/gold/facing, effective appearance, explicit tile-property overrides, a cell's region id, derived `worldIdle`, current `bgmPlaying`, the global timer, or a registered `ext` predicate, with `else` |
+| `if` | condition over switch/variable/selfSwitch/item/gold/facing, effective appearance, explicit tile-property overrides, a cell's region id, derived `worldIdle` or live player movement, current `bgmPlaying`, the global timer, or a registered `ext` predicate, with `else` |
 | `transfer` | swap maps at x/y/dir, with an optional fade; map/x/y/dir may be `{ "variable": "id" }`; a direct `playerTouch` transfer may carry a `seamless-v1` opening marker when the project opts into [world-layout handoff](#world-layout-data) |
 | `moveRoute` | route the player, this event, or a named event through moves, turns, waits, deterministic `pathTo`, and `approach` |
 | `moveControl` | change a target's autonomous mode, stop it, start bounded wandering, or override speed/run/frequency/collision/facing settings |
@@ -1671,6 +1671,11 @@ event, input lock, modal, player route, pending transfer/battle, fade, active
 scene, fatal overlay, or host-owned menu. It is derived when the condition is
 read and adds no save field; `negate:true` inverts it. Parallel fibers and
 attract/demo input ownership alone do not make the world busy.
+`{kind:"playerMoving", negate?}` reads whether the player already had a
+committed interpolating step at the start of the current reference tick. The
+press that starts a step is therefore false, the tick that lands it remains
+true, and the derived value adds no save field. Maps without this condition
+skip its movement context.
 `{kind:"bgmPlaying", id?, negate?}` tests any or one named BGM and is false
 while that BGM is paused or suspended behind an ME.
 Switch/variable ids prefixed `local.` reset on every map entry; a page `dir`

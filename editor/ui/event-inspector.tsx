@@ -201,6 +201,7 @@ function conditionSummary(condition: Condition): string {
     case "gold": return `gold >= ${condition.amount}`;
     case "facing": return condition.dir;
     case "worldIdle": return condition.negate ? "world busy" : "world idle";
+    case "playerMoving": return condition.negate ? "player resting" : "player moving";
     case "bgmPlaying": {
       const target = condition.id === undefined ? "Any BGM" : `BGM ${condition.id}`;
       return `${target} is ${condition.negate ? "not " : ""}playing`;

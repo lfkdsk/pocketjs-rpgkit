@@ -318,6 +318,7 @@ function clauseContext(clause: Condition): ContextReason | null {
   switch (clause.kind) {
     case "facing": return "facing-condition";
     case "worldIdle":
+    case "playerMoving":
     case "bgmPlaying":
     case "timer":
       return "runtime-condition";

@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "e763f4898c37c59c111618d57feb35d93b4ba67932cfb2094406388f1efedb45";
+export const MAP_SCHEMA_HASH = "674e20dcfa9e608e24362e48a852d786f7dbac27a1ef8830cc463baba2430d88";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -59,6 +59,9 @@ export const MAP_SCHEMA_HASH = "e763f4898c37c59c111618d57feb35d93b4ba67932cfb209
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: the `playerMoving` condition — reads the player's live
+  // interpolating-step state; older documents never carry it
+  "e763f4898c37c59c111618d57feb35d93b4ba67932cfb2094406388f1efedb45",
   // superseded by: optional save-runtime feedback entries in `uiText`;
   // older documents never carry them and keep the same English defaults
   "11227c99d75fe0ec833b77499bec30022f046383c4eeb9349a3f590bbc4ce801",
