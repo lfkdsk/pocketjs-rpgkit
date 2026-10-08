@@ -211,6 +211,7 @@ describe("player pages with languages", () => {
     expect(PAGE_I18N_SCRIPT).toContain("searchParams.delete");
     expect(PAGE_I18N_SCRIPT).toContain("location.reload");
     expect(PAGE_I18N_SCRIPT).toContain("__pocketI18n");
+    expect(PAGE_I18N_SCRIPT).toContain("__pocketPageLanguageEvent");
     expect(PAGE_I18N_SCRIPT).toContain("data-chapters-notice");
     expect(PAGE_I18N_SCRIPT).toContain("data-i18n-control");
     expect(PAGE_I18N_SCRIPT).toContain("data-landing-control");
