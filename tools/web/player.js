@@ -238,33 +238,43 @@ function startGithubSignIn(auth) {
   location.href = url.toString();
 }
 
-// Wire the sign-in button in the control bar, if the game declares auth.
+// Wire sign-in status and sign-out into the control bar, if the game declares
+// auth. The game remains the source of truth: the page sends a command, then
+// waits for the same login/logout event hook used by in-game sign-out. That
+// command also owns credential cleanup (wander-online removes its web ticket
+// through auth-store), so the page never needs to know a game's storage key.
 function initAuthUI(config) {
   const auth = config.auth;
   if (!auth?.github) return;
   const bar = document.querySelector(".bar");
   if (!bar) return;
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.id = "auth-signin";
-  btn.className = "bar-button";
-  setAuthUI(btn, "signed-out");
-  btn.addEventListener("click", () => startGithubSignIn(auth));
-  bar.insertBefore(btn, bar.querySelector(".audio-controls"));
+  const signIn = document.createElement("button");
+  signIn.type = "button";
+  signIn.id = "auth-signin";
+  signIn.className = "bar-button";
+  signIn.addEventListener("click", () => startGithubSignIn(auth));
+  const signOut = document.createElement("button");
+  signOut.type = "button";
+  signOut.id = "auth-signout";
+  signOut.className = "bar-button";
+  signOut.addEventListener("click", () => globalThis.__pocketAuthCommand?.("signout"));
+  setAuthUI(signIn, signOut, null);
+  const audio = bar.querySelector(".audio-controls");
+  bar.insertBefore(signIn, audio);
+  bar.insertBefore(signOut, audio);
   // The game reports login/logout through this event hook.
   globalThis.__pocketAuthEvent = (ev) => {
-    if (ev.type === "login") {
-      btn.textContent = t("auth.signed-in", "Signed in as {name}").replace("{name}", ev.login);
-      btn.disabled = true;
-    } else if (ev.type === "logout") {
-      setAuthUI(btn, "signed-out");
-    }
+    setAuthUI(signIn, signOut, ev.type === "login" ? ev.login : null);
   };
 }
 
-function setAuthUI(btn, state) {
-  btn.textContent = state === "signed-out" ? t("auth.signin", "Sign in with GitHub") : t("auth.signed-out", "Signed out");
-  btn.disabled = false;
+function setAuthUI(signIn, signOut, login) {
+  signIn.textContent = login === null
+    ? t("auth.signin", "Sign in with GitHub")
+    : t("auth.signed-in", "Signed in as {name}").replace("{name}", login);
+  signIn.disabled = login !== null;
+  signOut.textContent = t("auth.signed-out", "Sign out");
+  signOut.hidden = login === null;
 }
 
 

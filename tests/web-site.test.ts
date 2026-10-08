@@ -108,6 +108,24 @@ describe("games", () => {
     });
   });
 
+  test("wander-online publishes a stable English/Chinese page language channel", () => {
+    const online = resolveGame(KIT_ROOT, config, "wander-online");
+    expect(online.languages).toEqual({
+      options: [
+        { code: "en", label: "English" },
+        { code: "zh", label: "中文" },
+      ],
+      param: "lang",
+      storage: "pocket-rpgkit:wander-online:lang:v1",
+    });
+    expect(online.i18n?.zh?.description).toContain("GitHub");
+    expect(online.i18n?.zh?.controls).toEqual({
+      "Walk": "行走",
+      "Confirm": "确认",
+      "Cancel / back": "取消 / 返回",
+    });
+  });
+
   test("the browser editor companion cannot be configured without its file host", () => {
     const games = { ...config.games, editor: { ...config.games!.editor } };
     delete games.editor!.documents;
@@ -298,7 +316,8 @@ describe("pages", () => {
   });
 
   test("the landing page has no i18n trace when no game declares languages", () => {
-    const html = renderLanding(site, games.map((game) => ({ game })));
+    const plainGames = games.filter((game) => game.languages === undefined);
+    const html = renderLanding(site, plainGames.map((game) => ({ game })));
     expect(html).not.toContain("pocket-i18n");
     expect(html).not.toContain("data-page-lang");
     expect(html).not.toContain("data-landing-chapter");
@@ -413,8 +432,13 @@ describe("pages", () => {
       expect(parsed.autosaveStorageKey).not.toBe(parsed.editor?.storageKey);
       expect(parsed.keys.KeyA).toBe(BTN.CIRCLE);
       expect(html).toContain(`data-viewport="${game.viewport.policy}"`);
-      expect(html).toContain('<button type="button" id="audio-mute" aria-label="Mute audio" aria-pressed="false">Mute</button>');
-      expect(html).toContain('<label for="audio-volume">Volume</label>');
+      if (game.languages) {
+        expect(html).toContain('<button type="button" id="audio-mute" aria-label="Mute audio" aria-pressed="false" data-i18n="mute" data-i18n-aria-label="mute-audio">Mute</button>');
+        expect(html).toContain('<label for="audio-volume" data-i18n="volume">Volume</label>');
+      } else {
+        expect(html).toContain('<button type="button" id="audio-mute" aria-label="Mute audio" aria-pressed="false">Mute</button>');
+        expect(html).toContain('<label for="audio-volume">Volume</label>');
+      }
       expect(html).toContain('<input type="range" id="audio-volume" min="0" max="100" step="5" value="100">');
     }
   });

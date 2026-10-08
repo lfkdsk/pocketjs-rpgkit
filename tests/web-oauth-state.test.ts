@@ -13,8 +13,11 @@
 //               fragment cleared, saved state kept
 //   boot order  callback is consumed and the web marker/token is published
 //               before any wasm, pak or bundle request starts
-//   page UI     an ordinary web boot is distinguishable from desktop and a
-//               login event from the bundle renders "Signed in as ..."
+//   page UI     an ordinary web boot is distinguishable from desktop; login
+//               shows a localized, login-only Sign out control
+//   sign out    the page sends the game's existing signout command; its
+//               logout event resets the page, the ticket stays gone on a
+//               fresh boot, and a later login event works again
 //
 // The page under test evals the OAuth/UI functions and Player.boot source
 // extracted verbatim from tools/web/player.js (brace-matched out of the real
@@ -96,6 +99,12 @@ function extractPlayerBoot(source: string): string {
     .replace(/^async boot\(\)/, "async function boot()");
 }
 
+function extractLine(source: string, needle: string): string {
+  const line = source.split("\n").find((candidate) => candidate.startsWith(needle));
+  if (!line) throw new Error(`tools/web/player.js has no ${needle}`);
+  return line;
+}
+
 /** The harness page: evals the real oauthFromFragment (and the real
  *  OAUTH_STATE_KEY constant) extracted from tools/web/player.js, then exposes
  *  window.runOAuth / window.setSaved for the test to drive. */
@@ -105,6 +114,7 @@ function harnessPage(): string {
   const initAuthUI = extractBraced(source, "function initAuthUI");
   const setAuthUI = extractBraced(source, "function setAuthUI");
   const boot = extractPlayerBoot(source);
+  const translate = extractLine(source, "const t = ");
   const key = /const OAUTH_STATE_KEY = "[^"]+";/.exec(source)?.[0];
   if (!key) throw new Error("tools/web/player.js has no OAUTH_STATE_KEY");
   return `<!doctype html>
@@ -114,14 +124,16 @@ function harnessPage(): string {
 <script>
 ${key}
 ${fn}
-const t = (key, fallback) => fallback;
+${translate}
 ${initAuthUI}
 ${setAuthUI}
 ${boot}
 
+const AUTH_TICKET_KEY = "pocket-rpgkit:wander-online:ticket";
 let assetLoads = [];
 let assetMode = "stop";
 let bundleSource = "";
+let authCommands = [];
 function fetchOk(url, label) {
   assetLoads.push({
     label,
@@ -150,8 +162,45 @@ const resetBoot = (hash, saved) => {
   delete globalThis.__pocketAuth;
   delete globalThis.__pocketWeb;
   delete globalThis.__pocketAuthEvent;
+  delete globalThis.__pocketAuthCommand;
+  delete globalThis.__pocketI18n;
   delete globalThis.__bundleSawPocketWeb;
+  delete globalThis.__bundleSawTicket;
   assetLoads = [];
+  authCommands = [];
+};
+const useLanguage = (language) => {
+  if (language !== "zh") return;
+  const strings = {
+    "auth.signin": "使用 GitHub 登录",
+    "auth.signed-in": "已登录：{name}",
+    "auth.signed-out": "退出登录",
+  };
+  globalThis.__pocketI18n = (key) => strings[key] ?? key;
+};
+const authSnapshot = () => {
+  const signIn = document.getElementById("auth-signin");
+  const signOut = document.getElementById("auth-signout");
+  return {
+    text: signIn?.textContent ?? null,
+    disabled: signIn?.disabled ?? null,
+    signOutText: signOut?.textContent ?? null,
+    signOutHidden: signOut?.hidden ?? null,
+    ticket: localStorage.getItem(AUTH_TICKET_KEY),
+    commands: authCommands.slice(),
+  };
+};
+const installGameAuth = (login, ticket) => {
+  globalThis.__pocketAuthCommand = (command) => {
+    authCommands.push(command);
+    if (command !== "signout") return;
+    // This is the real game/page contract: OnlineView's signOut clears the
+    // auth-store ticket, then reports the same logout event used in-game.
+    localStorage.removeItem(AUTH_TICKET_KEY);
+    globalThis.__pocketAuthEvent?.({ type: "logout" });
+  };
+  if (login !== null) globalThis.__pocketAuthEvent?.({ type: "login", login });
+  globalThis.frame = () => {};
 };
 const bootReceiver = (config) => ({
   config,
@@ -201,13 +250,14 @@ window.runBootProbe = async (hash, saved) => {
     loads: assetLoads,
   };
 };
-window.runOrdinaryPageBoot = async (login) => {
+window.runOrdinaryPageBoot = async (login, language = "en") => {
   resetBoot("", null);
+  useLanguage(language);
   document.body.innerHTML = '<div class="bar"><span class="audio-controls"></span></div>';
   assetMode = "complete";
+  localStorage.setItem(AUTH_TICKET_KEY, JSON.stringify({ ticket: "web-ticket" }));
   bundleSource = "globalThis.__bundleSawPocketWeb = globalThis.__pocketWeb === true;\\n"
-    + "globalThis.frame = () => {};\\n"
-    + "globalThis.__pocketAuthEvent?.({ type: 'login', login: " + JSON.stringify(login) + " });";
+    + "installGameAuth(" + JSON.stringify(login) + ", 'web-ticket');";
   await boot.call(bootReceiver({
     wasm: "core.wasm",
     pak: "game.pak",
@@ -215,14 +265,37 @@ window.runOrdinaryPageBoot = async (login) => {
     app: "oauth-test",
     auth: { github: { clientId: "client", worker: "https://auth.invalid" } },
   }));
-  const button = document.getElementById("auth-signin");
   return {
     web: globalThis.__pocketWeb === true,
     bundleSawWeb: globalThis.__bundleSawPocketWeb === true,
     auth: globalThis.__pocketAuth === undefined ? null : Object.assign({}, globalThis.__pocketAuth),
-    text: button?.textContent ?? null,
-    disabled: button?.disabled ?? null,
+    ...authSnapshot(),
   };
+};
+window.clickSignOut = () => {
+  document.getElementById("auth-signout")?.click();
+  return authSnapshot();
+};
+window.runRefreshProbe = async (language = "en") => {
+  resetBoot("", null);
+  useLanguage(language);
+  document.body.innerHTML = '<div class="bar"><span class="audio-controls"></span></div>';
+  assetMode = "complete";
+  bundleSource = "globalThis.__bundleSawTicket = localStorage.getItem(" + JSON.stringify(AUTH_TICKET_KEY) + ") !== null;\\n"
+    + "installGameAuth(globalThis.__bundleSawTicket ? 'stored-user' : null, 'web-ticket');";
+  await boot.call(bootReceiver({
+    wasm: "core.wasm",
+    pak: "game.pak",
+    bundle: "game.js",
+    app: "oauth-test",
+    auth: { github: { clientId: "client", worker: "https://auth.invalid" } },
+  }));
+  return { bundleSawTicket: globalThis.__bundleSawTicket === true, ...authSnapshot() };
+};
+window.publishLoginAgain = (login) => {
+  localStorage.setItem(AUTH_TICKET_KEY, JSON.stringify({ ticket: "new-ticket" }));
+  globalThis.__pocketAuthEvent?.({ type: "login", login });
+  return authSnapshot();
 };
 </script>
 </body>
@@ -242,12 +315,23 @@ interface BootProbe {
   loads: Array<{ label: string; hash: string; web: boolean; auth: Record<string, string> | null }>;
 }
 
-interface PageBoot {
+interface AuthSnapshot {
+  text: string | null;
+  disabled: boolean | null;
+  signOutText: string | null;
+  signOutHidden: boolean | null;
+  ticket: string | null;
+  commands: string[];
+}
+
+interface PageBoot extends AuthSnapshot {
   web: boolean;
   bundleSawWeb: boolean;
   auth: Record<string, string> | null;
-  text: string | null;
-  disabled: boolean | null;
+}
+
+interface RefreshProbe extends AuthSnapshot {
+  bundleSawTicket: boolean;
 }
 
 describe.skipIf(!existsSync(CHROME))("web OAuth state (fail-closed)", () => {
@@ -317,6 +401,41 @@ describe.skipIf(!existsSync(CHROME))("web OAuth state (fail-closed)", () => {
     expect(r.auth).toBeNull();
     expect(r.text).toBe("Signed in as octocat");
     expect(r.disabled).toBe(true);
+    expect(r.signOutText).toBe("Sign out");
+    expect(r.signOutHidden).toBe(false);
+  }, 20_000);
+
+  test("sign out clears the ticket, survives a fresh boot, and allows a later login", async () => {
+    await evaluate<PageBoot>(`window.runOrdinaryPageBoot("octocat")`);
+
+    const signedOut = await evaluate<AuthSnapshot>(`window.clickSignOut()`);
+    expect(signedOut.commands).toEqual(["signout"]);
+    expect(signedOut.ticket).toBeNull();
+    expect(signedOut.text).toBe("Sign in with GitHub");
+    expect(signedOut.disabled).toBe(false);
+    expect(signedOut.signOutHidden).toBe(true);
+
+    const refreshed = await evaluate<RefreshProbe>(`window.runRefreshProbe()`);
+    expect(refreshed.bundleSawTicket).toBe(false);
+    expect(refreshed.text).toBe("Sign in with GitHub");
+    expect(refreshed.signOutHidden).toBe(true);
+
+    const signedInAgain = await evaluate<AuthSnapshot>(`window.publishLoginAgain("octo-again")`);
+    expect(signedInAgain.text).toBe("Signed in as octo-again");
+    expect(signedInAgain.disabled).toBe(true);
+    expect(signedInAgain.signOutText).toBe("Sign out");
+    expect(signedInAgain.signOutHidden).toBe(false);
+  }, 20_000);
+
+  test("the login-only sign-out control follows the Chinese page language", async () => {
+    const signedIn = await evaluate<PageBoot>(`window.runOrdinaryPageBoot("章鱼猫", "zh")`);
+    expect(signedIn.text).toBe("已登录：章鱼猫");
+    expect(signedIn.signOutText).toBe("退出登录");
+    expect(signedIn.signOutHidden).toBe(false);
+
+    const signedOut = await evaluate<AuthSnapshot>(`window.clickSignOut()`);
+    expect(signedOut.text).toBe("使用 GitHub 登录");
+    expect(signedOut.signOutHidden).toBe(true);
   }, 20_000);
 
   test("boot clears the callback and publishes its token before starting wasm, pak or bundle loads", async () => {
