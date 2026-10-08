@@ -18,6 +18,7 @@
 //   sign out    the page sends the game's existing signout command; its
 //               logout event resets the page, the ticket stays gone on a
 //               fresh boot, and a later login event works again
+//   web store   the bundle receives the generic browser storage bridge
 //
 // The page under test evals the OAuth/UI functions and Player.boot source
 // extracted verbatim from tools/web/player.js (brace-matched out of the real
@@ -166,6 +167,8 @@ const resetBoot = (hash, saved) => {
   delete globalThis.__pocketI18n;
   delete globalThis.__bundleSawPocketWeb;
   delete globalThis.__bundleSawTicket;
+  delete globalThis.__bundleSawWebStore;
+  delete globalThis.__pocketWebStore;
   assetLoads = [];
   authCommands = [];
 };
@@ -257,6 +260,7 @@ window.runOrdinaryPageBoot = async (login, language = "en") => {
   assetMode = "complete";
   localStorage.setItem(AUTH_TICKET_KEY, JSON.stringify({ ticket: "web-ticket" }));
   bundleSource = "globalThis.__bundleSawPocketWeb = globalThis.__pocketWeb === true;\\n"
+    + "globalThis.__bundleSawWebStore = globalThis.__pocketWebStore === globalThis.localStorage;\\n"
     + "installGameAuth(" + JSON.stringify(login) + ", 'web-ticket');";
   await boot.call(bootReceiver({
     wasm: "core.wasm",
@@ -268,6 +272,7 @@ window.runOrdinaryPageBoot = async (login, language = "en") => {
   return {
     web: globalThis.__pocketWeb === true,
     bundleSawWeb: globalThis.__bundleSawPocketWeb === true,
+    bundleSawWebStore: globalThis.__bundleSawWebStore === true,
     auth: globalThis.__pocketAuth === undefined ? null : Object.assign({}, globalThis.__pocketAuth),
     ...authSnapshot(),
   };
@@ -327,6 +332,7 @@ interface AuthSnapshot {
 interface PageBoot extends AuthSnapshot {
   web: boolean;
   bundleSawWeb: boolean;
+  bundleSawWebStore: boolean;
   auth: Record<string, string> | null;
 }
 
@@ -398,6 +404,7 @@ describe.skipIf(!existsSync(CHROME))("web OAuth state (fail-closed)", () => {
     const r = await evaluate<PageBoot>(`window.runOrdinaryPageBoot("octocat")`);
     expect(r.web).toBe(true);
     expect(r.bundleSawWeb).toBe(true);
+    expect(r.bundleSawWebStore).toBe(true);
     expect(r.auth).toBeNull();
     expect(r.text).toBe("Signed in as octocat");
     expect(r.disabled).toBe(true);
