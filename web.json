@@ -314,7 +314,6 @@
       "title": "Wander: an Endless Grown World",
       "url": "https://lfkdsk.github.io/pocketjs-wander/",
       "description": "An unbounded deterministic world streamed around the player: towns grow as you reach them, chunks load ahead and unload behind, and an autonomous walker discovers landmarks and errands.",
-      "preview": "https://lfkdsk.github.io/pocketjs-wander/wander/preview.png",
       "controls": [
         {
           "button": "DPAD",
@@ -334,7 +333,6 @@
       "title": "Wander Online",
       "url": "https://lfkdsk.github.io/pocketjs-wander/wander-online/",
       "description": "The same grown world shared in real time: sign in with GitHub, create a character, and walk with other players through the hosted authoritative server.",
-      "preview": "https://lfkdsk.github.io/pocketjs-wander/wander-online/preview.png",
       "controls": [
         {
           "button": "DPAD",
