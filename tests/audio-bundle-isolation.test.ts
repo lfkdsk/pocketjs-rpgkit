@@ -217,10 +217,17 @@ const maybeTest = preflight.ok ? test : test.skip;
 // catalog's writtenBy:"host" marker (a dedicated switchDef $def in the
 // embedded project schema) adds 72 B to each bundle: 611,600, 979,788 and
 // 776,953. The optional save-runtime uiText keys add a further measured
-// 72 B to the shared schema path in each bundle.
-const EXPECTED_MEADOW_BYTES = 611_672;
-const EXPECTED_SUNSTONE_QOA_BYTES = 979_860;
-const EXPECTED_WAV_FIXTURE_BYTES = 777_025;
+// 72 B to the shared schema path in each bundle: 611,672, 979,860 and
+// 777,025. Live playerMoving page conditions plus source-compatible command
+// wander clocks, observation pauses and exact intervals then add 3,535 B to
+// Meadow and the WAV fixture, and 4,152 B to Sunstone (whose save/demo graph
+// also validates the added movement state). These merged deltas are 72 B
+// below the source branch's measurements because its two unpublished schema
+// generations collapse into one compatible predecessor here. The totals are
+// 615,207, 984,012 and 780,560.
+const EXPECTED_MEADOW_BYTES = 615_207;
+const EXPECTED_SUNSTONE_QOA_BYTES = 984_012;
+const EXPECTED_WAV_FIXTURE_BYTES = 780_560;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

@@ -207,9 +207,16 @@ const maybeTest = preflight.ok ? test : test.skip;
 // its latching on the shared movement path) adds 2,495: measured 979,716.
 // The switch catalog's writtenBy:"host" marker (a dedicated switchDef $def
 // in the embedded project schema) adds 72: measured 979,788. The optional
-// save-runtime uiText keys add another measured 72 B on that shared path.
+// save-runtime uiText keys add another measured 72 B on that shared path:
+// 979,860.
+// Live playerMoving page conditions plus source-compatible command-wander
+// clocks, observation pauses, exact intervals and their save validation add
+// 4,152 B on the merged schema chain: measured 984,012. This is 72 B below
+// the source branch's delta because its two unpublished schema generations
+// collapse into one compatible predecessor here. The battle UI remains
+// absent by the identifier assertions below.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 979_860;
+const EXPECTED_BYTES = 984_012;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
