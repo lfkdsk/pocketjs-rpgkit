@@ -164,6 +164,7 @@ const resetBoot = (hash, saved) => {
   delete globalThis.__pocketWeb;
   delete globalThis.__pocketAuthEvent;
   delete globalThis.__pocketAuthCommand;
+  delete globalThis.__pocketPageLanguageEvent;
   delete globalThis.__pocketI18n;
   delete globalThis.__bundleSawPocketWeb;
   delete globalThis.__bundleSawTicket;
@@ -173,12 +174,19 @@ const resetBoot = (hash, saved) => {
   authCommands = [];
 };
 const useLanguage = (language) => {
-  if (language !== "zh") return;
-  const strings = {
-    "auth.signin": "使用 GitHub 登录",
-    "auth.signed-in": "已登录：{name}",
-    "auth.signed-out": "退出登录",
+  const dictionaries = {
+    en: {
+      "auth.signin": "Sign in with GitHub",
+      "auth.signed-in": "Signed in as {name}",
+      "auth.signed-out": "Sign out",
+    },
+    zh: {
+      "auth.signin": "使用 GitHub 登录",
+      "auth.signed-in": "已登录：{name}",
+      "auth.signed-out": "退出登录",
+    },
   };
+  const strings = dictionaries[language] ?? dictionaries.en;
   globalThis.__pocketI18n = (key) => strings[key] ?? key;
 };
 const authSnapshot = () => {
@@ -279,6 +287,11 @@ window.runOrdinaryPageBoot = async (login, language = "en") => {
 };
 window.clickSignOut = () => {
   document.getElementById("auth-signout")?.click();
+  return authSnapshot();
+};
+window.switchAuthLanguage = (language) => {
+  useLanguage(language);
+  globalThis.__pocketPageLanguageEvent?.(language);
   return authSnapshot();
 };
 window.runRefreshProbe = async (language = "en") => {
@@ -442,6 +455,20 @@ describe.skipIf(!existsSync(CHROME))("web OAuth state (fail-closed)", () => {
 
     const signedOut = await evaluate<AuthSnapshot>(`window.clickSignOut()`);
     expect(signedOut.text).toBe("使用 GitHub 登录");
+    expect(signedOut.signOutHidden).toBe(true);
+  }, 20_000);
+
+  test("changing the page language immediately retranslates signed-in and signed-out auth controls", async () => {
+    await evaluate<PageBoot>(`window.runOrdinaryPageBoot("octocat", "en")`);
+    const signedIn = await evaluate<AuthSnapshot>(`window.switchAuthLanguage("zh")`);
+    expect(signedIn.text).toBe("已登录：octocat");
+    expect(signedIn.signOutText).toBe("退出登录");
+    expect(signedIn.signOutHidden).toBe(false);
+
+    await evaluate<AuthSnapshot>(`window.clickSignOut()`);
+    const signedOut = await evaluate<AuthSnapshot>(`window.switchAuthLanguage("en")`);
+    expect(signedOut.text).toBe("Sign in with GitHub");
+    expect(signedOut.signOutText).toBe("Sign out");
     expect(signedOut.signOutHidden).toBe(true);
   }, 20_000);
 
