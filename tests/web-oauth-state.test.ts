@@ -32,7 +32,7 @@ setDefaultTimeout(60_000);
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Cdp, launchChrome } from "../tools/lib/cdp.ts";
+import { CHROME_START_BUDGET_MS, Cdp, launchChrome } from "../tools/lib/cdp.ts";
 
 const CHROME = Bun.which("google-chrome") ?? Bun.which("chromium") ?? "/usr/bin/google-chrome";
 const PLAYER_JS = resolve(import.meta.dir, "..", "tools", "web", "player.js");
@@ -400,7 +400,8 @@ describe.skipIf(!existsSync(CHROME))("web OAuth state (fail-closed)", () => {
       );
       throw new Error(`OAuth harness did not initialize: ${exceptions.join("\n") || "no page exception reported"}\n${excerpt}`);
     }
-  });
+    // A cold first Chrome launch may use the launcher's whole retry budget.
+  }, CHROME_START_BUDGET_MS + 30_000);
 
   afterAll(() => {
     cdp?.close();
