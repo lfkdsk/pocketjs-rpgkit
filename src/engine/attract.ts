@@ -50,6 +50,7 @@ import {
   releaseSessionMapsExcept,
   startSession,
   stepSession,
+  type SessionInput,
   type SceneOptions,
   type SessionEffectSink,
   type Session,
@@ -271,6 +272,7 @@ interface AttractCheckpoint {
   phase: AttractPhase;
   logBuf: Uint16Array;
   timelineBuf: Uint8Array;
+  sceneSelectBuf: Int32Array | null;
   logLength: number;
   firstDivergence: number;
   demoFrame: number;
@@ -366,6 +368,11 @@ export class AttractController {
   /** One compact controller byte per timeline entry. Its low bits distinguish
    *  reducer input from display ticks; its high bits retain presentation stage. */
   private timelineBuf: Uint8Array;
+  /** Optional semantic scene selections from touch/click activation. This is
+   *  allocated only after the first selection, so demo-enabled games that
+   *  use controller input retain the historical memory footprint. -1 means
+   *  that timeline entry carried no semantic selection. */
+  private sceneSelectBuf: Int32Array | null = null;
   private logLength = 0;
   /** Smallest log index whose mask differs from the tape mask at that
    *  index (Infinity while every folded entry equals the tape). SELECT can
@@ -480,7 +487,8 @@ export class AttractController {
   /** Allocated bytes for input plus the controller timeline used to restore
    *  pacing and end-hold on rewind. */
   get historyAllocatedBytes(): number {
-    return this.logBuf.byteLength + this.timelineBuf.byteLength;
+    return this.logBuf.byteLength + this.timelineBuf.byteLength +
+      (this.sceneSelectBuf?.byteLength ?? 0);
   }
 
   /** Deterministic serialized-payload estimate for retained keyframes. This
@@ -676,7 +684,7 @@ export class AttractController {
     this.controlNotice = 0;
   }
 
-  private append(mask: number, timelineFlags: number): void {
+  private append(mask: number, timelineFlags: number, sceneSelectIndex?: number): void {
     if (this.logLength >= this.logBuf.length) {
       const grown = new Uint16Array(this.logBuf.length * 2);
       grown.set(this.logBuf);
@@ -684,10 +692,26 @@ export class AttractController {
       const grownTimeline = new Uint8Array(this.timelineBuf.length * 2);
       grownTimeline.set(this.timelineBuf);
       this.timelineBuf = grownTimeline;
+      if (this.sceneSelectBuf) {
+        const grownSelect = new Int32Array(this.sceneSelectBuf.length * 2);
+        grownSelect.fill(-1);
+        grownSelect.set(this.sceneSelectBuf);
+        this.sceneSelectBuf = grownSelect;
+      }
     }
     const index = this.logLength;
     this.logBuf[index] = mask >>> 0;
     this.timelineBuf[index] = timelineFlags | (this.stage << 5);
+    if (sceneSelectIndex !== undefined) {
+      if (!this.sceneSelectBuf) {
+        this.sceneSelectBuf = new Int32Array(this.logBuf.length);
+        this.sceneSelectBuf.fill(-1);
+      }
+      this.sceneSelectBuf[index] = sceneSelectIndex;
+    } else if (this.sceneSelectBuf) {
+      // A rewind can make this slot reusable; erase its previous selection.
+      this.sceneSelectBuf[index] = -1;
+    }
     this.logLength++;
     if (timelineFlags & T_MODAL) this.pacingTicks = 0;
     else if (timelineFlags & T_HOLD) this.pacingTicks++;
@@ -698,9 +722,10 @@ export class AttractController {
     mask: number,
     previous: number,
     effects?: SessionEffectSink,
+    sceneSelectIndex?: number,
   ): SessionState {
     const pressed = mask & ~previous;
-    return stepSession(this.session, state, {
+    const input: SessionInput = {
       buttons: mask,
       confirmEdge: !!(pressed & BTN_CIRCLE),
       cancelEdge: !!(pressed & BTN_CROSS),
@@ -708,15 +733,22 @@ export class AttractController {
       downEdge: !!(pressed & BTN_DOWN),
       leftEdge: !!(pressed & BTN_LEFT),
       rightEdge: !!(pressed & BTN_RIGHT),
-    }, effects);
+    };
+    if (sceneSelectIndex !== undefined) input.selectIndex = sceneSelectIndex;
+    return stepSession(this.session, state, input, effects);
   }
 
-  private fold(mask: number, timelineFlags = 0, effects?: SessionEffectSink): SessionState {
+  private fold(
+    mask: number,
+    timelineFlags = 0,
+    effects?: SessionEffectSink,
+    sceneSelectIndex?: number,
+  ): SessionState {
     const beforeMap = this.state.mapId;
     const beforeScene = this.state.scene !== null;
     const beforeModal = this.state.interp.modal;
     const beforeModalInstance = this.modalKey(this.state);
-    this.state = this.reduce(this.state, mask, this.lastFolded, effects);
+    this.state = this.reduce(this.state, mask, this.lastFolded, effects, sceneSelectIndex);
     if (!beforeScene && this.state.scene === null) {
       this.worldAnimationTickValue = (this.worldAnimationTickValue + 1) >>> 0;
     }
@@ -739,7 +771,7 @@ export class AttractController {
       // Player-owned dialogs use the reducer's authored typewriter.
       this.resetDisplay();
     }
-    this.append(mask, timelineFlags);
+    this.append(mask, timelineFlags, sceneSelectIndex);
     this.sourceFrame++;
     this.captureKeyframe(
       beforeMap !== this.state.mapId,
@@ -833,7 +865,14 @@ export class AttractController {
       }
       const mask = masks[i]!;
       const beforeScene = state.scene !== null;
-      state = this.reduce(state, mask, previous);
+      const retainedSelect = masks === this.logBuf ? this.sceneSelectBuf?.[i] : undefined;
+      state = this.reduce(
+        state,
+        mask,
+        previous,
+        undefined,
+        retainedSelect !== undefined && retainedSelect >= 0 ? retainedSelect : undefined,
+      );
       if (!beforeScene && state.scene === null) {
         worldAnimationTick = (worldAnimationTick + 1) >>> 0;
       }
@@ -935,8 +974,19 @@ export class AttractController {
    *  the controller decides whether the tape or the player owns it. A
    *  repository miss rolls the whole host frame back, including low-rate
    *  multi-fold bookkeeping, so a caller can prepare bytes and retry it. */
-  step(liveButtons: number, effects?: SessionEffectSink, tickDirection?: SessionTickDirection): FoldResult {
-    if (!this.session.repository?.prepare) return this.stepUnchecked(liveButtons, effects, tickDirection);
+  step(
+    liveButtons: number,
+    effects?: SessionEffectSink,
+    tickDirection?: SessionTickDirection,
+    sceneSelectIndex?: number,
+  ): FoldResult {
+    if (sceneSelectIndex !== undefined &&
+      (!Number.isInteger(sceneSelectIndex) || sceneSelectIndex < 0 || sceneSelectIndex > 0x7fffffff)) {
+      throw new RangeError("attract: sceneSelectIndex must be a non-negative i32");
+    }
+    if (!this.session.repository?.prepare) {
+      return this.stepUnchecked(liveButtons, effects, tickDirection, sceneSelectIndex);
+    }
     // A repository miss rolls the whole controller back. The checkpoint is
     // one reused record, every field rewritten here, so a demo-enabled game
     // allocates nothing per frame for it.
@@ -945,6 +995,7 @@ export class AttractController {
     cp.phase = this.phase;
     cp.logBuf = this.logBuf;
     cp.timelineBuf = this.timelineBuf;
+    cp.sceneSelectBuf = this.sceneSelectBuf;
     cp.logLength = this.logLength;
     cp.firstDivergence = this.firstDivergence;
     cp.demoFrame = this.demoFrame;
@@ -971,7 +1022,7 @@ export class AttractController {
     cp.residentMaps.length = 0;
     for (const id of this.session.maps.keys()) cp.residentMaps.push(id);
     try {
-      const result = this.stepUnchecked(liveButtons, effects, tickDirection);
+      const result = this.stepUnchecked(liveButtons, effects, tickDirection, sceneSelectIndex);
       // The step succeeded, so the rollback snapshot is stale. Resync its
       // heavy references onto the live objects: a keyframe generation this
       // step evicted (or a published state it retired) must not stay alive
@@ -981,12 +1032,14 @@ export class AttractController {
       cp.keyframes = this.keyframes;
       cp.logBuf = this.logBuf;
       cp.timelineBuf = this.timelineBuf;
+      cp.sceneSelectBuf = this.sceneSelectBuf;
       return result;
     } catch (error) {
       this.state = cp.state;
       this.phase = cp.phase;
       this.logBuf = cp.logBuf;
       this.timelineBuf = cp.timelineBuf;
+      this.sceneSelectBuf = cp.sceneSelectBuf;
       this.logLength = cp.logLength;
       this.firstDivergence = cp.firstDivergence;
       this.demoFrame = cp.demoFrame;
@@ -1017,7 +1070,12 @@ export class AttractController {
   }
 
 
-  private stepUnchecked(liveButtons: number, effects?: SessionEffectSink, tickDirection?: SessionTickDirection): FoldResult {
+  private stepUnchecked(
+    liveButtons: number,
+    effects?: SessionEffectSink,
+    tickDirection?: SessionTickDirection,
+    sceneSelectIndex?: number,
+  ): FoldResult {
     this.loopReset = false;
     this.rewound = false;
     const live = liveButtons >>> 0;
@@ -1066,7 +1124,7 @@ export class AttractController {
       } else {
         this.idle = 0;
       }
-      this.foldLive(live, effects, tickDirection);
+      this.foldLive(live, effects, tickDirection, sceneSelectIndex);
       return this.result();
     }
 
@@ -1127,11 +1185,19 @@ export class AttractController {
     }
   }
 
-  private foldLive(mask: number, effects?: SessionEffectSink, tickDirection?: SessionTickDirection): void {
+  private foldLive(
+    mask: number,
+    effects?: SessionEffectSink,
+    tickDirection?: SessionTickDirection,
+    sceneSelectIndex?: number,
+  ): void {
     this.carry += this.timelineHz;
     while (this.carry >= this.hz) {
       this.carry -= this.hz;
+      const selectIndex = sceneSelectIndex;
+      sceneSelectIndex = undefined;
       if (
+        selectIndex === undefined &&
         this.firstDivergence === Infinity &&
         this.demoFrame < this.tape.length &&
         mask === this.tape[this.demoFrame]
@@ -1140,7 +1206,7 @@ export class AttractController {
         this.fold(mask, T_SOURCE, effects);
       } else {
         if (this.firstDivergence === Infinity) this.firstDivergence = this.logLength;
-        this.fold(mask, 0, effects);
+        this.fold(mask, 0, effects, selectIndex);
       }
       // The resolver advances the view-local route at the timeline (reference)
       // tick boundary; its bit replaces the d-pad on the NEXT fold, so a turn

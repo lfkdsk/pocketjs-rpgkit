@@ -68,6 +68,10 @@ async function boot(viewport: { width: number; height: number }): Promise<BoundG
         maxLength: 8,
         randomNames: ["Mira"],
       },
+      // A production GameView with demo/rewind configured always owns an
+      // AttractController, even while the player has control. Touch must use
+      // that controller's retained semantic-input timeline too.
+      __kg1Attract: true,
     },
     undefined,
     viewport,
@@ -128,4 +132,34 @@ simDescribe("name input touch", () => {
     pump(world, 1); // would consume an accidentally queued second activation
     expect(nameState(world)).toMatchObject({ cursor: 1, buffer: "B" });
   }, 30_000);
+
+  for (const hz of [60, 30, 20] as const) {
+    test(`retains each touch once through attract rewind at ${hz} Hz`, async () => {
+      const world = await bootGameWorld(
+        appBundle("kg1-name-input"),
+        hz,
+        {
+          __kg1NameArgs: {
+            variable: "player.nick",
+            default: "",
+            maxLength: 8,
+            randomNames: ["Mira"],
+          },
+          __kg1Attract: true,
+        },
+        undefined,
+        { width: 480, height: 272 },
+      );
+      pump(world, 1);
+
+      touchCell(world, 1, 1); // B
+      expect(nameState(world).buffer).toBe("B");
+      pump(world, hz * 4);
+      touchCell(world, 0, 1); // A, exactly once at low host rates
+      expect(nameState(world).buffer).toBe("BA");
+
+      press(world, BTN.LTRIGGER);
+      expect(nameState(world).buffer).toBe("B");
+    }, 30_000);
+  }
 });

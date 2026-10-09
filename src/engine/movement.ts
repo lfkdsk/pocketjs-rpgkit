@@ -31,12 +31,15 @@
 // and is driven only by the per-reference-tick BTN mask (docs/SIMULATION.md).
 
 import { BTN_BITS } from "./camera.ts";
+import { MOTION_HZ } from "./motion-clock.ts";
 import { canStepFrom, type Dir4, type PassageTable } from "./passability.ts";
 
 export interface MovementConfig {
   /** Tile edge in pixels (project.tileSize, 16). */
   tile: number;
-  /** Pixels per MOTION_HZ reference tick; tile must divide evenly by speed. */
+  /** Pixels per MOTION_HZ reference tick. A step whose final increment would
+   *  cross its target snaps to the tile boundary, matching a continuous
+   *  source mover sampled by the fixed clock. */
   speed: number;
 }
 
@@ -56,6 +59,10 @@ export interface MovementState {
   walking: boolean;
   /** Direction of the current step (valid while moving). */
   stepDir: Dir4;
+  /** Exact authored velocity latched for this committed tile only. Absent on
+   *  grade-based movement and at tile boundaries, keeping ordinary saves
+   *  sparse. */
+  stepTilesPerSecond?: number;
 }
 
 export interface MovementRules {
@@ -63,29 +70,42 @@ export interface MovementRules {
   through?: boolean;
   /** Allow movement (including a blocked attempt) to update visual facing. */
   faceMovement?: boolean;
+  /** Exact authored velocity to latch if this tick commits a tile. */
+  exactTilesPerSecond?: number;
 }
 
 export function stepFrames(cfg: MovementConfig): number {
-  if (cfg.tile <= 0 || cfg.speed <= 0 || !Number.isInteger(cfg.tile / cfg.speed)) {
-    throw new Error(`movement: tile ${cfg.tile} must be an integer multiple of speed ${cfg.speed}`);
+  if (!Number.isFinite(cfg.tile) || !Number.isFinite(cfg.speed) || cfg.tile <= 0 || cfg.speed <= 0) {
+    throw new Error(`movement: tile ${cfg.tile} and speed ${cfg.speed} must be finite and positive`);
   }
-  return cfg.tile / cfg.speed;
+  return Math.ceil(cfg.tile / cfg.speed);
 }
 
-/** Recover the speed latched when an in-flight step began from its exact
- *  displacement. Runtime speed changes therefore apply at the next tile
- *  boundary without adding a new serialized MovementState field. */
+/** Resolve the speed latched when an in-flight step began. New exact-speed
+ *  states carry the authored rate explicitly, so subtracting a large world
+ *  origin cannot turn an integral 6-tick step into 6.000000000000085 and a
+ *  seventh frame. The displacement fallback keeps old snapshots compatible;
+ *  a recovered value within coordinate-scale floating-point noise of the
+ *  current config is returned as that nominal config. */
 export function activeStepConfig(
-  state: Pick<MovementState, "tx" | "ty" | "px" | "py" | "phase">,
+  state: Pick<MovementState, "tx" | "ty" | "px" | "py" | "phase" | "stepTilesPerSecond">,
   cfg: MovementConfig,
 ): MovementConfig {
   if (state.phase <= 0) return cfg;
+  if (state.stepTilesPerSecond !== undefined) {
+    return { tile: cfg.tile, speed: cfg.tile * state.stepTilesPerSecond / MOTION_HZ };
+  }
+  const ox = state.tx * cfg.tile;
+  const oy = state.ty * cfg.tile;
   const distance = Math.max(
-    Math.abs(state.px - state.tx * cfg.tile),
-    Math.abs(state.py - state.ty * cfg.tile),
+    Math.abs(state.px - ox),
+    Math.abs(state.py - oy),
   );
   const speed = distance / state.phase;
-  return speed > 0 ? { tile: cfg.tile, speed } : cfg;
+  if (!(speed > 0)) return cfg;
+  const coordinateScale = Math.max(1, Math.abs(state.px), Math.abs(state.py), Math.abs(ox), Math.abs(oy));
+  const tolerance = Number.EPSILON * coordinateScale * 4 / state.phase;
+  return Math.abs(speed - cfg.speed) <= tolerance ? cfg : { tile: cfg.tile, speed };
 }
 
 export function initialMovement(
@@ -197,7 +217,7 @@ export function stepMovement(
     const ty = s.ty + DY[s.stepDir];
     const dir = dirFromButtons(buttons);
     const cont = dir !== null && canStep({ ...s, tx, ty }, dir, table, through);
-    return {
+    const landed: MovementState = {
       ...s,
       tx,
       ty,
@@ -208,6 +228,8 @@ export function stepMovement(
       walking: cont,
       facing: faceMovement && !cont ? (dir ?? s.facing) : s.facing,
     };
+    delete landed.stepTilesPerSecond;
+    return landed;
   }
 
   // Resting at a tile boundary.
@@ -222,7 +244,7 @@ export function stepMovement(
   }
   // Commit the step: the press tick renders the first 2px.
   const { px, py } = stepPixels(s.tx * cfg.tile, s.ty * cfg.tile, dir, 1, cfg);
-  return {
+  const committed: MovementState = {
     ...s,
     facing: faceMovement ? dir : s.facing,
     moving: true,
@@ -232,6 +254,9 @@ export function stepMovement(
     px,
     py,
   };
+  if (rules.exactTilesPerSecond === undefined) delete committed.stepTilesPerSecond;
+  else committed.stepTilesPerSecond = rules.exactTilesPerSecond;
+  return committed;
 }
 
 /** Pre-KM1 mover hot path. Sessions whose compiled world has no movement

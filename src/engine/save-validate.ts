@@ -16,6 +16,7 @@
 
 import { MAX_FIBER_STACK_DEPTH } from "./interpreter.ts";
 import { extensionCallNameValid, jsonValueProblem } from "./extensions.ts";
+import { MOTION_HZ } from "./motion-clock.ts";
 
 const INTEGER_OPS = new Set([
   "text", "choices", "switch", "variable", "selfSwitch", "if", "jmp", "repeat", "break",
@@ -351,9 +352,14 @@ function validateMoveControl(v: unknown, path: string): string | null {
         ? null
         : fail(`${path}.value`, "movement speed grade 1..6 required");
     case "routeSpeed":
-      return isNonNegInt(v.value) && v.value >= 1 && v.value <= 6
-        ? null
-        : fail(`${path}.value`, "movement speed grade 1..6 required");
+      if (!isNonNegInt(v.value) || v.value < 1 || v.value > 6) {
+        return fail(`${path}.value`, "movement speed grade 1..6 required");
+      }
+      if (v.tilesPerSecond !== undefined &&
+          (!isFiniteNumber(v.tilesPerSecond) || v.tilesPerSecond <= 0 || v.tilesPerSecond > 20)) {
+        return fail(`${path}.tilesPerSecond`, "exact speed in (0,20] tiles/second required");
+      }
+      return null;
     case "frequency":
       return isNonNegInt(v.value) && v.value >= 1 && v.value <= 5
         ? null
@@ -1738,6 +1744,7 @@ function validatePlacements(v: unknown, path: string): string | null {
 const MOVE_OVERRIDE_KEYS = new Set([
   "moveType", "bounds", "speed", "frequency", "wanderIntervalTicks", "running",
   "directionFix", "through", "facingMode", "routeStopped", "cooldown", "routeSpeed",
+  "routeTilesPerSecond",
 ]);
 
 function validateMoveOverride(v: unknown, path: string, event: boolean): string | null {
@@ -1764,6 +1771,13 @@ function validateMoveOverride(v: unknown, path: string, event: boolean): string 
   }
   if (v.routeSpeed !== undefined && (!isNonNegInt(v.routeSpeed) || v.routeSpeed < 1 || v.routeSpeed > 6)) {
     return fail(`${path}.routeSpeed`, "movement speed grade 1..6 required");
+  }
+  if (v.routeTilesPerSecond !== undefined &&
+      (!isFiniteNumber(v.routeTilesPerSecond) || v.routeTilesPerSecond <= 0 || v.routeTilesPerSecond > 20)) {
+    return fail(`${path}.routeTilesPerSecond`, "exact speed in (0,20] tiles/second required");
+  }
+  if (v.routeTilesPerSecond !== undefined && v.routeSpeed === undefined) {
+    return fail(`${path}.routeTilesPerSecond`, "exact route speed requires a routeSpeed grade");
   }
   if (v.frequency !== undefined && (!isNonNegInt(v.frequency) || v.frequency < 1 || v.frequency > 5)) {
     return fail(`${path}.frequency`, "movement frequency grade 1..5 required");
@@ -2159,6 +2173,10 @@ function validateRouteCommon(v: Record<string, unknown>, path: string): string |
   if (v.speed !== undefined && (!isNonNegInt(v.speed) || v.speed < 1 || v.speed > 6)) {
     return fail(`${path}.speed`, "movement speed grade 1..6 required");
   }
+  if (v.tilesPerSecond !== undefined &&
+      (!isFiniteNumber(v.tilesPerSecond) || v.tilesPerSecond <= 0 || v.tilesPerSecond > 20)) {
+    return fail(`${path}.tilesPerSecond`, "exact speed in (0,20] tiles/second required");
+  }
   return validatePathPlan(v.plan, `${path}.plan`);
 }
 
@@ -2184,18 +2202,29 @@ const STEP_DY = [1, 0, -1, 0] as const;
  *  how the step loop reads them back: at rest the pixel position is the tile
  *  origin; mid-step it lies on the stepDir axis, strictly between the origin
  *  and the target tile, and the speed recovered from it (movement.ts
- *  activeStepConfig) divides the tile into a whole number of ticks. A
- *  pair that fails would land the character somewhere its fields never said,
- *  or make the next tick throw. */
+ *  activeStepConfig) finishes it within the bounded reference window. New
+ *  exact motion carries its current-tile rate on the actor; an older snapshot
+ *  may instead recover it from the still-active route. Legacy grade motion
+ *  must divide the tile exactly. A pair that fails would land the character
+ *  somewhere its fields never said, or make the next tick throw. */
 function motionProblem(
   ch: Record<string, unknown>,
   at: string,
   subject: "character" | "player" = "character",
+  legacyExactRate?: number,
 ): string | null {
   const { tx, ty, px, py, phase, stepDir } = ch as Record<string, number>;
+  const storedExactRate = ch.stepTilesPerSecond;
+  if (storedExactRate !== undefined &&
+      (!isFiniteNumber(storedExactRate) || storedExactRate <= 0 || storedExactRate > 20)) {
+    return fail(`${at}.stepTilesPerSecond`, "exact speed in (0,20] tiles/second required");
+  }
   const ox = tx * SAVE_TILE;
   const oy = ty * SAVE_TILE;
   if (ch.moving !== true) {
+    if (storedExactRate !== undefined) {
+      return fail(`${at}.stepTilesPerSecond`, `an idle ${subject} cannot retain a committed-step speed`);
+    }
     if (phase !== 0) return fail(`${at}.phase`, `a ${subject} at rest must have phase 0`);
     if (px !== ox || py !== oy) return fail(at, `a ${subject} at rest must sit on its tile origin`);
     return null;
@@ -2211,9 +2240,31 @@ function motionProblem(
   if (across !== 0 || !(along > 0 && along < SAVE_TILE)) {
     return fail(at, `a moving ${subject}'s pixel position must lie between its tile and the stepDir neighbour`);
   }
-  // along < SAVE_TILE already makes frames > phase.
-  const frames = SAVE_TILE / (along / phase);
-  if (!Number.isInteger(frames) || frames > MAX_STEP_FRAMES) {
+  // A valid active-route rate is accepted only as an old-snapshot fallback:
+  // malformed route rates must reach validateRouteCommon's precise error,
+  // and a new per-step latch remains authoritative if the route changes or
+  // stops while the tile is already committed.
+  const exactRate = storedExactRate ?? (
+    isFiniteNumber(legacyExactRate) && legacyExactRate > 0 && legacyExactRate <= 20
+      ? legacyExactRate
+      : undefined
+  );
+  let frames: number;
+  if (exactRate !== undefined) {
+    const expected = SAVE_TILE * exactRate / MOTION_HZ * phase;
+    const coordinateScale = Math.max(1, Math.abs(px), Math.abs(py), Math.abs(ox), Math.abs(oy));
+    const tolerance = Number.EPSILON * coordinateScale * 8;
+    if (Math.abs(along - expected) > tolerance) {
+      return fail(at, `pixel offset must match the committed exact speed (${subject})`);
+    }
+    frames = Math.ceil(MOTION_HZ / exactRate);
+  } else {
+    // along < SAVE_TILE already makes frames > phase. Legacy grade motion
+    // must divide the tile exactly.
+    frames = SAVE_TILE / (along / phase);
+  }
+  if (!Number.isFinite(frames) || !Number.isInteger(frames) ||
+      frames <= phase || frames > MAX_STEP_FRAMES) {
     return fail(`${at}.phase`, `phase and pixel offset must describe a step the runtime can finish (${subject})`);
   }
   return null;
@@ -2279,7 +2330,10 @@ function validateMapRuntime(v: unknown, path: string, autosave: boolean): string
     if (!isBool(ch.moving) || !isBool(ch.visible) || !isBool(ch.blocks)) {
       return fail(at, "moving/visible/blocks booleans required");
     }
-    const motion = motionProblem(ch, at);
+    const legacyExactRate = isRecord(ch.route) && isFiniteNumber(ch.route.tilesPerSecond)
+      ? ch.route.tilesPerSecond
+      : undefined;
+    const motion = motionProblem(ch, at, "character", legacyExactRate);
     if (motion) return motion;
     const route = validateRouteRun(ch.route, `${at}.route`);
     if (route) return route;
@@ -2346,6 +2400,10 @@ export function validateSnapshot(snap: unknown): string | null {
   if (typeof p.moving !== "boolean" || typeof p.walking !== "boolean") {
     return "state.player: moving/walking must be booleans";
   }
+  if (p.stepTilesPerSecond !== undefined &&
+      (!isFiniteNumber(p.stepTilesPerSecond) || p.stepTilesPerSecond <= 0 || p.stepTilesPerSecond > 20)) {
+    return "state.player.stepTilesPerSecond: exact speed in (0,20] tiles/second required";
+  }
   if (snap.autosave === true) {
     const route = isRecord(snap.mapRuntime) && isRecord(snap.mapRuntime.playerRoute)
       ? snap.mapRuntime.playerRoute
@@ -2362,6 +2420,7 @@ export function validateSnapshot(snap: unknown): string | null {
       { ...p, phase: routePhase ?? p.phase, stepDir: routeDir },
       "state.player",
       "player",
+      route !== null && isFiniteNumber(route.tilesPerSecond) ? route.tilesPerSecond : undefined,
     );
     if (motion) return motion;
   } else {
@@ -2369,6 +2428,9 @@ export function validateSnapshot(snap: unknown): string | null {
     // exactly on an origin tile.
     if (p.moving !== false || p.phase !== 0) {
       return "state.player: a save must rest on a tile boundary (moving=false, phase=0)";
+    }
+    if (p.stepTilesPerSecond !== undefined) {
+      return "state.player.stepTilesPerSecond: an idle player cannot retain a committed-step speed";
     }
     if (px !== tx * 16 || py !== ty * 16) {
       return "state.player: pixel position must match the tile origin";

@@ -965,7 +965,7 @@ The movement, presentation, modal, extension, and battle forms use:
 
 | command | `field` spellings and text forms |
 | --- | --- |
-| `moveControl` | `target`, `control.kind`; `control.value` for value-bearing kinds, or `control.bounds` (`x,y,width,height`) and `control.frequency` for `wander` |
+| `moveControl` | `target`, `control.kind`; `control.value` for value-bearing kinds; optional `control.tilesPerSecond` for `routeSpeed`; or `control.bounds` (`x,y,width,height`), `control.frequency`, and `control.intervalTicks` for `wander` |
 | `appearance` | `target`, `sprite`, `opacity`, `visible`, `saveDefault` |
 | `layer` | `layer`, `visible`, `variant` |
 | `changeParallax` | `image` (or `null`), `loopX`, `loopY`, `sx`, `sy`, `zero` |

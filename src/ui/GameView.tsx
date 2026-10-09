@@ -1521,7 +1521,7 @@ export function GameView(props: GameViewProps) {
   let pendingSceneSelect: { id: string; index: number } | null = null;
   const selectSceneIndex = (id: string, index: number): void => {
     if (
-      attract ||
+      (attract && attract.status().phase !== "play") ||
       activeSceneId() !== id ||
       (scenePressButtons & BTN.CIRCLE) !== 0 ||
       !Number.isInteger(index)
@@ -1851,7 +1851,7 @@ export function GameView(props: GameViewProps) {
       frameHostEffects.length = 0;
       const effects = props.hostActions === undefined ? undefined : hostEffectSink;
       if (attract) {
-        const result = attract.step(frameButtons, effects, tapHook);
+        const result = attract.step(frameButtons, effects, tapHook, selected);
         state = result.state;
         status = result.status;
       } else {
@@ -2294,7 +2294,9 @@ export function GameView(props: GameViewProps) {
                 width={viewport().w}
                 height={viewport().h}
                 active={activeSceneId() === id}
-                onSelectIndex={attract ? undefined : (index) => selectSceneIndex(id, index)}
+                onSelectIndex={attract && demo()?.phase !== "play"
+                  ? undefined
+                  : (index) => selectSceneIndex(id, index)}
                 uiText={uiTextOverrides()}
               />
             </ProfileMount>

@@ -225,13 +225,18 @@ const maybeTest = preflight.ok ? test : test.skip;
 // sparse names, token expansion and targeted/variable-fed changeName) adds a
 // measured 3,641, 5,527 and 4,407 B. Transfer-persistent presentation plus
 // the exact-pair save hook adds another measured 1,492, 2,107 and 1,667 B.
-// Signed player-step displacement adds 1,327 B to each. The integrated totals
-// are 621,667, 992,973 and 787,961 B. The name-input and battle views remain
-// tree-shaken from the ordinary Sunstone graph.
+// Signed player-step displacement adds 1,327 B to each. Exact authored route
+// speed (fractional step geometry, route-scoped tiles/s and save validation)
+// plus rewind-safe scene touch add a measured 1,815, 4,875 and 3,626 B. The
+// integrated totals are 623,482, 997,848 and 791,587 B. Exact per-step
+// tiles/s latching (including route/wander consumption and save validation)
+// adds a measured 2,895 B to Meadow and the WAV fixture and 4,402 B to
+// Sunstone: 626,377, 1,002,250 and 794,482 B. The name-input and battle views
+// remain tree-shaken from the ordinary Sunstone graph.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 621_667;
-const EXPECTED_SUNSTONE_QOA_BYTES = 992_973;
-const EXPECTED_WAV_FIXTURE_BYTES = 787_961;
+const EXPECTED_MEADOW_BYTES = 626_377;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_002_250;
+const EXPECTED_WAV_FIXTURE_BYTES = 794_482;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

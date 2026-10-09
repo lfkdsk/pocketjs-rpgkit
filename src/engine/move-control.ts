@@ -7,6 +7,7 @@
 // owns this plain-data state, which makes save/load and rewind automatic.
 
 import { keyedRecord } from "./clone.ts";
+import { MOTION_HZ } from "./motion-clock.ts";
 import { stepFrames, type MovementConfig } from "./movement.ts";
 import type {
   FacingMode,
@@ -42,6 +43,9 @@ export interface MoveOverride {
    *  running), and deleted on consumption, so it never outlives the route
    *  it was meant for. */
   routeSpeed?: MoveSpeed;
+  /** Exact velocity paired with routeSpeed. It is pending for the same next
+   *  forced route and consumed/deleted with the grade. */
+  routeTilesPerSecond?: number;
 }
 
 export interface EventMoveOverride extends MoveOverride {
@@ -71,6 +75,12 @@ export interface ResolvedMoveSettings {
    *  random wandering. Runtime wander pauses for global dialog state and
    *  consumes the saveable project RNG; legacy page random remains exact. */
   runtimeWander: boolean;
+  /** Sparse speed waiting for the next forced route, also visible to a
+   *  command-started wander so its first committed tile matches Tuxemon's
+   *  custom moverate-before-wander sequence. */
+  pendingRouteSpeed?: MoveSpeed;
+  /** Exact authored rate paired with pendingRouteSpeed. */
+  pendingRouteTilesPerSecond?: number;
 }
 
 /** Shared immutable defaults for paths without an active movement override.
@@ -140,6 +150,8 @@ export function applyMoveControl(override: MoveOverride, control: MoveControl): 
       return;
     case "routeSpeed":
       override.routeSpeed = control.value;
+      if (control.tilesPerSecond === undefined) delete override.routeTilesPerSecond;
+      else override.routeTilesPerSecond = control.tilesPerSecond;
       return;
     case "run":
       override.running = control.value;
@@ -183,6 +195,10 @@ export function resolveMoveSettings(
     routeStopped: override?.routeStopped === true,
     runtimeMoveType: override?.moveType !== undefined,
     runtimeWander: override?.moveType === "random",
+    ...(override?.routeSpeed !== undefined ? { pendingRouteSpeed: override.routeSpeed } : {}),
+    ...(override?.routeTilesPerSecond !== undefined
+      ? { pendingRouteTilesPerSecond: override.routeTilesPerSecond }
+      : {}),
   };
 }
 
@@ -198,6 +214,17 @@ export function movementConfigFor(
   if (level === DEFAULT_MOVE_SPEED) return base;
   const frames = Math.max(1, Math.round(stepFrames(base) * (2 ** (DEFAULT_MOVE_SPEED - level))));
   return { tile: base.tile, speed: base.tile / frames };
+}
+
+/** Convert an exact tiles/second authoring rate to the fixed 60 Hz motion
+ * clock. Fractional pixels are retained between ticks; the crossing tick
+ * snaps onto the target tile just as a continuously integrated source mover
+ * does when it completes a waypoint. */
+export function movementConfigForTilesPerSecond(
+  base: MovementConfig,
+  tilesPerSecond: number,
+): MovementConfig {
+  return { tile: base.tile, speed: base.tile * tilesPerSecond / MOTION_HZ };
 }
 
 /** MV autonomous stop threshold, expressed in fixed 60 Hz reference ticks. */

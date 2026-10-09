@@ -210,11 +210,15 @@ const maybeTest = preflight.ok ? test : test.skip;
 // save-runtime uiText keys add another measured 72 B on that shared path:
 // 979,860. Live movement timing adds 4,152 B; runtime character identity adds
 // 5,527 B; transfer-persistent presentation and the exact-pair save hook add
-// 2,107 B; signed player-step displacement adds 1,327 B. The integrated
-// bundle is therefore a measured 992,973 B, while the battle and name-input
-// views remain absent by the assertions below.
+// 2,107 B; signed player-step displacement adds 1,327 B. Exact authored
+// route speed (fractional step geometry, route-scoped tiles/s and save
+// validation) plus rewind-safe scene touch add 4,875 B. The integrated
+// bundle is therefore a measured 997,848 B. Exact per-step tiles/s latching
+// (including route/wander consumption and save validation) adds 4,402 B,
+// measuring 1,002,250 B, while the battle and name-input views remain absent
+// by the assertions below.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 992_973;
+const EXPECTED_BYTES = 1_002_250;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

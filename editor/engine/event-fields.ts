@@ -225,9 +225,9 @@ function optionalInteger(
   return integer(raw, label, min, max);
 }
 
-function optionalNumber(raw: string, label: string, min?: number): FieldEdit<number | undefined> {
+function optionalNumber(raw: string, label: string, min?: number, max?: number): FieldEdit<number | undefined> {
   if (raw === OMIT || raw.trim() === "") return good(undefined);
-  return finite(raw, label, min);
+  return finite(raw, label, min, max);
 }
 
 function setOptional<T extends object>(value: T, key: string, next: unknown): T {
@@ -558,9 +558,14 @@ export function commandFields(
           fields.push(field("control.value", "VALUE", command.control.value, "enum", ["page", "static", "approach"]));
           break;
         case "speed":
-        case "routeSpeed":
         case "frequency":
           fields.push(field("control.value", "VALUE", command.control.value, "integer"));
+          break;
+        case "routeSpeed":
+          fields.push(
+            field("control.value", "VALUE", command.control.value, "integer"),
+            field("control.tilesPerSecond", "TILES / SECOND", command.control.tilesPerSecond ?? OMIT, "number"),
+          );
           break;
         case "run":
         case "directionFix":
@@ -1149,6 +1154,12 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
           case "stop":
             break;
         }
+      }
+      if (command.control.kind === "routeSpeed" && key === "control.tilesPerSecond") {
+        const value = optionalNumber(raw, "tiles per second", Number.MIN_VALUE, 20);
+        return value.ok
+          ? good({ ...command, control: setOptional(command.control, "tilesPerSecond", value.value) })
+          : value;
       }
       break;
     }

@@ -14,10 +14,14 @@ import { nameInputEvent, MAP, MAP_ID } from "./fixture-data.ts";
 declare global {
   // eslint-disable-next-line no-var
   var __kg1NameArgs: Record<string, unknown> | undefined;
+  // eslint-disable-next-line no-var
+  var __kg1Attract: boolean | undefined;
 }
 
 const args = globalThis.__kg1NameArgs ?? { variable: "player.nick", default: "Hero", maxLength: 8 };
+const attract = globalThis.__kg1Attract === true;
 globalThis.__kg1NameArgs = undefined;
+globalThis.__kg1Attract = undefined;
 
 const project: Project = {
   format: "rpgkit-project/v1",
@@ -35,5 +39,6 @@ mount(() => (
     assets={GAME_ASSETS}
     scenes={{ [NAME_INPUT_SCENE_ID]: nameInputRules }}
     sceneViews={{ [NAME_INPUT_SCENE_ID]: NameInputScene }}
+    {...(attract ? { attractTape: [] } : {})}
   />
 ));

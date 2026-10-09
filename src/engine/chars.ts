@@ -57,6 +57,7 @@ import {
   inMapBounds,
   inWanderBounds,
   movementConfigFor,
+  movementConfigForTilesPerSecond,
   wanderDelay,
   type ResolvedMoveSettings,
 } from "./move-control.ts";
@@ -170,6 +171,8 @@ export interface RouteRun {
    *  control while the route runs, and dies with the route, so the next
    *  route and autonomous movement are unaffected. */
   speed?: MoveSpeed;
+  /** Optional exact fixed-clock velocity paired with speed. */
+  tilesPerSecond?: number;
 }
 
 export interface CharState {
@@ -183,6 +186,9 @@ export interface CharState {
   phase: number;
   moving: boolean;
   stepDir: Dir4;
+  /** Exact authored velocity latched for the currently committed tile.
+   *  Deleted on landing; ordinary grade-based actors never store it. */
+  stepTilesPerSecond?: number;
   pageIndex: number;
   visible: boolean;
   blocks: boolean;
@@ -541,6 +547,7 @@ export function installRoute(
   waiter: string | null,
   cfg: MovementConfig,
   speed?: MoveSpeed,
+  tilesPerSecond?: number,
 ): { state: CharsState; displacedWaiter: string | null } {
   const s = cloneChars(s0);
   const ch = s.chars[eventId];
@@ -557,11 +564,13 @@ export function installRoute(
       plan: null,
       pathRetriesLeft: null,
       ...(speed !== undefined ? { speed } : {}),
+      ...(tilesPerSecond !== undefined ? { tilesPerSecond } : {}),
     };
     ch.phase = 0;
     ch.moving = false;
     ch.px = ch.tx * cfg.tile;
     ch.py = ch.ty * cfg.tile;
+    delete ch.stepTilesPerSecond;
   }
   return { state: s, displacedWaiter };
 }
@@ -576,7 +585,9 @@ export function routeSpeedConfig(
   cfg: MovementConfig,
   settings: ResolvedMoveSettings,
   speed: MoveSpeed | undefined,
+  tilesPerSecond?: number,
 ): MovementConfig {
+  if (tilesPerSecond !== undefined) return movementConfigForTilesPerSecond(cfg, tilesPerSecond);
   if (speed === undefined) return movementConfigFor(cfg, settings);
   return movementConfigFor(cfg, { speed, running: settings.running });
 }
@@ -588,11 +599,14 @@ export function latchRouteSpeed(
   s0: CharsState,
   eventId: string,
   speed: MoveSpeed,
+  tilesPerSecond?: number,
 ): { state: CharsState; latched: boolean } {
   const active = s0.chars[eventId]?.route;
   if (!active || active.patrol) return { state: s0, latched: false };
   const s = cloneChars(s0);
   s.chars[eventId]!.route!.speed = speed;
+  if (tilesPerSecond === undefined) delete s.chars[eventId]!.route!.tilesPerSecond;
+  else s.chars[eventId]!.route!.tilesPerSecond = tilesPerSecond;
   return { state: s, latched: true };
 }
 
@@ -656,6 +670,9 @@ export interface CharStepOptions {
   settings?: Readonly<Record<string, ResolvedMoveSettings>>;
   /** Called by a {control} route step at its tile boundary. */
   applyControl?: (eventId: string, control: MoveControl) => void;
+  /** Consume a routeSpeed override after runtime wander successfully commits
+   *  the one tile for which Tuxemon keeps a custom idle moverate. */
+  consumePendingRouteSpeed?: (eventId: string) => void;
   /** Saveable project RNG used only by command-started random wandering. */
   runtimeRng?: { rng: number };
   /** Tuxemon runtime wander pauses while any dialog/choice/shop is open. */
@@ -789,6 +806,7 @@ function commitStep(
   dir: Dir4,
   cfg: MovementConfig,
   settings: ResolvedMoveSettings,
+  exactTilesPerSecond?: number,
 ): void {
   if (canFace(settings, false)) ch.facing = dir;
   ch.stepDir = dir;
@@ -797,6 +815,8 @@ function commitStep(
   const { px, py } = stepPixels(ch.tx * cfg.tile, ch.ty * cfg.tile, dir, 1, cfg);
   ch.px = px;
   ch.py = py;
+  if (exactTilesPerSecond === undefined) delete ch.stepTilesPerSecond;
+  else ch.stepTilesPerSecond = exactTilesPerSecond;
 }
 
 function releaseRoute(ch: CharState, finishedWaiters: string[]): void {
@@ -903,7 +923,18 @@ export function stepCharsInPlace(
       ch.route = cloneRoute(ch.patrol);
     }
 
-    const desiredCfg = routeSpeedConfig(cfg, settings, ch.route?.speed);
+    const pendingWanderSpeed = ch.route === null && settings.runtimeWander
+      ? settings.pendingRouteSpeed
+      : undefined;
+    const pendingWanderRate = pendingWanderSpeed !== undefined
+      ? settings.pendingRouteTilesPerSecond
+      : undefined;
+    const desiredCfg = routeSpeedConfig(
+      cfg,
+      settings,
+      ch.route?.speed ?? pendingWanderSpeed,
+      ch.route?.tilesPerSecond ?? pendingWanderRate,
+    );
 
     // Mid-step: interpolate. Nothing interrupts a step once committed
     // (locks and page changes snap at boundaries via syncPages).
@@ -925,6 +956,7 @@ export function stepCharsInPlace(
       ch.py = ch.ty * cfg.tile;
       ch.phase = 0;
       ch.moving = false;
+      delete ch.stepTilesPerSecond;
       // A pathTo/approach step whose final internal step just
       // landed finishes on THIS tick — apply the approach arrival-facing
       // and advance the route pc (releasing a waiting fiber immediately).
@@ -1168,7 +1200,7 @@ function stepPath(
   }
   // Commit the next planned tile step; the SAME authored route step stays
   // current until the whole plan is consumed.
-  commitStep(ch, dir, cfg, settings);
+  commitStep(ch, dir, cfg, settings, route.tilesPerSecond);
   plan.dirs.shift();
   if (plan.dirs.length === 0) {
     // Last internal step is now interpolating; the landing boundary tick
@@ -1211,6 +1243,8 @@ function stepRoute(
         // A route step scopes the grade to THIS route: latch it directly
         // instead of writing the persistent override.
         route.speed = step.control.value;
+        if (step.control.tilesPerSecond === undefined) delete route.tilesPerSecond;
+        else route.tilesPerSecond = step.control.tilesPerSecond;
         advanceRouteStep(ch, finishedWaiters);
         return;
       }
@@ -1294,7 +1328,7 @@ function stepRoute(
     if (route.skippable) releaseRoute(ch, finishedWaiters);
     return; // retry on the next boundary tick
   }
-  commitStep(ch, dir, cfg, settings);
+  commitStep(ch, dir, cfg, settings, route.tilesPerSecond);
   route.pc++;
   if (route.pc >= route.steps.length && route.repeat) route.pc = 0;
 }
@@ -1325,7 +1359,10 @@ function randomStep(
     const cursor = options.runtimeRng ?? s;
     const r = randInt(cursor.rng, 0, exits.length - 1);
     cursor.rng = r.next;
-    commitStep(ch, exits[r.value]!, cfg, settings);
+    commitStep(ch, exits[r.value]!, cfg, settings, settings.pendingRouteTilesPerSecond);
+    if (settings.pendingRouteSpeed !== undefined) {
+      options.consumePendingRouteSpeed?.(ch.id);
+    }
     return;
   }
 

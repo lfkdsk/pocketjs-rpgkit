@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `138048a55ff7d728806120306745c007401d62eec7e5ed1a5da39720429da022` | optional `routeSpeed.tilesPerSecond` exact fixed-clock velocity; documents that omit it retain the existing MV speed grade, route lifetime and bytes | additive |
 | `5eecc57a1acad4721139225b1bed1e35ae581706c29e611909d58b2c90efb41b` | optional `screenBackdrop.whenModalOpen: "ignore"` policy for sources whose state stack preserves a covered backdrop, plus optional `system.transferPresentation: "retain"` for world-owned map animations, camera focus and player balloons; documents without either field keep unconditional backdrop replacement and the original per-map presentation lifetime | additive |
 | `70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a705fb3a3cd5531905` | optional `nameInput.random` ui-text word; optional `appearance.combatSheet` player battle back-sheet field with its `saveDefault` baseline; optional `system.characterNames` opt-in for `{char:player\|this\|eventId}` text; and `changeName` event targets/variable-fed names. Documents without the opt-in keep `{char:...}` literal, and older `changeName` commands retain their player/literal meaning | additive |
 | `c5d8a3f0ed118bfd8d99f2a0b4dda7479918506c3728d09097f1ef662788af2c` | `playerMoving` condition, plus optional exact `intervalTicks` cadence for command-started wander; projects without either addition retain their existing behavior and MV frequency-grade cadence | additive |

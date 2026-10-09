@@ -1450,6 +1450,11 @@ on the fixed reference-tick clock: grade `n` waits `30 × (5 - n)` reference
 ticks between autonomous decisions. `wander` may instead set a positive
 `intervalTicks`; it takes precedence over the grade. NPCs run that clock
 continuously, while player wander keeps its existing pause-while-held clock.
+`routeSpeed` scopes a grade to the active or next forced route. Its optional
+`tilesPerSecond` is an exact velocity on the 60 Hz reference clock and takes
+precedence over the grade; when absent, existing grade-only documents behave
+unchanged. The exact value and compatibility grade expire together with the
+route.
 
 Control settings (including `stop`) persist for the current map visit and
 round-trip through saves. An NPC page switch clears all of that NPC's

@@ -1705,7 +1705,8 @@
           "required": ["kind", "value"],
           "properties": {
             "kind": { "const": "routeSpeed" },
-            "value": { "type": "integer", "minimum": 1, "maximum": 6 }
+            "value": { "type": "integer", "minimum": 1, "maximum": 6 },
+            "tilesPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 20, "description": "Optional exact velocity on the fixed 60 Hz motion clock; when absent, value retains the MV speed-grade behavior." }
           }
         },
         {
@@ -1754,7 +1755,7 @@
           }
         }
       ],
-      "description": "A movement override or wander request for a player/event target. Wander may carry an exact intervalTicks cadence instead of an MV frequency grade. It persists for the map visit; an event page switch clears that event's overrides. routeSpeed is the exception: it scopes a speed grade to exactly one forced route (latching onto the active route, or held pending until the next route installs) and is gone when that route ends."
+      "description": "A movement override or wander request for a player/event target. Wander may carry an exact intervalTicks cadence instead of an MV frequency grade. It persists for the map visit; an event page switch clears that event's overrides. routeSpeed is the exception: it scopes a speed grade, and optional exact tilesPerSecond velocity, to exactly one forced route (latching onto the active route, or held pending until the next route installs) and is gone when that route ends."
     },
     "moveStep": {
       "oneOf": [

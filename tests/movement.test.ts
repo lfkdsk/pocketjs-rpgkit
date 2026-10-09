@@ -42,9 +42,23 @@ describe("step geometry", () => {
     expect(stepFrames(CFG)).toBe(8);
   });
 
-  test("rejects speeds that do not divide the tile evenly", () => {
-    expect(() => stepFrames({ tile: 16, speed: 3 })).toThrow();
+  test("a fractional final increment snaps at the first crossing tick", () => {
+    const cfg = { tile: 16, speed: 3 };
+    expect(stepFrames(cfg)).toBe(6);
+    const { table } = map10();
+    let state = initialMovement(1, 1, 3, cfg);
+    const x: number[] = [];
+    for (let tick = 0; tick < 6; tick++) {
+      state = stepMovement(state, BTN_BITS.RIGHT, table, cfg);
+      x.push(state.px);
+    }
+    expect(x).toEqual([19, 22, 25, 28, 31, 32]);
+    expect(state).toMatchObject({ tx: 2, phase: 0, moving: false });
+  });
+
+  test("rejects non-finite or non-positive movement geometry", () => {
     expect(() => stepFrames({ tile: 0, speed: 2 })).toThrow();
+    expect(() => stepFrames({ tile: 16, speed: Number.NaN })).toThrow();
   });
 
   test("stepPixels interpolates linearly in the step direction", () => {

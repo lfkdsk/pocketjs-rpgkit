@@ -435,6 +435,11 @@ describe("editor command tree", () => {
   test("summarizes movement control and map animation commands", () => {
     const commands: Command[] = [
       { op: "moveControl", target: { event: "guard" }, control: { kind: "speed", value: 6 } },
+      {
+        op: "moveControl",
+        target: { event: "runner" },
+        control: { kind: "routeSpeed", value: 5, tilesPerSecond: 7 },
+      },
       { op: "mapAnim", id: "spark-1", anim: "spark", x: 3, y: 4 },
       { op: "mapAnim", id: "aura-1", anim: "aura", target: "player" },
       { op: "stopAnim", id: "spark-1" },
@@ -443,6 +448,7 @@ describe("editor command tree", () => {
     ];
     expect(commands.map((command) => commandSummary(command))).toEqual([
       "Move control event guard: speed 6",
+      "Move control event runner: routeSpeed 5 @ 7 tiles/s",
       "Map animation spark as spark-1 on tile (3, 4)",
       "Map animation aura as aura-1 on player",
       "Stop map animation spark-1",

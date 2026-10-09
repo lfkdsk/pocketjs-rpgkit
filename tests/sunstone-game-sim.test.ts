@@ -513,9 +513,12 @@ simDescribe("sunstone — render budget", () => {
     // measured 979,831 B. The switch catalog's writtenBy:"host" marker (a
     // dedicated switchDef $def in the embedded project schema) adds 72:
     // measured 979,903 B. Integrated movement timing, opt-in character
-    // identity and transfer-persistent presentation measure 991,646 B and
-    // remain under this narrow margin.
-    expect(jsBytes).toBeLessThan(993_000);
+    // identity and transfer-persistent presentation measure 991,646 B.
+    // Exact authored route speed and rewind-safe scene touch bring the
+    // measured bundle to 997,848 B. Exact per-step tiles/s latching for
+    // route/wander consumption and save validation adds 4,402 B, measuring
+    // 1,002,250 B; keep a narrow margin above that value.
+    expect(jsBytes).toBeLessThan(1_004_000);
   });
 });
 

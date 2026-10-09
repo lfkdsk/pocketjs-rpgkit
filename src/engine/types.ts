@@ -145,7 +145,9 @@ export interface WanderBounds {
  *  `routeSpeed` is the exception: it scopes a speed grade to exactly one
  *  forced route — latching onto the actor's active route, or held pending
  *  until the next forced route installs — and is gone when that route ends,
- *  so later routes and autonomous movement keep their resolved speed. */
+ *  so later routes and autonomous movement keep their resolved speed. Its
+ *  optional `tilesPerSecond` is an exact fixed-clock velocity; documents
+ *  that omit it retain the grade-only behavior. */
 export type MoveControl =
   | {
       kind: "wander";
@@ -158,7 +160,7 @@ export type MoveControl =
   | { kind: "moveType"; value: "page" | "static" | "approach" }
   | { kind: "stop" }
   | { kind: "speed"; value: MoveSpeed }
-  | { kind: "routeSpeed"; value: MoveSpeed }
+  | { kind: "routeSpeed"; value: MoveSpeed; tilesPerSecond?: number }
   | { kind: "run"; value: boolean }
   | { kind: "frequency"; value: MoveFrequency }
   | { kind: "directionFix"; value: boolean }

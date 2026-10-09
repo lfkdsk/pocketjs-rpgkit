@@ -532,7 +532,10 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
     }
     case "moveControl": {
       const control = isRecord(command.control) ? command.control : {};
-      return `Move control ${targetSummary(command.target)}: ${text(control.kind)}${control.value === undefined ? "" : ` ${jsonPreview(control.value, 48, full)}`}`;
+      const exact = control.tilesPerSecond === undefined
+        ? ""
+        : ` @ ${numberText(control.tilesPerSecond)} tiles/s`;
+      return `Move control ${targetSummary(command.target)}: ${text(control.kind)}${control.value === undefined ? "" : ` ${jsonPreview(control.value, 48, full)}`}${exact}`;
     }
     case "shop":
       return `Shop ${text(command.id)} (${Array.isArray(command.goods) ? command.goods.length : 0} goods)`;

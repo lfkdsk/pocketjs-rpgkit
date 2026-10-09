@@ -4,7 +4,12 @@
 import { describe, expect, test } from "bun:test";
 import schema from "../src/data/schema.json" with { type: "json" };
 import { AttractController } from "../src/engine/attract.ts";
-import { createMoveControlState, frequencyDelay, movementConfigFor } from "../src/engine/move-control.ts";
+import {
+  createMoveControlState,
+  frequencyDelay,
+  movementConfigFor,
+  movementConfigForTilesPerSecond,
+} from "../src/engine/move-control.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
 import {
   createSessionSnapshot,
@@ -129,6 +134,7 @@ describe("KM1 schema and ordered dispatch", () => {
     { kind: "moveType", value: "page" },
     { kind: "stop" },
     { kind: "speed", value: 6 },
+    { kind: "routeSpeed", value: 5, tilesPerSecond: 7 },
     { kind: "run", value: true },
     { kind: "frequency", value: 2 },
     { kind: "directionFix", value: true },
@@ -785,6 +791,293 @@ describe("KM1 lifecycle, holds, save, and rewind", () => {
 });
 
 describe("KM1 route-scoped speed (routeSpeed)", () => {
+  test("all authored exact rates land on the mathematical crossing tick from varied world positions", () => {
+    const cases = [
+      { rate: 0.5, x: 37, y: 20, step: "moveRight" as const, dx: 1, dy: 0 },
+      { rate: 1, x: 37, y: 20, step: "moveLeft" as const, dx: -1, dy: 0 },
+      { rate: 1.5, x: 20, y: 37, step: "moveDown" as const, dx: 0, dy: 1 },
+      { rate: 3, x: 20, y: 37, step: "moveUp" as const, dx: 0, dy: -1 },
+      { rate: 3.75, x: 37, y: 21, step: "moveRight" as const, dx: 1, dy: 0 },
+      { rate: 5, x: 38, y: 21, step: "moveLeft" as const, dx: -1, dy: 0 },
+      { rate: 7, x: 21, y: 37, step: "moveDown" as const, dx: 0, dy: 1 },
+      { rate: 8, x: 21, y: 38, step: "moveUp" as const, dx: 0, dy: -1 },
+      { rate: 9, x: 37, y: 22, step: "moveRight" as const, dx: 1, dy: 0 },
+      { rate: 10, x: 37, y: 22, step: "moveLeft" as const, dx: -1, dy: 0 },
+    ];
+
+    for (const c of cases) {
+      const runner = event("runner", c.x, c.y, [page("action", [])]);
+      const p = project([map("a", [controller([
+        {
+          op: "moveControl",
+          target: { event: "runner" },
+          control: { kind: "routeSpeed", value: 5, tilesPerSecond: c.rate },
+        },
+        {
+          op: "moveRoute",
+          target: { event: "runner" },
+          wait: false,
+          route: { steps: [c.step], repeat: false, skippable: false },
+        },
+      ]), runner], undefined, 50, 50)]);
+      const run = boot(p);
+      let out = action(run.session, run.state);
+      const frames = Math.ceil(60 / c.rate);
+      for (let tick = 1; tick < frames; tick++) {
+        out = stepSession(run.session, out, { buttons: 0 });
+        const ch = out.chars.chars.runner!;
+        expect(ch.moving, `${c.rate} tps landed before tick ${frames}`).toBeTrue();
+        expect(ch.phase, `${c.rate} tps phase ${tick}`).toBe(tick);
+        expect(ch.px).toBeCloseTo(c.x * 16 + c.dx * tick * 16 * c.rate / 60, 10);
+        expect(ch.py).toBeCloseTo(c.y * 16 + c.dy * tick * 16 * c.rate / 60, 10);
+        expect(ch.stepTilesPerSecond).toBe(c.rate);
+      }
+      out = stepSession(run.session, out, { buttons: 0 });
+      expect(out.chars.chars.runner, `${c.rate} tps crossing tick`).toMatchObject({
+        tx: c.x + c.dx,
+        ty: c.y + c.dy,
+        px: (c.x + c.dx) * 16,
+        py: (c.y + c.dy) * 16,
+        phase: 0,
+        moving: false,
+      });
+      expect(out.chars.chars.runner?.stepTilesPerSecond).toBeUndefined();
+    }
+  });
+
+  test("a 10 tps exact step keeps its latch through a phase-5 save and lands on tick 6", () => {
+    const runner = event("runner", 37, 22, [page("action", [])]);
+    const p = project([map("a", [controller([
+      {
+        op: "moveControl",
+        target: { event: "runner" },
+        control: { kind: "routeSpeed", value: 6, tilesPerSecond: 10 },
+      },
+      {
+        op: "moveRoute",
+        target: { event: "runner" },
+        wait: false,
+        route: { steps: ["moveRight"], repeat: false, skippable: false },
+      },
+    ]), runner], undefined, 50, 50)]);
+    const run = boot(p);
+    const phaseFive = fold(run.session, action(run.session, run.state), 5);
+    expect(phaseFive.chars.chars.runner).toMatchObject({
+      tx: 37,
+      phase: 5,
+      moving: true,
+      stepTilesPerSecond: 10,
+    });
+    const snapshot = createSessionSnapshot(run.session, phaseFive, 0);
+    expect(validateSnapshot(snapshot)).toBeNull();
+    const restored = restoreSessionSnapshot(run.session, decodeEnvelopeText(encodeEnvelope(snapshot)));
+    expect(restored.chars.chars.runner?.stepTilesPerSecond).toBe(10);
+
+    const legacy = structuredClone(snapshot) as any;
+    delete legacy.mapRuntime.chars.chars.runner.stepTilesPerSecond;
+    expect(validateSnapshot(legacy)).toBeNull();
+    const legacyRestored = restoreSessionSnapshot(
+      run.session,
+      decodeEnvelopeText(encodeEnvelope(legacy)),
+    );
+
+    const malformedRate = structuredClone(snapshot) as any;
+    malformedRate.mapRuntime.chars.chars.runner.stepTilesPerSecond = 0;
+    expect(validateSnapshot(malformedRate)).toBe(
+      "state.mapRuntime.chars.chars.runner.stepTilesPerSecond: exact speed in (0,20] tiles/second required",
+    );
+    const malformedPosition = structuredClone(snapshot) as any;
+    malformedPosition.mapRuntime.chars.chars.runner.px -= 0.25;
+    expect(validateSnapshot(malformedPosition)).toBe(
+      "state.mapRuntime.chars.chars.runner: pixel offset must match the committed exact speed (character)",
+    );
+
+    const direct = fold(run.session, phaseFive, 1);
+    const replay = fold(run.session, restored, 1);
+    const legacyReplay = fold(run.session, legacyRestored, 1);
+    expect(motionProjection(replay)).toEqual(motionProjection(direct));
+    expect(motionProjection(legacyReplay)).toEqual(motionProjection(direct));
+    expect(direct.chars.chars.runner).toMatchObject({
+      tx: 38,
+      px: 608,
+      phase: 0,
+      moving: false,
+    });
+    expect(direct.chars.chars.runner?.stepTilesPerSecond).toBeUndefined();
+  });
+
+  test("a pending 1 tps char_speed is consumed by the first runtime-wander tile", () => {
+    const runner = event("runner", 37, 20, [page("action", [])]);
+    const driver = event("driver", 0, 0, [
+      page("autorun", [
+        {
+          op: "moveControl",
+          target: { event: "runner" },
+          control: { kind: "routeSpeed", value: 2, tilesPerSecond: 1 },
+        },
+        {
+          op: "moveControl",
+          target: { event: "runner" },
+          control: {
+            kind: "wander",
+            bounds: { x: 38, y: 20, width: 1, height: 1 },
+            intervalTicks: 1,
+          },
+        },
+        { op: "selfSwitch", key: "A", value: true },
+      ]),
+      page("parallel", [], { condition: { selfSwitch: "A" } }),
+    ]);
+    const p = project([map("a", [driver, runner], undefined, 50, 50)]);
+    const run = boot(p);
+    let out = fold(run.session, run.state, 1); // publish the two controls
+    expect(controls(out).events.runner).toMatchObject({
+      routeSpeed: 2,
+      routeTilesPerSecond: 1,
+      moveType: "random",
+    });
+
+    out = fold(run.session, out, 1); // the only bounded exit commits
+    expect(out.chars.chars.runner).toMatchObject({
+      tx: 37,
+      phase: 1,
+      moving: true,
+      stepTilesPerSecond: 1,
+    });
+    expect(out.chars.chars.runner?.px).toBeCloseTo(37 * 16 + 16 / 60, 12);
+    expect(controls(out).events.runner?.routeSpeed).toBeUndefined();
+    expect(controls(out).events.runner?.routeTilesPerSecond).toBeUndefined();
+
+    const phaseThirty = fold(run.session, out, 29);
+    const snapshot = createSessionSnapshot(run.session, phaseThirty, 0);
+    expect(validateSnapshot(snapshot)).toBeNull();
+    const restored = restoreSessionSnapshot(run.session, decodeEnvelopeText(encodeEnvelope(snapshot)));
+    const direct = fold(run.session, phaseThirty, 30);
+    const replay = fold(run.session, restored, 30);
+    expect(motionProjection(replay)).toEqual(motionProjection(direct));
+    expect(direct.chars.chars.runner).toMatchObject({
+      tx: 38,
+      px: 608,
+      phase: 0,
+      moving: false,
+    });
+    expect(direct.chars.chars.runner?.stepTilesPerSecond).toBeUndefined();
+  });
+
+  test("an exact route speed keeps the authored per-tick velocity and snaps only at the waypoint", () => {
+    const exact = movementConfigForTilesPerSecond({ tile: 16, speed: 2 }, 7);
+    expect(exact.speed).toBeCloseTo(16 * 7 / 60, 12);
+
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const p = project([map("a", [controller([
+      {
+        op: "moveControl",
+        target: { event: "runner" },
+        control: { kind: "routeSpeed", value: 5, tilesPerSecond: 7 },
+      },
+      {
+        op: "moveRoute",
+        target: { event: "runner" },
+        wait: false,
+        route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
+      },
+    ]), runner])]);
+    const run = boot(p);
+    let out = action(run.session, run.state);
+    expect(out.chars.chars.runner?.route).toMatchObject({ speed: 5, tilesPerSecond: 7 });
+    expect(out.interp.moveControls?.events.runner?.routeTilesPerSecond).toBeUndefined();
+
+    const positions: number[] = [];
+    for (let tick = 1; tick <= 9; tick++) {
+      out = stepSession(run.session, out, { buttons: 0 });
+      positions.push(out.chars.chars.runner!.px);
+    }
+    for (let tick = 1; tick < 9; tick++) {
+      expect(positions[tick - 1]!).toBeCloseTo(16 + tick * 16 * 7 / 60, 10);
+    }
+    expect(positions[8]).toBe(32);
+    expect(out.chars.chars.runner).toMatchObject({ tx: 2, phase: 0, moving: false });
+    out = fold(run.session, out, 9);
+    expect(out.chars.chars.runner).toMatchObject({ tx: 3, px: 48, phase: 0, moving: false });
+    expect(out.chars.chars.runner?.route).toBeNull();
+  });
+
+  test("exact route speed is identical at 60/30/20 Hz and survives a mid-step save", () => {
+    const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
+    const p = project([map("a", [controller([
+      {
+        op: "moveControl",
+        target: { event: "runner" },
+        control: { kind: "routeSpeed", value: 5, tilesPerSecond: 7 },
+      },
+      {
+        op: "moveRoute",
+        target: { event: "runner" },
+        wait: false,
+        route: { steps: ["moveRight", "moveRight", "moveRight"], repeat: false, skippable: false },
+      },
+    ]), runner])]);
+    const projections = ([60, 30, 20] as const).map((hz) => {
+      const run = boot(p, hz);
+      const started = action(run.session, run.state);
+      const mid = foldReferenceTicks(run.session, started, 12 - run.session.ticksPerFrame);
+      return motionProjection(mid);
+    });
+    expect(projections[1]).toEqual(projections[0]);
+    expect(projections[2]).toEqual(projections[0]);
+
+    const run = boot(p);
+    const mid = fold(run.session, action(run.session, run.state), 4);
+    expect(mid.chars.chars.runner).toMatchObject({ phase: 4, moving: true });
+    expect(mid.chars.chars.runner!.px).toBeCloseTo(16 + 4 * 16 * 7 / 60, 10);
+    const snapshot = createSessionSnapshot(run.session, mid, 0);
+    expect(validateSnapshot(snapshot)).toBeNull();
+    const invalidRoute = structuredClone(snapshot) as any;
+    invalidRoute.mapRuntime.chars.chars.runner.route.tilesPerSecond = 21;
+    expect(validateSnapshot(invalidRoute)).toBe(
+      "state.mapRuntime.chars.chars.runner.route.tilesPerSecond: exact speed in (0,20] tiles/second required",
+    );
+    const invalidStep = structuredClone(snapshot) as any;
+    invalidStep.mapRuntime.chars.chars.runner.route.steps[0] = {
+      control: { kind: "routeSpeed", value: 5, tilesPerSecond: 0 },
+    };
+    expect(validateSnapshot(invalidStep)).toBe(
+      "state.mapRuntime.chars.chars.runner.route.steps[0].control.tilesPerSecond: exact speed in (0,20] tiles/second required",
+    );
+    const restored = restoreSessionSnapshot(run.session, decodeEnvelopeText(encodeEnvelope(snapshot)));
+    expect(restored.chars.chars.runner?.route?.tilesPerSecond).toBe(7);
+    expect(motionProjection(fold(run.session, restored, 30)))
+      .toEqual(motionProjection(fold(run.session, mid, 30)));
+  });
+
+  test("exact player route speed takes precedence over the compatibility grade and run flag", () => {
+    const p = project([map("a", [event("driver", 3, 2, [page("action", [
+      { op: "moveControl", target: "player", control: { kind: "run", value: true } },
+      {
+        op: "moveControl",
+        target: "player",
+        control: { kind: "routeSpeed", value: 2, tilesPerSecond: 7 },
+      },
+      {
+        op: "moveRoute",
+        target: "player",
+        route: { steps: ["moveRight"], repeat: false, skippable: false },
+      },
+    ])])])], { map: "a", x: 2, y: 2, dir: "right" });
+    const run = boot(p);
+    let out = action(run.session, run.state);
+    expect(out.playerRoute).toMatchObject({ speed: 2, tilesPerSecond: 7 });
+    out = stepSession(run.session, out, { buttons: 0 });
+    expect(out.move.px).toBeCloseTo(32 + 16 * 7 / 60, 10);
+    expect(out.playerRoute?.phase).toBe(1);
+    out = fold(run.session, out, 8);
+    expect(out.move).toMatchObject({ tx: 3, px: 48, moving: false });
+    expect(out.playerRoute).toBeNull();
+    // The route-scoped exact value is gone; ordinary running resumes grade behavior.
+    out = stepSession(run.session, out, { buttons: BTN.RIGHT });
+    expect(out.move.px).toBe(52);
+  });
+
   test("a pending routeSpeed latches onto the next forced route and is gone when it ends", () => {
     const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
     const driver = event("driver", 2, 3, [
@@ -1051,7 +1344,7 @@ describe("KM1 route-scoped speed (routeSpeed)", () => {
   test("rewind over a player routeSpeed pathTo route restores identical state", () => {
     const driver = event("driver", 0, 0, [
       page("autorun", [
-        { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 6 } },
+        { op: "moveControl", target: "player", control: { kind: "routeSpeed", value: 5, tilesPerSecond: 7 } },
         {
           op: "moveRoute",
           target: "player",
@@ -1087,6 +1380,7 @@ describe("KM1 route-scoped speed (routeSpeed)", () => {
     fromZero.step(BTN.L);
     expect(keyed.state).toEqual(fromZero.state);
     expect(keyed.state.move.tx).toBe(9);
+    expect(keyed.state.playerRoute?.tilesPerSecond).toBeUndefined();
   });
 
   test("routeSpeed routes are byte-deterministic at 60/30/20/4 Hz", () => {
@@ -1159,7 +1453,11 @@ describe("KM1 route-scoped speed (routeSpeed)", () => {
     const runner = event("runner", 1, 5, [page("action", [], { moveSpeed: 4 })]);
     const driver = event("driver", 0, 0, [
       page("autorun", [
-        { op: "moveControl", target: { event: "runner" }, control: { kind: "routeSpeed", value: 6 } },
+        {
+          op: "moveControl",
+          target: { event: "runner" },
+          control: { kind: "routeSpeed", value: 5, tilesPerSecond: 7 },
+        },
         {
           op: "moveRoute",
           target: { event: "runner" },

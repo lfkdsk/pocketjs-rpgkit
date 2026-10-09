@@ -195,6 +195,12 @@ Conventions:
   `intervalTicks` instead for a positive reference-tick interval; it takes
   precedence over the frequency grade. NPCs run that clock continuously;
   player wander retains its existing pause-while-held clock.
+- **Exact forced-route speed:** `{kind:"routeSpeed", value:5,
+  tilesPerSecond:7}` scopes both the compatibility grade and the exact
+  velocity to the active or next forced route. The exact field takes
+  precedence and preserves fractional pixel positions on the 60 Hz reference
+  clock; omitting it keeps the old grade behavior byte-for-byte. Both fields
+  are consumed together and disappear when the route ends.
 - **Control lifetime and priority:** settings and `stop` persist for the map
   visit and round-trip through saves. An NPC page switch clears all of that
   actor's overrides; a map transfer clears both player and NPC overrides.

@@ -18,7 +18,7 @@ const NEWER_COMMAND_CASES: readonly {
   readonly op: EditableCommandOp;
   readonly edits: readonly Edit[];
 }[] = [
-  { op: "moveControl", edits: [["target", "player"], ["control.kind", "speed"], ["control.value", "5"]] },
+  { op: "moveControl", edits: [["target", "player"], ["control.kind", "routeSpeed"], ["control.value", "5"], ["control.tilesPerSecond", "7"]] },
   { op: "appearance", edits: [["target", "player"], ["sprite", "hero"], ["opacity", "128"], ["saveDefault", "true"]] },
   { op: "layer", edits: [["layer", "weather"], ["visible", "false"], ["variant", "rain"]] },
   { op: "tileProperty", edits: [["x", "1"], ["y", "1"], ["passage", "block"], ["enter", "left,up"]] },
