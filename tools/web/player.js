@@ -243,6 +243,27 @@ function startGithubSignIn(auth) {
 // waits for the same login/logout event hook used by in-game sign-out. That
 // command also owns app-specific credential cleanup, so the page never needs
 // to know a game's storage key.
+//
+// The same two hooks carry a character-name text box, so a browser player can
+// type a name with the OS input method (a Chinese IME, for example) while the
+// game shows its character-creation screen:
+//   game -> page  __pocketAuthEvent({ type: "nameInput", title, maxLength,
+//                 value, error })  the creation screen is open: show the box
+//                 (the value prefills it only the first time it opens, so
+//                 later events never clobber what the player is typing), set
+//                 its maxlength and show the error text when it is non-empty
+//                 (the game re-sends nameInput with an error when it refused
+//                 a name; an empty error clears the display).
+//                 __pocketAuthEvent({ type: "nameInputEnd" }) and
+//                 __pocketAuthEvent({ type: "logout" })  hide and clear it.
+//   page -> game  __pocketAuthCommand("name", text)  on Enter or the Create
+//                 button, with the trimmed text (an empty box submits nothing;
+//                 Enter during an IME composition is ignored).
+// The game's key listeners sit on the game screen, not on the document, and
+// the page only moves focus to the screen on load and on explicit clicks, so
+// keystrokes in the box never reach the game and the box keeps focus while
+// the player types. The box stops its key events all the same, so nothing
+// else on the page can see them.
 function initAuthUI(config) {
   const auth = config.auth;
   if (!auth?.github) return;
@@ -258,30 +279,114 @@ function initAuthUI(config) {
   signOut.id = "auth-signout";
   signOut.className = "bar-button";
   signOut.addEventListener("click", () => globalThis.__pocketAuthCommand?.("signout"));
+  // The character-name box, hidden until the game opens its creation screen.
+  const nameBox = document.createElement("span");
+  nameBox.id = "auth-name-box";
+  nameBox.className = "auth-name";
+  nameBox.hidden = true;
+  const nameLabel = document.createElement("label");
+  nameLabel.htmlFor = "auth-name";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.id = "auth-name";
+  nameInput.autocomplete = "off";
+  nameInput.spellcheck = false;
+  const nameSubmit = document.createElement("button");
+  nameSubmit.type = "button";
+  nameSubmit.id = "auth-name-submit";
+  nameSubmit.className = "bar-button";
+  const nameError = document.createElement("span");
+  nameError.id = "auth-name-error";
+  nameError.className = "auth-name-error";
+  nameError.setAttribute("role", "alert");
+  nameError.hidden = true;
+  nameBox.append(nameLabel, nameInput, nameSubmit, nameError);
+  let nameOpen = false;
+  const submitName = () => {
+    const text = nameInput.value.trim();
+    if (!nameOpen || !text) return;
+    globalThis.__pocketAuthCommand?.("name", text);
+  };
+  nameSubmit.addEventListener("click", submitName);
+  nameInput.addEventListener("keydown", (event) => {
+    // Keystrokes belong to the box: nothing above it may read them.
+    event.stopPropagation();
+    // Enter inside an IME composition commits the candidate, not the name.
+    if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    submitName();
+  });
+  for (const type of ["keyup", "keypress", "compositionstart", "compositionupdate", "compositionend"]) {
+    nameInput.addEventListener(type, (event) => event.stopPropagation());
+  }
+  const showName = (ev) => {
+    const max = Number(ev.maxLength);
+    if (Number.isInteger(max) && max > 0) nameInput.maxLength = max;
+    else nameInput.removeAttribute("maxlength");
+    const error = typeof ev.error === "string" ? ev.error : "";
+    nameError.textContent = error;
+    nameError.hidden = error === "";
+    nameInput.title = typeof ev.title === "string" ? ev.title : "";
+    if (nameOpen) return;
+    nameOpen = true;
+    nameInput.value = typeof ev.value === "string" ? ev.value : "";
+    nameBox.hidden = false;
+    nameInput.focus({ preventScroll: true });
+  };
+  const hideName = () => {
+    nameOpen = false;
+    nameBox.hidden = true;
+    nameInput.value = "";
+    nameInput.title = "";
+    nameError.textContent = "";
+    nameError.hidden = true;
+  };
   let login = null;
-  const refresh = () => setAuthUI(signIn, signOut, login);
+  const refresh = () => setAuthUI(signIn, signOut, login, { label: nameLabel, input: nameInput, submit: nameSubmit });
   refresh();
   const audio = bar.querySelector(".audio-controls");
   bar.insertBefore(signIn, audio);
   bar.insertBefore(signOut, audio);
+  bar.insertBefore(nameBox, audio);
   // The page switcher translates static chrome itself. Auth labels carry
   // runtime state (including the login name), so re-render them through the
   // same stateful formatter as soon as the active dictionary changes.
   globalThis.__pocketPageLanguageEvent = refresh;
-  // The game reports login/logout through this event hook.
+  // The game reports login/logout and its character-creation screen through
+  // this event hook.
   globalThis.__pocketAuthEvent = (ev) => {
-    login = ev.type === "login" ? ev.login : null;
+    switch (ev?.type) {
+      case "login":
+        login = ev.login;
+        break;
+      case "logout":
+        login = null;
+        hideName();
+        break;
+      case "nameInput":
+        showName(ev);
+        return;
+      case "nameInputEnd":
+        hideName();
+        return;
+      default:
+        return;
+    }
     refresh();
   };
 }
 
-function setAuthUI(signIn, signOut, login) {
+function setAuthUI(signIn, signOut, login, name) {
   signIn.textContent = login === null
     ? t("auth.signin", "Sign in with GitHub")
     : t("auth.signed-in", "Signed in as {name}").replace("{name}", login);
   signIn.disabled = login !== null;
   signOut.textContent = t("auth.signed-out", "Sign out");
   signOut.hidden = login === null;
+  if (!name) return;
+  name.label.textContent = t("auth.name-label", "Character name");
+  name.input.placeholder = t("auth.name-placeholder", "Type a name (letters, digits, space, _ . - or common Chinese)");
+  name.submit.textContent = t("auth.name-submit", "Create");
 }
 
 

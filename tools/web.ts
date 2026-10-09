@@ -208,7 +208,9 @@ export interface WebGameEntry {
    *  description, a chapters-unavailable notice), keyed by declared code. */
   i18n?: Record<string, WebGameI18n>;
   /** OAuth sign-in config. When present, the player page shows a
-   *  "Sign in with GitHub" control and hands the token to the game. */
+   *  "Sign in with GitHub" control and hands the token to the game, plus a
+   *  Sign out button and a character-name text box the game opens while its
+   *  creation screen is up (so names can be typed with the OS input method). */
   auth?: WebAuthConfig;
 }
 

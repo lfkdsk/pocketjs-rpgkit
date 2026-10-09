@@ -221,6 +221,32 @@ img, video, canvas { max-width: 100%; }
   color: var(--accent);
 }
 
+/* Character-name box beside the sign-in controls (games that declare auth).
+   Hidden until the game opens its character-creation screen. */
+.auth-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.auth-name[hidden] { display: none; }
+.auth-name input {
+  width: 14em;
+  max-width: 60vw;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.auth-name input:focus { outline: none; border-color: var(--accent); }
+.auth-name input::placeholder { color: var(--muted); }
+.auth-name-error { color: var(--accent); }
+.auth-name-error[hidden] { display: none; }
+
 .audio-controls {
   display: flex;
   align-items: center;
