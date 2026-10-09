@@ -247,6 +247,31 @@ img, video, canvas { max-width: 100%; }
 .auth-name-error { color: var(--accent); }
 .auth-name-error[hidden] { display: none; }
 
+/* Invite-link box beside the sign-in controls (multiplayer games). Hidden
+   until the game mints a realm invite; the input holds the shareable URL. */
+.auth-invite {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.auth-invite[hidden] { display: none; }
+.auth-invite input {
+  width: 24em;
+  max-width: 60vw;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.auth-invite input:focus { outline: none; border-color: var(--accent); }
+.auth-invite-hint { flex-basis: 100%; color: var(--muted); }
+.auth-invite-hint[hidden] { display: none; }
+
 .audio-controls {
   display: flex;
   align-items: center;

@@ -118,12 +118,20 @@ function harnessPage(): string {
   const translate = extractLine(source, "const t = ");
   const key = /const OAUTH_STATE_KEY = "[^"]+";/.exec(source)?.[0];
   if (!key) throw new Error("tools/web/player.js has no OAUTH_STATE_KEY");
+  // boot() also consumes a realm-invite fragment (tests/web-invite-link.test.ts
+  // covers that path); the real helpers ride along so the real boot runs.
+  const inviteKey = /const INVITE_KEY = "[^"]+";/.exec(source)?.[0];
+  if (!inviteKey) throw new Error("tools/web/player.js has no INVITE_KEY");
+  const invite = ["function inviteFromFragment", "function pendingInvite", "function forgetInvite"]
+    .map((needle) => extractBraced(source, needle)).join("\n");
   return `<!doctype html>
 <html>
 <head><meta charset="utf-8"><title>oauth state harness</title></head>
 <body>
 <script>
 ${key}
+${inviteKey}
+${invite}
 ${fn}
 ${translate}
 ${initAuthUI}

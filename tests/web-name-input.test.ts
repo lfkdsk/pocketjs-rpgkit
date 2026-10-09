@@ -310,7 +310,7 @@ describe.skipIf(!existsSync(CHROME))("web page character-name box", () => {
     const withAuth = await setup(true);
     expect(withAuth.present).toBe(true);
     expect(withAuth.hidden).toBe(true);
-    expect(withAuth.barChildren).toEqual(["auth-signin", "auth-signout", "auth-name-box", "audio-controls"]);
+    expect(withAuth.barChildren).toEqual(["auth-signin", "auth-signout", "auth-name-box", "auth-invite-box", "audio-controls"]);
     expect(withAuth.labelFor).toBe("auth-name");
     expect(withAuth.submitClass).toBe("bar-button");
     expect(withAuth.commands).toEqual([]);

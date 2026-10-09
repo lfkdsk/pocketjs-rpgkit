@@ -238,6 +238,57 @@ function startGithubSignIn(auth) {
   location.href = url.toString();
 }
 
+// --- Realm invites (multiplayer games) -------------------------------------
+// A shareable invite link is this page's own URL plus #invite=<token>. The
+// token rides in the fragment (never sent to the server, never logged) and
+// is consumed before the game loads: it is copied to sessionStorage and
+// stripped from the fragment, leaving any OAuth callback parameters in
+// place for oauthFromFragment. The page then publishes the token through
+// globalThis.__pocketInvite, from the fragment or, failing that, from
+// sessionStorage, so an invite survives the GitHub sign-in redirect round
+// trip and a reload within the same tab. The game reports
+// __pocketAuthEvent({ type: "inviteConsumed" }) once it has been admitted
+// through the token, which forgets the stored copy. Every storage access
+// fails soft: without sessionStorage the token still works for this load.
+const INVITE_KEY = "pocket-rpgkit:invite";
+
+function inviteFromFragment() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get("invite");
+  if (token === null) return null;
+  // Strip only the invite parameter; the rest of the fragment (an OAuth
+  // callback, for example) stays exactly as it was for its own reader.
+  params.delete("invite");
+  const rest = params.toString();
+  history.replaceState(null, "", location.pathname + location.search + (rest ? `#${rest}` : ""));
+  if (!token) return null;
+  try {
+    sessionStorage.setItem(INVITE_KEY, token);
+  } catch {
+    // private mode: the token still reaches the game for this load
+  }
+  return token;
+}
+
+/** The invite token this load should join with, or undefined. */
+function pendingInvite() {
+  const fromFragment = inviteFromFragment();
+  if (fromFragment) return fromFragment;
+  try {
+    return sessionStorage.getItem(INVITE_KEY) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function forgetInvite() {
+  try {
+    sessionStorage.removeItem(INVITE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 // Wire sign-in status and sign-out into the control bar, if the game declares
 // auth. The game remains the source of truth: the page sends a command, then
 // waits for the same login/logout event hook used by in-game sign-out. That
@@ -259,11 +310,28 @@ function startGithubSignIn(auth) {
 //   page -> game  __pocketAuthCommand("name", text)  on Enter or the Create
 //                 button, with the trimmed text (an empty box submits nothing;
 //                 Enter during an IME composition is ignored).
+//
+// A third box shares the hooks: the shareable invite link of a multiplayer
+// game's realm, shown once the player has minted an invite:
+//   game -> page  __pocketAuthEvent({ type: "invite", token, expiresIn })
+//                 show the box with this page's URL plus #invite=<token>, a
+//                 Copy button and a hint with the validity in minutes
+//                 (expiresIn is in seconds); a later invite event replaces
+//                 the link. __pocketAuthEvent({ type: "inviteEnd" }) and
+//                 logout hide and clear it.
+//                 __pocketAuthEvent({ type: "inviteConsumed" })  the game has
+//                 joined through the token this page handed it at boot:
+//                 forget the stored copy (see inviteFromFragment).
+//   page -> game  __pocketAuthCommand("inviteEnd")  the player closed the
+//                 box, so the game can forget the invite too.
 // The game's key listeners sit on the game screen, not on the document, and
 // the page only moves focus to the screen on load and on explicit clicks, so
 // keystrokes in the box never reach the game and the box keeps focus while
 // the player types. The box stops its key events all the same, so nothing
 // else on the page can see them.
+/** How long the Copy button reads "Copied" after a successful copy. */
+const INVITE_COPIED_MS = 2000;
+
 function initAuthUI(config) {
   const auth = config.auth;
   if (!auth?.github) return;
@@ -301,6 +369,32 @@ function initAuthUI(config) {
   nameError.setAttribute("role", "alert");
   nameError.hidden = true;
   nameBox.append(nameLabel, nameInput, nameSubmit, nameError);
+  // The invite-link box, hidden until the game mints a realm invite.
+  const inviteBox = document.createElement("span");
+  inviteBox.id = "auth-invite-box";
+  inviteBox.className = "auth-invite";
+  inviteBox.hidden = true;
+  const inviteLabel = document.createElement("label");
+  inviteLabel.htmlFor = "auth-invite";
+  const inviteInput = document.createElement("input");
+  inviteInput.type = "text";
+  inviteInput.id = "auth-invite";
+  inviteInput.readOnly = true;
+  inviteInput.autocomplete = "off";
+  inviteInput.spellcheck = false;
+  const inviteCopy = document.createElement("button");
+  inviteCopy.type = "button";
+  inviteCopy.id = "auth-invite-copy";
+  inviteCopy.className = "bar-button";
+  const inviteClose = document.createElement("button");
+  inviteClose.type = "button";
+  inviteClose.id = "auth-invite-close";
+  inviteClose.className = "bar-button";
+  const inviteHint = document.createElement("span");
+  inviteHint.id = "auth-invite-hint";
+  inviteHint.className = "auth-invite-hint";
+  inviteHint.hidden = true;
+  inviteBox.append(inviteLabel, inviteInput, inviteCopy, inviteClose, inviteHint);
   let nameOpen = false;
   const submitName = () => {
     const text = nameInput.value.trim();
@@ -341,13 +435,79 @@ function initAuthUI(config) {
     nameError.textContent = "";
     nameError.hidden = true;
   };
+  // Invite state: the validity in minutes (0 when unknown) and whether the
+  // Copy button is showing its brief "Copied" acknowledgement.
+  const invite = { label: inviteLabel, input: inviteInput, copy: inviteCopy, close: inviteClose, hint: inviteHint, minutes: 0, copied: false };
+  let copiedTimer = 0;
   let login = null;
-  const refresh = () => setAuthUI(signIn, signOut, login, { label: nameLabel, input: nameInput, submit: nameSubmit });
+  const refresh = () => setAuthUI(signIn, signOut, login, { label: nameLabel, input: nameInput, submit: nameSubmit }, invite);
+  const inviteUrl = (token) => `${location.origin}${location.pathname}${location.search}#invite=${encodeURIComponent(token)}`;
+  const showInvite = (ev) => {
+    if (typeof ev.token !== "string" || !ev.token) return;
+    const seconds = Number(ev.expiresIn);
+    invite.minutes = Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0;
+    inviteInput.value = inviteUrl(ev.token);
+    inviteBox.hidden = false;
+    refresh();
+  };
+  const hideInvite = () => {
+    inviteBox.hidden = true;
+    inviteInput.value = "";
+    invite.minutes = 0;
+    invite.copied = false;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = 0;
+    refresh();
+  };
+  const copiedForAWhile = () => {
+    invite.copied = true;
+    refresh();
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => {
+      copiedTimer = 0;
+      invite.copied = false;
+      refresh();
+    }, INVITE_COPIED_MS);
+  };
+  const copyInvite = async () => {
+    const text = inviteInput.value;
+    if (!text) return false;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      // No async clipboard (insecure context, permission denied, old
+      // browser): select the link and ask the browser to copy the
+      // selection the old way.
+      inviteInput.focus({ preventScroll: true });
+      inviteInput.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+    }
+    if (copied) copiedForAWhile();
+    return copied;
+  };
+  inviteCopy.addEventListener("click", () => {
+    void copyInvite();
+  });
+  inviteClose.addEventListener("click", () => {
+    hideInvite();
+    globalThis.__pocketAuthCommand?.("inviteEnd");
+  });
+  inviteInput.addEventListener("click", () => inviteInput.select());
+  for (const type of ["keydown", "keyup", "keypress", "compositionstart", "compositionupdate", "compositionend"]) {
+    inviteInput.addEventListener(type, (event) => event.stopPropagation());
+  }
   refresh();
   const audio = bar.querySelector(".audio-controls");
   bar.insertBefore(signIn, audio);
   bar.insertBefore(signOut, audio);
   bar.insertBefore(nameBox, audio);
+  bar.insertBefore(inviteBox, audio);
   // The page switcher translates static chrome itself. Auth labels carry
   // runtime state (including the login name), so re-render them through the
   // same stateful formatter as soon as the active dictionary changes.
@@ -362,12 +522,22 @@ function initAuthUI(config) {
       case "logout":
         login = null;
         hideName();
+        hideInvite();
         break;
       case "nameInput":
         showName(ev);
         return;
       case "nameInputEnd":
         hideName();
+        return;
+      case "invite":
+        showInvite(ev);
+        return;
+      case "inviteEnd":
+        hideInvite();
+        return;
+      case "inviteConsumed":
+        forgetInvite();
         return;
       default:
         return;
@@ -376,7 +546,7 @@ function initAuthUI(config) {
   };
 }
 
-function setAuthUI(signIn, signOut, login, name) {
+function setAuthUI(signIn, signOut, login, name, invite) {
   signIn.textContent = login === null
     ? t("auth.signin", "Sign in with GitHub")
     : t("auth.signed-in", "Signed in as {name}").replace("{name}", login);
@@ -387,6 +557,14 @@ function setAuthUI(signIn, signOut, login, name) {
   name.label.textContent = t("auth.name-label", "Character name");
   name.input.placeholder = t("auth.name-placeholder", "Type a name (letters, digits, space, _ . - or common Chinese)");
   name.submit.textContent = t("auth.name-submit", "Create");
+  if (!invite) return;
+  invite.label.textContent = t("auth.invite-label", "Invite link");
+  invite.copy.textContent = invite.copied ? t("auth.invite-copied", "Copied") : t("auth.invite-copy", "Copy");
+  invite.close.textContent = t("auth.invite-close", "Close");
+  invite.hint.textContent = invite.minutes > 0
+    ? t("auth.invite-hint", "Anyone who opens it joins your world. Valid for {minutes} minutes.").replace("{minutes}", String(invite.minutes))
+    : "";
+  invite.hint.hidden = invite.minutes <= 0;
 }
 
 
@@ -1170,6 +1348,9 @@ class Player {
     // Consume an OAuth callback before starting any wasm, pack or bundle
     // request. __pocketWeb is an explicit guest-readable platform marker;
     // unlike the one-time OAuth token, it is present on ordinary page loads.
+    // The invite parameter leaves the fragment first, so an OAuth callback
+    // that carried one through the sign-in redirect still parses below.
+    globalThis.__pocketInvite = pendingInvite();
     const oauth = oauthFromFragment();
     globalThis.__pocketWeb = true;
     globalThis.__pocketAuth = oauth?.token ? { token: oauth.token } : undefined;
