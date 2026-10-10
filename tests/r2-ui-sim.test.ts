@@ -52,6 +52,35 @@ const ANIMATION_COLOURS: readonly Rgba[] = [
 const IDLE_FEET: Rgba = [238, 238, 244, 255];
 const CANOPY_COLOUR: Rgba = [174, 48, 142, 255];
 
+simDescribe("GameView world overlay slot", () => {
+  test("mounts below screen effects, dialogs, and fade", async () => {
+    const world = await bootGameWorld(
+      appBundle("r2-ui"),
+      60,
+      { __r2WorldOverlay: true },
+      undefined,
+      VIEWPORT,
+    );
+    pump(world, 1);
+
+    const tree = world.getTree();
+    const overlayName = `rpgkit-fixture-world-overlay-${R2_MAP_ID}`;
+    const overlay = findNode(tree, overlayName);
+    expect(overlay).toBeDefined();
+
+    const serialized = JSON.stringify(tree);
+    const order = [
+      "rpgkit-world-frame",
+      overlayName,
+      "rpgkit-screen-tint",
+      "rpgkit-message-layer",
+      "rpgkit-screen-fade",
+    ].map((name) => serialized.indexOf(name));
+    expect(order.every((index) => index >= 0)).toBeTrue();
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});
+
 interface R2Stats {
   below?: AnimatedTilesStats;
   above?: AnimatedTilesStats;

@@ -51,6 +51,8 @@ export {
   type GameScreenPresentation,
   type GameScreenPresentationComponent,
   type GameScreenPresentationProps,
+  type GameWorldOverlayComponent,
+  type GameWorldOverlayProps,
   type GameViewProps,
   type SceneComponent,
 } from "./GameView.tsx";

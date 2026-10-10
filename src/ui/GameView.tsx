@@ -875,6 +875,15 @@ export interface GameEffectsProps {
 
 export type GameEffectsComponent = Component<GameEffectsProps>;
 
+/** Read-only input for a game-owned world overlay. The overlay paints
+ * immediately above the kept-alive world and below every screen tint, flash,
+ * HUD, dialog, and fade. */
+export interface GameWorldOverlayProps {
+  state: Accessor<Readonly<SessionState>>;
+}
+
+export type GameWorldOverlayComponent = Component<GameWorldOverlayProps>;
+
 /** Read-only inputs shared by optional screen-presentation layers. Reducer
  * state remains the only animation clock; presentation components cannot
  * mutate the session. */
@@ -940,6 +949,9 @@ export interface GameViewProps {
   sceneViews?: Record<string, SceneComponent>;
   /** Optional opt-in host effects, such as `pocket-rpgkit/ui/audio`. */
   effects?: GameEffectsComponent;
+  /** Optional game-owned presentation immediately above the world and below
+   * screen tints, HUD, dialogs, and fades. Omission mounts no extra layer. */
+  worldOverlay?: GameWorldOverlayComponent;
   assets: GameAssets;
   /** One u16 button mask per 60 Hz source frame (engine/attract-tape.ts).
    *  Present: attract/takeover/rewind drive the fold. Absent: live play. */
@@ -1048,6 +1060,7 @@ export function GameView(props: GameViewProps) {
   const { project, assets } = props;
   const Parallax = props.parallax;
   const Effects = props.effects;
+  const WorldOverlay = props.worldOverlay;
   const ScreenPresentationEffects = props.screenPresentation?.effects;
   const ScreenPresentationHud = props.screenPresentation?.hud;
   // Shop box item display names, keyed by id (DialogBox falls back to the
@@ -2191,6 +2204,10 @@ export function GameView(props: GameViewProps) {
           ))}
         </View>
       </ProfileMount>
+
+      {WorldOverlay ? (
+        <WorldOverlay state={readState} />
+      ) : null}
 
       {/* Screen effects (tints, flash, shake, backdrops) and the fade sit
           outside the kept-alive world so they keep their place above the

@@ -6,6 +6,7 @@ import {
   type ActorRenderStats,
   type AnimatedTilesStats,
   type BattleSceneViewProps,
+  type GameWorldOverlayProps,
 } from "../../../src/ui/index.ts";
 import type { MapRepository, Project, ProjectShell, ProjectSource } from "../../../src/engine/types.ts";
 import type { SceneRules } from "../../../src/engine/scene.ts";
@@ -53,6 +54,9 @@ declare global {
   var __r2Rewind: boolean | undefined;
   // eslint-disable-next-line no-var
   var __r2Kv2BattleGrow: boolean | undefined;
+  // Test-only opt-in for the GameView world-overlay presentation slot.
+  // eslint-disable-next-line no-var
+  var __r2WorldOverlay: boolean | undefined;
   // Test probe: fired with the layer name on every world-layer sync frame
   // (actors / mapAnimBelow / mapAnimAbove / balloons). Silent while a scene
   // gates the world, so a test can prove the per-frame hooks paused.
@@ -81,6 +85,7 @@ const rewindFixture = globalThis.__r2Rewind === true;
 // second map, so a test can prove the actor pool grows (not rebuilds) when a
 // battle closes onto a bigger map.
 const battleGrowFixture = globalThis.__r2Kv2BattleGrow === true;
+const worldOverlayFixture = globalThis.__r2WorldOverlay === true;
 const syncTick = globalThis.__r2UiSyncTick;
 globalThis.__r2UiSyncTick = undefined;
 globalThis.__r2Battle = undefined;
@@ -96,6 +101,7 @@ globalThis.__r2Kv2 = undefined;
 globalThis.__r2CapRepro = undefined;
 globalThis.__r2Rewind = undefined;
 globalThis.__r2Kv2BattleGrow = undefined;
+globalThis.__r2WorldOverlay = undefined;
 
 const project: Project = kv1Fixture
   ? KV1_UI_PROJECT
@@ -280,6 +286,15 @@ function KeptAliveScene(props: BattleSceneViewProps) {
   );
 }
 
+function FixtureWorldOverlay(props: GameWorldOverlayProps) {
+  return (
+    <View
+      class="absolute w-full h-full"
+      debugName={`rpgkit-fixture-world-overlay-${props.state().mapId}`}
+    />
+  );
+}
+
 mount(() => (
   <GameView
     immutableState
@@ -290,6 +305,7 @@ mount(() => (
     battleScene={ToyBattleScene}
     scenes={battleThenSceneFixture ? { "probe.keptAlive": keptAliveSceneRules } : undefined}
     sceneViews={battleThenSceneFixture ? { "probe.keptAlive": KeptAliveScene } : undefined}
+    worldOverlay={worldOverlayFixture ? FixtureWorldOverlay : undefined}
     attractTape={kv2Fixture ? [...KV2_TAPE] : rewindFixture ? [] : undefined}
     onAnimatedStats={(layer, value) => {
       stats[layer] = value;
