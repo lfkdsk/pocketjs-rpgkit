@@ -215,10 +215,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // validation) plus rewind-safe scene touch add 4,875 B. The integrated
 // bundle is therefore a measured 997,848 B. Exact per-step tiles/s latching
 // (including route/wander consumption and save validation) adds 4,402 B,
-// measuring 1,002,250 B, while the battle and name-input views remain absent
-// by the assertions below.
+// measuring 1,002,250 B. The optional GameView world-overlay composition
+// slot adds a measured 1,185 B on this full shared presentation path, for
+// 1,003,435 B, while the battle and name-input views remain absent by the
+// assertions below.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_002_250;
+const EXPECTED_BYTES = 1_003_435;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

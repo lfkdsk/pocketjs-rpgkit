@@ -231,12 +231,15 @@ const maybeTest = preflight.ok ? test : test.skip;
 // integrated totals are 623,482, 997,848 and 791,587 B. Exact per-step
 // tiles/s latching (including route/wander consumption and save validation)
 // adds a measured 2,895 B to Meadow and the WAV fixture and 4,402 B to
-// Sunstone: 626,377, 1,002,250 and 794,482 B. The name-input and battle views
-// remain tree-shaken from the ordinary Sunstone graph.
+// Sunstone: 626,377, 1,002,250 and 794,482 B. The optional GameView
+// world-overlay composition slot adds a measured 882 B to minimal Meadow and
+// 1,185 B to the full Sunstone/WAV paths, yielding 627,259, 1,003,435 and
+// 795,667 B. The name-input and battle views remain tree-shaken from the
+// ordinary Sunstone graph.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 626_377;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_002_250;
-const EXPECTED_WAV_FIXTURE_BYTES = 794_482;
+const EXPECTED_MEADOW_BYTES = 627_259;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_003_435;
+const EXPECTED_WAV_FIXTURE_BYTES = 795_667;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
