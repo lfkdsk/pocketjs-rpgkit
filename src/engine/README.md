@@ -554,6 +554,11 @@ Transfer semantics:
   transfer may replace that instant swap with one eight-reference-tick
   crossing, but only when the injected immutable-layout resolver proves the
   exact coordinate-preserving opening and the base passage tables admit it.
+  An opening may additionally name `movementCapability`; when the pure
+  `SessionOptions.handoffCapability(name, state)` callback confirms it, only
+  the target cell's solid-terrain bit is relaxed. Source exit and target
+  entry edges, target bodies, bounds and the full topology proof still block.
+  Projects and openings that omit the callback/field keep the original check.
   An accepted crossing is the transition and therefore replaces any authored
   transfer fade. A failed proof leaves the command untouched, including its
   original fade duration, on the legacy timeline.
@@ -619,6 +624,7 @@ without changing `MAP_SCHEMA_HASH`.
 | `verifyMapManifest` | `boolean` | `false` | recompute a sharded shell's declared content hash for untrusted inputs |
 | `onFiberStart` | `(key: string, pageIndex: number, parallel: boolean) => void` | none | page-fiber start trace; see below |
 | `onInstruction` | `(key: string, pageIndex: number, ins: Instr) => void` | none | per-instruction execution trace; see below |
+| `handoffCapability` | `(name: string, state: Readonly<SessionState>) => boolean` | none | confirm a trusted world opening's movement capability; may relax only target solid terrain |
 
 The former bare-repository third argument remains accepted for v1 callers.
 Packaged splitter output uses its build-time content hash directly, and

@@ -906,8 +906,11 @@ export interface WorldOpeningEndpoint {
 
 /** An authored map-edge portal. `offset` maps the source tangent coordinate
  * to the target tangent coordinate. Only `coordinate-preserving` openings
- * are eligible for a future seamless handoff; `portal-only` must retain the
- * project's ordinary transfer semantics. */
+ * are eligible for a seamless handoff; `portal-only` must retain the
+ * project's ordinary transfer semantics. `movementCapability` is trusted
+ * layout provenance: when the game confirms the live player has that
+ * capability, Session may ignore only the target cell's solid-terrain bit.
+ * Bounds, bodies and directional edges remain mandatory. */
 export interface WorldOpening {
   portalId: string;
   source: WorldOpeningEndpoint;
@@ -915,6 +918,7 @@ export interface WorldOpening {
   axis: WorldAxis;
   offset: number;
   compatibility: "coordinate-preserving" | "portal-only";
+  movementCapability?: string;
 }
 
 /** One evidence-approved geometric edge shared by two placements. The

@@ -25,6 +25,8 @@ export interface WorldHandoffRequest {
  * deliberately left to Session, which owns the compiled source/target tables. */
 export interface WorldHandoffResolution {
   direction: Facing;
+  /** Trusted opening provenance, never copied from the transfer command. */
+  movementCapability?: string;
 }
 
 export interface WorldHandoffResolver {

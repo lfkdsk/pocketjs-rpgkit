@@ -11,6 +11,7 @@ import {
   startSession,
   stepSession,
   type Session,
+  type SessionOptions,
   type SessionState,
 } from "../src/engine/session.ts";
 import { createWorldHandoffResolver } from "../src/engine/world-handoff.ts";
@@ -19,6 +20,7 @@ import type { Command, GameEvent, JsonValue, Project } from "../src/engine/types
 import { splitProjectMaps } from "../tools/lib/map-project.ts";
 import {
   autorunTransfer,
+  CAPABILITY_EAST,
   handoffProject,
   HANDOFF_LAYOUT,
   markedTransfer,
@@ -29,9 +31,14 @@ import {
   SAFE_WEST,
 } from "./fixtures/seamless-handoff/fixture-data.ts";
 
-function runtime(project: Project, hz = 60): { session: Session; state: SessionState } {
+function runtime(
+  project: Project,
+  hz = 60,
+  handoffCapability?: SessionOptions["handoffCapability"],
+): { session: Session; state: SessionState } {
   const session = createSession(project, hz, {
     handoff: createWorldHandoffResolver(HANDOFF_LAYOUT),
+    handoffCapability,
   });
   return { session, state: startSession(project, session) };
 }
@@ -386,6 +393,94 @@ describe("seamless-v1 opening handoff", () => {
     const state = walkToPortal(session, startSession(project, session), 0x0020);
     expect(state.mapId).toBe("east");
     expect(Object.hasOwn(state, "handoff")).toBe(false);
+  });
+
+  test("lets a trusted opening capability relax only target solid terrain", () => {
+    const project = handoffProject({
+      start: { map: "west", x: 2, y: 1, dir: "right" },
+      sourceEvent: playerTouchTransfer(
+        "surf-target",
+        3,
+        1,
+        markedTransfer("east", 0, 1, "right", CAPABILITY_EAST),
+      ),
+    });
+    project.maps.find((map) => map.id === "east")!.passage = [[4, "block"]];
+    const calls: Array<{ capability: string; mapId: string }> = [];
+    const capable = runtime(project, 60, (capability, state) => {
+      calls.push({ capability, mapId: state.mapId });
+      return capability === "surf";
+    });
+    const state = walkToPortal(capable.session, capable.state, 0x0020);
+    expect(state.handoff).toMatchObject({
+      portalId: CAPABILITY_EAST,
+      sourceMapId: "west",
+      targetMapId: "east",
+      phase: 0,
+      totalTicks: 8,
+    });
+    expect(calls).toEqual([{ capability: "surf", mapId: "west" }]);
+  });
+
+  test("keeps solid terrain blocking when the capability is absent or refused", () => {
+    const make = () => {
+      const project = handoffProject({
+        start: { map: "west", x: 2, y: 1, dir: "right" },
+        sourceEvent: playerTouchTransfer(
+          "surf-target",
+          3,
+          1,
+          markedTransfer("east", 0, 1, "right", CAPABILITY_EAST),
+        ),
+      });
+      project.maps.find((map) => map.id === "east")!.passage = [[4, "block"]];
+      return project;
+    };
+    for (const callback of [undefined, () => false] as const) {
+      const run = runtime(make(), 60, callback);
+      const state = walkToPortal(run.session, run.state, 0x0020);
+      expect(state.mapId).toBe("east");
+      expect(Object.hasOwn(state, "handoff")).toBe(false);
+    }
+  });
+
+  test("never lets a capability bypass source exit, target entry or target body blockers", () => {
+    const make = () => {
+      const project = handoffProject({
+        start: { map: "west", x: 2, y: 1, dir: "right" },
+        sourceEvent: playerTouchTransfer(
+          "surf-target",
+          3,
+          1,
+          markedTransfer("east", 0, 1, "right", CAPABILITY_EAST),
+        ),
+      });
+      project.maps.find((map) => map.id === "east")!.passage = [[4, "block"]];
+      return runtime(project, 60, () => true);
+    };
+    const cases = [
+      {
+        name: "source exit",
+        block: (session: Session) => { session.tables.get("west")!.exitMask[7] = 8; },
+      },
+      {
+        name: "target entry",
+        block: (session: Session) => { session.tables.get("east")!.entryMask[4] = 2; },
+      },
+      {
+        name: "target body",
+        block: (session: Session) => {
+          session.tables.get("east")!.bodyBlocks = new Set([4]);
+        },
+      },
+    ] as const;
+    for (const entry of cases) {
+      const run = make();
+      entry.block(run.session);
+      const state = walkToPortal(run.session, run.state, 0x0020);
+      expect(Object.hasOwn(state, "handoff"), entry.name).toBe(false);
+      expect(state.mapId, entry.name).toBe("east");
+    }
   });
 
   test("falls back when the real map dimensions disagree with the opening placement", () => {
@@ -890,6 +985,38 @@ describe("seamless-v1 opening handoff", () => {
     }
     expect(keyed.state.mapId).toBe("east");
     expect(keyed.keyframeStats().lastRefoldStart).toBe(12);
+  });
+
+  test("forwards opening capabilities through attract playback and refolds", () => {
+    const project = handoffProject({
+      start: { map: "west", x: 2, y: 1, dir: "right" },
+      sourceEvent: playerTouchTransfer(
+        "surf-attract",
+        3,
+        1,
+        markedTransfer("east", 0, 1, "right", CAPABILITY_EAST),
+      ),
+    });
+    project.maps.find((map) => map.id === "east")!.passage = [[4, "block"]];
+    const tape = [...new Array<number>(8).fill(0x0020), ...new Array<number>(16).fill(0)];
+    const controller = new AttractController(project, tape, {
+      hz: 60,
+      tapeHz: 60,
+      idleFrames: 60_000,
+      endHoldFrames: 60_000,
+      worldTraversal: "seamless-v1",
+      handoff: createWorldHandoffResolver(HANDOFF_LAYOUT),
+      handoffCapability: (capability) => capability === "surf",
+      rewindSeconds: 3 / 60,
+      keyframeIntervalFrames: 1,
+    });
+    controller.startAttract();
+    for (let frame = 0; frame < 8; frame++) controller.step(0);
+    expect(controller.state.handoff?.phase).toBe(0);
+    for (let frame = 0; frame < 8; frame++) controller.step(0);
+    expect(controller.state.mapId).toBe("east");
+    controller.step(0x0100);
+    expect(controller.state.handoff).toBeDefined();
   });
 
   test("rewinds before a source fatal and refolds to the same aborted handoff", () => {

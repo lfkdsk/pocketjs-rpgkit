@@ -54,6 +54,7 @@ import {
   type SessionEffectSink,
   type SessionHostEffect,
   type SessionInput,
+  type SessionOptions,
   type SceneOptions,
   type SessionState,
   type SessionTickDirection,
@@ -952,6 +953,9 @@ export interface GameViewProps {
   /** Optional game-owned presentation immediately above the world and below
    * screen tints, HUD, dialogs, and fades. Omission mounts no extra layer. */
   worldOverlay?: GameWorldOverlayComponent;
+  /** Pure policy for optional movement capabilities named by trusted world
+   * openings. It is forwarded identically to live play and attract/refolds. */
+  handoffCapability?: SessionOptions["handoffCapability"];
   assets: GameAssets;
   /** One u16 button mask per 60 Hz source frame (engine/attract-tape.ts).
    *  Present: attract/takeover/rewind drive the fold. Absent: live play. */
@@ -1189,6 +1193,7 @@ export function GameView(props: GameViewProps) {
           ? props.attractTapeWorldTraversal ?? "legacy-transfer"
           : project.worldTraversal,
         handoff: worldRenderer?.handoff,
+        handoffCapability: props.handoffCapability,
         ...demoRewind,
       })
     : null;
@@ -1205,6 +1210,7 @@ export function GameView(props: GameViewProps) {
         paginateText,
         textTokens: props.textTokens,
         handoff: worldRenderer?.handoff,
+        handoffCapability: props.handoffCapability,
       });
   startupProfileMark("game-view:session");
   let state: SessionState = attract ? attract.state : startSession(project, session);

@@ -51,6 +51,7 @@ import {
   startSession,
   stepSession,
   type SessionInput,
+  type SessionOptions,
   type SceneOptions,
   type SessionEffectSink,
   type Session,
@@ -189,6 +190,8 @@ export interface AttractOptions {
   worldTraversal?: WorldTraversalMode;
   /** Optional connected-world opening resolver forwarded to Session. */
   handoff?: WorldHandoffResolver;
+  /** Pure game policy for movement capabilities on trusted openings. */
+  handoffCapability?: SessionOptions["handoffCapability"];
 }
 
 /** Rewind history knobs a game may tune (DemoOptions.rewind forwards them). */
@@ -433,6 +436,7 @@ export class AttractController {
       textTokens: opts.textTokens,
       worldTraversal: opts.worldTraversal ?? (tape.length > 0 ? "legacy-transfer" : project.worldTraversal),
       handoff: opts.handoff,
+      handoffCapability: opts.handoffCapability,
     });
     this.idleFrames = opts.idleFrames ?? this.hz * 10;
     this.endHoldFrames = opts.endHoldFrames ?? this.timelineHz * 2;

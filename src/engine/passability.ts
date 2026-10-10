@@ -286,6 +286,23 @@ export function canEnter(table: PassageTable, tx: number, ty: number, entry?: Di
   return true;
 }
 
+/** Capability-gated target check for a trusted seamless opening. This is
+ * deliberately narrower than a passage override: it ignores only the
+ * cooked solid-terrain opinion. Bounds, blocking character bodies and the
+ * target-side entry edge remain authoritative. */
+export function canEnterIgnoringTerrainSolid(
+  table: PassageTable,
+  tx: number,
+  ty: number,
+  entry?: Dir4,
+): boolean {
+  if (tx < 0 || ty < 0 || tx >= table.width || ty >= table.height) return false;
+  const idx = ty * table.width + tx;
+  if (table.bodyBlocks?.has(idx)) return false;
+  if (entry !== undefined && (table.entryMask[idx]! & EDGE_BITS[entry]) !== 0) return false;
+  return true;
+}
+
 /** Full step decision for a character STANDING on (fx, fy): it may move to
  *  the adjacent cell in `dir` only when BOTH directional edges of the
  *  crossing are open — the source cell does not forbid the exit (cooked

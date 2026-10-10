@@ -91,7 +91,9 @@ export function createWorldHandoffResolver(layout: Readonly<WorldLayout>): World
       const targetWorldX = target.originTileX + request.targetX;
       const targetWorldY = target.originTileY + request.targetY;
       if (sourceWorldX + DX[direction] !== targetWorldX || sourceWorldY + DY[direction] !== targetWorldY) return null;
-      return { direction };
+      return opening.movementCapability === undefined
+        ? { direction }
+        : { direction, movementCapability: opening.movementCapability };
     },
   };
 }

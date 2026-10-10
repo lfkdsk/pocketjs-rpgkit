@@ -182,6 +182,7 @@ import type { Dir4, PassageTable } from "./passability.ts";
 import {
   buildPassage,
   canEnter,
+  canEnterIgnoringTerrainSolid,
   canStepFrom,
   cellBlocksExit,
   stampBlockedCells,
@@ -452,7 +453,15 @@ export interface Session {
   worldTraversal: WorldTraversalMode;
   /** Optional immutable-layout resolver. Null keeps every transfer legacy. */
   handoffResolver: WorldHandoffResolver | null;
+  /** Pure game policy for optional movement capabilities named by trusted
+   * WorldOpening data. Null retains ordinary terrain checks. */
+  handoffCapability: HandoffCapabilityResolver | null;
 }
+
+export type HandoffCapabilityResolver = (
+  capability: string,
+  state: Readonly<SessionState>,
+) => boolean;
 
 export interface SceneOptions {
   /** Advance map pages, characters and interpreter fibers while a full-screen
@@ -503,6 +512,10 @@ export interface SessionOptions {
   /** Type-only opt-in seam; concrete layout indexing lives outside the base
    * session bundle. */
   handoff?: WorldHandoffResolver;
+  /** Pure game policy for a capability named by trusted WorldOpening data.
+   * Returning true may relax only the target tile's solid-terrain opinion;
+   * bounds, event bodies and directional edge masks still block. */
+  handoffCapability?: HandoffCapabilityResolver;
 }
 
 function visitCondition(c: Condition, found: Set<string>): void {
@@ -933,6 +946,7 @@ export function createSession(
       immutableState: options.immutableState === true,
       worldTraversal,
       handoffResolver,
+      handoffCapability: options.handoffCapability ?? null,
     };
     acquireSessionMap(session, project.start.map);
     releaseSessionMapsExcept(session, [project.start.map]);
@@ -978,6 +992,7 @@ export function createSession(
     immutableState: options.immutableState === true,
     worldTraversal,
     handoffResolver,
+    handoffCapability: options.handoffCapability ?? null,
   };
 }
 
@@ -2651,10 +2666,13 @@ function tryStartSeamlessHandoff(
   // mint nor revoke importer-proven world topology.
   const sourcePassage = sess.tables.get(s.mapId)!;
   const targetPassage = sess.tables.get(transfer.map)!;
-  if (
-    cellBlocksExit(sourcePassage, s.move.tx, s.move.ty, resolved.direction) ||
-    !canEnter(targetPassage, transfer.x, transfer.y, OPPOSITE_DIR[resolved.direction])
-  ) return false;
+  if (cellBlocksExit(sourcePassage, s.move.tx, s.move.ty, resolved.direction)) return false;
+  const entry = OPPOSITE_DIR[resolved.direction];
+  const capabilityAllowsSolid = resolved.movementCapability !== undefined &&
+    sess.handoffCapability?.(resolved.movementCapability, s) === true;
+  if (!(capabilityAllowsSolid
+    ? canEnterIgnoringTerrainSolid(targetPassage, transfer.x, transfer.y, entry)
+    : canEnter(targetPassage, transfer.x, transfer.y, entry))) return false;
 
   const totalTicks = stepFrames(sess.cfg);
   s.handoff = {

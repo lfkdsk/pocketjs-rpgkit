@@ -563,7 +563,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "target": { "$ref": "#/$defs/worldOpeningEndpoint" },
         "axis": { "enum": ["x", "y"] },
         "offset": { "type": "integer" },
-        "compatibility": { "enum": ["coordinate-preserving", "portal-only"] }
+        "compatibility": { "enum": ["coordinate-preserving", "portal-only"] },
+        "movementCapability": { "type": "string", "minLength": 1 }
       }
     },
     "mapIndexEntry": {

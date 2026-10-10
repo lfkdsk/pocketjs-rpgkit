@@ -77,6 +77,7 @@ const LAYOUT: WorldLayout = {
         axis: "y",
         offset: 0,
         compatibility: "coordinate-preserving",
+        movementCapability: "surf",
       },
     ],
   }],
@@ -178,6 +179,7 @@ describe("WorldLayout coordinate contract", () => {
     expect(new Set(LAYOUT.components[0]!.openings.map((opening) => opening.compatibility))).toEqual(
       new Set(["coordinate-preserving", "portal-only"]),
     );
+    expect(LAYOUT.components[0]!.openings[1]!.movementCapability).toBe("surf");
 
     const fractionalOrigin = structuredClone(project()) as Project;
     fractionalOrigin.worldLayout!.components[0]!.placements[0]!.originTileX = -11.5;
@@ -189,6 +191,12 @@ describe("WorldLayout coordinate contract", () => {
     (unsafeDefault.worldLayout!.components[0]!.openings[0] as { compatibility: string }).compatibility = "seamless";
     expect(validateSchema(schema, unsafeDefault).some((error) =>
       error.path.endsWith(".compatibility")
+    )).toBeTrue();
+
+    const emptyCapability = structuredClone(project()) as Project;
+    emptyCapability.worldLayout!.components[0]!.openings[1]!.movementCapability = "";
+    expect(validateSchema(schema, emptyCapability).some((error) =>
+      error.path.endsWith(".movementCapability")
     )).toBeTrue();
   });
 

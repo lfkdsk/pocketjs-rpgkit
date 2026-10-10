@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `9435a3b7f420c7e7876a7d211e8b2842bdc60e483c54c60cd550d7f5effc7d1c` | optional `worldLayout` opening `movementCapability`; documents that omit it retain the ordinary target-solid passage check | additive |
 | `138048a55ff7d728806120306745c007401d62eec7e5ed1a5da39720429da022` | optional `routeSpeed.tilesPerSecond` exact fixed-clock velocity; documents that omit it retain the existing MV speed grade, route lifetime and bytes | additive |
 | `5eecc57a1acad4721139225b1bed1e35ae581706c29e611909d58b2c90efb41b` | optional `screenBackdrop.whenModalOpen: "ignore"` policy for sources whose state stack preserves a covered backdrop, plus optional `system.transferPresentation: "retain"` for world-owned map animations, camera focus and player balloons; documents without either field keep unconditional backdrop replacement and the original per-map presentation lifetime | additive |
 | `70564328ea0fd8a8028ac6f360f82dda0973a068ad54f4a705fb3a3cd5531905` | optional `nameInput.random` ui-text word; optional `appearance.combatSheet` player battle back-sheet field with its `saveDefault` baseline; optional `system.characterNames` opt-in for `{char:player\|this\|eventId}` text; and `changeName` event targets/variable-fed names. Documents without the opt-in keep `{char:...}` literal, and older `changeName` commands retain their player/literal meaning | additive |
@@ -842,6 +843,22 @@ No format change. Behavior fix in the session fold:
 - The project format and `schema.json` are unchanged, so the schema identity
   (`MAP_SCHEMA_HASH`) is unchanged and no row is added to
   [Schema identities](#schema-identities).
+
+## v1 amendment — 2026-10-09 (capability-gated seamless openings)
+
+- A `worldLayout` opening may name an optional non-empty
+  `movementCapability`. The name comes only from the validated immutable
+  opening; transfer commands cannot supply or override it.
+- `SessionOptions.handoffCapability` is a pure game callback over that name
+  and the live session state. When it returns true, a proven seamless
+  crossing may ignore the target cell's cooked solid-terrain bit. Map bounds,
+  the authored source exit edge, target entry edge, blocking event bodies,
+  opening geometry, dimensions and topology identity remain mandatory.
+  `GameView` and `AttractController` forward the same callback so live play,
+  playback and rewind/refold use one rule.
+- The field and callback are both optional. Older documents have no
+  capability and therefore retain the complete pre-existing passage check;
+  the outgoing schema identity remains compatible.
 
 Breaking changes to any of the above require a new marker
 (`rpgkit-project/v2`) and a new entry here.

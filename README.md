@@ -1081,6 +1081,28 @@ parallel transfers, portal-only openings, indoor maps and story warps. An
 accepted crossing is itself the visual transition and replaces any transfer
 fade; a rejected proof preserves and runs the original legacy fade.
 
+A coordinate-preserving opening may name a trusted movement capability:
+
+```json
+{
+  "portalId": "canal:river:12",
+  "source": { "mapId": "canal", "side": "east", "span": { "start": 12, "end": 13 } },
+  "target": { "mapId": "river", "side": "west", "span": { "start": 12, "end": 13 } },
+  "axis": "y",
+  "offset": 0,
+  "compatibility": "coordinate-preserving",
+  "movementCapability": "surf"
+}
+```
+
+Pass `handoffCapability={(name, state) => ...}` to `GameView` (or the same
+callback in `SessionOptions` / `AttractOptions`). A true result lets that
+opening ignore only the landing cell's solid-terrain bit. Bounds, source and
+target directional edges, blocking bodies and every topology/provenance check
+still apply. The name is read from the immutable opening, never the transfer;
+an opening without it or a game without the callback uses the original full
+passage check.
+
 An accepted handoff performs one normal tile-length crossing over eight 60 Hz
 reference ticks. The source map remains the only simulation owner during the
 crossing; at the boundary the reducer atomically rebuilds the target map using
