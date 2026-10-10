@@ -444,6 +444,27 @@ describe("seamless-v1 opening handoff", () => {
     }
   });
 
+  test("requires the opening capability even when its target terrain is ordinarily passable", () => {
+    const make = () => handoffProject({
+      start: { map: "west", x: 2, y: 1, dir: "right" },
+      sourceEvent: playerTouchTransfer(
+        "surf-passable-target",
+        3,
+        1,
+        markedTransfer("east", 0, 1, "right", CAPABILITY_EAST),
+      ),
+    });
+    for (const callback of [undefined, () => false] as const) {
+      const run = runtime(make(), 60, callback);
+      const state = walkToPortal(run.session, run.state, 0x0020);
+      expect(state.mapId).toBe("east");
+      expect(Object.hasOwn(state, "handoff")).toBe(false);
+    }
+
+    const capable = runtime(make(), 60, () => true);
+    expect(walkToPortal(capable.session, capable.state, 0x0020).handoff?.phase).toBe(0);
+  });
+
   test("never lets a capability bypass source exit, target entry or target body blockers", () => {
     const make = () => {
       const project = handoffProject({

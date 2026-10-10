@@ -2668,11 +2668,13 @@ function tryStartSeamlessHandoff(
   const targetPassage = sess.tables.get(transfer.map)!;
   if (cellBlocksExit(sourcePassage, s.move.tx, s.move.ty, resolved.direction)) return false;
   const entry = OPPOSITE_DIR[resolved.direction];
-  const capabilityAllowsSolid = resolved.movementCapability !== undefined &&
-    sess.handoffCapability?.(resolved.movementCapability, s) === true;
-  if (!(capabilityAllowsSolid
-    ? canEnterIgnoringTerrainSolid(targetPassage, transfer.x, transfer.y, entry)
-    : canEnter(targetPassage, transfer.x, transfer.y, entry))) return false;
+  if (resolved.movementCapability !== undefined) {
+    // A capability-bearing opening is gated even when the underlying terrain
+    // happens to be ordinarily passable. This keeps the optional opening field
+    // authoritative: importing a Surf lane cannot make it usable on foot.
+    if (sess.handoffCapability?.(resolved.movementCapability, s) !== true) return false;
+    if (!canEnterIgnoringTerrainSolid(targetPassage, transfer.x, transfer.y, entry)) return false;
+  } else if (!canEnter(targetPassage, transfer.x, transfer.y, entry)) return false;
 
   const totalTicks = stepFrames(sess.cfg);
   s.handoff = {
