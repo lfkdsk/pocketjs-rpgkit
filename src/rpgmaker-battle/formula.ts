@@ -18,6 +18,7 @@ export type RpgMakerFormulaNode =
   | { kind: "param"; side: "a" | "b"; name: RpgMakerBattlerParam }
   | { kind: "variable"; index: number }
   | { kind: "mathConst"; name: "E" | "PI" }
+  | { kind: "group"; value: RpgMakerFormulaNode }
   | { kind: "unary"; op: "+" | "-" | "!"; value: RpgMakerFormulaNode }
   | {
       kind: "binary";
@@ -38,6 +39,10 @@ export type RpgMakerMathFunction = typeof MATH_FUNCTIONS[number];
 
 const PARAMS = new Set<string>(RPGMAKER_BATTLER_PARAMS);
 const MATH = new Set<string>(MATH_FUNCTIONS);
+const MAX_SOURCE_LENGTH = 2_048;
+const MAX_TOKENS = 512;
+const MAX_DEPTH = 64;
+const MAX_MATH_ARGS = 32;
 
 type TokenKind = "number" | "ident" | "op" | "eof";
 interface Token {
@@ -58,7 +63,16 @@ const THREE_CHAR = new Set(["===", "!=="]);
 const ONE_CHAR = new Set(["+", "-", "*", "/", "%", "<", ">", "!", "?", ":", ".", "[", "]", "(", ")", ","]);
 
 function tokenize(source: string): Token[] {
+  if (source.length > MAX_SOURCE_LENGTH) {
+    throw new RpgMakerFormulaError(MAX_SOURCE_LENGTH, `formula exceeds ${MAX_SOURCE_LENGTH} characters`);
+  }
   const out: Token[] = [];
+  const add = (token: Token): void => {
+    out.push(token);
+    if (out.length > MAX_TOKENS) {
+      throw new RpgMakerFormulaError(token.offset, `formula exceeds ${MAX_TOKENS} tokens`);
+    }
+  };
   let i = 0;
   while (i < source.length) {
     const c = source[i]!;
@@ -83,34 +97,34 @@ function tokenize(source: string): Token[] {
       const text = source.slice(start, i);
       const value = Number(text);
       if (!Number.isFinite(value)) throw new RpgMakerFormulaError(start, "finite numeric literal required");
-      out.push({ kind: "number", text, offset: start });
+      add({ kind: "number", text, offset: start });
       continue;
     }
     if (/[A-Za-z_$]/.test(c)) {
       const start = i++;
       while (/[A-Za-z0-9_$]/.test(source[i] ?? "")) i++;
-      out.push({ kind: "ident", text: source.slice(start, i), offset: start });
+      add({ kind: "ident", text: source.slice(start, i), offset: start });
       continue;
     }
     const three = source.slice(i, i + 3);
     if (THREE_CHAR.has(three)) {
-      out.push({ kind: "op", text: three, offset: i });
+      add({ kind: "op", text: three, offset: i });
       i += 3;
       continue;
     }
     const two = source.slice(i, i + 2);
     if (TWO_CHAR.has(two)) {
-      out.push({ kind: "op", text: two, offset: i });
+      add({ kind: "op", text: two, offset: i });
       i += 2;
       continue;
     }
     if (ONE_CHAR.has(c)) {
-      out.push({ kind: "op", text: c, offset: i++ });
+      add({ kind: "op", text: c, offset: i++ });
       continue;
     }
     throw new RpgMakerFormulaError(i, `unsupported token ${JSON.stringify(c)}`);
   }
-  out.push({ kind: "eof", text: "", offset: source.length });
+  add({ kind: "eof", text: "", offset: source.length });
   return out;
 }
 
@@ -176,6 +190,9 @@ class Parser {
       const precedence = BINARY_PRECEDENCE[operator.text];
       if (precedence === undefined || precedence < minPrecedence) return left;
       this.take();
+      if (operator.text === "**" && left.kind === "unary") {
+        throw new RpgMakerFormulaError(operator.offset, "JavaScript requires parentheses before ** after a unary operator");
+      }
       const right = this.binary(operator.text === "**" ? precedence : precedence + 1);
       left = {
         kind: "binary",
@@ -205,7 +222,7 @@ class Parser {
       this.take();
       const value = this.ternary();
       this.take(")");
-      return value;
+      return { kind: "group", value };
     }
     if (token.kind !== "ident") {
       throw new RpgMakerFormulaError(token.offset, `expected a number, battler parameter, variable, or Math call`);
@@ -253,6 +270,9 @@ class Parser {
     if (this.peek().text !== ")") {
       for (;;) {
         args.push(this.ternary());
+        if (args.length > MAX_MATH_ARGS) {
+          throw new RpgMakerFormulaError(member.offset, `Math calls support at most ${MAX_MATH_ARGS} arguments`);
+        }
         if (this.peek().text !== ",") break;
         this.take(",");
       }
@@ -271,93 +291,122 @@ export interface RpgMakerFormulaBattler extends Record<RpgMakerBattlerParam, num
 export interface RpgMakerFormulaContext {
   a: RpgMakerFormulaBattler;
   b: RpgMakerFormulaBattler;
-  /** Numeric RPG Maker variable ids. Missing and non-numeric values read 0. */
+  /** Numeric RPG Maker variable ids. A missing value behaves like the
+   * undefined hole in $gameVariables._data, making arithmetic NaN and the
+   * final formula result zero. */
   variables?: Readonly<Record<number, number>> | readonly number[];
 }
 
-const truthy = (value: number): boolean => value !== 0 && !Number.isNaN(value);
+type FormulaValue = number | boolean | undefined;
 
-function variableAt(values: RpgMakerFormulaContext["variables"], index: number): number {
-  if (values === undefined) return 0;
+const truthy = (value: FormulaValue): boolean => Boolean(value);
+
+function variableAt(values: RpgMakerFormulaContext["variables"], index: number): number | undefined {
+  if (values === undefined) return undefined;
   const value = values[index];
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function mathCall(name: RpgMakerMathFunction, args: number[]): number {
+function mathCall(name: RpgMakerMathFunction, args: FormulaValue[]): number {
+  const numbers = args as (number | undefined)[];
   switch (name) {
-    case "abs": return Math.abs(args[0] ?? 0);
-    case "ceil": return Math.ceil(args[0] ?? 0);
-    case "floor": return Math.floor(args[0] ?? 0);
-    case "round": return Math.round(args[0] ?? 0);
-    case "trunc": return Math.trunc(args[0] ?? 0);
-    case "sign": return Math.sign(args[0] ?? 0);
-    case "sqrt": return Math.sqrt(args[0] ?? 0);
-    case "cbrt": return Math.cbrt(args[0] ?? 0);
-    case "min": return Math.min(...args);
-    case "max": return Math.max(...args);
-    case "pow": return Math.pow(args[0] ?? 0, args[1] ?? 0);
-    case "hypot": return Math.hypot(...args);
-    case "sin": return Math.sin(args[0] ?? 0);
-    case "cos": return Math.cos(args[0] ?? 0);
-    case "tan": return Math.tan(args[0] ?? 0);
-    case "asin": return Math.asin(args[0] ?? 0);
-    case "acos": return Math.acos(args[0] ?? 0);
-    case "atan": return Math.atan(args[0] ?? 0);
-    case "atan2": return Math.atan2(args[0] ?? 0, args[1] ?? 0);
+    case "abs": return Math.abs(numbers[0] as number);
+    case "ceil": return Math.ceil(numbers[0] as number);
+    case "floor": return Math.floor(numbers[0] as number);
+    case "round": return Math.round(numbers[0] as number);
+    case "trunc": return Math.trunc(numbers[0] as number);
+    case "sign": return Math.sign(numbers[0] as number);
+    case "sqrt": return Math.sqrt(numbers[0] as number);
+    case "cbrt": return Math.cbrt(numbers[0] as number);
+    case "min": return Math.min(...numbers as number[]);
+    case "max": return Math.max(...numbers as number[]);
+    case "pow": return Math.pow(numbers[0] as number, numbers[1] as number);
+    case "hypot": return Math.hypot(...numbers as number[]);
+    case "sin": return Math.sin(numbers[0] as number);
+    case "cos": return Math.cos(numbers[0] as number);
+    case "tan": return Math.tan(numbers[0] as number);
+    case "asin": return Math.asin(numbers[0] as number);
+    case "acos": return Math.acos(numbers[0] as number);
+    case "atan": return Math.atan(numbers[0] as number);
+    case "atan2": return Math.atan2(numbers[0] as number, numbers[1] as number);
   }
 }
 
-function evaluate(node: RpgMakerFormulaNode, context: RpgMakerFormulaContext): number {
+function evaluate(
+  node: RpgMakerFormulaNode,
+  context: RpgMakerFormulaContext,
+  budget: { nodes: number },
+  depth: number,
+): FormulaValue {
+  if (depth > MAX_DEPTH || --budget.nodes < 0) throw new Error("formula AST exceeds safe evaluation limits");
+  const child = (value: RpgMakerFormulaNode): FormulaValue => evaluate(value, context, budget, depth + 1);
   switch (node.kind) {
     case "number": return node.value;
     case "param": return context[node.side][node.name];
     case "variable": return variableAt(context.variables, node.index);
     case "mathConst": return node.name === "PI" ? Math.PI : Math.E;
+    case "group": return child(node.value);
     case "unary": {
-      const value = evaluate(node.value, context);
-      if (node.op === "+") return value;
-      if (node.op === "-") return -value;
-      return truthy(value) ? 0 : 1;
+      const value = child(node.value);
+      if (node.op === "+") return +(value as number | boolean);
+      if (node.op === "-") return -(value as number | boolean);
+      return !truthy(value);
     }
     case "binary": {
-      const left = evaluate(node.left, context);
-      if (node.op === "&&") return truthy(left) ? evaluate(node.right, context) : left;
-      if (node.op === "||") return truthy(left) ? left : evaluate(node.right, context);
-      const right = evaluate(node.right, context);
+      const left = child(node.left);
+      if (node.op === "&&") return truthy(left) ? child(node.right) : left;
+      if (node.op === "||") return truthy(left) ? left : child(node.right);
+      const right = child(node.right);
       switch (node.op) {
-        case "+": return left + right;
-        case "-": return left - right;
-        case "*": return left * right;
-        case "/": return left / right;
-        case "%": return left % right;
-        case "**": return left ** right;
-        case "<": return left < right ? 1 : 0;
-        case "<=": return left <= right ? 1 : 0;
-        case ">": return left > right ? 1 : 0;
-        case ">=": return left >= right ? 1 : 0;
-        case "==":
-        case "===": return left === right ? 1 : 0;
-        case "!=":
-        case "!==": return left !== right ? 1 : 0;
+        case "+": return Number(left) + Number(right);
+        case "-": return Number(left) - Number(right);
+        case "*": return Number(left) * Number(right);
+        case "/": return Number(left) / Number(right);
+        case "%": return Number(left) % Number(right);
+        case "**": return Number(left) ** Number(right);
+        case "<": return Number(left) < Number(right);
+        case "<=": return Number(left) <= Number(right);
+        case ">": return Number(left) > Number(right);
+        case ">=": return Number(left) >= Number(right);
+        case "==": return left === right ||
+          (left !== undefined && right !== undefined && Number(left) === Number(right));
+        case "===": return left === right;
+        case "!=": return !(left === right ||
+          (left !== undefined && right !== undefined && Number(left) === Number(right)));
+        case "!==": return left !== right;
       }
       break;
     }
-    case "ternary": return truthy(evaluate(node.test, context))
-      ? evaluate(node.yes, context)
-      : evaluate(node.no, context);
-    case "math": return mathCall(node.name, node.args.map((arg) => evaluate(arg, context)));
+    case "ternary": return truthy(child(node.test)) ? child(node.yes) : child(node.no);
+    case "math": return mathCall(node.name, node.args.map(child));
   }
-  return 0;
+  throw new Error("invalid formula AST");
 }
 
-/** Evaluate a previously parsed formula. Non-finite JavaScript arithmetic
- * (division by zero, an invalid square root, overflow) follows RPG Maker's
- * catch-and-clamp behavior and becomes zero. */
+/** Evaluate a previously parsed raw expression. Invalid/forged ASTs, NaN and
+ * Infinity become zero. Refusing Infinity is an intentional JSON-state safety
+ * tightening over corescript's isNaN-only check. */
 export function evaluateRpgMakerFormula(
   formula: RpgMakerFormulaNode,
   context: RpgMakerFormulaContext,
 ): number {
-  const value = evaluate(formula, context);
-  return Number.isFinite(value) ? value : 0;
+  try {
+    const value = evaluate(formula, context, { nodes: MAX_TOKENS }, 0);
+    const numeric = typeof value === "boolean" ? (value ? 1 : 0) : value;
+    return typeof numeric === "number" && Number.isFinite(numeric) ? numeric : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Apply corescript's base-value rule after raw expression evaluation.
+ * Element, critical, variance and guard remain later pipeline stages. */
+export function evaluateRpgMakerDamageBase(
+  formula: RpgMakerFormulaNode,
+  type: number,
+  context: RpgMakerFormulaContext,
+): number {
+  const magnitude = Math.max(evaluateRpgMakerFormula(formula, context), 0);
+  return type === 3 || type === 4 ? -magnitude : magnitude;
 }
 

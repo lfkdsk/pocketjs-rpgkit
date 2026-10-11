@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  evaluateRpgMakerDamageBase,
   evaluateRpgMakerFormula,
   parseRpgMakerFormula,
   RpgMakerFormulaError,
@@ -37,11 +38,14 @@ describe("safe RPG Maker formula subset", () => {
     expect(run("1 + 2 * 3 ** 2 - -4")).toBe(23);
     expect(run("(1 + 2) * 3")).toBe(9);
     expect(run("20 / 4 + 7 % 4")).toBe(8);
+    expect(run("2 ** -2")).toBe(0.25);
+    expect(run("(-2) ** 2")).toBe(4);
+    expect(() => parseRpgMakerFormula("-2 ** 2")).toThrow(RpgMakerFormulaError);
   });
 
   test("reads allowlisted a/b parameters and numeric v indexes", () => {
     expect(run("a.atk * 4 - b.def * 2 + v[1]")).toBe(35);
-    expect(run("a.level + b.hp + v[99]")).toBe(28);
+    expect(run("a.level + b.hp + v[99]")).toBe(0);
   });
 
   test("supports comparisons, short circuit and right-associative ternaries", () => {
@@ -49,6 +53,7 @@ describe("safe RPG Maker formula subset", () => {
     expect(run("0 && (1 / 0)")).toBe(0);
     expect(run("v[4] || 7")).toBe(-2);
     expect(run("!(a.atk === b.atk) || a.hp !== b.hp")).toBe(1);
+    expect(run("(1 < 2) !== 1")).toBe(1);
   });
 
   test("supports deterministic common Math members", () => {
@@ -60,6 +65,14 @@ describe("safe RPG Maker formula subset", () => {
   test("turns non-finite arithmetic into deterministic zero", () => {
     expect(run("1 / 0")).toBe(0);
     expect(run("Math.sqrt(-1)")).toBe(0);
+    expect(run("Math.pow(2)")).toBe(0);
+    expect(run("Math.cos()")).toBe(0);
+    expect(run("Math.atan2(1)")).toBe(0);
+  });
+
+  test("applies the damage/recovery sign after raw expression evaluation", () => {
+    expect(evaluateRpgMakerDamageBase(parseRpgMakerFormula("-5"), 1, context)).toBe(0);
+    expect(evaluateRpgMakerDamageBase(parseRpgMakerFormula("5"), 3, context)).toBe(-5);
   });
 
   test.each([
