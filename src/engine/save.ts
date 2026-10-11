@@ -48,6 +48,7 @@ import { MAP_SCHEMA_HASH, describeMapSchemaRefusal, isCompatibleMapSchemaHash } 
 import type { JsonValue } from "./types.ts";
 import type { FadeState, LeftMapSnapshot, PlayerRoute, Session, SessionState } from "./session.ts";
 import { cloneTravelState, type TravelState } from "./travel.ts";
+import { cloneScene, type BattleScene } from "./battle.ts";
 
 export const SAVE_FORMAT = "rpgkit-save/v1" as const;
 export const SAVE_VERSION = 1 as const;
@@ -79,6 +80,9 @@ export interface SaveSnapshot {
   mapRuntime?: SaveMapRuntime;
   /** Project-wide follower positions and persistent vehicle locations. */
   travel?: TravelState;
+  /** An active battle is saved only when its registered BattleRules opt in
+   * with a game-owned codec. Generic game scenes are never serialized. */
+  battle?: BattleScene;
 }
 
 /** Map-visit state the session keeps beside the interpreter. Everything in
@@ -108,10 +112,26 @@ export function canSave(
   scene: unknown = null,
   handoff: unknown = null,
 ): boolean {
+  return scene === null && canSaveAt(player, interp, null, handoff);
+}
+
+/** Shared manual-save predicate. `battleFiber` names the one external fiber
+ * whose work is completely represented by SaveSnapshot.battle. */
+function canSaveAt(
+  player: MovementState,
+  interp: InterpState,
+  battleFiber: string | null,
+  handoff: unknown,
+): boolean {
+  const mainIsBattle = battleFiber !== null &&
+    interp.main?.key === battleFiber && interp.main.mode === "external";
+  const battleOwner = mainIsBattle || (
+    battleFiber !== null && interp.parallels[battleFiber]?.mode === "external"
+  );
   return (
     !player.moving &&
     player.phase === 0 &&
-    (!isBusy(interp) || interp.main?.mode === "screenWait") &&
+    (!isBusy(interp) || interp.main?.mode === "screenWait" || mainIsBattle) &&
     interp.error === undefined &&
     interp.modal === null &&
     interp.pendingTransfer === null &&
@@ -121,9 +141,22 @@ export function canSave(
     interp.abortedRoutes.length === 0 &&
     interp.pendingBattles.length === 0 &&
     (interp.pendingScenes?.length ?? 0) === 0 &&
-    scene === null &&
+    (battleFiber === null || battleOwner) &&
     handoff == null
   );
+}
+
+/** Session-aware predicate: a registered battle save codec is the only
+ * exception to the generic no-active-scene rule. */
+export function canSaveSessionSnapshot(
+  session: Session,
+  state: Readonly<SessionState>,
+): boolean {
+  if (state.scene === null) {
+    return canSave(state.move, state.interp, null, state.handoff);
+  }
+  if (state.scene.kind !== "battle" || session.battle?.save === undefined) return false;
+  return canSaveAt(state.move, state.interp, state.scene.fiber, state.handoff);
 }
 
 /** Deep-copy a snapshot without host built-ins. The desktop QuickJS realm
@@ -140,6 +173,7 @@ export function cloneSnapshot(snap: SaveSnapshot): SaveSnapshot {
   };
   if (snap.mapRuntime !== undefined) out.mapRuntime = cloneMapRuntime(snap.mapRuntime);
   if (snap.travel !== undefined) out.travel = cloneTravelState(snap.travel);
+  if (snap.battle !== undefined) out.battle = cloneScene(snap.battle);
   return out;
 }
 
@@ -242,6 +276,29 @@ export function createSessionSnapshot(
 ): SaveSnapshot {
   if (state.pendingAutosave === true) {
     throw new Error("save: a deferred autosave request must resolve before a manual snapshot");
+  }
+  if (!canSaveSessionSnapshot(session, state)) {
+    throw new Error("save: snapshot is only valid at a tile boundary with no modal or scene open and no external work pending");
+  }
+  if (state.scene?.kind === "battle") {
+    const codec = session.battle!.save!;
+    const encoded = codec.encode(deepClone(state.scene.state));
+    assertJsonValue(encoded, "saved battle state");
+    return normalizeInterp(cloneSnapshot({
+      map: state.mapId,
+      player: state.move,
+      held,
+      interp: state.interp,
+      ext: encodeExtension(session.extensions, state.ext),
+      battle: { ...state.scene, state: encoded },
+      mapRuntime: {
+        chars: state.chars,
+        playerRoute: state.playerRoute,
+        fade: state.fade,
+        ...(state.leftMap ? { leftMap: state.leftMap } : {}),
+      },
+      ...(state.travel ? { travel: state.travel } : {}),
+    }));
   }
   return createSnapshot(
     state.mapId,

@@ -28,7 +28,7 @@ import type { SaveErrorCode, SaveSnapshot } from "./save.ts";
 import {
   SAVE_MAX_DEPTH,
   SaveError,
-  canSave,
+  canSaveSessionSnapshot,
   cloneLeftMap,
   cloneSnapshot,
   createSessionSnapshot,
@@ -41,8 +41,10 @@ import { MapNotReadyError } from "./map-repository.ts";
 import { cloneInterp, createSwitchState, reconstructLabelScopes } from "./interpreter.ts";
 import { cloneChars, createChars } from "./chars.ts";
 import { clonePathSearch } from "./pathfind.ts";
-import { decodeExtension } from "./extensions.ts";
+import { assertImmutableJsonValue, assertJsonValue, decodeExtension } from "./extensions.ts";
+import { deepClone } from "./clone.ts";
 import { cloneTravelState, createTravelState } from "./travel.ts";
+import { cloneAudioState } from "./audio.ts";
 import {
   acquireSessionMap,
   releaseSessionMapsExcept,
@@ -231,6 +233,28 @@ export function restoreSessionSnapshot(
     const reason = error instanceof Error ? error.message : String(error);
     throw new SaveError("shape", `save extension state is invalid: ${reason}`);
   }
+  let battle = null;
+  if (snap.battle !== undefined) {
+    const rules = session.battle;
+    if (!rules?.save) {
+      throw new SaveError("shape", "save cannot be restored: registered BattleRules do not support active-battle saves");
+    }
+    try {
+      const decoded = rules.save.decode(deepClone(snap.battle.state));
+      if (rules.immutableState) assertImmutableJsonValue(decoded, "restored battle state");
+      else assertJsonValue(decoded, "restored battle state");
+      battle = {
+        ...snap.battle,
+        state: rules.immutableState ? decoded : deepClone(decoded),
+        ...(snap.battle.returnAudio !== undefined
+          ? { returnAudio: snap.battle.returnAudio === null ? null : cloneAudioState(snap.battle.returnAudio) }
+          : {}),
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new SaveError("shape", `save battle state is invalid: ${reason}`);
+    }
+  }
   // A save without map runtime (written before it was recorded) restores
   // as it always did: the next tick spawns the characters from the map.
   const runtime = snap.mapRuntime;
@@ -259,7 +283,7 @@ export function restoreSessionSnapshot(
         }
       : null,
     ext,
-    scene: null,
+    scene: battle,
   };
   if (snap.travel) {
     state.travel = cloneTravelState(snap.travel);
@@ -315,7 +339,7 @@ export type SessionLoadResult =
 /** Snapshot a live session, or explain why this frame is not a save point.
  *  Never throws for a state the reducer produced. */
 export function saveSession(session: Session, state: SessionState, held: number): SessionSaveResult {
-  if (state.pendingAutosave === true || !canSave(state.move, state.interp, state.scene, state.handoff)) {
+  if (state.pendingAutosave === true || !canSaveSessionSnapshot(session, state)) {
     return {
       ok: false,
       error: {

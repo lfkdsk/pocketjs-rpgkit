@@ -1440,6 +1440,7 @@ function validateFiber(
   routeWaiters: ReadonlySet<string> = new Set(),
   autosave = false,
   modal: unknown = null,
+  battleFiber: string | null = null,
 ): string | null {
   if (!isRecord(v)) return fail(path, "fiber must be an object");
   if (typeof v.key !== "string" || !v.key.includes("/")) {
@@ -1530,6 +1531,7 @@ function validateFiber(
       // route that names this fiber; a save without it cannot.
       const ins = top.pc < top.prog.length ? top.prog[top.pc] : undefined;
       if (routeWaiters.has(v.key) && isRecord(ins) && ins.op === "moveRoute" && ins.wait === true) break;
+      if (battleFiber === v.key) break;
       return fail(`${path}.mode`, "a save cannot park a fiber in external mode unless a saved route resumes it");
     }
     case "text":
@@ -1547,6 +1549,31 @@ function validateFiber(
           modal.kind === v.mode && instructionMatches) break;
       return fail(`${path}.mode`, `a save cannot park a fiber in ${v.mode as string} mode without its autosave modal`);
     }
+  }
+  return null;
+}
+
+/** The engine-owned wrapper around an opaque, game-validated battle state.
+ * The registered BattleRules.save codec performs the state-specific check at
+ * restore; this map-agnostic boundary still proves the wrapper is canonical
+ * JSON and references exactly one parked external fiber below. */
+function validateSavedBattle(v: unknown, path: string): string | null {
+  if (!isRecord(v)) return fail(path, "battle scene object required");
+  for (const key of Object.keys(v)) {
+    if (!["kind", "fiber", "state", "pausedTicks", "returnAudio"].includes(key)) {
+      return fail(`${path}.${key}`, "unknown battle scene field");
+    }
+  }
+  if (v.kind !== "battle") return fail(`${path}.kind`, '"battle" required');
+  if (typeof v.fiber !== "string" || !v.fiber.includes("/")) {
+    return fail(`${path}.fiber`, "map/event-id fiber key required");
+  }
+  if (!isNonNegInt(v.pausedTicks)) return fail(`${path}.pausedTicks`, "non-negative integer required");
+  const state = jsonValueProblem(v.state, `${path}.state`);
+  if (state) return state;
+  if (v.returnAudio !== undefined && v.returnAudio !== null) {
+    const audio = validateAudioState(v.returnAudio, `${path}.returnAudio`);
+    if (audio) return audio;
   }
   return null;
 }
@@ -2720,6 +2747,11 @@ export function validateSnapshot(snap: unknown): string | null {
   if (!isU32(snap.held)) return "state.held: u32 button mask required";
   const extProblem = jsonValueProblem(snap.ext, "state.ext");
   if (extProblem) return extProblem;
+  if (snap.battle !== undefined) {
+    if (snap.autosave === true) return "state.battle: active battles are manual-save only";
+    const battle = validateSavedBattle(snap.battle, "state.battle");
+    if (battle) return battle;
+  }
   if (snap.travel !== undefined) {
     const travel = validateTravel(snap.travel, "state.travel");
     if (travel) return travel;
@@ -2796,10 +2828,18 @@ export function validateSnapshot(snap: unknown): string | null {
   // serializable. Other blocking fibers remain forbidden. Parallel fibers
   // serialize live, including one parked mid-wait.
   const routeWaiters = savedRouteWaiters(snap.mapRuntime);
+  const battleFiber = isRecord(snap.battle) && typeof snap.battle.fiber === "string"
+    ? snap.battle.fiber
+    : null;
   if (it.main !== null) {
-    const fe = validateFiber(it.main, "state.interp.main", false, snap.map, routeWaiters, snap.autosave === true, it.modal);
+    const fe = validateFiber(
+      it.main, "state.interp.main", false, snap.map, routeWaiters,
+      snap.autosave === true, it.modal, battleFiber,
+    );
     if (fe) return fe;
-    if (!isRecord(it.main) || (it.main.mode !== "screenWait" && snap.autosave !== true)) {
+    const mainIsBattle = battleFiber !== null && isRecord(it.main) &&
+      it.main.key === battleFiber && it.main.mode === "external";
+    if (!isRecord(it.main) || (it.main.mode !== "screenWait" && !mainIsBattle && snap.autosave !== true)) {
       return "state.interp.main: only a waited screen effect may be saved mid-command";
     }
   }
@@ -2821,8 +2861,20 @@ export function validateSnapshot(snap: unknown): string | null {
       routeWaiters,
       snap.autosave === true,
       it.modal,
+      battleFiber,
     );
     if (fe) return fe;
+  }
+
+  if (battleFiber !== null) {
+    const owners = Number(isRecord(it.main) && it.main.key === battleFiber && it.main.mode === "external") +
+      Number(isRecord(it.parallels[battleFiber]) && it.parallels[battleFiber].mode === "external");
+    if (owners !== 1) {
+      return "state.battle.fiber: must name exactly one parked external fiber";
+    }
+    if (!battleFiber.startsWith(`${snap.map}/`)) {
+      return "state.battle.fiber: must belong to the saved map";
+    }
   }
 
   const liveKeys = new Set(Object.keys(it.parallels));

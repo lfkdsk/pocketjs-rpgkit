@@ -63,10 +63,24 @@ export interface BattleStart {
   };
 }
 
+/** Optional, game-owned active-battle save codec. The engine can prove the
+ * scene wrapper and parked interpreter fiber are resumable, but only the
+ * registered rules know whether their opaque JSON state is structurally
+ * valid for a later step(). Rules that omit this codec retain the historical
+ * behavior: an open battle is not a manual save point. */
+export interface BattleSaveCodec {
+  /** Produce the JSON payload stored in rpgkit-save/v1. */
+  encode(state: JsonValue): JsonValue;
+  /** Validate and rebuild a payload before it is exposed to step()/done(). */
+  decode(saved: JsonValue): JsonValue;
+}
+
 export interface BattleRules {
   /** Opt in only when callbacks preserve every published state and return
    * persistent JSON values. The engine can then share validated subtrees. */
   readonly immutableState?: boolean;
+  /** Opt in to manual saves while this battle owns the full-screen scene. */
+  readonly save?: BattleSaveCodec;
   start(
     ext: JsonValue,
     setup: JsonValue,

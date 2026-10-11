@@ -8,6 +8,8 @@ import { createSession, startSession, stepSession, type Session, type SessionInp
 import type { ExtensionOptions } from "../src/engine/extensions.ts";
 import type { Project } from "../src/engine/types.ts";
 import { NAME_INPUT_SCENE_ID, nameInputRules } from "../src/engine/name-input.ts";
+import { canonicalJson, createSessionSnapshot, encodeEnvelope } from "../src/engine/save.ts";
+import { restoreSessionEnvelope, restoreSessionSnapshot } from "../src/engine/save-restore.ts";
 import {
   createRpgMakerBattleExtensions,
   createRpgMakerBattleRules,
@@ -104,6 +106,33 @@ function lowHpExtension(): ExtensionOptions["initial"] {
 }
 
 describe("imported RPG Maker Battle Processing end to end", () => {
+  test("an opted-in mid-battle save restores the exact reducer worldline", () => {
+    const db = structuredClone(imported.battle);
+    db.enemies[0]!.params[0] = 1;
+    db.enemies[0]!.exp = 200;
+    db.enemies[0]!.gold = 37;
+    const project = battleProject();
+    const session = createSession(project, 60, options(db));
+    let middle = enterBattle(session, startSession(project, session));
+    middle = pulse(session, middle, { confirmEdge: true }); // intro -> party
+    middle = pulse(session, middle, { confirmEdge: true }); // fight -> command
+    expect(rpgMakerBattleState(middle.scene!.state).phase).toBe("command");
+
+    const snapshot = createSessionSnapshot(session, middle, 0);
+    expect(snapshot.battle?.kind).toBe("battle");
+    const restored = restoreSessionEnvelope(session, encodeEnvelope(snapshot));
+    expect(restored.scene).toEqual(middle.scene);
+
+    const baseline = settleEvent(session, finishBattle(session, middle, "win"));
+    const replayed = settleEvent(session, finishBattle(session, restored, "win"));
+    expect(canonicalJson(createSessionSnapshot(session, replayed, 0)))
+      .toBe(canonicalJson(createSessionSnapshot(session, baseline, 0)));
+
+    const malformed = structuredClone(snapshot);
+    (malformed.battle!.state as Record<string, any>).databaseHash = "0".repeat(64);
+    expect(() => restoreSessionSnapshot(session, malformed)).toThrow("database hash");
+  });
+
   for (const hz of [60, 30, 20]) test(`win executes 601, rewards, drops, and levels at ${hz} Hz`, () => {
     const db = structuredClone(imported.battle);
     db.enemies[0]!.params[0] = 1;

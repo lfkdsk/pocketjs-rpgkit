@@ -1583,8 +1583,170 @@ function stepState(
   }
 }
 
+function savedStateRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function savedInteger(value: unknown, minimum = 0): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
+}
+
+function savedNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function savedNumberRecord(value: unknown, strings = false): boolean {
+  return savedStateRecord(value) && Object.values(value).every((entry) =>
+    savedNumber(entry) || (strings && typeof entry === "string"));
+}
+
+function savedBooleanRecord(value: unknown): boolean {
+  return savedStateRecord(value) && Object.values(value).every((entry) => typeof entry === "boolean");
+}
+
+function savedCombatantProblem(value: unknown, path: string): string | null {
+  if (!savedStateRecord(value)) return `${path}: object required`;
+  if (typeof value.key !== "string" || typeof value.name !== "string") return `${path}: key/name strings required`;
+  if (value.side !== "actor" && value.side !== "enemy") return `${path}.side: actor|enemy required`;
+  if (!savedInteger(value.databaseId, 1)) return `${path}.databaseId: positive integer required`;
+  for (const key of ["hp", "mp", "tp"] as const) {
+    if (!savedNumber(value[key])) return `${path}.${key}: finite number required`;
+  }
+  if (!Array.isArray(value.params) || value.params.length !== 8 || !value.params.every(savedNumber)) {
+    return `${path}.params: eight finite numbers required`;
+  }
+  if (!Array.isArray(value.states) || !value.states.every((active) =>
+    savedStateRecord(active) && savedInteger(active.id, 1) && savedInteger(active.turns))) {
+    return `${path}.states: state id/turn array required`;
+  }
+  if (!Array.isArray(value.buffs) || value.buffs.length !== 8 || !value.buffs.every((buff) =>
+    savedStateRecord(buff) && savedInteger(buff.level, -2) && (buff.level as number) <= 2 && savedInteger(buff.turns))) {
+    return `${path}.buffs: eight bounded buff records required`;
+  }
+  if (typeof value.guarding !== "boolean" || typeof value.hidden !== "boolean") {
+    return `${path}: guarding/hidden booleans required`;
+  }
+  if (value.image !== undefined && typeof value.image !== "string") return `${path}.image: string required`;
+  if (value.actor !== undefined) {
+    const actor = value.actor;
+    if (!savedStateRecord(actor) || !savedInteger(actor.classId, 1) || !savedInteger(actor.level, 1) ||
+        !savedInteger(actor.exp) || !Array.isArray(actor.skills) || !actor.skills.every((id) => savedInteger(id, 1))) {
+      return `${path}.actor: class, level, exp and skill ids required`;
+    }
+  }
+  return null;
+}
+
+function savedActionProblem(value: unknown, path: string): string | null {
+  if (!savedStateRecord(value)) return `${path}: object required`;
+  if (value.side !== "actor" && value.side !== "enemy") return `${path}.side: actor|enemy required`;
+  if (!savedInteger(value.user)) return `${path}.user: non-negative integer required`;
+  if (value.kind !== "skill" && value.kind !== "item" && value.kind !== "guard") {
+    return `${path}.kind: skill|item|guard required`;
+  }
+  if (!savedInteger(value.id) || !savedInteger(value.target, -1) || !savedNumber(value.speed)) {
+    return `${path}: integer id/target and finite speed required`;
+  }
+  return null;
+}
+
+/** Validate the complete reducer shape before a checksum-valid save can feed
+ * it back into battle step(). This is deliberately owned by the optional RPG
+ * Maker module; the generic save validator knows only that scene.state is
+ * JSON and never learns this format. */
+function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): string | null {
+  if (!savedStateRecord(value)) return "state must be an object";
+  if (value.format !== "rpgmaker-battle-state/v1") return "format must be rpgmaker-battle-state/v1";
+  if (value.databaseHash !== db.databaseHash) return "database hash does not match the registered battle data";
+  if (!savedInteger(value.rng) || (value.rng as number) > 0xffffffff) return "rng must be a u32";
+  for (const key of ["nowTick", "turn", "escapeAttempts", "troopId", "actorIndex", "menuIndex", "listIndex", "targetIndex", "queueIndex", "messageStart"] as const) {
+    if (!savedInteger(value[key])) return `${key} must be a non-negative integer`;
+  }
+  if (!db.troops.some((troop) => troop.id === value.troopId)) return "troopId is absent from the registered database";
+  if (typeof value.canEscape !== "boolean" || typeof value.canLose !== "boolean") {
+    return "canEscape/canLose must be booleans";
+  }
+  if (!["message", "party", "command", "skill", "item", "target", "done"].includes(value.phase as string)) {
+    return "phase is unknown";
+  }
+  if (!["party", "turnStart", "nextAction", "win", "lose", "escape"].includes(value.afterMessage as string)) {
+    return "afterMessage is unknown";
+  }
+  if (value.result !== null && value.result !== "win" && value.result !== "lose" && value.result !== "escape") {
+    return "result is unknown";
+  }
+  if (typeof value.message !== "string") return "message must be a string";
+  for (const side of ["actors", "enemies"] as const) {
+    if (!Array.isArray(value[side]) || value[side].length === 0) return `${side} must be a non-empty array`;
+    for (let index = 0; index < value[side].length; index++) {
+      const problem = savedCombatantProblem(value[side][index], `${side}[${index}]`);
+      if (problem) return problem;
+      if ((value[side][index] as Record<string, unknown>).side !== (side === "actors" ? "actor" : "enemy")) {
+        return `${side}[${index}].side does not match its array`;
+      }
+    }
+  }
+  const actors = value.actors as JsonValue[];
+  const enemies = value.enemies as JsonValue[];
+  if ((value.actorIndex as number) >= actors.length) return "actorIndex is outside actors";
+  for (const field of ["actorActions", "queue"] as const) {
+    if (!Array.isArray(value[field])) return `${field} must be an array`;
+    for (let index = 0; index < value[field].length; index++) {
+      const problem = savedActionProblem(value[field][index], `${field}[${index}]`);
+      if (problem) return problem;
+    }
+  }
+  const queue = value.queue as JsonValue[];
+  if ((value.queueIndex as number) > queue.length) return "queueIndex is outside queue";
+  if (value.selected !== undefined && (!savedStateRecord(value.selected) ||
+      (value.selected.kind !== "skill" && value.selected.kind !== "item") || !savedInteger(value.selected.id, 1))) {
+    return "selected must name a skill or item";
+  }
+  if (value.effect !== null) {
+    if (!savedStateRecord(value.effect) || (value.effect.side !== "actor" && value.effect.side !== "enemy") ||
+        !savedInteger(value.effect.index) || !savedNumber(value.effect.from) || !savedNumber(value.effect.to) ||
+        !savedInteger(value.effect.startTick) || !savedInteger(value.effect.duration) ||
+        !["hit", "heal", "faint"].includes(value.effect.kind as string)) {
+      return "effect is malformed";
+    }
+    const count = value.effect.side === "actor" ? actors.length : enemies.length;
+    if ((value.effect.index as number) >= count) return "effect index is outside its side";
+  }
+  const troop = db.troops.find((entry) => entry.id === value.troopId)!;
+  if (!Array.isArray(value.pageRuns) || value.pageRuns.length !== troop.pages.length || !value.pageRuns.every((run) =>
+    savedStateRecord(run) && typeof run.battle === "boolean" && savedInteger(run.lastTurn, -1) && typeof run.active === "boolean")) {
+    return "pageRuns does not match the troop pages";
+  }
+  if (!savedNumberRecord(value.variables, true) || !savedNumberRecord(value.initialVariables, true)) {
+    return "variable banks must contain finite numbers or strings";
+  }
+  if (!savedBooleanRecord(value.switches) || !savedBooleanRecord(value.initialSwitches)) {
+    return "switch banks must contain booleans";
+  }
+  if (!savedNumberRecord(value.items) || !savedNumberRecord(value.initialItems)) {
+    return "item banks must contain finite numbers";
+  }
+  if (!savedNumber(value.gold) || !savedNumber(value.initialGold)) return "gold values must be finite";
+  if (!savedStateRecord(value.reward) || !savedNumber(value.reward.exp) || !savedNumber(value.reward.gold) ||
+      !savedNumberRecord(value.reward.items) || !Array.isArray(value.reward.levels) ||
+      !value.reward.levels.every((line) => typeof line === "string")) {
+    return "reward is malformed";
+  }
+  return null;
+}
+
+function decodeSavedBattleState(db: RpgMakerBattleDatabase, saved: JsonValue): JsonValue {
+  const problem = savedBattleStateProblem(db, saved);
+  if (problem) throw new Error(`RPG Maker battle save: ${problem}`);
+  return deepClone(saved);
+}
+
 export function createRpgMakerBattleRules(db: RpgMakerBattleDatabase): BattleRules {
   return {
+    save: {
+      encode: (state) => decodeSavedBattleState(db, state),
+      decode: (saved) => decodeSavedBattleState(db, saved),
+    },
     start(ext, setup, seed, context) {
       const started = createInitialState(db, ext, setup, seed, context);
       return started ? { state: jsonState(started.state), ext: started.ext } : null;
