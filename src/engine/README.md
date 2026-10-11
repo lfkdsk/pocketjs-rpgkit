@@ -224,7 +224,8 @@ Conventions:
   event, but `autorun`/`parallel` fibers still fold. The lock is per map
   visit and its held state round-trips through a save.
 - **Message hold:** `createWorld(..., { messageBlocksPlayer: true })`
-  (from `project.system.messageBlocksPlayer`) makes any open text/choices
+  (from `project.system.messageBlocksPlayer`) makes any open text, scrolling
+  text, or choices
   box hold the player, a PARALLEL page's included:
   `messageHoldsPlayer(world, state)` is then true, the mover must not run,
   and the trigger scan starts no action, playerTouch or eventTouch page, so the
@@ -258,6 +259,13 @@ Conventions:
   replace player follow with a fixed camera. Its endpoint remains a fixed
   camera. A subsequent `{op:"camera", target:"player"}` returns to live
   follow.
+- **Scrolling text:** `scrollText` opens a transparent 480×272 clipping layer
+  and moves the complete laid-out block upward by `speed / 2` pixels per
+  60 Hz reference tick. Held confirm applies RPG Maker's 3× multiplier unless
+  `noFastForward` is true. It uses the ordinary CJK-aware flow and RPG Maker
+  colour spans without dialog pagination. The half-pixel offset and captured
+  content/viewport dimensions live in modal state, so save/load, rewind and
+  60/30/20 Hz playback resume at the same position.
 - **Numbered pictures:** ids 1..100 are sparse and paint in numeric order.
   Coordinates may be literals or variables sampled at command execution.
   A coordinate variable that does not hold a finite number is a fatal content
@@ -286,10 +294,17 @@ Conventions:
   screen-effect clocks and hide the map presentation; `worldContinues:true`
   advances it behind the battle scene.
 - **Audio state:** `playBgm`, `fadeoutBgm`, `stopBgm`, `pauseBgm`,
-  `resumeBgm`, `playBgs`, `fadeoutBgs`, `playMe`, `playSe`, `saveBgm`, and
-  `replayBgm` write sparse `InterpState.audio`. BGM/BGS/ME position and fade
+  `resumeBgm`, `playBgs`, `fadeoutBgs`, `playMe`, `stopMe`, `playSe`,
+  `saveBgm`, and `replayBgm` write sparse `InterpState.audio`. Track
+  descriptors retain volume, pitch and pan (-100 left, 0 centre, 100 right),
+  while BGM/BGS/ME position and fade
   counters advance on the fixed 60 Hz reference clock. ME suspends BGM until
-  its authored duration ends; BGS continues independently. `{kind:
+  its authored duration ends or `stopMe` ends it; the held BGM then resumes
+  from its virtual cursor and BGS continues independently. Stopping or fading
+  BGM while ME is active suppresses that later resume. Reissuing the same
+  BGM or BGS id updates volume, pitch and pan without moving its cursor;
+  replaying the currently active BGM likewise keeps its cursor, pause and
+  fade state. `{kind:
   "bgmPlaying", id?, negate?}` is false while BGM is paused or suspended by
   ME. Persistent audio intent round-trips through saves and attract rewind;
   SE remains an ordered, one-tick cue and never enters a save. A game may
@@ -507,8 +522,9 @@ party order and currency unit through `system.rpgMakerText`:
 The optional colour array replaces the palette used by `\C[n]`; omitting it
 uses the stock 32-colour MV palette. The supported escapes are:
 
-- `\N[n]`: actor database name. Actor 1 follows the saved player name;
-  another actor follows its saved `actorNNN-name` variable when present.
+- `\N[n]`: actor database name. The initial party leader follows the saved
+  player name; another actor follows its saved `actorNNN-name` variable when
+  present.
 - `\P[n]`: name of the actor at one-based position `n` in the declared
   `party` array. Runtime party reordering is not modelled.
 - `\V[n]`: variable `vNNN`, or `0` when it has not been set.
@@ -529,6 +545,25 @@ the typewriter reveal, so a colour change does not consume a reveal step and a
 partially revealed glyph never receives the next run's colour. The expanded
 text and its colour ranges live in the modal state, making save/load, rewind
 and different simulation rates observe the same open box.
+
+### Actor conditions
+
+An `if` or event page may compare one imported actor record with a name,
+class, skill, weapon, armour or state id:
+
+```json
+{ "kind": "actor", "actor": "actor001", "test": "skill", "value": "skill004" }
+```
+
+The name test reads the live saved name (the initial party leader uses
+`playerName`; other actors use their `actorNNN-name` variable when present).
+The other tests read the optional initial facts on `ActorDef`. Missing actors
+or facts are false. The RPG Maker importer derives those facts from the
+database actor/class learnings and the valid initial equipment after applying
+slot type, equip-type permissions, seals and dual wield. It does not model
+later class, skill, equipment or state mutations, so those imported conditions
+are reported as degraded even though their initial-database value is
+executable.
 
 ### Steps and region crossings
 
@@ -746,8 +781,8 @@ parked vehicles stay on their authored maps. Follower/vehicle positions,
 facings, trails, gathering waiters, riding state, and airship phase are all in
 saves, autosaves, and rewind keyframes. The RPG Maker importer maps
 `System.json` follower/vehicle settings and event commands 140, 202, 206, 216,
-217, and 323 to these fields and commands. RPG Maker audio pan is retained as
-an import limitation because the kit's BGM state has no pan control. Studio's
+217, and 323 to these fields and commands. RPG Maker audio pan is retained on
+vehicle BGM as well as ordinary BGM/BGS/ME/SE commands. Studio's
 project mobility panel edits the initial follower switch and the three vehicle
 placements while preserving their BGM settings.
 

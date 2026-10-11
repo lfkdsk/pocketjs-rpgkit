@@ -1,12 +1,42 @@
 # Importing RPG Maker MV/MZ projects
 
 `tools/rpgmaker-import` converts an RPG Maker MV or MZ project's
-`data/*.json` files (and the images they use) into an `rpgkit-project/v1`
-document plus generated art. It is a prototype: it shows how much of an
+`data/*.json` files, referenced images and unencrypted Ogg/M4A media into an
+`rpgkit-project/v1` document plus generated art and QOA audio. It is a
+prototype: it shows how much of an
 RPG Maker game maps onto the kit directly, and lists what is still missing.
 
 The importer is a build-time tool. Nothing in it is imported by the
 runtime, so games that do not use it carry none of its code.
+
+## RPG Maker parity anchors
+
+The mappings are checked against the official MV core at commit
+[`182e3144`](https://github.com/rpgtkoolmv/corescript/tree/182e31449707ba7e406db0485c44c2a9d11e2dcd):
+
+- commands 105/405 and the continuous speed/fast-forward rules come from
+  [`Game_Interpreter.command105`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L412-L424)
+  and
+  [`Window_ScrollText`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_windows/Window_ScrollText.js#L56-L82);
+- the actor party/name/class/skill/weapon/armour/state subtypes follow the
+  [`command111` actor block](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L487-L515);
+- audio event commands and their volume/pitch/pan records follow
+  [`command241` through `command250`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1247-L1293)
+  and
+  [`AudioManager`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_managers/AudioManager.js#L81-L133).
+  Its ME path pauses BGM, resumes it when the decoded buffer stops, and fades
+  it in for 0.5 seconds; see
+  [`playMe`/`stopMe`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_managers/AudioManager.js#L235-L268).
+
+The public MZ v1.1.0 mirror at commit
+[`5ecc09ae`](https://github.com/stak/rmmz-corescript/tree/5ecc09ae5170c6aee71c7d9513e553e3dbea116b)
+has the same
+[`command105`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_objects.js#L9855-L9867),
+[`actor predicates`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_objects.js#L9931-L9959),
+[`scrolling window`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_windows.js#L5199-L5252),
+and
+[`ME/BGM lifecycle`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_managers.js#L1254-L1291).
+The mirror is corroborating source, not an official repository.
 
 ## Usage
 
@@ -26,8 +56,10 @@ with a `www/` folder work too). The output folder receives:
 | `animations/*.png` | Imported MV `Animations.json` timelines, flattened into one deterministic multi-cell sheet per animation. |
 | `parallaxes/*.png` | Referenced map and Change Parallax images, scaled by the same map-to-16-px factor as tiles. |
 | `pictures/*.png` | Pictures used by Show Picture, copied unchanged. |
+| `audio/*.qoa` | Referenced BGM/BGS/ME/SE, decoded to signed 16-bit stereo at 44.1 kHz and encoded with the kit's deterministic QOA encoder. |
 | `system/balloon.png` | The balloon sheet, when Show Balloon Icon is used. |
-| `assets.json` | The render manifest an asset cooker bakes: sheets (including item cells), sprites, animations, parallaxes, pictures, animated water cells per map, the balloon sheet, and the player's sprite. |
+| `assets.json` | The render manifest an asset cooker bakes: sheets (including item cells), sprites, animations, parallaxes, pictures, audio, animated water cells per map, the balloon sheet, and the player's sprite. |
+| `audio-media.json` | Stable per-track source/output byte counts, source format, decoded channels/rate/frames and 60 Hz duration; missing/corrupt media includes its reason. |
 | `coverage.md` | What happened to every construct in this project, followed by the table of every MV/MZ command. |
 | `coverage.json` | The machine-readable per-project construct counts (the static command table is Markdown-only). |
 
@@ -44,11 +76,13 @@ complete example: its `gen-assets.ts` imports two test projects, bakes the
 512 px map chunks from the generated tile sheets, slices each character
 block into the twelve walker frames, cooks animated water into sprite
 atlases, slices balloons and animations, carries parallaxes and item cells,
-fits pictures into a screen layer, and writes the `GameAssets` manifest. Its
-`rmi-play.tsx` mounts `GameView` with the opt-in parallax renderer and
+fits pictures into a screen layer, packs imported QOA under the generated
+audio keys, and writes the `GameAssets` manifest. Its `rmi-play.tsx` mounts
+`GameView` with `createAudioEffects`, the opt-in parallax renderer and
 item-icon row, a placeholder battle and the kit's name-input scene. Production
-games use `pocket-rpgkit/ui/parallax` and `pocket-rpgkit/ui/item-icons` the
-same way; omitting either entry keeps its concrete UI out of the bundle.
+games use `pocket-rpgkit/ui/audio`, `pocket-rpgkit/ui/parallax` and
+`pocket-rpgkit/ui/item-icons` the same way; omitting an opt-in entry keeps its
+concrete implementation out of the bundle.
 
 ## Ids
 
@@ -109,7 +143,10 @@ In short:
   maps to `eventTouch` so walking into the event still starts it, with the
   documented caveat that a moving event can also initiate that contact.
 - Conditions on switches, variables (≥), self switches, items and party
-  members map directly.
+  members map directly. Actor name uses the live saved name. Actor class,
+  skill, weapon, armour and state tests execute against imported initial
+  database facts and are reported Degraded because later actor mutations are
+  not modelled.
 - Control Variables can read Game Data → Other → Steps, and a script
   condition consisting only of `$gameParty.steps()` compared with a safe
   integer maps to the native Steps condition. Arbitrary JavaScript remains a
@@ -131,7 +168,7 @@ In short:
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 66 of the 107 commands map natively, 3 run degraded, 4 become
+use of it: 68 of the 107 commands map natively, 1 runs degraded, 4 become
 placeholders (Battle Processing, Script and the two plugin commands) and
 34 are dropped, many of them actor, enemy and battle-only commands. "Needs
 kit" names the runtime capability a native mapping would take; it is the
@@ -147,7 +184,7 @@ for that project, to `coverage.md`.
 | 102 | Show Choices | MV/MZ | Native |  | single-option lists and a default cursor row |
 | 103 | Input Number | MV/MZ | Native |  |  |
 | 104 | Select Item | MV/MZ | Native |  |  |
-| 105 | Show Scrolling Text | MV/MZ | Degraded | scrolling text shown as message pages | a scrolling credits-style text box |
+| 105 | Show Scrolling Text | MV/MZ | Native |  |  |
 | 108 | Comment | MV/MZ | Native |  |  |
 | 109 | Skip | MZ | Native |  |  |
 | 111 | Conditional Branch | MV/MZ | Native |  | conditions over actor stats, enemies, event facing and buttons |
@@ -174,7 +211,7 @@ for that project, to `coverage.md`.
 | 137 | Change Formation Access | MV/MZ | Dropped |  | a party formation menu |
 | 138 | Change Window Color | MV/MZ | Dropped |  | a runtime UI theme command |
 | 139 | Change Defeat ME | MV/MZ | Dropped |  | battle audio settings in the battle setup |
-| 140 | Change Vehicle BGM | MV/MZ | Native |  | audio pan |
+| 140 | Change Vehicle BGM | MV/MZ | Native |  |  |
 | 201 | Transfer Player | MV/MZ | Native |  | a white transfer fade colour |
 | 202 | Set Vehicle Location | MV/MZ | Native |  |  |
 | 203 | Set Event Location | MV/MZ | Native |  | place by variable coordinates and character exchange |
@@ -199,14 +236,14 @@ for that project, to `coverage.md`.
 | 234 | Tint Picture | MV/MZ | Native |  |  |
 | 235 | Erase Picture | MV/MZ | Native |  |  |
 | 236 | Set Weather Effect | MV/MZ | Dropped |  | rain/storm/snow weather particles |
-| 241 | Play BGM | MV/MZ | Native |  | audio pan |
+| 241 | Play BGM | MV/MZ | Native |  |  |
 | 242 | Fadeout BGM | MV/MZ | Native |  |  |
 | 243 | Save BGM | MV/MZ | Native |  |  |
 | 244 | Resume BGM | MV/MZ | Native |  |  |
-| 245 | Play BGS | MV/MZ | Native |  | audio pan |
+| 245 | Play BGS | MV/MZ | Native |  |  |
 | 246 | Fadeout BGS | MV/MZ | Native |  |  |
-| 249 | Play ME | MV/MZ | Degraded | ME length unknown; plays for 4 s | ME length from the decoded audio file (playMe needs an authored duration) |
-| 250 | Play SE | MV/MZ | Native |  | audio pan |
+| 249 | Play ME | MV/MZ | Native |  |  |
+| 250 | Play SE | MV/MZ | Native |  |  |
 | 251 | Stop SE | MV/MZ | Native |  |  |
 | 261 | Play Movie | MV/MZ | Dropped |  | video playback |
 | 281 | Change Map Name Display | MV/MZ | Native |  |  |
@@ -254,7 +291,8 @@ for that project, to `coverage.md`.
 
 Besides the commands, the report counts conditional branch types, page
 conditions, triggers, movement route steps, message escape codes and tile
-constructs. Of note:
+constructs. It also records every referenced audio file's source and encoded
+size, decoded duration/format, or the exact missing/corrupt reason. Of note:
 
 - **Touch events that block** (same-as-characters priority) keep blocking
   and use `eventTouch`, so walking into them starts the page without moving
@@ -318,6 +356,14 @@ constructs. Of note:
   exists. The runtime shop draws it only when the game opts into
   `pocket-rpgkit/ui/item-icons`; other games keep the old text-only bundle and
   layout.
+- **Audio media**: logical names are matched case-insensitively under
+  `audio/{bgm,bgs,me,se}`. Ogg is preferred when both deployment formats are
+  present; a corrupt preferred file is reported rather than silently changing
+  source. `ffmpeg` decodes the selected stream to stable 44.1 kHz stereo
+  signed-16 PCM and the repository QOA encoder writes the final bytes. The
+  decoded ME frame count supplies `playMe.duration` at 60 reference ticks per
+  second. Volume, pitch and pan (-100..100) are retained on every audio
+  command. `ffmpeg` must be on `PATH` while importing.
 
 ## Known limitations
 
@@ -330,13 +376,15 @@ constructs. Of note:
   redistribute RTP art in a kit game unless your license allows it.
 - **Encrypted projects are refused.** A deployed game with encrypted images
   or audio (`hasEncryptedImages` / `hasEncryptedAudio`) is not decrypted.
-- **Audio files are not converted.** Commands keep logical ids
-  (`bgm-<name>`, `se-<name>` …) and `project.audio` stays empty; a game
-  adds WAV/QOA entries itself.
-- **No battle system, actor stats or classes.** Actor ids and database names
-  are imported for message escapes, but actor/enemy/battle-only state and
-  commands are dropped; Battle Processing is a placeholder. A `\P[n]` lookup
-  uses the initial party order rather than later Change Party Member results.
+- **Missing or corrupt audio is omitted.** The reference remains in event
+  intent but no `project.audio` entry or QOA file is emitted; `coverage.md`,
+  `coverage.json`, `audio-media.json` and the CLI warning carry the reason.
+- **No battle system or dynamic actor simulation.** Actor ids, database names,
+  initial class/skills/equipment/states and their conditions are imported, but
+  actor stats, later class/skill/equipment/state mutations, enemy conditions
+  and battle-only state are not modelled; Battle Processing is a placeholder.
+  A `\P[n]` lookup uses the initial party order rather than later Change Party
+  Member results.
 - **Maps are capped at 256 × 256**, the kit's limit.
 - Region ids and terrain tags are carried over as sparse per-cell map data
   (Get Location Info, the `region` condition and authored region-crossing

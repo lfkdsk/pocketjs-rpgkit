@@ -5,7 +5,7 @@ built on [PocketJS](https://github.com/pocket-nexus/pocketjs). It contains
 the parts an RPG-Maker-style game needs without any specific game:
 
 - **pure-TS engine** (`src/engine/`) — tile movement and collision, the
-  event interpreter (pages, triggers, 78 commands), map-character motion,
+  event interpreter (pages, triggers, 80 commands), map-character motion,
   multi-map sessions, deterministic extension state and battle scenes,
   deterministic save snapshots. No host imports, no
   wall clock, no `Math.random`: a session is one pure fold per virtual
@@ -1135,16 +1135,17 @@ are translated by the shared `worldNode`. Both sit inside the renderer's
 band adds the origin itself. The coordinate spaces and the single
 conversion point are documented in `src/ui/world-contract.ts`.
 
-### The 78 commands
+### The 80 commands
 
 | op | purpose |
 | --- | --- |
 | `text` | typewriter dialog lines; a message longer than the box continues on further pages, one confirm each ([Long text is never cut](#long-text-is-never-cut)); `{name}` and, with `system.textVariables`, `{v:<id>}` tokens ([Text tokens](#text-tokens)); optional `position`, `align`, `valign` and `background` place and draw the box ([Text box layout](#text-box-layout)) |
+| `scrollText` | move an unpaginated text block continuously up a transparent full-screen layer at an authored half-pixel speed; held confirm accelerates it 3× unless `noFastForward` is set |
 | `choices` | prompt with 2-8 option branches (a scrolling box past 4), an optional cancel branch, and optional per-option sprite icons ([Choice icons](#choice-icons)) |
 | `switch` | set a global switch |
 | `variable` | set/add/sub, a seeded random range, or arithmetic against another variable (copy/add/sub/mul/div/mod) |
 | `selfSwitch` | set the event-local A/B/C/D flag |
-| `if` | condition over switch/variable/selfSwitch/item/gold/facing, effective appearance, explicit tile-property overrides, a cell's region id, derived `worldIdle` or live player movement, current `bgmPlaying`, the global timer, or a registered `ext` predicate, with `else` |
+| `if` | condition over switch/variable/selfSwitch/item/gold/facing, an actor's live name or imported initial class/skill/equipment/state facts, effective appearance, explicit tile-property overrides, a cell's region id, derived `worldIdle` or live player movement, current `bgmPlaying`, the global timer, or a registered `ext` predicate, with `else` |
 | `transfer` | swap maps at x/y/dir, with an optional fade; map/x/y/dir may be `{ "variable": "id" }`; a direct `playerTouch` transfer may carry a `seamless-v1` opening marker when the project opts into [world-layout handoff](#world-layout-data) |
 | `moveRoute` | route the player, this event, or a named event through moves, turns, waits, deterministic `pathTo`, and `approach` |
 | `moveControl` | change a target's autonomous mode, stop it, start bounded wandering, or override speed/run/frequency/collision/facing settings |
@@ -1184,14 +1185,15 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `gold` | add/sub gold |
 | `item` | add/remove an item count |
 | `se` | emit a sound cue the host drains |
-| `playBgm` | start or replace looping background music with optional volume and pitch |
+| `playBgm` | start or replace looping background music with optional volume, pitch and pan |
 | `fadeoutBgm` | fade BGM to silence over virtual seconds, then remove it |
 | `stopBgm` / `pauseBgm` / `resumeBgm` | control the current BGM without consulting host time |
-| `playBgs` / `fadeoutBgs` | start ambient background sound or fade it to silence independently of BGM |
-| `playMe` | play a duration-authored music effect while BGM is suspended, then resume BGM |
-| `playSe` | emit a transient sound effect by logical audio id (`se` remains compatible) |
+| `playBgs` / `fadeoutBgs` | start ambient background sound with optional volume, pitch and pan, or fade it to silence independently of BGM |
+| `playMe` | play a duration-authored music effect with optional volume, pitch and pan while BGM is suspended, then resume BGM |
+| `stopMe` | end the active music effect and resume any held BGM |
+| `playSe` | emit a transient sound effect by logical audio id with optional volume, pitch and pan (`se` remains compatible) |
 | `stopSe` | stop every sound effect currently playing |
-| `saveBgm` / `replayBgm` | snapshot and restore BGM id, volume, pitch, and virtual position |
+| `saveBgm` / `replayBgm` | snapshot and restore BGM id, volume, pitch, pan and virtual position |
 | `erase` | remove this event for the rest of the map visit |
 | `exit` | end this fiber |
 | `loop` | repeat its `commands` until a `break` leaves it ([Loops](#loops)) |
