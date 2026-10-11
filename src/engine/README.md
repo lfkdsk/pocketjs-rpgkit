@@ -309,8 +309,11 @@ Conventions:
   ME. Persistent audio intent round-trips through saves and attract rewind;
   SE remains an ordered, one-tick cue and never enters a save. A game may
   return `BattleStart.audio` to suspend that complete state, play one battle
-  BGM (or silence), and restore the exact map mix in the completion fold;
-  omitting it preserves the legacy continue-through behavior.
+  BGM (or silence), and restore the exact map mix in the completion fold.
+  An optional `BattleRules.audio(state)` projection can replace that owned
+  BGM during the scene (for example with victory or defeat music) without
+  overwriting the suspended map mix; omitting both preserves the legacy
+  continue-through behavior.
 - **Persistence:** in-flight tween endpoints and remaining reference ticks,
   camera focus, balloon frame age, numbered pictures, map-name banner phase,
   and persistent layers all round-trip in saves and attract rewind. Older
@@ -959,7 +962,12 @@ Its result may also include
 `audio: { bgm: { id, volume?, pitch? } | null }`. Presence snapshots the
 complete map audio state, replaces it with only the battle track (or silence),
 and restores the snapshot atomically when `done` completes; omission leaves
-audio untouched. Invalid track fields are game-code contract errors.
+audio untouched. A battle that claimed audio may additionally implement
+`BattleRules.audio(state)`: after each `step`, a returned BGM becomes the
+desired battle-owned track, while `undefined` keeps the current one and
+`{ bgm: null }` selects silence. Repeating the same id/volume/pitch preserves
+its playback position instead of restarting it. Invalid track fields are
+game-code contract errors.
 `BattleRules.step(state, input, ticks)` receives only scene input, once per
 host frame, with fixed-reference `ticks`. `done` returns ext, a
 win/lose/escape/draw result, optional variable/switch/item/gold replacements,

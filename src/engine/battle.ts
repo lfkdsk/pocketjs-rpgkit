@@ -47,6 +47,16 @@ export interface BattleCompletion {
   transfer?: BattleTransfer;
 }
 
+/** One battle-owned BGM intent. Battle music deliberately owns only BGM:
+ * the complete map-side mix remains suspended until the scene completes. */
+export interface BattleAudio {
+  bgm: {
+    id: string;
+    volume?: number;
+    pitch?: number;
+  } | null;
+}
+
 export interface BattleStart {
   state: JsonValue;
   ext: JsonValue;
@@ -54,13 +64,7 @@ export interface BattleStart {
    * state alone. When present, the session suspends the complete map audio
    * state, plays only this BGM (or silence for null), then restores the map
    * state atomically when the battle completes. */
-  audio?: {
-    bgm: {
-      id: string;
-      volume?: number;
-      pitch?: number;
-    } | null;
-  };
+  audio?: BattleAudio;
 }
 
 /** Optional, game-owned active-battle save codec. The engine can prove the
@@ -90,6 +94,12 @@ export interface BattleRules {
   /** One host-frame fold. ticks is the number of fixed 60 Hz reference ticks
    * represented by that host frame (1/2/3/15 at 60/30/20/4 Hz). */
   step(state: JsonValue, input: Readonly<BattleInput>, ticks: number): JsonValue;
+  /** Optional desired BGM projection for a battle that returned
+   * `BattleStart.audio`. The engine samples it after each step, changes the
+   * owned track only when id/volume/pitch differ, and still restores the
+   * suspended map mix on completion. `undefined` keeps the current battle
+   * track; `{ bgm: null }` selects silence. */
+  audio?(state: JsonValue): BattleAudio | undefined;
   done(state: JsonValue): BattleCompletion | null;
 }
 

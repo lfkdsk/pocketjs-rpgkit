@@ -492,6 +492,53 @@ describe("battle audio lifecycle", () => {
     expect(completed.interp.audio).not.toBe(battleReturnAudio(played));
   });
 
+  test("a state projection changes result BGM once, then restores the map mix", () => {
+    const p = battleProject([{ op: "playBgm", id: "map", volume: 73 }]);
+    const rules: BattleRules = {
+      immutableState: true,
+      start: (ext) => ({
+        ext,
+        state: { phase: "fight" },
+        audio: { bgm: { id: "combat", volume: 88 } },
+      }),
+      step(rawState, input) {
+        const state = rawState as { phase: "fight" | "result" | "done" };
+        if (!input.confirmEdge) return state;
+        return { phase: state.phase === "fight" ? "result" : "done" };
+      },
+      audio(rawState) {
+        const state = rawState as { phase: string };
+        return state.phase === "result" || state.phase === "done"
+          ? { bgm: { id: "victory", volume: 91 } }
+          : undefined;
+      },
+      done(rawState) {
+        return (rawState as { phase: string }).phase === "done"
+          ? { ext: null, result: "win" }
+          : null;
+      },
+    };
+    const session = createSession(p, 60, { battle: rules });
+    const entered = sessionStep(session, startSession(p, session), true);
+    expect(entered.interp.audio?.bgm).toEqual({
+      id: "combat", volume: 88, pitch: 100, positionTicks: 0,
+    });
+
+    const result = sessionStep(session, entered, true);
+    expect(result.interp.audio?.bgm).toEqual({
+      id: "victory", volume: 91, pitch: 100, positionTicks: 0,
+    });
+    const held = sessionStep(session, result);
+    expect(held.interp.audio?.bgm?.positionTicks).toBe(1);
+    expect(result.interp.audio?.bgm?.positionTicks).toBe(0);
+
+    const completed = sessionStep(session, held, true);
+    expect(completed.scene).toBeNull();
+    expect(completed.interp.audio?.bgm).toEqual({
+      id: "map", volume: 73, pitch: 100, positionTicks: 0,
+    });
+  });
+
   for (const hz of [60, 30, 20, 4] as const) {
     test(`immutable frozen battles preserve prior audio states at ${hz} Hz`, () => {
       const p = battleProject([{ op: "playBgm", id: "map", volume: 73 }]);

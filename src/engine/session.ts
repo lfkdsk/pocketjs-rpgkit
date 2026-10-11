@@ -1884,6 +1884,22 @@ function battleAudioState(value: unknown): AudioState | null | undefined {
   };
 }
 
+/** A battle audio projection is a desired track, not a replay command. Keep
+ * the existing position when the projected id/volume/pitch already match. */
+function battleAudioMatches(
+  current: Readonly<AudioState> | undefined,
+  projected: Readonly<AudioState> | null,
+): boolean {
+  if (projected === null) return current === undefined;
+  const currentBgm = current?.bgm;
+  const projectedBgm = projected.bgm;
+  return currentBgm !== undefined && projectedBgm !== undefined &&
+    currentBgm.id === projectedBgm.id &&
+    currentBgm.volume === projectedBgm.volume &&
+    currentBgm.pitch === projectedBgm.pitch &&
+    current?.bgs === undefined && current?.me === undefined && current?.savedBgm === undefined;
+}
+
 /** Consume one queued Battle Processing request. One draw
  * from the session cursor derives an isolated u32 seed even when start()
  * declines the encounter; no game rule may read wall time or global RNG.
@@ -2233,6 +2249,16 @@ function advanceBattleScene(
     if (rules.immutableState) assertImmutableJsonValue(stepped, "battle step state");
     else assertJsonValue(stepped, "battle step state");
     scene.state = stepped;
+  }
+  // Dynamic battle BGM remains reducer state. Sampling is opt-in twice: the
+  // battle must have claimed audio at start, and the rules must publish a
+  // projection. Projects using neither retain the old zero-call hot path.
+  if (scene.returnAudio !== undefined && rules.audio !== undefined) {
+    const projected = battleAudioState(rules.audio(scene.state));
+    if (projected !== undefined && !battleAudioMatches(s.interp.audio, projected)) {
+      if (projected === null) delete s.interp.audio;
+      else s.interp.audio = projected;
+    }
   }
   const completion = rules.done(scene.state);
   if (completion === null) return;
