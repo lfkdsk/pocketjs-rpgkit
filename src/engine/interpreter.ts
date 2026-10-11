@@ -4528,7 +4528,7 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
     case "playBgm": {
       const audio = (s.audio ??= {});
       const held = audio.bgm?.id === ins.id &&
-          !audioTrackIsFadingOut(audio.bgm) && audio.bgm.pitch === ins.pitch
+          !audioTrackIsFadingOut(audio.bgm)
         ? audio.bgm
         : undefined;
       audio.bgm = {
@@ -4564,7 +4564,7 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
     case "playBgs": {
       const audio = (s.audio ??= {});
       const held = audio.bgs?.id === ins.id &&
-          !audioTrackIsFadingOut(audio.bgs) && audio.bgs.pitch === ins.pitch
+          !audioTrackIsFadingOut(audio.bgs)
         ? audio.bgs
         : undefined;
       audio.bgs = {
@@ -4627,18 +4627,13 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
         const current = s.audio.bgm?.id === saved.id && !audioTrackIsFadingOut(s.audio.bgm)
           ? s.audio.bgm
           : undefined;
-        const held = current?.pitch === saved.pitch ? current : undefined;
-        if (held) {
+        if (current) {
           s.audio.bgm = {
             ...saved,
-            positionTicks: held.positionTicks,
-            ...(held.paused ? { paused: true as const } : {}),
-            ...(held.fade ? { fade: { ...held.fade } } : {}),
+            positionTicks: current.positionTicks,
+            ...(current.paused ? { paused: true as const } : {}),
+            ...(current.fade ? { fade: { ...current.fade } } : {}),
           };
-        } else if (current) {
-          // Same current name with a new pitch restarts at zero, but remains
-          // the same track for replayBgm and gets no replay fade.
-          s.audio.bgm = { ...saved, positionTicks: 0 };
         } else {
           s.audio.bgm = {
             ...saved,

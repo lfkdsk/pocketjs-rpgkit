@@ -236,9 +236,17 @@ describe("audio reducer state", () => {
     expect(state.audio?.bgm?.fade).toEqual({
       totalTicks: ME_REPLAY_FADE_TICKS, leftTicks: ME_REPLAY_FADE_TICKS, direction: "in",
     });
+
+    state = issue(state, { op: "playBgm", id: "first", volume: 20, pitch: 90, pan: 30 }, "pitch-update");
+    const changedPitchPosition = state.audio!.bgm!.positionTicks;
+    state = issue(state, { op: "replayBgm" }, "replay-same-different-pitch");
+    expect(state.audio?.bgm).toMatchObject({
+      ...state.audio!.savedBgm!,
+      positionTicks: changedPitchPosition,
+    });
   });
 
-  test("same-id volume/pan preserve position, pitch restarts, and explicit ME stop fades", () => {
+  test("same-id volume/pan/pitch preserve position and explicit ME stop fades", () => {
     let state = issue(createInterpState(), { op: "playBgm", id: "route", volume: 70 });
     state = issue(state, { op: "playBgs", id: "rain", volume: 55 }, "bgs");
     state = idleInterp(state, 12);
@@ -255,17 +263,20 @@ describe("audio reducer state", () => {
       id: "rain", volume: 65, pitch: 100, pan: -30, positionTicks: bgsBeforeUpdate + 1,
     });
 
+    const bgmBeforePitch = state.audio!.bgm!.positionTicks;
     const bgsBeforeBgmPitch = state.audio!.bgs!.positionTicks;
     state = issue(state, { op: "playBgm", id: "route", volume: 80, pitch: 120, pan: 25 }, "bgm-pitch");
     expect(state.audio?.bgm).toEqual({
-      id: "route", volume: 80, pitch: 120, pan: 25, positionTicks: 0,
+      id: "route", volume: 80, pitch: 120, pan: 25, positionTicks: bgmBeforePitch + 1,
     });
     expect(state.audio?.bgs?.positionTicks).toBe(bgsBeforeBgmPitch + 1);
 
+    const bgmBeforeBgsPitch = state.audio!.bgm!.positionTicks;
+    const bgsBeforePitch = state.audio!.bgs!.positionTicks;
     state = issue(state, { op: "playBgs", id: "rain", volume: 65, pitch: 90, pan: -30 }, "bgs-pitch");
-    expect(state.audio?.bgm?.positionTicks).toBe(1);
+    expect(state.audio?.bgm?.positionTicks).toBe(bgmBeforeBgsPitch + 1);
     expect(state.audio?.bgs).toEqual({
-      id: "rain", volume: 65, pitch: 90, pan: -30, positionTicks: 0,
+      id: "rain", volume: 65, pitch: 90, pan: -30, positionTicks: bgsBeforePitch + 1,
     });
 
     state = issue(state, { op: "playMe", id: "sting", duration: 2 }, "me");
