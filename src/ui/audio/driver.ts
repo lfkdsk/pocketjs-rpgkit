@@ -130,6 +130,11 @@ function wavAsset(pcm: WavPcm): AudioAsset {
 export class AudioDriver {
   private readonly voices = new Map<number, Voice>();
   private readonly persistent: Partial<Record<PersistentKind, Voice>> = {};
+  /** One paused BGM is kept as a bounded return candidate. Scene-owned music
+   * commonly replaces a map track and later restores the exact reducer
+   * position; retaining its already-filled native ring keeps that restore off
+   * the frame's QOA decode path. */
+  private suspendedBgm: Voice | undefined;
   private readonly assetCache = new Map<string, AudioAsset | null>();
   private lastState: AudioDriverState | undefined;
   private lastFrame: number | undefined;
@@ -236,7 +241,10 @@ export class AudioDriver {
   ): void {
     let voice = this.persistent[kind];
     if (!track) {
-      if (voice) this.destroyVoice(voice);
+      if (voice) {
+        if (kind === "bgm") this.suspendBgm(voice);
+        else this.destroyVoice(voice);
+      }
       return;
     }
 
@@ -250,10 +258,25 @@ export class AudioDriver {
     const sameTrack = voice && voice.id === track.id && voice.pakKey === pakKey &&
       voice.pitch === pitch && voice.pan === pan;
     if (voice && !sameTrack) {
-      this.destroyVoice(voice);
-      voice = undefined;
+      const returning = kind === "bgm"
+        ? this.takeSuspendedBgm(track, pakKey, pitch, gameFrame)
+        : undefined;
+      if (returning) {
+        this.destroyVoice(voice);
+        voice = returning;
+      } else if (kind === "bgm") {
+        this.suspendBgm(voice);
+        voice = undefined;
+      } else {
+        this.destroyVoice(voice);
+        voice = undefined;
+      }
+    } else if (!voice && kind === "bgm") {
+      voice = this.takeSuspendedBgm(track, pakKey, pitch, gameFrame);
     }
 
+    // A matching active voice can still represent a seek/restart. That path
+    // deliberately destroys it instead of suspending a stale position.
     if (voice) {
       const elapsed = (gameFrame - voice.gameFrame) * elapsedTicksPerFrame;
       const advanced = track.positionTicks - voice.positionTicks;
@@ -415,6 +438,11 @@ export class AudioDriver {
   /** Persistent tracks and new SE both evict only the oldest transient voice. */
   private makeRoom(): boolean {
     if (this.voices.size < MAX_STREAMS) return true;
+    // A return candidate is an optimization, never a correctness resource.
+    // Release it before evicting a live one-shot when all native slots are in
+    // use.
+    if (this.suspendedBgm) this.destroyVoice(this.suspendedBgm);
+    if (this.voices.size < MAX_STREAMS) return true;
     let oldest: Voice | undefined;
     for (const voice of this.voices.values()) {
       if (voice.kind === "se" && (!oldest || voice.serial < oldest.serial)) oldest = voice;
@@ -426,7 +454,9 @@ export class AudioDriver {
 
   private pumpAll(): void {
     // Map insertion order makes write/play/end ordering deterministic.
-    for (const voice of [...this.voices.values()]) this.pumpVoice(voice);
+    for (const voice of [...this.voices.values()]) {
+      if (voice !== this.suspendedBgm) this.pumpVoice(voice);
+    }
   }
 
   private pumpVoice(voice: Voice): void {
@@ -511,10 +541,56 @@ export class AudioDriver {
 
   private destroyVoice(voice: Voice): void {
     if (!this.voices.delete(voice.handle)) return;
+    if (this.suspendedBgm === voice) this.suspendedBgm = undefined;
     if (voice.kind !== "se" && this.persistent[voice.kind] === voice) {
       delete this.persistent[voice.kind];
     }
     this.ops.destroyStream(voice.handle);
+  }
+
+  /** Pause, detach and retain at most one BGM. If a scene has already parked
+   * its map track, later battle/result transitions are destroyed normally so
+   * they cannot displace the return candidate. */
+  private suspendBgm(voice: Voice): void {
+    if (this.suspendedBgm && this.suspendedBgm !== voice) {
+      this.destroyVoice(voice);
+      return;
+    }
+    if (this.persistent.bgm === voice) delete this.persistent.bgm;
+    voice.desiredPlaying = false;
+    voice.reducerPlaying = false;
+    if (voice.hostPlaying) {
+      this.ops.pause(voice.handle);
+      voice.hostPlaying = false;
+    }
+    this.suspendedBgm = voice;
+  }
+
+  /** Reattach an exact-position return candidate. A same-track request at a
+   * different position is a real restart/seek, so discard the stale native
+   * ring and let the ordinary creation path rebuild it. */
+  private takeSuspendedBgm(
+    track: Readonly<AudioTrackState | AudioMeState>,
+    pakKey: string,
+    pitch: number,
+    gameFrame: number,
+  ): Voice | undefined {
+    const voice = this.suspendedBgm;
+    if (!voice) return undefined;
+    const sameIdentity = voice.id === track.id && voice.pakKey === pakKey && voice.pitch === pitch;
+    if (!sameIdentity) return undefined;
+    if (voice.finished || voice.positionTicks !== track.positionTicks) {
+      this.destroyVoice(voice);
+      return undefined;
+    }
+    this.suspendedBgm = undefined;
+    this.persistent.bgm = voice;
+    // The reducer clock advanced while the scene owned BGM. Rebase the
+    // presentation comparison at the restore boundary; the queued PCM and
+    // native play head remained paused at this same reducer position.
+    voice.gameFrame = gameFrame;
+    voice.reducerPlaying = false;
+    return voice;
   }
 
   private destroyAll(): void {

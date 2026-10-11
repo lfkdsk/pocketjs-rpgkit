@@ -654,6 +654,39 @@ describe("opt-in audio host", () => {
     expect([...ops.streams.keys()]).toEqual([1]);
   });
 
+  test("restores a scene-replaced BGM from its paused native ring", () => {
+    const ops = new MockAudioOps();
+    const bytes = encodeQoa(qoaSamples(AUDIO_RING_FRAMES + 1_000), 1, 11_025);
+    const driver = new AudioDriver(
+      ops,
+      {
+        map: "audio:qoa.map",
+        battle: "audio:qoa.battle",
+        victory: "audio:qoa.victory",
+      },
+      () => bytes,
+    );
+    const bgm = (id: string, positionTicks: number) => ({
+      id,
+      volume: 100,
+      pitch: 100,
+      positionTicks,
+    });
+
+    driver.sync(frame(1, { bgm: bgm("map", 7) }));
+    driver.sync(frame(2, { bgm: bgm("battle", 0) }));
+    driver.sync(frame(3, { bgm: bgm("victory", 0) }));
+    const mapWritesBeforeRestore = ops.writes.filter(({ handle }) => handle === 1).length;
+    driver.sync(frame(4, { bgm: bgm("map", 7) }));
+
+    expect(ops.created.map(({ handle }) => handle)).toEqual([1, 2, 3]);
+    expect(ops.destroyed).toEqual([2, 3]);
+    expect(ops.pauses).toEqual([1]);
+    expect(ops.plays).toEqual([1, 2, 3, 1]);
+    expect([...ops.streams.keys()]).toEqual([1]);
+    expect(ops.writes.filter(({ handle }) => handle === 1)).toHaveLength(mapWritesBeforeRestore);
+  });
+
   test("decodes only the QOA slices needed to fill credited ring space", () => {
     const sourceFrames = AUDIO_RING_FRAMES + 1_000;
     const bytes = encodeQoa(qoaSamples(sourceFrames), 1, 11_025);
