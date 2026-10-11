@@ -402,7 +402,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
                 "properties": {
                   "id": { "type": "string", "minLength": 1 },
                   "volume": { "type": "number", "minimum": 0, "maximum": 100 },
-                  "pitch": { "type": "number", "minimum": 50, "maximum": 150 }
+                  "pitch": { "type": "number", "minimum": 50, "maximum": 150 },
+                  "pan": { "type": "number", "minimum": -100, "maximum": 100 }
                 }
               },
               "flash": {
@@ -468,6 +469,11 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
         "databaseId": { "type": "integer", "minimum": 1, "description": "Numeric RPG Maker actor id used by \\N[n] and system.rpgMakerText.party." },
         "name": { "type": "string", "minLength": 1 },
+        "classId": { "type": "string", "minLength": 1, "description": "Imported initial RPG Maker class id." },
+        "skills": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 }, "description": "Imported initial learned and trait-added skill ids." },
+        "weapons": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 }, "description": "Imported initially equipped weapon ids." },
+        "armors": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 }, "description": "Imported initially equipped armor ids." },
+        "states": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 }, "description": "Imported initial state ids; RPG Maker actors normally start with none." },
         "sprite": { "type": "string", "description": "Key in project.sprites." },
         "moveSeconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 }
       }
@@ -647,7 +653,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "volume": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "pitch": { "type": "integer", "minimum": 50, "maximum": 150 }
+        "pitch": { "type": "integer", "minimum": 50, "maximum": 150 },
+        "pan": { "type": "integer", "minimum": -100, "maximum": 100 }
       }
     },
     "map": {
@@ -1482,7 +1489,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "op": { "const": "se" },
             "name": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
             "volume": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 }
+            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 },
+            "pan": { "type": "integer", "minimum": -100, "maximum": 100 }
           }
         },
         {
@@ -1493,7 +1501,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "op": { "const": "playBgm" },
             "id": { "type": "string", "minLength": 1 },
             "volume": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 }
+            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 },
+            "pan": { "type": "integer", "minimum": -100, "maximum": 100 }
           }
         },
         {
@@ -1516,7 +1525,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "op": { "const": "playBgs" },
             "id": { "type": "string", "minLength": 1 },
             "volume": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 }
+            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 },
+            "pan": { "type": "integer", "minimum": -100, "maximum": 100 }
           }
         },
         {
@@ -1537,9 +1547,11 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "id": { "type": "string", "minLength": 1 },
             "duration": { "type": "number", "minimum": 0 },
             "volume": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 }
+            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 },
+            "pan": { "type": "integer", "minimum": -100, "maximum": 100 }
           }
         },
+        { "type": "object", "additionalProperties": false, "required": ["op"], "description": "Stop the active music effect and resume the held BGM.", "properties": { "op": { "const": "stopMe" } } },
         {
           "type": "object",
           "additionalProperties": false,
@@ -1548,7 +1560,8 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "op": { "const": "playSe" },
             "id": { "type": "string", "minLength": 1 },
             "volume": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 }
+            "pitch": { "type": "integer", "minimum": 50, "maximum": 150 },
+            "pan": { "type": "integer", "minimum": -100, "maximum": 100 }
           }
         },
         { "type": "object", "additionalProperties": false, "required": ["op"], "description": "Stop every sound effect currently playing (RPG Maker 251).", "properties": { "op": { "const": "stopSe" } } },
@@ -2192,6 +2205,18 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "negate": { "type": "boolean" }
           },
           "description": "True while the player rides the named persistent vehicle; negate inverts the result."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "actor", "test", "value"],
+          "properties": {
+            "kind": { "const": "actor" },
+            "actor": { "type": "string", "minLength": 1 },
+            "test": { "enum": ["name", "class", "skill", "weapon", "armor", "state"] },
+            "value": { "type": "string" }
+          },
+          "description": "Compare an imported actor's current name or initial database class, skills, equipment and states. A missing actor is false."
         },
         {
           "type": "object",
