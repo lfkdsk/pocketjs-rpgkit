@@ -48,6 +48,7 @@ import {
   addPage,
   canPaint,
   compactPassage,
+  compactRegions,
   compactUpper,
   createEditorState,
   createEventAt,
@@ -68,6 +69,7 @@ import {
   selectLayer,
   selectMap,
   selectPassageBrush,
+  selectRegionBrush,
   selectPage,
   selectTile,
   setMapName,
@@ -75,6 +77,7 @@ import {
   strokeEnd,
   strokeStart,
   toDensePassage,
+  toDenseRegions,
   toDenseUpper,
   updateSelectedEvent,
   updateSelectedPage,
@@ -1151,6 +1154,23 @@ function passageCellValue(value: unknown, key: string): "pass" | "block" | null 
   return value;
 }
 
+/** Region id 0 has RPG Maker's erase semantics and is normalized out of the
+ * sparse layer. Null is also accepted so generic eraser tools can share the
+ * paint-cells/paint-rect protocol. */
+function regionCellValue(value: unknown, key: string): number | null {
+  if (value === null || value === 0) return null;
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 255) {
+    throw new EditApiError(
+      "INVALID_ARGUMENT",
+      `${key} must be an integer from 1 to 255, or 0/null to erase`,
+      `$.${key}`,
+      "region id 1..255, 0, or null",
+      value,
+    );
+  }
+  return value as number;
+}
+
 /** Absolute map cells used as openings in a passage room template. */
 function roomDoorsArg(
   args: Record<string, unknown>,
@@ -1219,7 +1239,23 @@ function paintPassageIndices(
   return exportProject(state);
 }
 
-type CellPaintValue = TileId | "pass" | "block";
+/** One region stroke: 0 has already been normalized to the null eraser. */
+function paintRegionIndices(
+  project: Project,
+  mapIndex: number,
+  value: number | null,
+  indices: readonly number[],
+): Project {
+  let state = editorAt(project, mapIndex);
+  state = selectLayer(state, "regions");
+  if (value !== null) state = selectRegionBrush(state, value);
+  state = strokeStart(state, value === null);
+  for (const index of indices) state = paintCell(state, index);
+  state = strokeEnd(state);
+  return exportProject(state);
+}
+
+type CellPaintValue = TileId | "pass" | "block" | number;
 
 /** Apply per-cell values with one layer copy. This is the patterned-brush
  * counterpart to paintIndices: parsing, validation, diffing and history all
@@ -1257,12 +1293,22 @@ function paintCellValues(
     return { ...project, maps };
   }
 
-  const dense = toDensePassage(map);
-  indices.forEach((index, at) => { dense[index] = values[at] as "pass" | "block" | null; });
-  const passage = compactPassage(map.passage, dense);
-  if (semanticEqual(passage, map.passage ?? [])) return project;
+  if (layer === "passage") {
+    const dense = toDensePassage(map);
+    indices.forEach((index, at) => { dense[index] = values[at] as "pass" | "block" | null; });
+    const passage = compactPassage(map.passage, dense);
+    if (semanticEqual(passage, map.passage ?? [])) return project;
+    const maps = project.maps.slice();
+    maps[mapIndex] = { ...map, passage };
+    return { ...project, maps };
+  }
+
+  const dense = toDenseRegions(map);
+  indices.forEach((index, at) => { dense[index] = values[at] as number | null; });
+  const regions = compactRegions(map.regions, dense);
+  if (semanticEqual(regions, map.regions ?? [])) return project;
   const maps = project.maps.slice();
-  maps[mapIndex] = { ...map, passage };
+  maps[mapIndex] = { ...map, regions };
   return { ...project, maps };
 }
 
@@ -1588,7 +1634,7 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
   if (command === "paint-cells") {
     const mapId = stringArg(args, "map");
     const { map, index: mapIndex } = findMap(project, mapId);
-    const layer = enumArg(args, "layer", ["ground", "upper", "passage"] as const, "ground");
+    const layer = enumArg(args, "layer", ["ground", "upper", "passage", "regions"] as const, "ground");
     const cells = cellsArg(args, map);
     const hasValue = own(args, "value");
     const hasValues = own(args, "values");
@@ -1623,6 +1669,8 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
       let values: CellPaintValue[];
       if (layer === "passage") {
         values = args.values.map((value, at) => passageCellValue(value, `values[${at}]`));
+      } else if (layer === "regions") {
+        values = args.values.map((value, at) => regionCellValue(value, `values[${at}]`));
       } else {
         let state = editorAt(project, mapIndex);
         state = selectLayer(state, layer);
@@ -1644,6 +1692,12 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
     if (layer === "passage") {
       value = passageValueArg(args);
       edited = paintPassageIndices(project, mapIndex, value as "pass" | "block" | null, cells.indices);
+    } else if (layer === "regions") {
+      if (!own(args, "value")) {
+        throw new EditApiError("INVALID_ARGUMENT", "value is required; pass 0 or null to erase", "$.value", "region id 1..255, 0, or null");
+      }
+      value = regionCellValue(args.value, "value");
+      edited = paintRegionIndices(project, mapIndex, value as number | null, cells.indices);
     } else {
       value = args.value;
       edited = paintIndices(project, mapIndex, layer, value, cells.indices, "value");
@@ -1679,7 +1733,7 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
     const mapId = stringArg(args, "map");
     const { map, index: mapIndex } = findMap(project, mapId);
     const layer = command === "paint-rect"
-      ? enumArg(args, "layer", ["ground", "upper", "passage"] as const, "ground")
+      ? enumArg(args, "layer", ["ground", "upper", "passage", "regions"] as const, "ground")
       : enumArg(args, "layer", ["ground", "upper"] as const, "ground");
     const x = integerArg(args, "x", { min: 0, max: map.width - 1 })!;
     const y = integerArg(args, "y", { min: 0, max: map.height - 1 })!;
@@ -1786,6 +1840,28 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
         project: paintPassageIndices(project, mapIndex, value, cells.map((cell) => cell.y * map.width + cell.x)),
         addresses: cells.map((cell) => tileAddress(mapId, "passage", cell.x, cell.y)),
         result: { map: mapId, layer: "passage", value, cells: cells.length },
+      };
+    }
+
+    if (command === "paint-rect" && layer === "regions") {
+      if (own(args, "tile") || own(args, "template") || own(args, "doors")) {
+        const key = own(args, "tile") ? "tile" : own(args, "template") ? "template" : "doors";
+        throw new EditApiError(
+          "INVALID_ARGUMENT",
+          `${key} is not valid for a regions rectangle; use value`,
+          `$.${key}`,
+          "value: region id 1..255, 0, or null",
+          args[key],
+        );
+      }
+      if (!own(args, "value")) {
+        throw new EditApiError("INVALID_ARGUMENT", "value is required; pass 0 or null to erase", "$.value", "region id 1..255, 0, or null");
+      }
+      const value = regionCellValue(args.value, "value");
+      return {
+        project: paintRegionIndices(project, mapIndex, value, cells.map((cell) => cell.y * map.width + cell.x)),
+        addresses: cells.map((cell) => tileAddress(mapId, "regions", cell.x, cell.y)),
+        result: { map: mapId, layer: "regions", value, cells: cells.length },
       };
     }
 

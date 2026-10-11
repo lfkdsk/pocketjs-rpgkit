@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { executeEditOperation } from "../editor/api/operations.ts";
+import { scanCatalogReferences } from "../editor/api/catalogs.ts";
 import { runFileEdit } from "../editor/api/file.ts";
 import type { EditExecution, EditSuccess } from "../editor/api/types.ts";
 import { mapManifestHash } from "../src/engine/map-repository.ts";
@@ -96,6 +97,22 @@ function failure(execution: EditExecution): { code: string; details?: any } {
 }
 
 describe("project catalog operations", () => {
+  test("reference scan ignores sprite-less actors and indexes authored actor sprites", () => {
+    const project = fixture();
+    project.actors = [
+      { id: "narrator", name: "Narrator" },
+      { id: "hero-actor", name: "Hero", sprite: "hero" },
+    ];
+    const references = scanCatalogReferences(project).sprite;
+    expect([...references.keys()]).not.toContain(undefined);
+    expect(references.get("hero")).toContainEqual({
+      address: "actor:hero-actor",
+      field: "actors[1].sprite",
+      access: "reference",
+    });
+    expect([...references.values()].flat()).not.toContainEqual(expect.objectContaining({ address: "actor:narrator" }));
+  });
+
   test("lists and gets all six catalogs, including implicit state ids and full reference details", () => {
     const json = source();
     const expected = new Map([

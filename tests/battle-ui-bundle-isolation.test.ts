@@ -219,8 +219,13 @@ const maybeTest = preflight.ok ? test : test.skip;
 // slot adds a measured 1,185 B on this full shared presentation path, for
 // 1,003,435 B, while the battle and name-input views remain absent by the
 // assertions below.
+// RPG Maker text escape parsing, colour-span presentation, persistent Steps,
+// and region crossing support add 19,044 shared runtime bytes, measuring
+// 1,022,479 B. Projects that omit the new document fields retain the same
+// control flow. The final unused-feature hot-path guards add 93 B, measuring
+// 1,022,572 B; this pin records the shared code-size cost.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_003_435;
+const EXPECTED_BYTES = 1_022_572;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

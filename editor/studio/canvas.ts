@@ -43,14 +43,15 @@ export interface FrameStats {
   recent: number[];
 }
 
-/** A map with passage overrides still contains authored content even when
+/** A map with sparse passage/region data still contains authored content even when
  * every visual layer is empty. Keep this pure so the empty-guide contract is
  * cheap to exercise without constructing a browser canvas. */
-export function isStudioMapBlank(map: Pick<MapDef, "ground" | "upper" | "events" | "passage">): boolean {
+export function isStudioMapBlank(map: Pick<MapDef, "ground" | "upper" | "events" | "passage" | "regions">): boolean {
   return map.ground.every((tile) => tile === null) &&
     (map.upper?.length ?? 0) === 0 &&
     (map.events?.length ?? 0) === 0 &&
-    (map.passage?.length ?? 0) === 0;
+    (map.passage?.length ?? 0) === 0 &&
+    (map.regions?.length ?? 0) === 0;
 }
 
 export class MapCanvas {
@@ -490,6 +491,12 @@ export class MapCanvas {
       this.drawPassage(ctx, map, x0, y0, x1, y1);
       ctx.restore();
     }
+    if (visible.regions && opacity.regions > 0) {
+      ctx.save();
+      ctx.globalAlpha = opacity.regions;
+      this.drawRegions(ctx, map, x0, y0, x1, y1);
+      ctx.restore();
+    }
     if (visible.grid && zoom * TILE >= 6) this.drawGrid(ctx, map, x0, y0, x1, y1, scale);
     if (visible.events && opacity.events > 0) {
       ctx.save();
@@ -651,6 +658,40 @@ export class MapCanvas {
     if (drag?.kind === "paint" && (this.app.layer === "passage" || this.app.layer === "edges")) {
       ctx.fillStyle = "rgba(255,209,102,0.45)";
       for (const index of drag.cells.keys()) ctx.fillRect((index % map.width) * TILE, Math.floor(index / map.width) * TILE, TILE, TILE);
+    }
+  }
+
+  private drawRegions(ctx: CanvasRenderingContext2D, map: MapDef, x0: number, y0: number, x1: number, y1: number): void {
+    const regions = new Map<number, number>(map.regions ?? []);
+    const drag = this.drag?.kind === "paint" && this.app.layer === "regions" ? this.drag : null;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const index = y * map.width + x;
+        const previewed = drag?.cells.has(index) === true;
+        const value = previewed
+          ? (drag!.erase || this.app.regionBrush === 0 ? undefined : this.app.regionBrush)
+          : regions.get(index);
+        if (value === undefined) continue;
+        const px = x * TILE;
+        const py = y * TILE;
+        const hue = (value * 47) % 360;
+        ctx.fillStyle = `hsla(${hue}, 78%, 52%, 0.48)`;
+        ctx.fillRect(px, py, TILE, TILE);
+        ctx.strokeStyle = `hsla(${hue}, 90%, 76%, 0.95)`;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(px + 0.5, py + 0.5, TILE - 1, TILE - 1);
+        ctx.fillStyle = "rgba(255,255,255,0.96)";
+        ctx.font = "700 7px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(value), px + TILE / 2, py + TILE / 2);
+      }
+    }
+    if (drag && (drag.erase || this.app.regionBrush === 0)) {
+      ctx.fillStyle = "rgba(255,209,102,0.35)";
+      for (const index of drag.cells.keys()) {
+        ctx.fillRect((index % map.width) * TILE, Math.floor(index / map.width) * TILE, TILE, TILE);
+      }
     }
   }
 
@@ -1045,8 +1086,9 @@ export class MapCanvas {
     this.requestDraw();
   }
 
-  private strokeValue(erase: boolean): TileId | "pass" | "block" | null {
+  private strokeValue(erase: boolean): TileId | "pass" | "block" | number | null {
     if (this.app.layer === "passage") return erase || this.app.passageBrush === "clear" ? null : this.app.passageBrush;
+    if (this.app.layer === "regions") return erase || this.app.regionBrush === 0 ? null : this.app.regionBrush;
     return erase ? null : this.app.brush;
   }
 
@@ -1118,7 +1160,7 @@ export class MapCanvas {
 
   private fill(map: MapDef, x: number, y: number): void {
     if (this.app.layer !== "ground" && this.app.layer !== "upper") {
-      this.app.notify("info", "Fill works on the ground and upper layers; use the brush or rectangle for passage.");
+      this.app.notify("info", "Fill works on the ground and upper layers; use the brush or rectangle for passage and regions.");
       return;
     }
     this.app.run("fill-region", { map: map.id, layer: this.app.layer, x, y, tile: this.app.brush }, `Fill from (${x},${y})`);
@@ -1130,6 +1172,13 @@ export class MapCanvas {
       const override = (map.passage ?? []).find(([cell]) => cell === index)?.[1];
       this.app.passageBrush = override ?? "clear";
       this.app.setTool("pencil");
+      return;
+    }
+    if (this.app.layer === "regions") {
+      const region = (map.regions ?? []).findLast(([cell]) => cell === index)?.[1] ?? 0;
+      this.app.setRegionBrush(region);
+      this.app.setTool("pencil");
+      if (region === 0) this.app.notify("info", `(${x},${y}) has no region; region 0 erases.`);
       return;
     }
     const tile = this.app.layer === "upper"

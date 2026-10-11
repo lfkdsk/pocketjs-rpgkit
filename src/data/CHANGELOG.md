@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `614dfaaaa341ce4de1b69921775b041686ae8bdaddee0ee5ba3d79c7edc19437` | optional RPG Maker text configuration, actor database ids and sprite-less actors; optional step counter with Steps condition/variable read; region-enter/leave page triggers with a region id. Documents without these fields retain literal backslashes, sparse state and their existing event triggers | additive |
 | `9435a3b7f420c7e7876a7d211e8b2842bdc60e483c54c60cd550d7f5effc7d1c` | optional `worldLayout` opening `movementCapability`; documents that omit it retain the ordinary target-solid passage check | additive |
 | `138048a55ff7d728806120306745c007401d62eec7e5ed1a5da39720429da022` | optional `routeSpeed.tilesPerSecond` exact fixed-clock velocity; documents that omit it retain the existing MV speed grade, route lifetime and bytes | additive |
 | `5eecc57a1acad4721139225b1bed1e35ae581706c29e611909d58b2c90efb41b` | optional `screenBackdrop.whenModalOpen: "ignore"` policy for sources whose state stack preserves a covered backdrop, plus optional `system.transferPresentation: "retain"` for world-owned map animations, camera focus and player balloons; documents without either field keep unconditional backdrop replacement and the original per-map presentation lifetime | additive |

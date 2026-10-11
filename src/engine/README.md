@@ -477,6 +477,109 @@ use the current map's saved `changeName` override, then the authored event
 name, then its id. `this` resolves from the fiber that opened the box. Without
 the opt-in these braces remain literal, preserving older documents.
 
+### RPG Maker text escapes
+
+`project.system.rpgMakerText` opts messages, choice prompts and choice rows
+into RPG Maker MV/MZ's backslash grammar. The opt-in is deliberately separate
+from the kit's brace-token grammar above: when it is present, the box uses the
+RPG Maker parser only. Without it, backslashes retain their original literal
+meaning, so existing projects remain byte- and pixel-compatible.
+
+The project supplies actor database ids through `actors`, plus the initial
+party order and currency unit through `system.rpgMakerText`:
+
+```json
+{
+  "system": {
+    "rpgMakerText": {
+      "party": [1, 3],
+      "currencyUnit": "G",
+      "colours": ["#FFFFFF", "#20A0D6"]
+    }
+  },
+  "actors": [
+    { "id": "actor001", "databaseId": 1, "name": "Harold" },
+    { "id": "actor003", "databaseId": 3, "name": "Marsha" }
+  ]
+}
+```
+
+The optional colour array replaces the palette used by `\C[n]`; omitting it
+uses the stock 32-colour MV palette. The supported escapes are:
+
+- `\N[n]`: actor database name. Actor 1 follows the saved player name;
+  another actor follows its saved `actorNNN-name` variable when present.
+- `\P[n]`: name of the actor at one-based position `n` in the declared
+  `party` array. Runtime party reordering is not modelled.
+- `\V[n]`: variable `vNNN`, or `0` when it has not been set.
+- `\G`: the configured currency unit.
+- `\C[n]`: select a text colour. An invalid or missing palette entry falls
+  back to colour 0.
+- `\\`: one visible backslash.
+
+Parsing is one left-to-right pass when the box opens. Replacement values are
+never scanned again, even if they contain another escape. Unknown or malformed
+escapes remain visible. MZ `\PX[n]`, `\PY[n]` and `\FS[n]` are recognized as
+zero-width controls but their positioning/font-size effect is not rendered;
+the importer preserves their source spelling and reports that limitation.
+
+Colour ranges use Unicode-code-point offsets in the expanded visible text.
+Those offsets are carried through newlines, CJK-aware wrapping, pagination and
+the typewriter reveal, so a colour change does not consume a reveal step and a
+partially revealed glyph never receives the next run's colour. The expanded
+text and its colour ranges live in the modal state, making save/load, rewind
+and different simulation rates observe the same open box.
+
+### Steps and region crossings
+
+`project.system.stepCounter:true` enables RPG Maker's persistent party Steps
+value. It starts at zero and increments once when the player successfully
+lands on a new tile, including a forced player route and a physical seamless
+map handoff. Turning, waiting and blocked attempts do not count, and an
+explicit transfer's destination placement is not a step. The sparse
+`state.sw.steps` field is saved and rewound; projects without the opt-in never
+allocate it and retain the legacy state shape.
+
+Events can read the value in either of the two RPG Maker-compatible forms:
+
+```json
+{ "kind": "steps", "op": ">=", "value": 20 }
+{ "op": "variable", "id": "walked", "set": { "op": "steps" } }
+```
+
+The condition is valid in `condition.all` and an `if` command. Comparisons use
+`>=`, `<=`, `==` or `!=`; the variable operand copies the current count at the
+instant the command executes.
+
+`MapDef.regions` is a sparse list of `[rowMajorCellIndex, regionId]` pairs.
+Only nonzero ids need to be stored; an absent cell reads as region 0. Besides
+the existing fixed-cell `region` condition and `locationInfo` command, an
+event page may react to a player boundary crossing:
+
+```json
+{
+  "trigger": "regionEnter",
+  "region": 7,
+  "commands": [{ "op": "switch", "id": "entered-forest", "value": true }]
+}
+```
+
+`regionEnter` fires after a successful step from any other region into the
+watched nonzero id; `regionLeave` fires when leaving it. A transfer placement,
+standing still and moving between two cells with the same id do not fire.
+Page conditions are sampled on the crossing. If one step matches several
+pages, every matching leave page runs before every matching enter page, with
+event ids in ascending UTF-16 order inside each group. They are blocking
+fibers and therefore run one at a time; the remaining queue is saveable, and
+each page is selected again before its turn so an earlier handler may disable
+a later one deterministically.
+
+The RPG Maker importer carries the map's Region ID plane, enables the counter
+when imported content reads `$gameParty.steps()`, and lowers supported Steps
+reads/comparisons to the two forms above. RPG Maker has no stock region-enter
+or region-leave event trigger, so those pages are kit-authored; encounter
+region sets are a separate battle/encounter feature and are not implemented.
+
 ## P1④ session (multi-map) fold
 
 For a multi-map game the host does not drive the mover and interpreter by

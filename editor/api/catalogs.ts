@@ -325,8 +325,9 @@ function addCommandReferences(
 export function scanCatalogReferences(project: Project): ReferenceIndex {
   const index = emptyReferenceIndex();
   project.items.forEach((item, at) => addTileReference(index, item.sprite, catalogAddress("item", item.id), `items[${at}].sprite`));
-  const actors = (project as unknown as { actors?: Array<{ id: string; sprite: string }> }).actors ?? [];
-  actors.forEach((actor, at) => addReference(index, "sprite", actor.sprite, `actor:${encoded(actor.id)}`, `actors[${at}].sprite`));
+  (project.actors ?? []).forEach((actor, at) => {
+    if (actor.sprite !== undefined) addReference(index, "sprite", actor.sprite, `actor:${encoded(actor.id)}`, `actors[${at}].sprite`);
+  });
   (project.animations ?? []).forEach((animation, animationAt) => {
     animation.timings?.forEach((timing, timingAt) => {
       if (timing.se) addReference(index, "audio", timing.se.id, `animation:${encoded(animation.id)}`, `animations[${animationAt}].timings[${timingAt}].se.id`);

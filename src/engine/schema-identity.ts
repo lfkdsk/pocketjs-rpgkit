@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "9435a3b7f420c7e7876a7d211e8b2842bdc60e483c54c60cd550d7f5effc7d1c";
+export const MAP_SCHEMA_HASH = "614dfaaaa341ce4de1b69921775b041686ae8bdaddee0ee5ba3d79c7edc19437";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -62,6 +62,10 @@ export const MAP_SCHEMA_HASH = "9435a3b7f420c7e7876a7d211e8b2842bdc60e483c54c60c
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: optional RPG Maker message, step-counter, actor database
+  // and region-edge fields plus new command/condition/trigger variants;
+  // documents that omit them retain their existing text and movement state
+  "9435a3b7f420c7e7876a7d211e8b2842bdc60e483c54c60cd550d7f5effc7d1c",
   // superseded by: optional movement capability on a trusted world opening;
   // older openings omit it and retain the ordinary target-solid check
   "138048a55ff7d728806120306745c007401d62eec7e5ed1a5da39720429da022",

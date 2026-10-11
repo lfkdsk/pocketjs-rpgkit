@@ -60,7 +60,7 @@ import type { Modal, ShopRow } from "../engine/interpreter.ts";
 import { fitBounded, marqueeOffset, windowByRows, wrapLabel, type BoundedCell } from "./list-window.ts";
 import { useMarqueeTick } from "./use-marquee-tick.ts";
 import { BoundedLine } from "./BoundedLine.tsx";
-import { flowRows, revealRows } from "./text-flow.ts";
+import { flowRows, revealColourRuns, revealRows, type TextColourRun } from "./text-flow.ts";
 import {
   DIALOG_PAGE_VIEWPORT,
   DIALOG_ROWS,
@@ -187,6 +187,7 @@ const sameBox = (a: TextBoxLayout | undefined, b: TextBoxLayout | undefined): bo
   a === b || (a !== undefined && b !== undefined && a.position === b.position && a.align === b.align &&
     a.valign === b.valign && a.background === b.background);
 const EMPTY_LINES: readonly string[] = [];
+const EMPTY_COLOUR_ROWS: readonly (readonly TextColourRun[])[] = [];
 const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
 const sameRange = (a: number[], b: number[]): boolean => a.length === b.length;
 
@@ -551,6 +552,15 @@ export function DialogBox(props: DialogBoxProps) {
     const visible = revealRows(flow(), shown);
     return textRows().map((i) => visible[i] ?? "");
   });
+  const colourRows = createMemo((): readonly (readonly TextColourRun[])[] => {
+    const m = message();
+    if (m?.kind !== "text" || !m.colours || m.colours.length === 0) return EMPTY_COLOUR_ROWS;
+    const starts = pageStarts();
+    const at = page();
+    const offset = starts && starts.length > 1 && at > 0 ? starts[at]! : speaker().cut;
+    const shown = pageRevealed(m.revealed, speaker().cut, starts, at);
+    return revealColourRuns(flow(), shown, m.colours, offset);
+  });
 
   // Solid replaces an empty string's Text child on the next character. Keep
   // a space in that child and hide its row instead: revealing it only
@@ -562,22 +572,56 @@ export function DialogBox(props: DialogBoxProps) {
       <For each={textRows()}>
         {(row) => {
           const line = createMemo(() => textLines()[row]!);
+          const runs = createMemo(() => colourRows()[row] ?? []);
           return (
-            <Text
-              class="text-xs"
-              style={{
-                textColor: theme().ink,
-                lineHeight: MESSAGE_ROW_H,
-                height: MESSAGE_ROW_H,
-                width: textWidth(),
-                display: line() ? 0 : 1,
-                translateX: rowShifts()?.[row] ?? 0,
-                translateY: rowsShift(),
-              }}
-              debugName={`rpgkit-message-row-${row}`}
-            >
-              {line() || " "}
-            </Text>
+            <Show when={colourRows().length > 0} fallback={
+              <Text
+                class="text-xs"
+                style={{
+                  textColor: theme().ink,
+                  lineHeight: MESSAGE_ROW_H,
+                  height: MESSAGE_ROW_H,
+                  width: textWidth(),
+                  display: line() ? 0 : 1,
+                  translateX: rowShifts()?.[row] ?? 0,
+                  translateY: rowsShift(),
+                }}
+                debugName={`rpgkit-message-row-${row}`}
+              >
+                {line() || " "}
+              </Text>
+            }>
+              <View
+                class="flex-row"
+                style={{
+                  height: MESSAGE_ROW_H,
+                  width: textWidth(),
+                  display: line() ? 0 : 1,
+                  translateX: rowShifts()?.[row] ?? 0,
+                  translateY: rowsShift(),
+                }}
+                debugName={`rpgkit-message-row-${row}`}
+              >
+                <For each={runs()}>
+                  {(run) => (
+                    <Text
+                      class="text-xs"
+                      style={{
+                        textColor: run.colour ?? theme().ink,
+                        lineHeight: MESSAGE_ROW_H,
+                        height: MESSAGE_ROW_H,
+                        shrink: 0,
+                      }}
+                    >
+                      {run.text}
+                    </Text>
+                  )}
+                </For>
+                <Show when={runs().length === 0}>
+                  <Text class="text-xs" style={{ textColor: theme().ink, lineHeight: MESSAGE_ROW_H, height: MESSAGE_ROW_H, shrink: 0 }}> </Text>
+                </Show>
+              </View>
+            </Show>
           );
         }}
       </For>

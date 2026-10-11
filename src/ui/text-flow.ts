@@ -17,6 +17,7 @@
 //      time (dialog-pages.ts); a band or label box grows to show them.
 
 import { breakLine, breakText, isCjk, scalarOffset, type Measure, type TextRow } from "../engine/text-break.ts";
+import type { RpgMakerTextColourSpan } from "../engine/rpgmaker-text.ts";
 
 /** Marks a soft-joined "\n" between two CJK characters: never drawn, zero
  *  width, a break opportunity. Same UTF-16 length as "\n", so reveal offsets
@@ -29,6 +30,13 @@ const JOIN_RE = new RegExp(JOIN, "g");
 export interface TextFlow {
   rows: TextRow[];
   source: string;
+}
+
+/** One contiguous colour run in a laid-out row. Missing `colour` means the
+ * dialog theme's normal ink. */
+export interface TextColourRun {
+  text: string;
+  colour?: string;
 }
 
 function codePointBefore(text: string, i: number): number {
@@ -71,5 +79,58 @@ export function revealRows(flow: TextFlow, revealed: number): string[] {
     if (cut >= row.end) return row.text;
     const shown = source.slice(row.start, cut);
     return shown.includes(JOIN) ? shown.replace(JOIN_RE, "") : shown;
+  });
+}
+
+/** The revealed part of each row, split only where RPG Maker's active
+ * colour changes. `sourceOffset` is the page's Unicode-code-point offset in
+ * the full modal text (speaker prefix and earlier pages included).
+ *
+ * Soft CJK joins remain one source code point, like the newline they
+ * replace, but draw no glyph. This keeps parser spans, wrapping and the
+ * reducer's typewriter counter on the same coordinate system. */
+export function revealColourRuns(
+  flow: TextFlow,
+  revealed: number,
+  spans: readonly RpgMakerTextColourSpan[],
+  sourceOffset = 0,
+): TextColourRun[][] {
+  const { rows, source } = flow;
+  const cut = revealed >= source.length ? source.length : scalarOffset(source, revealed);
+  let spanIndex = 0;
+  const colourAt = (offset: number): string | undefined => {
+    while (spanIndex < spans.length && spans[spanIndex]!.end <= offset) spanIndex++;
+    const span = spans[spanIndex];
+    return span !== undefined && span.start <= offset && offset < span.end
+      ? span.colour
+      : undefined;
+  };
+  let rowOffset = sourceOffset;
+  let cursor = 0;
+  return rows.map((row) => {
+    rowOffset += Array.from(source.slice(cursor, row.start)).length;
+    cursor = row.start;
+    if (cut <= row.start) return [];
+    const end = Math.min(cut, row.end);
+    const runs: TextColourRun[] = [];
+    let run = "";
+    let runColour: string | undefined;
+    let offset = rowOffset;
+    for (const scalar of source.slice(row.start, end)) {
+      const colour = colourAt(offset);
+      if (scalar !== JOIN) {
+        if (run !== "" && colour !== runColour) {
+          runs.push(runColour === undefined ? { text: run } : { text: run, colour: runColour });
+          run = "";
+        }
+        if (run === "") runColour = colour;
+        run += scalar;
+      }
+      offset++;
+    }
+    if (run !== "") runs.push(runColour === undefined ? { text: run } : { text: run, colour: runColour });
+    rowOffset += Array.from(source.slice(row.start, row.end)).length;
+    cursor = row.end;
+    return runs;
   });
 }

@@ -46,6 +46,8 @@ const EDITS: { name: string; command: Parameters<EditSession["run"]>[0]; args: R
   { name: "upper stroke", command: "paint-cells", args: { map: "village", layer: "upper", cells: [[4, 4]], value: "town.12" } },
   { name: "eraser", command: "paint-cells", args: { map: "village", layer: "upper", cells: [[0, 0], [1, 0]], value: null } },
   { name: "passage stroke", command: "paint-cells", args: { map: "village", layer: "passage", cells: [[2, 2], [3, 3]], value: "block" } },
+  { name: "region stroke", command: "paint-cells", args: { map: "village", layer: "regions", cells: [[2, 2], [3, 3]], value: 17 } },
+  { name: "region rectangle", command: "paint-rect", args: { map: "village", layer: "regions", x: 2, y: 2, width: 2, height: 2, value: 255 } },
   { name: "rectangle", command: "paint-rect", args: { map: "village", layer: "ground", x: 2, y: 2, width: 3, height: 2, tile: "town.40" } },
   { name: "fill", command: "fill-region", args: { map: "village", layer: "ground", x: 1, y: 1, tile: "town.41" } },
   { name: "one-way edge", command: "paint-edges", args: { map: "village", cells: [[5, 5]], brush: { kind: "enter", dir: "left" } } },
@@ -90,6 +92,46 @@ describe("Studio edit session (inline)", () => {
     expect(response.ok).toBe(false);
     expect(session.history()).toHaveLength(0);
     expect(session.exportText()).toBe(SUNSTONE);
+  });
+
+  test("region values round-trip sparsely and 0/null erase", () => {
+    const session = EditSession.open(SUNSTONE);
+    expect(session.run("paint-cells", { map: "village", layer: "regions", cells: [[1, 1], [2, 1], [3, 1]], values: [1, 255, 0] }).ok).toBe(true);
+    expect(session.map("village")!.regions).toEqual([[21, 1], [22, 255]]);
+    expect(session.run("paint-rect", { map: "village", layer: "regions", x: 1, y: 1, width: 1, height: 1, value: null }).ok).toBe(true);
+    expect(session.map("village")!.regions).toEqual([[22, 255]]);
+    const edited = session.exportText();
+    expect(loadProject(edited).project.maps.find((map) => map.id === "village")?.regions).toEqual([[22, 255]]);
+    session.undo();
+    expect(session.map("village")!.regions).toEqual([[21, 1], [22, 255]]);
+    session.redo();
+    expect(session.map("village")!.regions).toEqual([[22, 255]]);
+
+    const invalid = session.run("paint-cells", { map: "village", layer: "regions", cells: [[0, 0]], value: 256 });
+    expect(invalid.ok).toBe(false);
+  });
+
+  test("editing a region keeps untouched authored duplicate pairs verbatim", () => {
+    const project = JSON.parse(SUNSTONE) as Project;
+    project.maps.find((map) => map.id === "village")!.regions = [[21, 3], [21, 4], [22, 5]];
+    const session = EditSession.open(JSON.stringify(project));
+    expect(session.run("paint-cells", { map: "village", layer: "regions", cells: [[2, 1]], value: 9 }).ok).toBe(true);
+    expect(session.map("village")!.regions).toEqual([[21, 3], [21, 4], [22, 9]]);
+  });
+
+  test("text-field edits preserve RPG Maker escape source through undo and redo", () => {
+    const session = EditSession.open(SUNSTONE);
+    const raw = String.raw`\C[2]Danger\C[0] \\ path`;
+    expect(session.run("update-command", {
+      map: "village", event: "sign", page: 0,
+      address: { path: [], index: 0 }, field: "lines", value: raw,
+    }).ok).toBe(true);
+    const line = () => (session.map("village")!.events!.find((event) => event.id === "sign")!.pages[0]!.commands[0] as { lines: string[] }).lines[0];
+    expect(line()).toBe(raw);
+    session.undo();
+    expect(line()).not.toBe(raw);
+    session.redo();
+    expect(line()).toBe(raw);
   });
 
   test("a transaction is one step whose patch replays through save", () => {

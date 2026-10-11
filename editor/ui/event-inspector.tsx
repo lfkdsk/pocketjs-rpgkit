@@ -202,6 +202,7 @@ function conditionSummary(condition: Condition): string {
     case "facing": return condition.dir;
     case "worldIdle": return condition.negate ? "world busy" : "world idle";
     case "playerMoving": return condition.negate ? "player resting" : "player moving";
+    case "steps": return `steps ${condition.op} ${condition.value}`;
     case "bgmPlaying": {
       const target = condition.id === undefined ? "Any BGM" : `BGM ${condition.id}`;
       return `${target} is ${condition.negate ? "not " : ""}playing`;

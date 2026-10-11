@@ -517,8 +517,12 @@ simDescribe("sunstone — render budget", () => {
     // Exact authored route speed and rewind-safe scene touch bring the
     // measured bundle to 997,848 B. Exact per-step tiles/s latching for
     // route/wander consumption and save validation adds 4,402 B, measuring
-    // 1,002,250 B; keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_004_000);
+    // 1,002,250 B. The optional world-overlay slot then measured 1,003,435 B;
+    // RPG Maker text colours/escapes plus Steps and region crossings add
+    // 19,044 shared runtime bytes, measuring 1,022,479 B. The unused-feature
+    // hot-path guards add 93 B, measuring 1,022,572 B. Keep a narrow
+    // 428-byte margin above that value.
+    expect(jsBytes).toBeLessThan(1_023_000);
   });
 });
 

@@ -57,6 +57,11 @@ import {
 import { TILE } from "./tiles.ts";
 import { scalarLength } from "./text-break.ts";
 import {
+  parseRpgMakerText,
+  type RpgMakerTextActor,
+  type RpgMakerTextColourSpan,
+} from "./rpgmaker-text.ts";
+import {
   cloneMoveControlState,
   type MoveControlState,
 } from "./move-control.ts";
@@ -279,6 +284,9 @@ export interface SwitchState {
   /** The player's name, substituted for the {name} text token. Part of the
    *  save snapshot; a fresh session seeds it from Project.playerName. */
   playerName: string;
+  /** RPG Maker's global party step count. Missing is the legacy/zero value;
+   *  projects that opt in allocate it only after their first landing. */
+  steps?: number;
   /** Sparse runtime names of map events, keyed by `${mapId}/${eventId}`.
    *  Missing entries fall back to the event's authored name (then id).
    *  Kept in the switch bank so save/load and rewind preserve identity. */
@@ -323,6 +331,9 @@ export function createSwitchState(init?: Partial<SwitchState>): SwitchState {
   };
   if (init?.eventNames && Object.keys(init.eventNames).length > 0) {
     state.eventNames = keyedRecord(init.eventNames);
+  }
+  if (init?.steps !== undefined && init.steps > 0) {
+    state.steps = Math.max(0, clampFiniteVar(init.steps));
   }
   if (init?.playerAppearance) state.playerAppearance = { ...init.playerAppearance };
   if (init?.timer?.running) {
@@ -451,6 +462,16 @@ export function evalCondition(
         case "<=": return v <= c.value;
         case "==": return v === c.value;
         case "!=": return v !== c.value;
+      }
+      return false;
+    }
+    case "steps": {
+      const steps = s.steps ?? 0;
+      switch (c.op) {
+        case ">=": return steps >= c.value;
+        case "<=": return steps <= c.value;
+        case "==": return steps === c.value;
+        case "!=": return steps !== c.value;
       }
       return false;
     }
@@ -685,7 +706,8 @@ export type Instr =
       set:
         | { op: "set" | "add" | "sub"; value: number }
         | { op: "random"; min: number; max: number }
-        | { op: "copy" | "add" | "sub" | "mul" | "div" | "mod"; from: string };
+        | { op: "copy" | "add" | "sub" | "mul" | "div" | "mod"; from: string }
+        | { op: "steps" };
     }
   | { op: "selfSwitch"; key: SelfKey; value: boolean }
   | { op: "if"; cond: Condition; onFalse: number }
@@ -1676,6 +1698,9 @@ export interface TextModal {
   /** Only on a text command with a layout other than the default box: the
    *  command's window position, alignment and background, for the UI. */
   box?: TextBoxLayout;
+  /** RPG Maker colour runs over `lines.join("\n")`, indexed in Unicode
+   *  code points. Omitted keeps legacy message state and rendering shape. */
+  colours?: readonly RpgMakerTextColourSpan[];
 }
 
 /** The layout fields of a text command that differ from the default box,
@@ -1692,7 +1717,13 @@ export function textBoxLayout(c: TextBoxLayout): TextBoxLayout | undefined {
 
 /** A text box opening on `lines`, with its pages when World.paginateText
  *  splits it (at the width of the box's window). */
-function openTextModal(w: World, fiber: string, lines: string[], box: TextBoxLayout | undefined): TextModal {
+function openTextModal(
+  w: World,
+  fiber: string,
+  lines: string[],
+  box: TextBoxLayout | undefined,
+  colours?: readonly RpgMakerTextColourSpan[],
+): TextModal {
   const modal: TextModal = {
     kind: "text",
     fiber,
@@ -1702,6 +1733,7 @@ function openTextModal(w: World, fiber: string, lines: string[], box: TextBoxLay
     complete: false,
   };
   if (box) modal.box = box;
+  if (colours && colours.length > 0) modal.colours = colours;
   const starts = w.paginateText?.(lines, box);
   if (starts && starts.length > 1) {
     modal.pageStarts = starts;
@@ -1783,6 +1815,18 @@ function textBoxEquals(a: TextBoxLayout | undefined, b: TextBoxLayout | undefine
   return a.position === b.position && a.align === b.align && a.valign === b.valign && a.background === b.background;
 }
 
+function colourSpansEqual(
+  a: readonly RpgMakerTextColourSpan[] | undefined,
+  b: readonly RpgMakerTextColourSpan[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  return a.every((span, index) => {
+    const other = b[index]!;
+    return span.start === other.start && span.end === other.end && span.colour === other.colour;
+  });
+}
+
 /** Did the VISIBLE modal identity/content change between two reducer
  *  frames? The UI repaints the message layer only when this is true, so a
  *  parked typewriter emits zero ops on idle frames. Comparing only kind and
@@ -1805,6 +1849,7 @@ export function modalChanged(a: Modal | null, b: Modal | null): boolean {
       a.page !== b.page ||
       a.lines.length !== b.lines.length ||
       a.lines.some((line, i) => line !== b.lines[i]) ||
+      !colourSpansEqual(a.colours, b.colours) ||
       !textBoxEquals(a.box, b.box) ||
       (a.pageStarts === undefined) !== (b.pageStarts === undefined) ||
       (a.pageStarts !== undefined && (
@@ -2182,6 +2227,9 @@ export interface World {
   /** True when some page or program reads `playerMoving`; the session then
    *  samples the mover only for this map. */
   needsPlayerMovingContext?: boolean;
+  /** True when page selection reads the persistent step count. Command-only
+   * reads do not invalidate the page-selection cache while walking. */
+  pageReadsSteps?: boolean;
   /** True when some page/condition of the map reads a `region` condition:
    *  the session then populates ConditionContext.regionCells. Maps without
    *  one pay nothing. */
@@ -2208,6 +2256,9 @@ export interface World {
    *  then detects bump/contact events in its movement phase and passes them
    *  as InterpInput.touchContacts. Maps without one pay nothing. */
   hasEventTouch?: boolean;
+  /** True when a page watches a region boundary. Such events are included
+   * in the always-scan index regardless of their authored event cell. */
+  hasRegionTriggers?: boolean;
   /** Project item catalog (id -> Item), for a shop's price fallback
    *  (goods entries without their own `price` use the item's own) and its
    *  sell price fallback (floor(item.price / 2) when a shop has no
@@ -2225,6 +2276,13 @@ export interface World {
   /** Project.system.characterNames: text and choices expand built-in
    *  {char:<eventId>} / {char:this} / {char:player} tokens. */
   characterNames?: boolean;
+  /** Compiled project database/config for runtime RPG Maker text escapes. */
+  rpgMakerText?: {
+    actors: readonly RpgMakerTextActor[];
+    partyActorIds: readonly number[];
+    currencyUnit: string;
+    colours?: readonly string[];
+  };
   /** Project.system.textTokens is declared: text and choices expand {x:<key>}
    *  through the session's resolver. Absent: {x:…} braces print verbatim,
    *  the pre-{x:} behavior, so a document without the declaration is
@@ -2255,6 +2313,12 @@ export interface WorldOptions {
   textVariables?: boolean;
   /** Project.system.characterNames: switches built-in {char:} expansion on. */
   characterNames?: boolean;
+  rpgMakerText?: {
+    actors: readonly RpgMakerTextActor[];
+    partyActorIds: readonly number[];
+    currencyUnit: string;
+    colours?: readonly string[];
+  };
   /** Project.system.textTokens is declared: switches {x:<key>} expansion on.
    *  Absent: {x:…} prints verbatim. */
   textTokensEnabled?: boolean;
@@ -2396,6 +2460,10 @@ export interface InterpState {
    *  order. Unlike the other pending fields this queue survives interpreter
    *  steps until the session consumes each request. */
   pendingBattles: PendingBattle[];
+  /** One-shot region boundary pages waiting behind the current blocking
+   * fiber. A->B crossings enqueue every leave-A page before every enter-B
+   * page, each group in deterministic event-id order. */
+  pendingRegionTriggers?: { key: string; pageIndex: number }[];
   /** Game scene requests waiting for the scene host, in deterministic fiber
    *  order. Same persistence and drain rules as pendingBattles. Runtime-only:
    *  the queue must be empty at a save point, so the field is never
@@ -2636,6 +2704,7 @@ export interface WorldBuild {
   readonly cellEvents: Map<number, GameEvent[]>;
   readonly alwaysScanEvents: GameEvent[];
   hasEventTouch: boolean;
+  hasRegionTriggers: boolean;
   /** Next ordered event to index, and the next row of its footprint
    * (0: not started). */
   indexed: number;
@@ -2662,6 +2731,7 @@ export function beginWorld(
     cellEvents: new Map(),
     alwaysScanEvents: [],
     hasEventTouch: false,
+    hasRegionTriggers: false,
     indexed: 0,
     row: 0,
   };
@@ -2702,10 +2772,13 @@ export function stepWorld(build: WorldBuild, budget = Infinity): World | null {
     const ev = ordered[build.indexed]!;
     if (build.row === 0) {
       if (spent >= budget) return null;
-      if (ev.pages.some((page) => page.trigger === "autorun" || page.trigger === "parallel")) {
+      if (ev.pages.some((page) => page.trigger === "autorun" || page.trigger === "parallel" ||
+        page.trigger === "regionEnter" || page.trigger === "regionLeave")) {
         build.alwaysScanEvents.push(ev);
       }
       build.hasEventTouch ||= ev.pages.some((page) => page.trigger === "eventTouch");
+      build.hasRegionTriggers ||= ev.pages.some((page) =>
+        page.trigger === "regionEnter" || page.trigger === "regionLeave");
     }
     const w = ev.w ?? 1;
     const h = ev.h ?? 1;
@@ -2754,7 +2827,7 @@ export function createWorld(
 function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): World {
   const {
     map, hz, options, commonPrograms, pagePrograms, contextFlags, needsMovementControlPath,
-    cellEvents, alwaysScanEvents, hasEventTouch,
+    cellEvents, alwaysScanEvents, hasEventTouch, hasRegionTriggers,
   } = build;
   const eventsById = new Map(orderedEvents.map((ev) => [ev.id, ev]));
   const items = options.items ?? [];
@@ -2765,6 +2838,8 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
   };
   const animsById = new Map((options.animations ?? []).map((def) => [def.id, compileAnim(def, hz)]));
   const keyed = indexEvents(map);
+  const pageReadsSteps = (map.events ?? []).some((event) => event.pages.some((page) =>
+    page.condition?.all?.some((condition) => condition.kind === "steps") === true));
   const regionCells = sparseCellMap(map.regions);
   const terrainCells = sparseCellMap(map.terrain);
   const tilesCells = sparseTileMap(map.tiles);
@@ -2782,17 +2857,20 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     needsTilePropertyContext: (contextFlags & CONTEXT_TILE_PROPERTIES) !== 0,
     needsRegionContext: (contextFlags & CONTEXT_REGION) !== 0,
     needsPlayerMovingContext: (contextFlags & CONTEXT_PLAYER_MOVING) !== 0,
+    ...(pageReadsSteps ? { pageReadsSteps: true } : {}),
     ...(regionCells ? { regionCells } : {}),
     ...(terrainCells ? { terrainCells } : {}),
     ...(tilesCells ? { tilesCells } : {}),
     needsMovementControlPath,
     needsMapAnimTarget: (contextFlags & CONTEXT_MAP_ANIM_TARGET) !== 0,
     ...(hasEventTouch ? { hasEventTouch } : {}),
+    ...(hasRegionTriggers ? { hasRegionTriggers } : {}),
     items: itemsById,
     inventory: resolvedInventory,
     messageBlocksPlayer: options.messageBlocksPlayer === true,
     textVariables: options.textVariables === true,
     characterNames: options.characterNames === true,
+    ...(options.rpgMakerText ? { rpgMakerText: options.rpgMakerText } : {}),
     textTokensEnabled: options.textTokensEnabled === true,
     textTokens: options.textTokens,
     onFiberStart: options.onFiberStart,
@@ -2844,7 +2922,11 @@ export function messageHoldsPlayer(w: World, s: InterpState): boolean {
  *  are immutable and shared, only the per-fiber pc cursor is copied. */
 export function cloneModal(m: Modal | null): Modal | null {
   if (m === null) return null;
-  if (m.kind === "text") return { ...m, lines: [...m.lines] };
+  if (m.kind === "text") return {
+    ...m,
+    lines: [...m.lines],
+    ...(m.colours ? { colours: m.colours.map((span) => ({ ...span })) } : {}),
+  };
   if (m.kind === "shop") return { ...m, rows: m.rows.map((row) => ({ ...row })) };
   return {
     ...m,
@@ -2936,6 +3018,7 @@ export function cloneInterp(s0: InterpState): InterpState {
     playerName: s0.sw.playerName ?? DEFAULT_PLAYER_NAME,
     rng: s0.sw.rng,
   };
+  if (s0.sw.steps !== undefined) sw.steps = s0.sw.steps;
   // Conditional assignment (not a conditional spread) so a project without
   // playerAppearance allocates no empty-object literal on the clone path.
   if (s0.sw.playerAppearance) sw.playerAppearance = { ...s0.sw.playerAppearance };
@@ -2961,6 +3044,7 @@ export function shareInterp(s0: InterpState, immutable = false): InterpState {
     playerName: s0.sw.playerName ?? DEFAULT_PLAYER_NAME,
     rng: s0.sw.rng,
   };
+  if (s0.sw.steps !== undefined) sw.steps = s0.sw.steps;
   // Conditional assignment (not a conditional spread) so the per-frame
   // working copy allocates no empty-object literal when playerAppearance
   // is absent.
@@ -3087,6 +3171,9 @@ function copyInterp(
       id: request.id,
       args: deepClone(request.args),
     }));
+  }
+  if (s0.pendingRegionTriggers && s0.pendingRegionTriggers.length > 0) {
+    s.pendingRegionTriggers = s0.pendingRegionTriggers.map((request) => ({ ...request }));
   }
   if (s0.moveControls) s.moveControls = cloneMoveControlState(s0.moveControls);
   if (s0.error) s.error = { ...s0.error };
@@ -3508,6 +3595,11 @@ const NO_PENDING_PARALLELS = Object.freeze(
   keyedRecord<PendingParallel>(),
 ) as Record<string, PendingParallel>;
 
+function regionAt(w: World, cell: Readonly<Cell>): number {
+  if (cell.x < 0 || cell.y < 0 || cell.x >= w.map.width || cell.y >= w.map.height) return 0;
+  return w.regionCells?.get(cell.y * w.map.width + cell.x) ?? 0;
+}
+
 function scanTriggers(
   s: InterpState,
   w: World,
@@ -3517,8 +3609,12 @@ function scanTriggers(
   local?: LocalCells,
 ): Record<string, PendingParallel> {
   let pending: Record<string, PendingParallel> | undefined;
+  let regionLeaves: { key: string; pageIndex: number }[] | undefined;
+  let regionEnters: { key: string; pageIndex: number }[] | undefined;
   const rectOf = (ev: GameEvent): Rect | null => eventRect(ev, eventOrigin(ev, input, local));
   const moved = input.prevCell.x !== input.playerCell.x || input.prevCell.y !== input.playerCell.y;
+  const previousRegion = moved && w.hasRegionTriggers ? regionAt(w, input.prevCell) : 0;
+  const currentRegion = moved && w.hasRegionTriggers ? regionAt(w, input.playerCell) : 0;
   const prevFacing = input.prevFacing ?? input.facing;
   const turned = prevFacing !== input.facing;
   // Sampled once, before any fiber folds this step: the box that is open
@@ -3580,6 +3676,20 @@ function scanTriggers(
     // a victory event's spent parallel page are inert markers, not
     // per-frame start/finish spin.
     if (page.commands.length === 0) continue;
+    // Short-circuit on the compiled world flag first: ordinary maps retain
+    // the old trigger scan without two string comparisons per event.
+    if (w.hasRegionTriggers === true &&
+        (page.trigger === "regionEnter" || page.trigger === "regionLeave")) {
+      const watched = page.region ?? 0;
+      if (moved && watched > 0) {
+        if (page.trigger === "regionLeave" && previousRegion === watched && currentRegion !== watched) {
+          (regionLeaves ??= []).push({ key, pageIndex: index });
+        } else if (page.trigger === "regionEnter" && previousRegion !== watched && currentRegion === watched) {
+          (regionEnters ??= []).push({ key, pageIndex: index });
+        }
+      }
+      continue;
+    }
     if (page.trigger === "parallel") {
       if (!keyedValue(s.parallels, key)) {
         const prog = w.pagePrograms.get(key)![index]!;
@@ -3653,6 +3763,36 @@ function scanTriggers(
       }
     }
   }
+  if (regionLeaves || regionEnters) {
+    const queue = s.pendingRegionTriggers ?? (s.pendingRegionTriggers = []);
+    if (regionLeaves) queue.push(...regionLeaves);
+    if (regionEnters) queue.push(...regionEnters);
+  }
+  // A crossing can match several region events (notably leave A plus enter
+  // B). Keep the rest queued while one blocking fiber runs, then validate
+  // the active page again before starting each successor.
+  while (s.main === null && (s.pendingRegionTriggers?.length ?? 0) > 0) {
+    const request = s.pendingRegionTriggers!.shift()!;
+    const eventId = request.key.startsWith(`${w.map.id}/`)
+      ? request.key.slice(w.map.id.length + 1)
+      : "";
+    const ev = worldEventById(w, eventId);
+    if (!ev || s.erased[request.key]) continue;
+    const index = activeIndexAt(
+      ev,
+      s.sw,
+      request.key,
+      input.facing,
+      extension,
+      liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
+    );
+    if (index !== request.pageIndex) continue;
+    const page = ev.pages[index]!;
+    if (page.trigger !== "regionEnter" && page.trigger !== "regionLeave") continue;
+    w.onFiberStart?.(request.key, index, false);
+    s.main = startFiber(s, request.key, index, false, w.pagePrograms.get(request.key)![index]!);
+  }
+  if (s.pendingRegionTriggers?.length === 0) delete s.pendingRegionTriggers;
   return pending ?? NO_PENDING_PARALLELS;
 }
 
@@ -3689,6 +3829,7 @@ function guardMask(c: Condition, runtime: ExtensionRuntime): number {
     case "facing": return 32;
     case "worldIdle": return 64;
     case "playerMoving": return 512;
+    case "steps": return -1;
     case "ext":
       return runtime.immutableConditions && runtime.deterministicConditions
         ? 1 | 2 | 8 | 16 | 128 | 256
@@ -4096,7 +4237,9 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
     case "variable": {
       const variables = s.sw.variables;
       let value: VariableValue;
-      if (ins.set.op === "random") {
+      if (ins.set.op === "steps") {
+        value = s.sw.steps ?? 0;
+      } else if (ins.set.op === "random") {
         const r = randInt(s.sw.rng, ins.set.min, ins.set.max);
         value = clampFiniteVar(r.value);
         s.sw.rng = r.next;
@@ -4997,7 +5140,34 @@ function characterNameInFiber(
   return event ? runtimeEventName(s.sw, w.map.id, event) : undefined;
 }
 
+function rpgMakerTextActors(s: InterpState, w: World): readonly RpgMakerTextActor[] {
+  const configured = w.rpgMakerText?.actors ?? [];
+  return configured.map((actor) => {
+    const variable = `actor${String(actor.databaseId).padStart(3, "0")}-name`;
+    const renamed = s.sw.variables[variable];
+    const name = actor.databaseId === 1
+      ? s.sw.playerName ?? actor.name
+      : typeof renamed === "string" ? renamed : actor.name;
+    return name === actor.name ? actor : { databaseId: actor.databaseId, name };
+  });
+}
+
+function rpgMakerBoxText(s: InterpState, w: World, text: string) {
+  const options = w.rpgMakerText!;
+  return parseRpgMakerText(text, {
+    variables: s.sw.variables,
+    actors: rpgMakerTextActors(s, w),
+    partyActorIds: options.partyActorIds,
+    currencyUnit: options.currencyUnit,
+    ...(options.colours ? { colours: options.colours } : {}),
+  });
+}
+
 function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: string): string {
+  // RPG Maker mode is its own one-pass grammar. It deliberately does not
+  // run kit brace tokens before or after parsing: a replacement containing
+  // another escape/token must print literally, matching MV/MZ.
+  if (w.rpgMakerText) return rpgMakerBoxText(s, w, text).text;
   const xEnabled = w.textTokensEnabled === true;
   const resolver = xEnabled ? (w.textTokens ?? null) : null;
   return expandTextTokens(
@@ -5018,10 +5188,17 @@ function boxLines(
   lines: readonly string[],
   ext: JsonValue,
   fiber: string,
-): string[] {
+): { lines: string[]; colours?: readonly RpgMakerTextColourSpan[] } {
+  if (w.rpgMakerText) {
+    const parsed = rpgMakerBoxText(s, w, lines.join("\n"));
+    return {
+      lines: parsed.text.split("\n"),
+      ...(parsed.spans ? { colours: parsed.spans } : {}),
+    };
+  }
   const xEnabled = w.textTokensEnabled === true;
   const resolver = xEnabled ? (w.textTokens ?? null) : null;
-  return expandTextLines(
+  return { lines: expandTextLines(
     lines,
     s.sw.playerName ?? DEFAULT_PLAYER_NAME,
     w.textVariables ? s.sw.variables : null,
@@ -5030,7 +5207,7 @@ function boxLines(
     xEnabled,
     w.characterNames ? (target) => characterNameInFiber(s, w, fiber, target) : null,
     w.characterNames === true,
-  );
+  ) };
 }
 
 function runFiber(
@@ -5094,7 +5271,10 @@ function runFiber(
       // does not retype it (RPG Maker converts escapes once).
       const open = s.modal?.kind === "text"
         ? s.modal
-        : openTextModal(w, f.key, boxLines(s, w, ins.lines, extension.ext, f.key), ins.box);
+        : (() => {
+            const expanded = boxLines(s, w, ins.lines, extension.ext, f.key);
+            return openTextModal(w, f.key, expanded.lines, ins.box, expanded.colours);
+          })();
       // The typewriter counts code points (one per drawn glyph), not UTF-16
       // units: a supplementary character is one step. Same as .length for
       // text without surrogate pairs. It types the open page only.
@@ -5117,6 +5297,10 @@ function runFiber(
         next.page = open.page ?? 0;
       }
       if (open.box) next.box = open.box;
+      // Text state is rebuilt on every typewriter tick. Colour runs are
+      // immutable box-open data, like lines/page starts/layout, and must
+      // survive reveal updates and page turns.
+      if (open.colours) next.colours = open.colours;
       if (input.confirmEdge && timed >= pageLength) {
         if (next.pageStarts && next.page! + 1 < next.pageStarts.length) {
           // Turn the page: its typewriter starts on this frame, like a box
@@ -5885,8 +6069,8 @@ function runFiber(
         if (s.modal) return;
         f.mode = "text";
         f.since = s.frame;
-        const firstLines = boxLines(s, w, ins.lines, extension.ext, f.key);
-        s.modal = openTextModal(w, f.key, firstLines, ins.box);
+        const first = boxLines(s, w, ins.lines, extension.ext, f.key);
+        s.modal = openTextModal(w, f.key, first.lines, ins.box, first.colours);
         return;
       case "choices": {
         // Same single-slot rule for the choices box.

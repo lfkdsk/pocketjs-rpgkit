@@ -60,14 +60,14 @@ export type FieldEdit<T> =
   | { ok: false; error: string };
 
 const DIRS = ["down", "left", "right", "up"] as const;
-// eventTouch is last so the long-standing action → playerTouch → autorun →
-// parallel cycle order is unchanged; cycling from parallel reaches it.
-const TRIGGERS = ["action", "playerTouch", "autorun", "parallel", "eventTouch"] as const;
+// Keep the long-standing action → playerTouch → autorun → parallel →
+// eventTouch prefix; region crossings follow it as the additive triggers.
+const TRIGGERS = ["action", "playerTouch", "autorun", "parallel", "eventTouch", "regionEnter", "regionLeave"] as const;
 const MOVE_TYPES = ["static", "random", "approach"] as const;
 const BOOLS = ["true", "false"] as const;
 const VAR_MODES = [
   "set", "add", "sub", "random", "copy:variable", "add:variable",
-  "sub:variable", "mul:variable", "div:variable", "mod:variable",
+  "sub:variable", "mul:variable", "div:variable", "mod:variable", "steps",
 ] as const;
 const IDENTIFIER = /^[A-Za-z0-9_.-]+$/;
 const SOUND_ID = /^[a-z0-9_-]+$/;
@@ -404,6 +404,11 @@ export function conditionFields(
       return [field(p("negate"), "NEGATE", condition.negate ?? false, "boolean", BOOLS)];
     case "playerMoving":
       return [field(p("negate"), "NEGATE", condition.negate ?? false, "boolean", BOOLS)];
+    case "steps":
+      return [
+        field(p("op"), "OP", condition.op, "enum", [">=", "<=", "==", "!="]),
+        field(p("value"), "VALUE", condition.value, "integer"),
+      ];
     case "bgmPlaying":
       return [
         resourceField(p("id"), "BGM", condition.id ?? "(any)", resources.audio, "Project audio ids; use (any) for any BGM"),
@@ -469,7 +474,7 @@ export function commandFields(
         fields.push(field("min", "MIN", command.set.min, "integer"), field("max", "MAX", command.set.max, "integer"));
       } else if ("from" in command.set) {
         fields.push(field("from", "FROM", command.set.from));
-      } else {
+      } else if (command.set.op !== "steps") {
         fields.push(field("value", "VALUE", command.set.value, "integer"));
       }
       return fields;
@@ -835,6 +840,15 @@ function editConditionUnchecked(condition: Condition, key: string, raw: string):
     const value = enumValue(raw, DIRS, "direction"); return value.ok ? good({ ...condition, dir: value.value }) : value;
   } else if (condition.kind === "worldIdle" && key === "negate") {
     const value = bool(raw); return value === null ? bad("negate must be true or false") : good({ ...condition, negate: value });
+  } else if (condition.kind === "steps") {
+    if (key === "op") {
+      const value = enumValue(raw, [">=", "<=", "==", "!="] as const, "steps operator");
+      return value.ok ? good({ ...condition, op: value.value }) : value;
+    }
+    if (key === "value") {
+      const value = integer(raw, "steps", 0);
+      return value.ok ? good({ ...condition, value: value.value }) : value;
+    }
   } else if (condition.kind === "bgmPlaying") {
     if (key === "id") {
       if (raw === "(any)" || raw.trim() === "") return good(setOptional(condition, "id", undefined));
@@ -1034,11 +1048,12 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       if (key === "mode") {
         const mode = enumValue(raw, VAR_MODES, "variable mode");
         if (!mode.ok) return mode;
+        if (mode.value === "steps") return good({ ...command, set: { op: "steps" } });
         if (mode.value === "random") return good({ ...command, set: { op: "random", min: 0, max: 1 } });
         if (mode.value.endsWith(":variable")) return good({ ...command, set: { op: mode.value.slice(0, -9) as "copy" | "add" | "sub" | "mul" | "div" | "mod", from: "variable" } });
         return good({ ...command, set: { op: mode.value as "set" | "add" | "sub", value: 0 } });
       }
-      if (key === "value" && !("from" in command.set) && command.set.op !== "random") { const value = integer(raw, "value"); return value.ok ? good({ ...command, set: { ...command.set, value: value.value } }) : value; }
+      if (key === "value" && !("from" in command.set) && command.set.op !== "random" && command.set.op !== "steps") { const value = integer(raw, "value"); return value.ok ? good({ ...command, set: { ...command.set, value: value.value } }) : value; }
       if (key === "from" && "from" in command.set) { const value = identifier(raw, "source variable"); return value.ok ? good({ ...command, set: { ...command.set, from: value.value } }) : value; }
       if ((key === "min" || key === "max") && command.set.op === "random") { const value = integer(raw, key); return value.ok ? good({ ...command, set: { ...command.set, [key]: value.value } }) : value; }
       break;
@@ -1830,7 +1845,19 @@ export function editPageConditionField(
 }
 
 export function editPageField(page: Page, key: string, raw: string): FieldEdit<Page> {
-  if (key === "trigger") { const value = enumValue(raw, TRIGGERS, "trigger"); return value.ok ? good({ ...page, trigger: value.value }) : value; }
+  if (key === "trigger") {
+    const value = enumValue(raw, TRIGGERS, "trigger");
+    if (!value.ok) return value;
+    if (value.value === "regionEnter" || value.value === "regionLeave") {
+      return good({ ...page, trigger: value.value, region: page.region ?? 1 });
+    }
+    const { region: _, ...rest } = page;
+    return good({ ...rest, trigger: value.value });
+  }
+  if (key === "region") {
+    const value = integer(raw, "region", 1, 255);
+    return value.ok ? good({ ...page, region: value.value }) : value;
+  }
   if (key === "sprite") return good({ ...page, sprite: raw === "" || raw.toLowerCase() === "none" ? null : raw });
   if (key === "direction") { const value = enumValue(raw, DIRS, "direction"); return value.ok ? good({ ...page, dir: value.value }) : value; }
   if (key === "moveType") { const value = enumValue(raw, MOVE_TYPES, "move type"); return value.ok ? good({ ...page, moveType: value.value }) : value; }
@@ -1855,6 +1882,9 @@ export function editPageRouteField(page: Page, key: string, raw: string): FieldE
 export function pageFieldDescriptors(page: Page): EditableField[] {
   return [
     field("trigger", "TRIGGER", page.trigger, "enum", TRIGGERS),
+    ...((page.trigger === "regionEnter" || page.trigger === "regionLeave")
+      ? [field("region", "REGION", page.region ?? 1, "integer")]
+      : []),
     field("sprite", "SPRITE", page.sprite ?? "NONE"),
     field("direction", "DIR", page.dir ?? "down", "enum", DIRS),
     field("moveType", "MOVE", page.moveType ?? "static", "enum", MOVE_TYPES),

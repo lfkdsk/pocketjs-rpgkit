@@ -241,6 +241,12 @@ function validateCondition(v: unknown, path: string): string | null {
         return fail(`${path}.negate`, "boolean required");
       }
       return null;
+    case "steps":
+      if (![">=", "<=", "==", "!="].includes(v.op as string)) {
+        return fail(`${path}.op`, "unknown steps comparison");
+      }
+      if (!isNonNegInt(v.value)) return fail(`${path}.value`, "non-negative integer required");
+      return null;
     case "region":
       if (!isNonNegInt(v.x) || !isNonNegInt(v.y)) {
         return fail(`${path}.x`, "non-negative integers required");
@@ -607,6 +613,8 @@ function validateProg(prog: unknown, path: string): string | null {
           if (!isFiniteNumber(min) || !isFiniteNumber(max) || min > max) {
             return fail(`${here}.set`, "random needs min <= max numbers");
           }
+        } else if (set.op === "steps") {
+          // No payload: the operand is the persisted global step counter.
         } else if (typeof set.from === "string") {
           // T2-16 variable-operand variant: shares "add"/"sub" spellings
           // with the literal-value variant below, disambiguated by the
@@ -1653,6 +1661,9 @@ function validateSwitchState(v: unknown, path: string): string | null {
     }
   }
   if (!isSafeInt(v.gold)) return fail(`${path}.gold`, "safe integer required");
+  if (v.steps !== undefined && (!isSafeInt(v.steps) || v.steps < 0)) {
+    return fail(`${path}.steps`, "non-negative safe integer required");
+  }
   if (!isU32(v.rng)) return fail(`${path}.rng`, "u32 RNG cursor required");
   // The player name is present in every snapshot a current runtime writes;
   // an older bank without it is allowed and defaults at load, but a present
@@ -1968,6 +1979,25 @@ function validateModal(v: unknown, path: string, liveKeys: ReadonlySet<string>):
       }
       if (!isNonNegInt(v.page) || v.page >= starts.length) {
         return fail(`${path}.page`, "an index into pageStarts required");
+      }
+    }
+    if (v.colours !== undefined) {
+      if (!Array.isArray(v.colours) || v.colours.length === 0) {
+        return fail(`${path}.colours`, "non-empty colour span array required when present");
+      }
+      let previousEnd = 0;
+      for (let index = 0; index < v.colours.length; index++) {
+        const span = v.colours[index];
+        const at = `${path}.colours[${index}]`;
+        if (!isRecord(span) || !isNonNegInt(span.start) || !isNonNegInt(span.end) ||
+            span.start >= span.end || span.end > (v.total as number)) {
+          return fail(at, "ordered start/end offsets within total required");
+        }
+        if (span.start < previousEnd) return fail(at, "non-overlapping spans in source order required");
+        if (typeof span.colour !== "string" || !/^#[0-9A-F]{6}$/.test(span.colour)) {
+          return fail(`${at}.colour`, "uppercase six-digit hex colour required");
+        }
+        previousEnd = span.end;
       }
     }
     if (v.box !== undefined) return validateTextBox(v.box, `${path}.box`);
@@ -2548,6 +2578,18 @@ export function validateSnapshot(snap: unknown): string | null {
   }
   if (!Array.isArray(it.pendingBattles) || it.pendingBattles.length !== 0) {
     return "state.interp.pendingBattles: no queued battles at a save point";
+  }
+  if (it.pendingRegionTriggers !== undefined) {
+    if (!Array.isArray(it.pendingRegionTriggers) || it.pendingRegionTriggers.length === 0) {
+      return "state.interp.pendingRegionTriggers: non-empty array required when present";
+    }
+    for (let index = 0; index < it.pendingRegionTriggers.length; index++) {
+      const request = it.pendingRegionTriggers[index];
+      if (!isRecord(request) || typeof request.key !== "string" || request.key.length === 0 ||
+          !isNonNegInt(request.pageIndex)) {
+        return `state.interp.pendingRegionTriggers[${index}]: key and non-negative pageIndex required`;
+      }
+    }
   }
   if (it.pendingScenes !== undefined && (!Array.isArray(it.pendingScenes) || it.pendingScenes.length !== 0)) {
     return "state.interp.pendingScenes: no queued scenes at a save point";

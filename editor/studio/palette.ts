@@ -409,6 +409,31 @@ export function mountPalette(root: HTMLElement, app: StudioApp, art: ArtRegistry
     h("p", { class: "hint" }, "Paints per-cell overrides on this map. Right-click clears. Red tint = blocked by the tile sheet; X = blocked override; ○ = pass override."));
   }
 
+  function renderRegions(): void {
+    replace(header, h("span", { class: "panel-title" }, "Region brush"));
+    const input = h("input", {
+      type: "number",
+      class: "region-brush-input",
+      min: "0",
+      max: "255",
+      step: "1",
+      inputmode: "numeric",
+      value: String(app.regionBrush),
+      "aria-label": "Region id",
+      "data-testid": "region-brush",
+    });
+    input.addEventListener("change", () => {
+      const value = Number(input.value);
+      app.setRegionBrush(Number.isFinite(value) ? value : 0);
+      if (app.tool !== "pencil" && app.tool !== "rect") app.setTool("pencil");
+    });
+    replace(body,
+      h("div", { class: "region-brush-control" },
+        h("label", null, "Region id", input),
+        h("span", { class: `region-brush-swatch${app.regionBrush === 0 ? " erase" : ""}` }, app.regionBrush === 0 ? "×" : String(app.regionBrush))),
+      h("p", { class: "hint" }, "Paint region ids 1–255. Region 0, the eraser tool, or right-click removes the sparse region entry."));
+  }
+
   function renderEdges(): void {
     replace(header, h("span", { class: "panel-title" }, "One-way edges"));
     const isPack = app.session?.kind === "pack";
@@ -440,6 +465,7 @@ export function mountPalette(root: HTMLElement, app: StudioApp, art: ArtRegistry
       return;
     }
     if (app.layer === "passage") renderPassage();
+    else if (app.layer === "regions") renderRegions();
     else if (app.layer === "edges") renderEdges();
     else renderTiles();
   }

@@ -16,7 +16,7 @@ import {
   type CommandListPath,
 } from "./commands.ts";
 
-export type Layer = "ground" | "upper" | "passage";
+export type Layer = "ground" | "upper" | "passage" | "regions";
 
 /** Dense upper layer, length width*height: null = no star-layer cell. */
 export type DenseUpper = (TileId | null)[];
@@ -24,6 +24,12 @@ export type DenseUpper = (TileId | null)[];
 /** Dense passage overrides, length width*height: null = no override. */
 export type PassageValue = "pass" | "block" | null;
 export type DensePassage = PassageValue[];
+
+/** Dense RPG Maker region layer: null = region id 0 / no sparse entry. */
+export type RegionValue = number | null;
+export type DenseRegions = RegionValue[];
+
+type CellLayerValue = TileId | PassageValue | RegionValue;
 
 /** The brush an edge stroke paints on the sheet of a cell's ground tile. */
 export type EdgeBrush = { kind: "enter" | "exit"; dir: Dir } | { kind: "clear" };
@@ -38,13 +44,13 @@ interface OpenStroke {
   layer: Layer;
   /** Tile painted by this stroke; null = an erase stroke. Fixed at press
    *  time so changing the palette selection mid-drag cannot mix brushes. */
-  brush: TileId;
+  brush: CellLayerValue;
   /** Private copy-on-stroke buffer. It is installed into the current state
    *  on the first changed cell, then updated in place while parent objects
    *  are replaced so UI dependents still observe every painted cell. This
    *  keeps large maps from copying their whole layer on every pointer frame. */
-  working: (TileId | PassageValue)[];
-  before: TileId[];
+  working: CellLayerValue[];
+  before: CellLayerValue[];
   /** Row-major cells this stroke changed, in paint order (appended in
    *  place with `working`). Each changed exactly once: the brush is fixed. */
   cells: number[];
@@ -79,9 +85,14 @@ export interface EditRulesState {
   /** Per-map dense passage caches with the same touched/export contract. */
   passageDense: DensePassage[];
   passageTouched: boolean[];
+  /** Per-map dense region caches with the same touched/export contract. */
+  regionDense: DenseRegions[];
+  regionTouched: boolean[];
   groundTouched: boolean[];
   /** Brush for passage strokes ("pass"/"block"); erase strokes clear. */
   passageBrush: "pass" | "block";
+  /** RPG Maker region id painted by region strokes. */
+  regionBrush: number;
   stroke: OpenStroke | null;
   /** Open sheet-dirEdges stroke (PASS mode edge tools), exclusive of stroke. */
   edgeStroke: OpenEdgeStroke | null;
@@ -119,7 +130,23 @@ export function fromDensePassage(dense: DensePassage): [number, "pass" | "block"
   return pairs;
 }
 
-/** `lazyCaches` leaves the dense upper/passage caches unbuilt; a stroke
+export function toDenseRegions(map: MapDef): DenseRegions {
+  const dense: DenseRegions = new Array(map.width * map.height).fill(null);
+  for (const [index, value] of map.regions ?? []) {
+    if (index >= 0 && index < dense.length) dense[index] = value;
+  }
+  return dense;
+}
+
+export function fromDenseRegions(dense: DenseRegions): [number, number][] {
+  const pairs: [number, number][] = [];
+  dense.forEach((value, index) => {
+    if (value !== null) pairs.push([index, value]);
+  });
+  return pairs;
+}
+
+/** `lazyCaches` leaves the dense upper/passage/region caches unbuilt; a stroke
  *  derives the one it paints on demand. editor/api uses it for its
  *  one-operation scratch states. */
 export function createEditorState(project: Project, options: { lazyCaches?: boolean } = {}): EditRulesState {
@@ -135,8 +162,11 @@ export function createEditorState(project: Project, options: { lazyCaches?: bool
     upperTouched: project.maps.map(() => false),
     passageDense: lazy ? new Array<DensePassage>(project.maps.length) : project.maps.map(toDensePassage),
     passageTouched: project.maps.map(() => false),
+    regionDense: lazy ? new Array<DenseRegions>(project.maps.length) : project.maps.map(toDenseRegions),
+    regionTouched: project.maps.map(() => false),
     groundTouched: project.maps.map(() => false),
     passageBrush: "pass",
+    regionBrush: 1,
     stroke: null,
     edgeStroke: null,
   };
@@ -163,11 +193,12 @@ export function canPaint(state: EditRulesState, tile: string): boolean {
   return cell >= 0 && cell < sheet.cols * sheet.rows;
 }
 
-function layerArray(state: EditRulesState, mapIndex: number, layer: Layer): (TileId | PassageValue)[] {
+function layerArray(state: EditRulesState, mapIndex: number, layer: Layer): CellLayerValue[] {
   const map = state.project.maps[mapIndex]!;
   if (layer === "ground") return map.ground;
   if (layer === "upper") return state.upperDense[mapIndex] ?? toDenseUpper(map);
-  return state.passageDense[mapIndex] ?? toDensePassage(map);
+  if (layer === "passage") return state.passageDense[mapIndex] ?? toDensePassage(map);
+  return state.regionDense[mapIndex] ?? toDenseRegions(map);
 }
 
 export function selectTile(state: EditRulesState, tile: TileId): EditRulesState {
@@ -179,6 +210,11 @@ export function selectTile(state: EditRulesState, tile: TileId): EditRulesState 
 export function selectPassageBrush(state: EditRulesState, brush: "pass" | "block"): EditRulesState {
   if (state.passageBrush === brush) return state;
   return { ...state, passageBrush: brush };
+}
+
+export function selectRegionBrush(state: EditRulesState, brush: number): EditRulesState {
+  if (!Number.isInteger(brush) || brush < 1 || brush > 255 || state.regionBrush === brush) return state;
+  return { ...state, regionBrush: brush };
 }
 
 export function selectLayer(state: EditRulesState, layer: Layer): EditRulesState {
@@ -206,7 +242,7 @@ export function selectMap(state: EditRulesState, mapIndex: number): EditRulesSta
   };
 }
 
-function withLayer(state: EditRulesState, mapIndex: number, layer: Layer, next: (TileId | PassageValue)[]): EditRulesState {
+function withLayer(state: EditRulesState, mapIndex: number, layer: Layer, next: CellLayerValue[]): EditRulesState {
   if (layer === "ground") {
     const maps = state.project.maps.slice();
     maps[mapIndex] = { ...maps[mapIndex]!, ground: next as (string | null)[] };
@@ -221,11 +257,18 @@ function withLayer(state: EditRulesState, mapIndex: number, layer: Layer, next: 
     upperTouched[mapIndex] = true;
     return { ...state, upperDense, upperTouched };
   }
-  const passageDense = state.passageDense.slice();
-  passageDense[mapIndex] = next as DensePassage;
-  const passageTouched = state.passageTouched.slice();
-  passageTouched[mapIndex] = true;
-  return { ...state, passageDense, passageTouched };
+  if (layer === "passage") {
+    const passageDense = state.passageDense.slice();
+    passageDense[mapIndex] = next as DensePassage;
+    const passageTouched = state.passageTouched.slice();
+    passageTouched[mapIndex] = true;
+    return { ...state, passageDense, passageTouched };
+  }
+  const regionDense = state.regionDense.slice();
+  regionDense[mapIndex] = next as DenseRegions;
+  const regionTouched = state.regionTouched.slice();
+  regionTouched[mapIndex] = true;
+  return { ...state, regionDense, regionTouched };
 }
 
 /** Begin a drag stroke on the active map/layer. `erase` selects the eraser
@@ -237,6 +280,8 @@ export function strokeStart(state: EditRulesState, erase = false): EditRulesStat
     ? null
     : state.layer === "passage"
       ? state.passageBrush
+      : state.layer === "regions"
+        ? state.regionBrush
       : state.tile;
   const before = layerArray(state, state.mapIndex, state.layer);
   return {
@@ -246,7 +291,7 @@ export function strokeStart(state: EditRulesState, erase = false): EditRulesStat
       layer: state.layer,
       brush,
       working: before.slice(),
-      before: before as TileId[],
+      before,
       cells: [],
     },
   };
@@ -262,7 +307,7 @@ export function paintCell(state: EditRulesState, index: number): EditRulesState 
   const layer = stroke.layer;
   const next = stroke.brush;
   const working = stroke.working;
-  if (layer !== "passage" && next !== null && !canPaint(state, next)) return state;
+  if ((layer === "ground" || layer === "upper") && next !== null && !canPaint(state, next as string)) return state;
   if (working[index] === next) return state;
   working[index] = next;
   stroke.cells.push(index);
@@ -302,12 +347,14 @@ function withEvents(
 /** Rebuild the per-map dense caches from a (flushed) project. A structural
  *  snapshot always carries its layers compacted, so the caches are pure
  *  derivations and every touched flag resets. */
-function rebuildCaches(project: Project): Pick<EditRulesState, "upperDense" | "upperTouched" | "passageDense" | "passageTouched" | "groundTouched"> {
+function rebuildCaches(project: Project): Pick<EditRulesState, "upperDense" | "upperTouched" | "passageDense" | "passageTouched" | "regionDense" | "regionTouched" | "groundTouched"> {
   return {
     upperDense: project.maps.map(toDenseUpper),
     upperTouched: project.maps.map(() => false),
     passageDense: project.maps.map(toDensePassage),
     passageTouched: project.maps.map(() => false),
+    regionDense: project.maps.map(toDenseRegions),
+    regionTouched: project.maps.map(() => false),
     groundTouched: project.maps.map(() => false),
   };
 }
@@ -648,6 +695,10 @@ export function compactPassage(
   return compactSparse(original, dense);
 }
 
+export function compactRegions(original: [number, number][] | undefined, dense: DenseRegions): [number, number][] {
+  return compactSparse(original, dense);
+}
+
 /** Export form: only touched layers compact (preserving authored pair
  *  order); untouched maps keep their original arrays. The result is then
  *  validated by engine/document.ts before leaving the editor. */
@@ -658,6 +709,7 @@ export function exportProject(state: EditRulesState): Project {
     let next = map;
     if (state.upperTouched[i]) next = { ...next, upper: compactUpper(next.upper, state.upperDense[i]!) };
     if (state.passageTouched[i]) next = { ...next, passage: compactPassage(next.passage, state.passageDense[i]!) };
+    if (state.regionTouched[i]) next = { ...next, regions: compactRegions(next.regions, state.regionDense[i]!) };
     return next;
   });
   return { ...state.project, maps };
@@ -694,7 +746,7 @@ export function slotForTile(tiles: TileId[], tile: TileId): number {
 
 // --- structural edits (map properties + map management) --------------------
 //
-// Every structural edit transforms the FLUSHED project (pending upper/passage
+// Every structural edit transforms the FLUSHED project (pending sparse-layer
 // strokes compacted in) and rebuilds the dense caches from the result. Open
 // tile/edge strokes are refused here.
 
@@ -957,6 +1009,9 @@ export function resizeMap(state: EditRulesState, rawW: number, rawH: number): Re
     const passage = resizeSparse(target.passage, oldW, oldH, width, height);
     if (passage === undefined) delete target.passage;
     else target.passage = passage;
+    const regions = resizeSparse(target.regions, oldW, oldH, width, height);
+    if (regions === undefined) delete target.regions;
+    else target.regions = regions;
     const events = (target.events ?? []).flatMap((event): GameEvent[] => {
       if (event.x >= width || event.y >= height) {
         croppedEvents.push(event.id);
@@ -1127,7 +1182,7 @@ export function deleteMap(state: EditRulesState, confirm = false): DeleteMapResu
  *  Void cells (no ground tile) are ignored while painting. */
 export function edgeStrokeStart(state: EditRulesState, brush: EdgeBrush): EditRulesState {
   if (state.stroke || state.edgeStroke) return state;
-  // Flush pending upper/passage paints into the project first, so the
+  // Flush pending sparse-layer paints into the project first, so the
   // cache rebuild below cannot drop them.
   const flushed = exportProject(state);
   return {

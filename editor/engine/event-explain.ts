@@ -76,6 +76,8 @@ const TRIGGER_WORDS: Record<Trigger, string> = {
   // the event's step refused by the player); on a non-blocking page it fires
   // on entry like playerTouch.
   eventTouch: "Runs when the player bumps into it or it bumps into the player; on a non-blocking page, when the player walks onto it",
+  regionEnter: "Runs when the player enters its region",
+  regionLeave: "Runs when the player leaves its region",
   autorun: "Runs automatically while its page is active, taking over the screen",
   parallel: "Runs automatically in the background while its page is active",
 };

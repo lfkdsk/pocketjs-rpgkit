@@ -576,7 +576,11 @@ async function main(): Promise<void> {
   /** A Studio chrome shot is accepted only when the important overlays are
    *  laid out inside the canvas, the computed palette matches the requested
    *  theme, and the captured map/minimap contain real rendered pixels. */
-  const studioShot = async (name: string, wantTheme: "light" | "dark") => {
+  const studioShot = async (
+    name: string,
+    wantTheme: "light" | "dark",
+    expectedViewport = { width: 1440, height: 900 },
+  ) => {
     await evaluate(`(() => { __studio.app.notices = []; __studio.app.emit("notice"); })()`);
     await stabilizeCaptureChrome();
     await settleStudio(`shot ${name}`);
@@ -679,14 +683,15 @@ async function main(): Promise<void> {
     const minimapColors = minimap ? colorCount({ x: minimap.x + 2, y: minimap.y + 2, w: minimap.w - 4, h: minimap.h - 4 }, 3) : 0;
     const light = luma(panel) > 220 && luma(canvasBackground) > 150;
     const dark = luma(panel) < 70 && luma(canvasBackground) < 70;
+    const minCanvasWidth = expectedViewport.width >= 1440 ? 480 : 360;
     const checks: [string, boolean, unknown][] = [
-      ["the capture is the 1440×900 CSS-pixel window", layout.vw === 1440 && layout.vh === 900 && layout.dpr === 1 && img.width === 1440 && img.height === 900, { image: `${img.width}×${img.height}`, viewport: `${layout.vw}×${layout.vh}`, dpr: layout.dpr }],
+      [`the capture is the ${expectedViewport.width}×${expectedViewport.height} CSS-pixel window`, layout.vw === expectedViewport.width && layout.vh === expectedViewport.height && layout.dpr === 1 && img.width === expectedViewport.width && img.height === expectedViewport.height, { image: `${img.width}×${img.height}`, viewport: `${layout.vw}×${layout.vh}`, dpr: layout.dpr }],
       [`computed colors use the ${wantTheme} theme`, layout.theme === wantTheme && (wantTheme === "light" ? light : dark) && near(panel, toolbarBackground) && layout.colors.layers !== "rgba(0, 0, 0, 0)" && layout.colors.minimap !== "rgba(0, 0, 0, 0)", { theme: layout.theme, ...layout.colors }],
       [layout.commandPalette ? "the modal scrim visibly dims the toolbar" : "the toolbar background is present in captured pixels",
         layout.commandPalette ? toolbarPixels < 0.3 : toolbarPixels > 0.7,
         toolbarPixels.toFixed(2)],
-      ["the map canvas and side panels have usable boxes inside the window", inWindow(canvasHost, 480, 400) && inWindow(canvas, 480, 400) && inside(canvas, canvasHost) && inWindow(palette, 180, 180) && inWindow(inspector, 220, 180), layout.boxes],
-      ["the four-layer panel and minimap have usable boxes inside the canvas", layout.layers === 4 && !!layers && layers.w >= 200 && layers.h >= 100 && !!minimap && minimap.w >= 44 && minimap.h >= 32 && !!minimapViewport && minimapViewport.w >= 5 && minimapViewport.h >= 5 && inside(layers, canvasHost) && inside(minimap, canvasHost) && inside(minimapViewport, minimap), { layers: layout.layers, panel: layers, minimap, viewport: minimapViewport }],
+      ["the map canvas and side panels have usable boxes inside the window", inWindow(canvasHost, minCanvasWidth, 400) && inWindow(canvas, minCanvasWidth, 400) && inside(canvas, canvasHost) && inWindow(palette, 180, 180) && inWindow(inspector, 220, 180), layout.boxes],
+      ["the five-layer panel and minimap have usable boxes inside the canvas", layout.layers === 5 && !!layers && layers.w >= 200 && layers.h >= 100 && !!minimap && minimap.w >= 44 && minimap.h >= 32 && !!minimapViewport && minimapViewport.w >= 5 && minimapViewport.h >= 5 && inside(layers, canvasHost) && inside(minimap, canvasHost) && inside(minimapViewport, minimap), { layers: layout.layers, panel: layers, minimap, viewport: minimapViewport }],
       ["the map and minimap contain rendered art pixels", canvasColors >= 12 && minimapColors >= 6, { canvasColors, minimapColors }],
     ];
     let all = true;
@@ -957,6 +962,83 @@ async function main(): Promise<void> {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     })()`);
     await sleep(80);
+
+    // Regions are authored as a sparse numeric plane, but the editor must
+    // make the result visually unmistakable. Exercise the public edit op,
+    // select the layer/brush, prove the coloured overlay changes pixels, and
+    // retain both wide and compact screenshots for human review.
+    await evaluate(`(() => {
+      __studio.app.run("paint-cells", {
+        map: "village",
+        layer: "regions",
+        cells: [[3, 3], [4, 3], [5, 3], [3, 4], [4, 4], [5, 4]],
+        value: 37,
+      }, "Paint region 37");
+      __studio.app.setRegionBrush(37);
+      __studio.app.setLayer("regions");
+      __studio.app.visible.upper = false;
+      __studio.app.visible.events = false;
+      __studio.app.emit("view");
+      __studio.canvas.fit(true);
+    })()`);
+    await settleStudio("region authoring");
+    const regionProof = await evaluate<{
+      layer: string;
+      brush: number;
+      visible: boolean;
+      cells: number[];
+      paintedColourPixels: number;
+      emptyColourPixels: number;
+    }>(`(() => {
+      const map = __studio.app.currentMap();
+      const authored = new Set([[3, 3], [4, 3], [5, 3], [3, 4], [4, 4], [5, 4]].map(([x, y]) => y * map.width + x));
+      const canvas = document.querySelector(".map-canvas");
+      const rect = canvas.getBoundingClientRect();
+      const ratioX = canvas.width / rect.width;
+      const ratioY = canvas.height / rect.height;
+      const regionColour = (x, y) => {
+        const center = __studio.cellToClient(x, y);
+        const cx = Math.round((center.x - rect.left) * ratioX);
+        const cy = Math.round((center.y - rect.top) * ratioY);
+        const half = Math.max(6, Math.floor(6 * __studio.app.view.zoom * ratioX));
+        const data = canvas.getContext("2d").getImageData(cx - half, cy - half, half * 2, half * 2).data;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          // Region 37's deterministic hue is magenta. Count its red/blue
+          // dominance rather than generic saturation: the grass underneath
+          // is itself highly saturated green.
+          if (data[i] > data[i + 1] + 24 && data[i + 2] > data[i + 1] + 12 && data[i + 3] > 180) count++;
+        }
+        return count;
+      };
+      return {
+        layer: __studio.app.layer,
+        brush: __studio.app.regionBrush,
+        visible: __studio.app.visible.regions,
+        cells: (map.regions ?? []).filter(([index]) => authored.has(index)).map(([, value]) => value),
+        paintedColourPixels: regionColour(4, 4),
+        emptyColourPixels: regionColour(7, 4),
+      };
+    })()`);
+    expect("regions: sparse edit, layer and brush are visible on the canvas",
+      regionProof.layer === "regions" && regionProof.brush === 37 && regionProof.visible &&
+        regionProof.cells.length === 6 && regionProof.cells.every((value) => value === 37) &&
+        regionProof.paintedColourPixels > regionProof.emptyColourPixels + 20,
+      JSON.stringify(regionProof));
+    await studioShot("studio-regions-light", "light");
+    await viewport(1024, 768);
+    await evaluate(`__studio.canvas.fit(true)`);
+    await studioShot("studio-regions-compact-light", "light", { width: 1024, height: 768 });
+    await viewport(1440, 900);
+    await evaluate(`(() => {
+      __studio.app.undo();
+      __studio.app.visible.upper = true;
+      __studio.app.visible.events = true;
+      __studio.app.setLayer("ground");
+      __studio.app.emit("view");
+      __studio.canvas.fit(true);
+    })()`);
+    await settleStudio("region cleanup");
 
     // Hovering an event long enough shows its semantic summary. The merchant
     // has more room on the left, so the card must choose that side rather than

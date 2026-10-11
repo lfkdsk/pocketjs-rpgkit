@@ -30,6 +30,7 @@ import {
 import type { ConditionSource, EditableField } from "../engine/event-fields.ts";
 import { eventEditorResources, type EventEditorResources } from "../engine/event-resources.ts";
 import { uniqueEventId } from "../engine/model.ts";
+import { parseRpgMakerText } from "../../src/engine/rpgmaker-text.ts";
 
 // ---- command categories ---------------------------------------------------------
 
@@ -533,6 +534,7 @@ export interface CellInfo {
   ground: string | null;
   upper: string | null;
   passage: "pass" | "block" | null;
+  region: number | null;
 }
 
 export function cellInfo(map: MapDef, x: number, y: number): CellInfo | null {
@@ -541,7 +543,33 @@ export function cellInfo(map: MapDef, x: number, y: number): CellInfo | null {
   // Sparse layers: the last pair at an index wins (runtime rule).
   const upper = (map.upper ?? []).findLast(([at]) => at === index)?.[1] ?? null;
   const passage = (map.passage ?? []).findLast(([at]) => at === index)?.[1] ?? null;
-  return { x, y, ground: map.ground[index] ?? null, upper, passage };
+  const region = (map.regions ?? []).findLast(([at]) => at === index)?.[1] ?? null;
+  return { x, y, ground: map.ground[index] ?? null, upper, passage, region };
+}
+
+export interface RpgMakerTextPreviewSegment {
+  text: string;
+  colour?: string;
+}
+
+/** A presentation-only preview of RPG Maker colour escapes. The editor keeps
+ * the raw source spelling in its input; this helper only strips recognized
+ * control codes from the adjacent preview and returns visible text spans. */
+export function rpgMakerTextPreview(raw: string): RpgMakerTextPreviewSegment[] | null {
+  if (!/\\C\[[0-9]+\]/i.test(raw)) return null;
+  const parsed = parseRpgMakerText(raw, {
+    variables: {}, actors: [], partyActorIds: [], currencyUnit: "G",
+  });
+  const codePoints = Array.from(parsed.text);
+  const segments: RpgMakerTextPreviewSegment[] = [];
+  let at = 0;
+  for (const span of parsed.spans ?? []) {
+    if (span.start > at) segments.push({ text: codePoints.slice(at, span.start).join("") });
+    if (span.end > span.start) segments.push({ text: codePoints.slice(span.start, span.end).join(""), colour: span.colour });
+    at = span.end;
+  }
+  if (at < codePoints.length) segments.push({ text: codePoints.slice(at).join("") });
+  return segments;
 }
 
 /** "a, b ,c" → ["a","b","c"] (empty entries dropped). */

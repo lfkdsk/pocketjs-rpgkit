@@ -30,7 +30,7 @@ export interface CommandInfo {
 
 export const RM_COMMANDS: readonly CommandInfo[] = [
   { code: 0, name: "End", flavor: "MV/MZ", continuation: true },
-  { code: 101, name: "Show Text", flavor: "MV/MZ", needsKit: "face graphics per message (portrait keyed by file/index, not speaker); \\N[n]/\\P[n] for n > 1 (other party members) — map to {x:<key>} with a session resolver or a future kit token" },
+  { code: 101, name: "Show Text", flavor: "MV/MZ", needsKit: "face graphics per message (portrait keyed by file/index, not speaker); inline icons, timing/gold-window controls and MZ \\PX/\\PY/\\FS presentation" },
   { code: 401, name: "Show Text (line)", flavor: "MV/MZ", continuation: true },
   { code: 102, name: "Show Choices", flavor: "MV/MZ", needsKit: "single-option lists and a default cursor row" },
   { code: 402, name: "When [Choice]", flavor: "MV/MZ", continuation: true },
@@ -118,7 +118,7 @@ export const RM_COMMANDS: readonly CommandInfo[] = [
   { code: 604, name: "Battle End", flavor: "MV/MZ", continuation: true },
   { code: 302, name: "Shop Processing", flavor: "MV/MZ" },
   { code: 605, name: "Shop Processing (goods)", flavor: "MV/MZ", continuation: true },
-  { code: 303, name: "Name Input Processing", flavor: "MV/MZ", needsKit: "per-actor names (only the player name has a text token)" },
+  { code: 303, name: "Name Input Processing", flavor: "MV/MZ" },
   { code: 311, name: "Change HP", flavor: "MV/MZ", needsKit: "actor stats" },
   { code: 312, name: "Change MP", flavor: "MV/MZ", needsKit: "actor stats" },
   { code: 326, name: "Change TP", flavor: "MV/MZ", needsKit: "actor stats" },

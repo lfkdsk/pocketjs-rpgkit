@@ -580,16 +580,22 @@ describe("event inspector page and condition fields", () => {
     expect(validateProject(projectWith([], page))).toEqual([]);
   });
 
-  test("cycles the trigger through eventTouch last and wraps to action", () => {
+  test("cycles the trigger through region crossings and wraps to action", () => {
     let page: Page = { trigger: "action", commands: [] };
     const seen: string[] = [page.trigger];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 7; i++) {
       const result = editPageField(page, "trigger", nextFieldValue(pageFieldDescriptors(page)[0]!));
       if (!result.ok) throw new Error(result.error);
       page = result.value;
       seen.push(page.trigger);
     }
-    expect(seen).toEqual(["action", "playerTouch", "autorun", "parallel", "eventTouch", "action"]);
+    expect(seen).toEqual([
+      "action", "playerTouch", "autorun", "parallel", "eventTouch",
+      "regionEnter", "regionLeave", "action",
+    ]);
+    expect(page.region).toBeUndefined();
+    const region = editPageField(page, "trigger", "regionEnter");
+    expect(region.ok && region.value).toMatchObject({ trigger: "regionEnter", region: 1 });
     const touched = editPageField(page, "trigger", "eventTouch");
     expect(touched.ok && touched.value.trigger).toBe("eventTouch");
     expect(validateProject(projectWith([], { trigger: "eventTouch", blocks: true }))).toEqual([]);

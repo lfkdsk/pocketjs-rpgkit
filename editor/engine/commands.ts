@@ -1029,6 +1029,7 @@ export const CONDITION_KINDS = [
   "bgmPlaying",
   "timer",
   "region",
+  "steps",
   "ext",
 ] as const;
 
@@ -1082,6 +1083,9 @@ export function defaultCondition<Kind extends ConditionKind>(kind: Kind): Condit
     case "region":
       condition = { kind, x: 0, y: 0, id: 0 };
       break;
+    case "steps":
+      condition = { kind, op: ">=", value: 0 };
+      break;
     case "ext":
       condition = { kind, call: "game.condition", args: null };
       break;
@@ -1117,6 +1121,8 @@ export function conditionSummary(condition: unknown, opts: { full?: boolean } = 
       return `Tile property (${numberText(condition.x)}, ${numberText(condition.y)}) ${jsonPreview({ passage: condition.passage, enter: condition.enter, exit: condition.exit }, 48, full)}`;
     case "region":
       return `Region ${numberText(condition.id)} at (${numberText(condition.x)}, ${numberText(condition.y)})`;
+    case "steps":
+      return `Steps ${text(condition.op)} ${numberText(condition.value)}`;
     case "worldIdle":
       return condition.negate === true ? "World is busy" : "World is idle";
     case "playerMoving":

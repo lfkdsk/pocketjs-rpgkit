@@ -26,6 +26,14 @@ editor through the in-memory one (see
 `tests/editor-api-equivalence.test.ts` checks that the same edits produce
 identical patches, undo/redo stacks and saved bytes in both.
 
+Studio also exposes a sparse **Regions** map layer. Its brush accepts RPG
+Maker region ids 1–255; 0, right-click and the eraser remove an entry. Region
+strokes and rectangles use the shared `paint-cells` / `paint-rect` API and
+therefore remain one undoable history step. Inspector text inputs keep RPG
+Maker escape spellings byte-for-byte, while an adjacent presentation-only
+preview makes `\C[n]` colour changes visible without putting control codes in
+the preview text.
+
 New to the editor? [`docs/editor-tutorial.md`](../docs/editor-tutorial.md)
 follows one small scenario — a villager NPC with branching dialog and a
 one-time reward, a second map with two-way portals, and a play-test with

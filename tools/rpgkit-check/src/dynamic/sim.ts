@@ -234,6 +234,7 @@ export function worldFingerprint(state: SessionState): string {
     entries(state.sw.self),
     entries(state.sw.items),
     state.sw.gold,
+    state.sw.steps ?? 0,
   ]);
 }
 
@@ -273,7 +274,7 @@ export function checkConditionContext(state: SessionState, map: MapDef): Conditi
       eventPages[ev.id] = { pageIndex, sprite: ev.pages[pageIndex]!.sprite ?? null };
     }
   }
-  return {
+  const context: ConditionContext = {
     worldIdle: isSessionWorldIdle(state),
     audio: state.interp.audio,
     eventPages,
@@ -282,4 +283,6 @@ export function checkConditionContext(state: SessionState, map: MapDef): Conditi
     mapWidth: map.width,
     mapHeight: map.height,
   };
+  if (map.regions) context.regionCells = new Map(map.regions);
+  return context;
 }

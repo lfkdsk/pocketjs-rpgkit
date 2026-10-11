@@ -42,6 +42,7 @@ import {
   pageDeleteOp,
   pageMoveOps,
   parseSheetList,
+  rpgMakerTextPreview,
   PICKER_ENTRIES,
   selectionAfterDelete,
   sessionResources,
@@ -251,11 +252,23 @@ describe("pure helpers", () => {
       ground: ["a.0", "a.1", null, "a.2", "a.3", "a.4"],
       upper: [[1, "u.0"], [1, "u.1"]],
       passage: [[4, "block"]],
+      regions: [[1, 2], [1, 9]],
     } as MapDef;
-    expect(cellInfo(map, 1, 0)).toEqual({ x: 1, y: 0, ground: "a.1", upper: "u.1", passage: null });
-    expect(cellInfo(map, 1, 1)).toEqual({ x: 1, y: 1, ground: "a.3", upper: null, passage: "block" });
+    expect(cellInfo(map, 1, 0)).toEqual({ x: 1, y: 0, ground: "a.1", upper: "u.1", passage: null, region: 9 });
+    expect(cellInfo(map, 1, 1)).toEqual({ x: 1, y: 1, ground: "a.3", upper: null, passage: "block", region: null });
     expect(cellInfo(map, 2, 0)!.ground).toBeNull();
     expect(cellInfo(map, 3, 0)).toBeNull();
+  });
+
+  test("RPG Maker text preview strips control codes and exposes colour spans without changing source", () => {
+    const raw = String.raw`Plain \C[2]red\C[0] white`;
+    expect(rpgMakerTextPreview(raw)).toEqual([
+      { text: "Plain " },
+      { text: "red", colour: "#FF784C" },
+      { text: " white", colour: "#FFFFFF" },
+    ]);
+    expect(raw).toBe(String.raw`Plain \C[2]red\C[0] white`);
+    expect(rpgMakerTextPreview("ordinary text")).toBeNull();
   });
 
   test("sheet lists", () => {

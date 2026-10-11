@@ -319,6 +319,7 @@ function clauseContext(clause: Condition): ContextReason | null {
     case "facing": return "facing-condition";
     case "worldIdle":
     case "playerMoving":
+    case "steps":
     case "bgmPlaying":
     case "timer":
       return "runtime-condition";

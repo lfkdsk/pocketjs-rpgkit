@@ -159,7 +159,7 @@ function kitMap(commands: Command[]): MapDef {
   return { id: "m", name: "m", width: 20, height: 13, sheets: ["t"], ground: Array(260).fill("t.0"), events: [ev] };
 }
 
-function runKit(commands: Command[], init: { gold?: number; variables?: Record<string, number>; items?: Record<string, number> }): InterpState {
+function runKit(commands: Command[], init: { gold?: number; variables?: Record<string, number>; items?: Record<string, number>; steps?: number }): InterpState {
   const w = createWorld(kitMap(commands));
   let s = createInterpState(createSwitchState(init));
   const base = { confirmEdge: false, cancelEdge: false, upEdge: false, downEdge: false, playerCell: { x: 10, y: 10 }, prevCell: { x: 10, y: 10 }, facing: 2 as const };
@@ -382,33 +382,38 @@ describe("messages", () => {
   test("escape codes", () => {
     const ctx = makeCtx();
     const out = convertMessage(
-      ["\\N[1] has \\V[3] \\G, \\c[2]red\\C[0] \\I[5]!", "\\n[2] and \\P[1]/\\P[2] \\\\ \\{big\\} \\.\\|\\!\\>\\<\\^\\$ \\FS[20]x"],
+      ["\\N[1] has \\V[3] \\G, \\c[2]red\\C[0] \\I[5]!", "\\n[2] and \\P[1]/\\P[2] \\\\ \\{big\\} \\.\\|\\!\\>\\<\\^\\$ \\PX[4]\\PY[8]\\FS[20]x"],
       ctx,
     );
-    expect(out).toEqual(["{name} has {v:v003} G, red !", "Therese and {name}/Therese \\ big  x"]);
+    expect(out).toEqual([
+      "\\N[1] has \\V[3] \\G, \\c[2]red\\C[0] \\I[5]!",
+      "\\n[2] and \\P[1]/\\P[2] \\\\ \\{big\\} \\.\\|\\!\\>\\<\\^\\$ \\PX[4]\\PY[8]\\FS[20]x",
+    ]);
     const esc = (k: string) => counts(ctx.cov, "escape", k);
-    expect(esc("\\N")).toMatchObject({ Native: 1, Degraded: 1 });
+    expect(esc("\\N")).toMatchObject({ Native: 2 });
     expect(esc("\\V")).toMatchObject({ Native: 1 });
     expect(esc("\\G")).toMatchObject({ Native: 1 });
-    expect(esc("\\C")).toMatchObject({ Degraded: 2 });
+    expect(esc("\\C")).toMatchObject({ Native: 2 });
     expect(esc("\\I")).toMatchObject({ Degraded: 1 });
-    expect(esc("\\P")).toMatchObject({ Native: 1, Degraded: 1 });
+    expect(esc("\\P")).toMatchObject({ Degraded: 2 });
     expect(esc("\\\\")).toMatchObject({ Native: 1 });
     expect(esc("\\{")).toMatchObject({ Degraded: 1 });
     expect(esc("\\^")).toMatchObject({ Degraded: 1 });
+    expect(esc("\\PX")).toMatchObject({ Degraded: 1 });
+    expect(esc("\\PY")).toMatchObject({ Degraded: 1 });
     expect(esc("\\FS")).toMatchObject({ Degraded: 1 });
   });
 
-  test("\\V, \\N, \\P and \\G are replaced before other codes", () => {
+  test("recognized and unknown escapes keep their exact source spelling", () => {
     const ctx = makeCtx();
-    expect(convertMessage(["\\Gold \\Vx \\Np"], ctx)).toEqual(["Gold  "]);
+    expect(convertMessage(["\\Gold \\Vx \\Np"], ctx)).toEqual(["\\Gold \\Vx \\Np"]);
     expect(counts(ctx.cov, "escape", "\\G")).toMatchObject({ Native: 1 });
     expect(counts(ctx.cov, "escape", "\\VX")).toMatchObject({ Degraded: 1 });
   });
 
   test("Show Text: lines, face, MZ speaker, wrapping", () => {
     let r = conv([C(101, 0, ["", 0, 0, 2]), C(401, 0, ["Hello \\N[1]."]), C(401, 0, ["Bye."])]);
-    expect(r.cmds).toEqual([{ op: "text", lines: ["Hello {name}.", "Bye."] }]);
+    expect(r.cmds).toEqual([{ op: "text", lines: ["Hello \\N[1].", "Bye."] }]);
     expect(only(r.cov, 101)).toBe("Native");
 
     r = conv([C(101, 0, ["Actor1", 0, 0, 2, "Reid"]), C(401, 0, ["Hi."])]);
@@ -422,7 +427,7 @@ describe("messages", () => {
     expect(only(r.cov, 101)).toBe("Degraded");
   });
 
-  test("wrapping and choice truncation never split a converted variable token", () => {
+  test("wrapping and choice truncation never split a runtime text escape", () => {
     expect(wrap([`${"x".repeat(49)}{v:v003}tail`], 52)).toEqual(["x".repeat(49), "{v:v003}tail"]);
     const label = `${"x".repeat(61)}\\V[3]tail`;
     const r = conv([
@@ -645,6 +650,18 @@ describe("conditional branch", () => {
     expect(only(r.cov, 111)).toBe("Placeholder");
   });
 
+  test.each([
+    ["$gameParty.steps() >= 12", { kind: "steps", op: ">=", value: 12 }],
+    ["($gameParty.steps() < 5)", { kind: "steps", op: "<=", value: 4 }],
+    ["20 > $gameParty.steps()", { kind: "steps", op: "<=", value: 19 }],
+    ["$gameParty . steps ( ) !== 7", { kind: "steps", op: "!=", value: 7 }],
+  ] as const)("Steps script condition maps natively: %s", (source, condition) => {
+    const { cmds, cov } = conv(branch([12, source], true));
+    expect(cmds).toEqual([{ op: "if", if: condition, then: [THEN], else: [ELSE] }]);
+    expect(only(cov, 111)).toBe("Native");
+    expect(counts(cov, "condition", "script")).toMatchObject({ Native: 1 });
+  });
+
   test("comparison lowerings agree with MV on the interpreter", () => {
     const ops = [0, 1, 2, 3, 4, 5];
     const mv = (a: number, b: number, op: number): boolean =>
@@ -730,6 +747,25 @@ describe("control variables", () => {
       { op: "variable", id: "v004", set: { op: "add", from: "rmi-tmp1" } },
     ]);
     expect(only(cov, 122)).toBe("Native");
+  });
+
+  test("Steps game data uses the native counter operand for set and arithmetic", () => {
+    const set = conv([C(122, 0, [4, 5, 0, 3, 7, 3, 0])]);
+    expect(set.cmds).toEqual([
+      { op: "variable", id: "v004", set: { op: "steps" } },
+      { op: "variable", id: "v005", set: { op: "steps" } },
+    ]);
+    expect(only(set.cov, 122)).toBe("Native");
+    expect(runKit(set.cmds, { steps: 37 }).sw.variables).toMatchObject({ v004: 37, v005: 37 });
+
+    const add = conv([C(122, 0, [4, 5, 1, 3, 7, 3, 0])]);
+    expect(add.cmds).toEqual([
+      { op: "variable", id: "rmi-tmp1", set: { op: "steps" } },
+      { op: "variable", id: "v004", set: { op: "add", from: "rmi-tmp1" } },
+      { op: "variable", id: "v005", set: { op: "add", from: "rmi-tmp1" } },
+    ]);
+    expect(runKit(add.cmds, { steps: 37, variables: { v004: 1, v005: 2 } }).sw.variables)
+      .toMatchObject({ v004: 38, v005: 39 });
   });
 
   test("unsupported game data is dropped; script is a placeholder", () => {
@@ -1073,7 +1109,7 @@ describe("battle, shop, name input", () => {
     expect(only(r.cov, 303)).toBe("Native");
     r = conv([C(303, 0, [2, 8])]);
     expect(r.cmds).toEqual([{ op: "scene", id: "rpgkit.nameInput", args: { maxLength: 8, swallowCancel: true, variable: "actor002-name", title: "Therese" } }]);
-    expect(only(r.cov, 303)).toBe("Degraded");
+    expect(only(r.cov, 303)).toBe("Native");
   });
 
   test("change name maps actor 1 and reports unsupported actor names", () => {

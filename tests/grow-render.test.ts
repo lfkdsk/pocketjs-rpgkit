@@ -275,7 +275,9 @@ simDescribe("D6e grow render: measured 512x512 chunk-rebake alternative", () => 
     // widening the baked font's glyph coverage by one codepoint.
     // +6,432 B for the causal world: eleven new 16x16 cells (six ground,
     // four ruin pieces, the caravan; 5,632 B) and 800 B of other baked data.
-    expect(pak.size).toBe(805_696);
+    // +16 B because the shared RPG Maker text parser adds one codepoint to
+    // Grow's source-scanned ASCII font archive.
+    expect(pak.size).toBe(805_712);
     expect(pak.size).toBeLessThan(850_000);
   });
 });

@@ -86,9 +86,10 @@ describe("Studio polish contracts", () => {
   });
 
   test("passage overrides count as authored map content", () => {
-    const empty = { ground: [null, null, null, null], upper: [], events: [], passage: [] };
+    const empty = { ground: [null, null, null, null], upper: [], events: [], passage: [], regions: [] };
     expect(isStudioMapBlank(empty)).toBe(true);
     expect(isStudioMapBlank({ ...empty, passage: [[2, "block"]] })).toBe(false);
+    expect(isStudioMapBlank({ ...empty, regions: [[1, 7]] })).toBe(false);
     expect(isStudioMapBlank({ ...empty, ground: [null, "town.1", null, null] })).toBe(false);
   });
 

@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 // editor/studio/layers-panel.ts — visibility, opacity and editing-layer
-// controls for the four layers Studio presents on the map canvas.
+// controls for the layers Studio presents on the map canvas.
 
 import type { PaintLayer, PresentedLayer, StudioApp } from "./app.ts";
 import { emptyState, h, icon, replace } from "./dom.ts";
@@ -16,6 +16,7 @@ const LAYERS: readonly LayerDefinition[] = [
   { key: "ground", label: "Ground", editable: "ground" },
   { key: "upper", label: "Upper", editable: "upper" },
   { key: "passage", label: "Passage", editable: "passage" },
+  { key: "regions", label: "Regions", editable: "regions" },
   { key: "events", label: "Events" },
 ];
 

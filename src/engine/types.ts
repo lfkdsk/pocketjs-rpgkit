@@ -98,7 +98,14 @@ export interface Sheet {
  *  when the player's step is refused by the event's body (a bump) or when
  *  the event's own movement step is refused by the player's body; on a
  *  non-blocking page it fires on entry, like playerTouch. */
-export type Trigger = "action" | "playerTouch" | "eventTouch" | "autorun" | "parallel";
+export type Trigger =
+  | "action"
+  | "playerTouch"
+  | "eventTouch"
+  | "regionEnter"
+  | "regionLeave"
+  | "autorun"
+  | "parallel";
 
 /** A route target other than the mover itself: "player" or another map
  *  event by id (MV Set Movement Route on any event). */
@@ -235,6 +242,9 @@ export type Condition =
   /** True while the player had a committed interpolating tile step at the
    *  start of this reference tick. `negate` asks for the resting state. */
   | { kind: "playerMoving"; negate?: boolean }
+  /** Compare RPG Maker's global party step counter. A project that authors
+   *  this condition opts into counting successful player tile landings. */
+  | { kind: "steps"; op: ">=" | "<=" | "==" | "!="; value: number }
   /** True when the region id authored at cell (x, y) equals `id`. Cells
    *  without a region read 0, so `{kind:"region", x, y, id: 0}` matches
    *  unmarked cells. Coordinates are literals (like tileProperty); read a
@@ -257,6 +267,10 @@ export interface VariableRandom {
   op: "random";
   min: number;
   max: number;
+}
+/** Read RPG Maker's global party step counter at command execution. */
+export interface VariableSteps {
+  op: "steps";
 }
 /** T2-16: the operand is another variable's live value instead of a
  *  literal. "copy" assigns it outright; the arithmetic ops combine the
@@ -369,7 +383,7 @@ export type Command =
       cancel?: { commands: Command[] };
     }
   | { op: "switch"; id: string; value: boolean }
-  | { op: "variable"; id: string; set: VariableSet | VariableRandom | VariableOpRef }
+  | { op: "variable"; id: string; set: VariableSet | VariableRandom | VariableOpRef | VariableSteps }
   | { op: "selfSwitch"; key: "A" | "B" | "C" | "D"; value: boolean }
   | { op: "if"; if: Condition; then: Command[]; else?: Command[] }
   | {
@@ -735,6 +749,9 @@ export interface PageCondition {
 export interface Page {
   condition?: PageCondition;
   trigger: Trigger;
+  /** Region id watched by a regionEnter/regionLeave page. Required for
+   *  those triggers and ignored by every other trigger. */
+  region?: number;
   sprite?: string | null;
   blocks?: boolean;
   /** Autonomous motion (MV moveType): "static" stands still, "random"
@@ -1134,6 +1151,17 @@ export interface ProjectSystem {
    *  tokens from runtime character names. Off by default so older project
    *  text containing those braces remains literal. */
   characterNames?: boolean;
+  /** Interpret message strings with RPG Maker MV/MZ's backslash escapes.
+   *  The object also supplies the initial party order, currency word and
+   *  optional replacement colour palette used by those escapes. */
+  rpgMakerText?: {
+    party: number[];
+    currencyUnit: string;
+    colours?: string[];
+  };
+  /** Count successful player tile landings in the persistent switch bank.
+   *  Importers enable this when content reads RPG Maker's Steps value. */
+  stepCounter?: boolean;
   /** Allowlist of `{x:<key>}` text-token keys the game's session resolver
    *  answers. Declaring it is the explicit opt-in that switches `{x:}`
    *  expansion on (like `textVariables`): without it the braces print
@@ -1155,6 +1183,17 @@ export interface ProjectSystem {
      *  refused even with room under maxPerItem/gold. */
     maxKinds?: number;
   };
+}
+
+/** Editor/runtime actor database entry. `databaseId` preserves the numeric
+ * RPG Maker id used by \N[n] and party entries; `sprite` remains optional
+ * because message-only actors may have no walking graphic. */
+export interface ActorDef {
+  id: string;
+  databaseId?: number;
+  name: string;
+  sprite?: string;
+  moveSeconds?: number;
 }
 
 export interface Project {
@@ -1183,6 +1222,8 @@ export interface Project {
   /** Named variable directory for authoring tools. Event references to an id
    * that is absent here keep their existing sparse-bank runtime semantics. */
   variables?: VariableDef[];
+  /** Actor catalogue used by RPG Maker name and party text escapes. */
+  actors?: ActorDef[];
   /** Page.sprite key -> static character image. */
   sprites?: Record<string, SpriteDef>;
   /** Frame animations playable with the `mapAnim` command, by id. */

@@ -33,7 +33,7 @@ import { cookMvAnimation, MV_ANIMATION_RATE, MvAnimationCookError } from "./anim
 import { Coverage } from "./coverage.ts";
 import { TileAtlas, composeMap } from "./compose.ts";
 import { convertCommonEvent, convertPage, type EventContext } from "./events.ts";
-import { animationId, commonId, eventId, itemId, mapId, partySwitchId, slug } from "./ids.ts";
+import { actorId, animationId, commonId, eventId, itemId, mapId, partySwitchId, slug } from "./ids.ts";
 import { rmParallaxSpeed, rmTileSize } from "./load.ts";
 import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
 import type { RmPageImage, RmProject } from "./rm-types.ts";
@@ -616,6 +616,10 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     }
   }
 
+  const actors = rm.actors.flatMap((actor) =>
+    actor && Number.isInteger(actor.id) && actor.id > 0 && actor.name.length > 0
+      ? [{ id: actorId(actor.id), databaseId: actor.id, name: actor.name }]
+      : []);
   const project: Project = {
     format: "rpgkit-project/v1",
     title: truncate(nonEmpty(rm.system.gameTitle, "Imported RPG Maker project"), 80),
@@ -624,13 +628,16 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     system: {
       messageBlocksPlayer: true,
       mapNameDisplay: true,
-      ...(cov.list("escape").some((row) => row.key === "\\V" && row.counts.Native > 0)
-        ? { textVariables: true }
-        : {}),
+      rpgMakerText: {
+        party: (rm.system.partyMembers ?? []).filter((id) => Number.isInteger(id) && id > 0),
+        currencyUnit: String(rm.system.currencyUnit ?? "").slice(0, 24),
+      },
+      ...(containsStepRead({ events: maps.map((map) => map.events), commonEvents }) ? { stepCounter: true } : {}),
     },
     ...(leader?.name ? { playerName: leader.name } : {}),
     sheets,
     items,
+    ...(actors.length > 0 ? { actors } : {}),
     ...(Object.keys(sprites).length > 0 ? { sprites } : {}),
     ...(animations.length > 0 ? { animations } : {}),
     ...(commonEvents.length > 0 ? { commonEvents } : {}),
@@ -641,6 +648,18 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     warnings.push(`${audioUsed.size} audio ids are referenced; audio files are not converted (project.audio is left empty)`);
   }
   return { project, images, assets, cov, warnings };
+}
+
+/** Steps are an opt-in persistent counter. Search the converted event graph
+ * so projects that never read it retain the old sparse switch-bank shape. */
+function containsStepRead(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsStepRead);
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.kind === "steps") return true;
+  if (record.op === "variable" && record.set && typeof record.set === "object" &&
+      (record.set as Record<string, unknown>).op === "steps") return true;
+  return Object.values(record).some(containsStepRead);
 }
 
 /** Find an RPG Maker PNG by basename without depending on host filesystem

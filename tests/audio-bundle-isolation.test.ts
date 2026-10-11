@@ -236,10 +236,16 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 1,185 B to the full Sunstone/WAV paths, yielding 627,259, 1,003,435 and
 // 795,667 B. The name-input and battle views remain tree-shaken from the
 // ordinary Sunstone graph.
+// RPG Maker message parsing/colour spans plus sparse Steps and region-crossing
+// support add a measured 16,191 B to Meadow, 19,044 B to Sunstone and
+// 16,211 B to the WAV fixture. The concrete audio decoders remain opt-in by
+// the text-needle assertions below.
+// Skipping the sparse Steps-bank read and region-trigger string comparisons
+// on projects that do not opt in adds 93 shared bytes to each graph.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 627_259;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_003_435;
-const EXPECTED_WAV_FIXTURE_BYTES = 795_667;
+const EXPECTED_MEADOW_BYTES = 643_543;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_022_572;
+const EXPECTED_WAV_FIXTURE_BYTES = 811_971;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

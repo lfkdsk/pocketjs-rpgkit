@@ -87,6 +87,11 @@ describe("rpgmaker-import: output", () => {
     ]);
     expect(hollow.project.start).toEqual({ map: "map001", x: 11, y: 9, dir: "down" });
     expect(hollow.project.playerName).toBe("Wren");
+    expect(hollow.project.actors).toEqual([
+      { id: "actor001", databaseId: 1, name: "Wren" },
+      { id: "actor002", databaseId: 2, name: "Moss" },
+    ]);
+    expect(hollow.project.system?.rpgMakerText).toEqual({ party: [1], currencyUnit: "G" });
     expect(hollow.project.sheets.map((s) => s.id)).toEqual(["ts1", "ts2", "iconset"]);
     // MV is 48 px: composed at 48 and averaged down, every sheet is 16 px.
     expect(stage.project.maps.map((m) => [m.id, m.width, m.height])).toEqual([["map001", 17, 13]]);
@@ -99,6 +104,18 @@ describe("rpgmaker-import: output", () => {
     }
   });
 
+  test("the RPG Maker region plane is copied into each map as sparse row-major cells", () => {
+    expect(hollow.project.maps[0]!.regions).toEqual([
+      [243, 1], [244, 1], [245, 1], [266, 1], [267, 1], [268, 1], [269, 1],
+      [290, 1], [291, 1], [292, 1], [293, 1], [314, 1], [315, 1], [316, 1],
+    ]);
+    expect(hollow.project.maps[1]!.regions).toBeUndefined();
+    expect(hollow.project.maps[2]!.regions).toEqual([
+      [69, 3], [70, 3], [71, 3], [89, 3], [90, 3], [91, 3], [109, 3], [110, 3], [111, 3],
+    ]);
+    expect(hollow.cov.list("tile").find((row) => row.key === "region id")?.counts.Native).toBe(23);
+  });
+
   test("MV Show Text background and position become the text box layout", () => {
     const texts = allCommands(stage.project).filter((c) => c.op === "text") as unknown as Record<string, unknown>[];
     expect(texts).toContainEqual({ op: "text", lines: ["Woo! Front row!"], position: "top", background: "dim" });
@@ -109,11 +126,19 @@ describe("rpgmaker-import: output", () => {
     expect(validateSchema(stage.project, schema as Record<string, unknown>)).toEqual([]);
   });
 
-  test("variable text tokens opt the generated project in only when used", async () => {
-    expect(hollow.project.system).toMatchObject({ messageBlocksPlayer: true, mapNameDisplay: true, textVariables: true });
-    expect(stage.project.system).toMatchObject({ messageBlocksPlayer: true, mapNameDisplay: true, textVariables: true });
+  test("message escapes stay raw and every import opts into live RPG Maker text data", async () => {
+    expect(hollow.project.system).toMatchObject({
+      messageBlocksPlayer: true,
+      mapNameDisplay: true,
+      rpgMakerText: { party: [1], currencyUnit: "G" },
+    });
+    expect(stage.project.system).toMatchObject({
+      messageBlocksPlayer: true,
+      mapNameDisplay: true,
+      rpgMakerText: { party: [1], currencyUnit: "G" },
+    });
     const messages = allCommands(hollow.project).filter((c) => c.op === "text") as unknown as { lines: string[] }[];
-    expect(messages.some((m) => m.lines.some((line) => line.includes("{v:v002}")))).toBe(true);
+    expect(messages.some((m) => m.lines.some((line) => line.includes("\\V[2]")))).toBe(true);
 
     const noTokens = loadRmProject(STAGE);
     for (const map of noTokens.maps.values()) {
@@ -126,7 +151,31 @@ describe("rpgmaker-import: output", () => {
       }
     }
     const imported = await importRmProject(noTokens);
-    expect(imported.project.system).toEqual({ messageBlocksPlayer: true, mapNameDisplay: true });
+    expect(imported.project.system).toEqual({
+      messageBlocksPlayer: true,
+      mapNameDisplay: true,
+      rpgMakerText: { party: [1], currencyUnit: "G" },
+    });
+  });
+
+  test("a native Steps read opts the imported project into persistent step counting", async () => {
+    const rm = loadRmProject(STAGE);
+    const page = rm.maps.get(1)!.events.find((event) => event !== null)!.pages[0]!;
+    page.list = [
+      { code: 122, indent: 0, parameters: [9, 9, 0, 3, 7, 3, 0] },
+      { code: 111, indent: 0, parameters: [12, "$gameParty.steps() >= 10"] },
+      { code: 0, indent: 1, parameters: [] },
+      { code: 412, indent: 0, parameters: [] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    const imported = await importRmProject(rm);
+    expect(imported.project.system?.stepCounter).toBe(true);
+    const commands = imported.project.maps[0]!.events![0]!.pages[0]!.commands;
+    expect(commands).toEqual([
+      { op: "variable", id: "v009", set: { op: "steps" } },
+      { op: "if", if: { kind: "steps", op: ">=", value: 10 }, then: [] },
+    ]);
+    expect(stage.project.system?.stepCounter).toBeUndefined();
   });
 
   test("plugin and script commands are visible placeholders, battles a battle op", () => {

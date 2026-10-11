@@ -59,7 +59,7 @@ same way; omitting either entry keeps its concrete UI out of the bundle.
 | Common event 2 | common event `ce002` |
 | Switch 1, variable 1 | switch `s001`, variable `v001` |
 | Item / weapon / armor 1 | items `item001`, `weapon001`, `armor001` (one bank) |
-| Actor 3 in the party | switch `party-actor003` (stored inverted as `party-out-actor003` for actors in the starting party) |
+| Actor 3 / party membership | actor `actor003` with `databaseId: 3`; switch `party-actor003` (stored inverted as `party-out-actor003` for actors in the starting party) |
 | Tileset 1 | tile sheet `ts1` |
 
 ## Tiles and autotiles
@@ -110,6 +110,10 @@ In short:
   documented caveat that a moving event can also initiate that contact.
 - Conditions on switches, variables (≥), self switches, items and party
   members map directly.
+- Control Variables can read Game Data → Other → Steps, and a script
+  condition consisting only of `$gameParty.steps()` compared with a safe
+  integer maps to the native Steps condition. Arbitrary JavaScript remains a
+  visible placeholder.
 - Commands map to kit commands where one exists; where the kit has a
   narrower command the importer lowers it (for example a comparison
   between two variables goes through a scratch variable; a transfer to a
@@ -139,7 +143,7 @@ for that project, to `coverage.md`.
 <!-- rpgmaker-commands:begin -->
 | Code | Command | Flavor | Handling | Notes | Needs kit |
 |---:|---|---|---|---|---|
-| 101 | Show Text | MV/MZ | Native |  | face graphics per message (portrait keyed by file/index, not speaker); \N[n]/\P[n] for n > 1 (other party members) — map to {x:<key>} with a session resolver or a future kit token |
+| 101 | Show Text | MV/MZ | Native |  | face graphics per message (portrait keyed by file/index, not speaker); inline icons, timing/gold-window controls and MZ \PX/\PY/\FS presentation |
 | 102 | Show Choices | MV/MZ | Native |  | single-option lists and a default cursor row |
 | 103 | Input Number | MV/MZ | Native |  |  |
 | 104 | Select Item | MV/MZ | Native |  |  |
@@ -212,7 +216,7 @@ for that project, to `coverage.md`.
 | 285 | Get Location Info | MV/MZ | Native |  |  |
 | 301 | Battle Processing | MV/MZ | Placeholder | no RPG Maker battle system; the game runs a placeholder battle | an RPG Maker battle system (troops, actors, skills) behind the battle op |
 | 302 | Shop Processing | MV/MZ | Native |  |  |
-| 303 | Name Input Processing | MV/MZ | Native |  | per-actor names (only the player name has a text token) |
+| 303 | Name Input Processing | MV/MZ | Native |  |  |
 | 311 | Change HP | MV/MZ | Dropped |  | actor stats |
 | 312 | Change MP | MV/MZ | Dropped |  | actor stats |
 | 326 | Change TP | MV/MZ | Dropped |  | actor stats |
@@ -277,16 +281,16 @@ constructs. Of note:
   at those steps into route, command, route — exact, because the event
   waits for the route anyway. Unwaited or repeating routes drop those
   steps.
-- **Escape codes**: `\N[1]`/`\P[1]` become the `{name}` token and `\G` the
-  currency unit. `\V[n]` becomes `{v:vNNN}` and the generated project sets
-  `system.textVariables: true` only when such a token is present, so it is
-  expanded from live state when the text or choice opens. Expansion is one
-  pass; RPG Maker plugin-written strings containing another `\V` are not
-  recursively expanded. Colour, icon, font-size and timing codes are
-  stripped. `\N[n]`/`\P[n]` for `n > 1` (other party members) have no kit
-  token yet: map them to `{x:<key>}` once the game ships a
-  `SessionOptions.textTokens` resolver, or leave them for a future kit
-  token.
+- **Escape codes**: message and choice strings retain their source spelling.
+  The generated actor catalogue and `system.rpgMakerText` configuration let
+  the runtime expand `\N[n]`, `\P[n]`, `\V[n]`, `\G` and `\\`, and apply
+  `\C[n]` colour spans when the box opens. Expansion is one left-to-right
+  pass; replacement values containing another escape are not rescanned.
+  `\P[n]` follows the imported initial party order. MZ `\PX`/`\PY`/`\FS`,
+  inline icons, font-size shorthands, timing controls and the gold-window
+  control remain byte-for-byte present and are reported Degraded, but their
+  visual effects are not interpreted. Unknown/plugin escapes also remain
+  visible instead of being silently deleted.
 - **Parallaxes**: `parallaxName`, both loop flags, signed `parallaxSx/Sy`,
   editor visibility and the leading-`!` zero-camera convention become the
   map's authored parallax. Change Parallax (284) replaces or clears the same
@@ -329,14 +333,20 @@ constructs. Of note:
 - **Audio files are not converted.** Commands keep logical ids
   (`bgm-<name>`, `se-<name>` …) and `project.audio` stays empty; a game
   adds WAV/QOA entries itself.
-- **No battle system, actors or classes.** Actor, enemy and battle-only
-  commands are dropped; Battle Processing is a placeholder.
+- **No battle system, actor stats or classes.** Actor ids and database names
+  are imported for message escapes, but actor/enemy/battle-only state and
+  commands are dropped; Battle Processing is a placeholder. A `\P[n]` lookup
+  uses the initial party order rather than later Change Party Member results.
 - **Maps are capped at 256 × 256**, the kit's limit.
 - Region ids and terrain tags are carried over as sparse per-cell map data
-  (Get Location Info and the `region` condition read them); damage floors and
-  map encounters are not. Ladders, bushes and counters keep their passage but
+  (Get Location Info, the `region` condition and authored region-crossing
+  pages read them); damage floors, encounter region sets and map encounters
+  are not. RPG Maker has no stock region-enter/leave event trigger for the
+  importer to synthesize. Ladders, bushes and counters keep their passage but
   not their special behaviour.
-- Item icons (`IconSet.png`) are not imported.
+- Import-time message wrapping protects complete escape spellings but still
+  budgets the raw source length, not the final visible pixel width after
+  expansion. Runtime pagination then wraps the expanded visible text safely.
 - MZ Effekseer animations are not converted. MV target-only flash, temporary
   target hiding and blend interaction with the map are reported as degraded,
   while their remaining animation still imports.

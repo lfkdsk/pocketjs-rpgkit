@@ -25,6 +25,18 @@
         "messageBlocksPlayer": { "type": "boolean", "description": "While any fiber's text or choices box is open (a parallel page's included), the player cannot move and no action, playerTouch or eventTouch page starts; autorun and parallel pages keep running. Default false." },
         "textVariables": { "type": "boolean", "description": "Expand {v:<id>} tokens in text lines and choice prompts/rows with the live value of variable id (0 when unset). Default false: braces show verbatim." },
         "characterNames": { "type": "boolean", "description": "Expand built-in {char:<eventId>}, {char:this} and {char:player} tokens from saved runtime character names. Default false: braces show verbatim." },
+        "rpgMakerText": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["party", "currencyUnit"],
+          "properties": {
+            "party": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "description": "Initial actor database ids in party order for \\P[n]." },
+            "currencyUnit": { "type": "string", "maxLength": 24, "description": "Replacement for RPG Maker's \\G escape." },
+            "colours": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }, "description": "Optional \\C[n] palette; omitted uses the stock MV 32-colour palette." }
+          },
+          "description": "Opt into runtime RPG Maker MV/MZ message escapes. Absent leaves backslashes literal for older projects."
+        },
+        "stepCounter": { "type": "boolean", "description": "Count successful player tile landings for the steps condition and variable operand. Default false." },
         "textTokens": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true, "description": "Allowlist of {x:<key>} text-token keys the game's session resolver answers. Declaring it makes rpgkit-check warn on any {x:} key not listed; omit it to skip the check. Tokens are resolved at box open by the game's SessionOptions.textTokens function; an unanswered token shows ???." },
         "mapNameDisplay": { "type": "boolean", "description": "Show MapDef.name in the built-in banner on map entry. Default false." },
         "inventory": {
@@ -406,9 +418,10 @@
     "actor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "sprite"],
+      "required": ["id", "name"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+        "databaseId": { "type": "integer", "minimum": 1, "description": "Numeric RPG Maker actor id used by \\N[n] and system.rpgMakerText.party." },
         "name": { "type": "string", "minLength": 1 },
         "sprite": { "type": "string", "description": "Key in project.sprites." },
         "moveSeconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 }
@@ -662,7 +675,8 @@
       "required": ["trigger", "commands"],
       "properties": {
         "condition": { "$ref": "#/$defs/pageCondition" },
-        "trigger": { "enum": ["action", "playerTouch", "eventTouch", "autorun", "parallel"], "description": "eventTouch: on a blocking page, fires when the player's step is refused by this event's body or this event's step is refused by the player's body; on a non-blocking page, fires on entry like playerTouch." },
+        "trigger": { "enum": ["action", "playerTouch", "eventTouch", "regionEnter", "regionLeave", "autorun", "parallel"], "description": "eventTouch reacts to body contact. regionEnter/regionLeave react once when a successful player step crosses the page's region boundary." },
+        "region": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Region watched by a regionEnter/regionLeave page." },
         "sprite": { "type": ["string", "null"], "description": "Key in project.sprites; null = no character (touch trigger tile only)." },
         "blocks": { "type": "boolean", "description": "true = the event body blocks movement (closed gates); default false = below-characters, walkable, touch fires on entry (MV priorityType 0 semantics)." },
         "moveType": { "enum": ["static", "random", "approach"] },
@@ -686,7 +700,17 @@
           "type": "array",
           "items": { "$ref": "#/$defs/command" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "trigger": { "enum": ["regionEnter", "regionLeave"] } }, "required": ["trigger"] },
+          "then": { "required": ["region"] }
+        },
+        {
+          "if": { "properties": { "trigger": { "enum": ["action", "playerTouch", "eventTouch", "autorun", "parallel"] } }, "required": ["trigger"] },
+          "then": { "not": { "required": ["region"] } }
+        }
+      ]
     },
     "pageCondition": {
       "type": "object",
@@ -797,7 +821,10 @@
                   "properties": { "op": { "const": "random" }, "min": { "type": "integer" }, "max": { "type": "integer" } } },
                 { "type": "object", "additionalProperties": false, "required": ["op", "from"],
                   "description": "T2-16: the operand is another variable's live value (target OP source); div/mod by a source reading 0 leave the variable unchanged.",
-                  "properties": { "op": { "enum": ["copy", "add", "sub", "mul", "div", "mod"] }, "from": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" } } }
+                  "properties": { "op": { "enum": ["copy", "add", "sub", "mul", "div", "mod"] }, "from": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" } } },
+                { "type": "object", "additionalProperties": false, "required": ["op"],
+                  "properties": { "op": { "const": "steps" } },
+                  "description": "Read the persistent RPG Maker party step counter." }
               ]
             }
           }
@@ -1945,6 +1972,17 @@
             "id": { "type": "integer", "minimum": 0, "maximum": 255, "description": "The region id to match; 0 matches an unmarked cell." }
           },
           "description": "True when the region id authored at cell (x, y) equals id. Cells without a region read 0."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "op", "value"],
+          "properties": {
+            "kind": { "const": "steps" },
+            "op": { "enum": [">=", "<=", "==", "!="] },
+            "value": { "type": "integer", "minimum": 0 }
+          },
+          "description": "Compare the persistent count of successful player tile landings."
         },
         {
           "type": "object",

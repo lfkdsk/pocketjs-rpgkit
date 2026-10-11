@@ -66,6 +66,7 @@ import {
   pageDeleteOp,
   pageMoveOps,
   parseSheetList,
+  rpgMakerTextPreview,
   selectionAfterDelete,
   sessionResources,
   adjacentCommand,
@@ -406,11 +407,14 @@ class Inspector {
       }
     }
     const checkbox = spec.control === "checkbox";
+    const preview = typeof value === "string" ? rpgMakerTextPreview(value) : null;
     return h(
       "div",
       { class: `ins-field${checkbox ? " ins-field-check" : ""}${spec.control === "textarea" ? " ins-field-wide" : ""}${stored ? " invalid" : ""}` },
       checkbox ? [control, h("label", { for: id }, spec.label)] : [h("label", { for: id }, spec.label), control],
       datalist,
+      preview ? h("div", { class: "rpgmaker-text-preview", "data-role": "rpgmaker-text-preview", "aria-label": "RPG Maker text preview" },
+        preview.map((segment) => h("span", segment.colour ? { style: `color: ${segment.colour}` } : null, segment.text))) : null,
       stored ? h("div", { class: "ins-error", id: `${id}-error`, role: "alert" }, stored.error) : null,
       !stored && spec.hint ? h("div", { class: "ins-hint" }, spec.hint) : null,
     );
@@ -557,6 +561,7 @@ class Inspector {
         row("Ground", info.ground),
         row("Upper", info.upper),
         row("Passage", info.passage === null ? null : info.passage),
+        row("Region", info.region === null ? null : String(info.region)),
       ),
     );
   }

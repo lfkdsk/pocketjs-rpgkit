@@ -12,7 +12,7 @@ import type { EditCommandName, EditResponse } from "../api/types.ts";
 import type { MotionChoice, StudioPreferences } from "./host.ts";
 
 export type Tool = "select" | "pencil" | "rect" | "fill" | "picker" | "eraser" | "event";
-export type PaintLayer = "ground" | "upper" | "passage" | "edges";
+export type PaintLayer = "ground" | "upper" | "passage" | "regions" | "edges";
 export type PassageBrush = "pass" | "block" | "clear";
 export type EdgeBrushValue = { kind: "enter" | "exit"; dir: "up" | "down" | "left" | "right" } | { kind: "clear" };
 
@@ -47,10 +47,11 @@ export interface LayerVisibility {
   upper: boolean;
   events: boolean;
   passage: boolean;
+  regions: boolean;
   grid: boolean;
 }
 
-export type PresentedLayer = "ground" | "upper" | "events" | "passage";
+export type PresentedLayer = "ground" | "upper" | "events" | "passage" | "regions";
 export type LayerOpacity = Record<PresentedLayer, number>;
 
 export interface TileSelection {
@@ -74,13 +75,14 @@ export class StudioApp {
   layer: PaintLayer = "ground";
   brush: TileId | null = null;
   passageBrush: PassageBrush = "block";
+  regionBrush = 1;
   edgeBrush: EdgeBrushValue = { kind: "enter", dir: "up" };
   recentTiles: TileId[] = [];
   favoriteTiles: NonNullable<TileId>[] = [];
   tileSelection: TileSelection | null = null;
   view: ViewState = { zoom: 2, panX: 0, panY: 0 };
-  visible: LayerVisibility = { ground: true, upper: true, events: true, passage: false, grid: true };
-  opacity: LayerOpacity = { ground: 1, upper: 1, events: 1, passage: 0.82 };
+  visible: LayerVisibility = { ground: true, upper: true, events: true, passage: false, regions: false, grid: true };
+  opacity: LayerOpacity = { ground: 1, upper: 1, events: 1, passage: 0.82, regions: 0.82 };
   motion: MotionChoice = "system";
   systemReducedMotion = false;
   recentCommands: string[] = [];
@@ -288,7 +290,15 @@ export class StudioApp {
   setLayer(layer: PaintLayer): void {
     this.layer = layer;
     if (layer === "passage" || layer === "edges") this.visible.passage = true;
+    if (layer === "regions") this.visible.regions = true;
     this.emit("tool");
+  }
+
+  setRegionBrush(value: number): void {
+    const brush = Number.isFinite(value) ? Math.max(0, Math.min(255, Math.trunc(value))) : 0;
+    if (this.regionBrush === brush) return;
+    this.regionBrush = brush;
+    this.emit("brush");
   }
 
   setBrush(tile: TileId | null): void {

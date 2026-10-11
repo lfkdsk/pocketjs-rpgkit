@@ -773,3 +773,4 @@ select.ins-input {
   text-transform: uppercase;
   color: var(--accent);
 }
+.rpgmaker-text-preview { grid-column: 1 / -1; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: #171923; color: #fff; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.45; }

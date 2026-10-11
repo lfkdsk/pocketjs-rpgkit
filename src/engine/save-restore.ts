@@ -128,6 +128,19 @@ export function restoreProblem(
       return `${path}: stack exceeds ${MAX_FIBER_STACK_DEPTH} frames`;
     }
   }
+  for (const [index, queued] of (snap.interp.pendingRegionTriggers ?? []).entries()) {
+    const prefix = `${map.id}/`;
+    if (!queued.key.startsWith(prefix)) {
+      return `interp.pendingRegionTriggers[${index}]: event key ${JSON.stringify(queued.key)} is not on ${map.id}`;
+    }
+    const eventId = queued.key.slice(prefix.length);
+    const ev = events.get(eventId);
+    if (!ev) return `interp.pendingRegionTriggers[${index}]: event "${eventId}" does not exist on ${map.id}`;
+    const page = ev.pages[queued.pageIndex];
+    if (!page || (page.trigger !== "regionEnter" && page.trigger !== "regionLeave")) {
+      return `interp.pendingRegionTriggers[${index}]: page ${queued.pageIndex} is not a region trigger`;
+    }
+  }
 
   // Character provenance: save-validate.ts proved the table's shape; each
   // character must also be an event of this map, on one of its pages,

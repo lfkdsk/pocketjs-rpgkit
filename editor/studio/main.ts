@@ -120,7 +120,8 @@ const LAYERS: [PaintLayer, string, string][] = [
   ["ground", "Ground", "1"],
   ["upper", "Upper", "2"],
   ["passage", "Passage", "3"],
-  ["edges", "Edges", "4"],
+  ["regions", "Regions", "4"],
+  ["edges", "Edges", "5"],
 ];
 
 function addEventFromPalette(): void {
@@ -186,7 +187,7 @@ function studioCommands(): StudioCommand[] {
     ...LAYERS.map(([layer, label, shortcut]): StudioCommand => ({
       id: `layer:${layer}`, label: `Edit ${label} layer`, detail: "Change the active editing layer", shortcut, section: "Actions", disabled: noDocument, run: () => app.setLayer(layer),
     })),
-    ...(["ground", "upper", "passage", "events"] as const).map((layer, index): StudioCommand => ({
+    ...(["ground", "upper", "passage", "regions", "events"] as const).map((layer, index): StudioCommand => ({
       id: `visibility:${layer}`, label: `${app.visible[layer] ? "Hide" : "Show"} ${layer} layer`, detail: "Canvas visibility", shortcut: `Shift+${index + 1}`, section: "Actions", disabled: noDocument,
       run: () => { app.visible[layer] = !app.visible[layer]; app.emit("view"); renderToolbar(); },
     })),
@@ -300,7 +301,8 @@ function renderToolbar(): void {
       toggle("grid", "grid", "Grid", "G"),
       toggle("upper", "layers", "Show upper layer"),
       toggle("events", "event", "Show events"),
-      toggle("passage", "pass", "Passage overlay", "P")),
+      toggle("passage", "pass", "Passage overlay", "P"),
+      toggle("regions", "grid", "Region overlay")),
     h("div", { class: "group zoom" },
       iconButton("zoomOut", "Zoom out", () => canvas?.zoomStep(-1), { shortcut: "-" }),
       h("button", { type: "button", class: "zoom-label", title: "Fit map (0)", id: "studio-zoom", onclick: () => canvas?.fit() }, `${Math.round(app.view.zoom * 100)}%`),
@@ -472,8 +474,9 @@ function renderStatus(): void {
   if (hover && map) {
     const index = hover.y * map.width + hover.x;
     const ground = map.ground[index] ?? "void";
-    const upper = (map.upper ?? []).find(([cell]) => cell === index)?.[1];
-    hoverText = `(${hover.x}, ${hover.y}) ${ground}${upper ? ` / ${upper}` : ""}`;
+    const upper = (map.upper ?? []).findLast(([cell]) => cell === index)?.[1];
+    const region = (map.regions ?? []).findLast(([cell]) => cell === index)?.[1];
+    hoverText = `(${hover.x}, ${hover.y}) ${ground}${upper ? ` / ${upper}` : ""}${region ? ` · region ${region}` : ""}`;
   }
   const selection = app.selection;
   const selectionText = selection.kind === "event" ? `event ${selection.eventId} · page ${selection.page + 1}` : selection.kind === "cell" ? `cell (${selection.x}, ${selection.y})` : "nothing selected";
@@ -482,6 +485,7 @@ function renderStatus(): void {
   const dirty = session?.isDirty();
   replace($("statusbar"),
     h("span", { class: "status-item", id: "status-map" }, map ? `${map.name ? `${map.name} · ` : ""}${map.id} ${map.width}×${map.height}` : "No document"),
+    h("span", { class: "status-item", id: "status-layer" }, `layer ${app.layer}${app.layer === "regions" ? ` · brush ${app.regionBrush || "erase"}` : ""}`),
     h("span", { class: "status-item mono", id: "status-hover" }, hoverText),
     h("span", { class: "status-item", id: "status-selection" }, selectionText),
     h("span", { class: "spacer" }),
@@ -755,9 +759,9 @@ window.addEventListener("keydown", (event) => {
   if (mod && key === "d") { if (isTyping(event)) return; event.preventDefault(); duplicateSelectedEvent(); return; }
   if (mod || event.altKey || isTyping(event)) return;
   if (document.querySelector("dialog[open]")) return;
-  if (event.shiftKey && /^Digit[1-4]$/.test(event.code)) {
+  if (event.shiftKey && /^Digit[1-5]$/.test(event.code)) {
     event.preventDefault();
-    const layer = (["ground", "upper", "passage", "events"] as const)[Number(event.code.slice(-1)) - 1]!;
+    const layer = (["ground", "upper", "passage", "regions", "events"] as const)[Number(event.code.slice(-1)) - 1]!;
     app.visible[layer] = !app.visible[layer];
     app.emit("view");
     renderToolbar();

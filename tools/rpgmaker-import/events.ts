@@ -873,7 +873,9 @@ export function wrap(lines: readonly string[], width = TEXT_WIDTH): string[] {
  *  text. A token at column zero is shorter than either importer limit, but
  *  allowing its end also makes this helper total for hand-written ids. */
 function tokenSafeCut(text: string, cut: number): number {
-  for (const match of text.matchAll(/\{name\}|\{v:[^{}]*\}/g)) {
+  // RPG Maker escapes stay raw until a message box opens, so wrapping and
+  // choice truncation must treat them as atoms just like kit brace tokens.
+  for (const match of text.matchAll(/\{name\}|\{v:[^{}]*\}|\\\\|\\(?:V|N|P|C|PX|PY|FS)\[[0-9]+\]|\\G/gi)) {
     const start = match.index;
     const end = start + match[0].length;
     if (start < cut && cut < end) return start > 0 ? start : end;
@@ -1066,6 +1068,8 @@ function convertCondition(p: readonly unknown[], st: State): CondResult {
     case 11:
       return unknown("Degraded", "button state is not readable from events");
     case 12: {
+      const steps = stepsScriptCondition(String(p[1] ?? ""));
+      if (steps) return ok(steps);
       const r: CondResult = { pre: [], cond: null, swap: false, d: "Placeholder", reason: "script condition not ported; treated as false" };
       r.placeholder = placeholderText(st, "[Script condition not ported:", String(p[1] ?? ""));
       return r;
@@ -1075,6 +1079,39 @@ function convertCondition(p: readonly unknown[], st: State): CondResult {
     default:
       return unknown("Dropped", "unknown condition type");
   }
+}
+
+/** Recognize the ordinary script spelling used to branch on MV/MZ's Steps
+ * value. Arbitrary JavaScript remains a visible placeholder; this narrow
+ * grammar accepts only a single comparison with an integer literal. */
+function stepsScriptCondition(source: string): Extract<Condition, { kind: "steps" }> | null {
+  const expression = source.trim().replace(/^\((.*)\)$/s, "$1").trim();
+  const steps = String.raw`\$gameParty\s*\.\s*steps\s*\(\s*\)`;
+  const integer = String.raw`[-+]?\d+`;
+  const direct = new RegExp(`^${steps}\\s*(===|==|!==|!=|>=|<=|>|<)\\s*(${integer})$`).exec(expression);
+  const reverse = new RegExp(`^(${integer})\\s*(===|==|!==|!=|>=|<=|>|<)\\s*${steps}$`).exec(expression);
+  if (!direct && !reverse) return null;
+  const rawValue = direct?.[2] ?? reverse?.[1];
+  const value = Number(rawValue);
+  if (!Number.isSafeInteger(value)) return null;
+  let op = (direct?.[1] ?? reverse?.[2])!;
+  if (reverse) op = ({ ">=": "<=", "<=": ">=", ">": "<", "<": ">" } as Record<string, string>)[op] ?? op;
+  const normalized = op === "==" || op === "==="
+    ? { op: "==" as const, value }
+    : op === "!=" || op === "!=="
+      ? { op: "!=" as const, value }
+      : op === ">="
+        ? { op: ">=" as const, value }
+        : op === "<="
+          ? { op: "<=" as const, value }
+          : op === ">"
+            ? { op: ">=" as const, value: value + 1 }
+            : op === "<"
+              ? { op: "<=" as const, value: value - 1 }
+              : null;
+  return normalized && Number.isSafeInteger(normalized.value) && normalized.value >= 0
+    ? { kind: "steps", ...normalized }
+    : null;
 }
 
 /** The scope a branch runs in once `cond` is known to hold. */
@@ -1238,6 +1275,14 @@ function emitVariables(p: readonly unknown[], st: State): Command[] {
       }
       if ("value" in g) {
         for (const id of ids) out.push(...constOp(id, op, g.value));
+      } else if ("steps" in g) {
+        if (op === "set") {
+          for (const id of ids) out.push({ op: "variable", id, set: { op: "steps" } });
+        } else {
+          const tmp = tempVariableId(1);
+          out.push({ op: "variable", id: tmp, set: { op: "steps" } });
+          for (const id of ids) out.push(refOp(id, op, tmp));
+        }
       } else {
         out.push(...g.compute);
         for (const id of ids) out.push(refOp(id, op, g.from));
@@ -1254,13 +1299,13 @@ function emitVariables(p: readonly unknown[], st: State): Command[] {
   }
 }
 
-type GameData = { value: number } | { compute: Command[]; from: string } | { dropped: string };
+type GameData = { value: number } | { compute: Command[]; from: string } | { steps: true } | { dropped: string };
 
 const GAME_DATA_NAMES = ["item", "weapon", "armor", "actor", "enemy", "character", "party", "other", "last"];
 const OTHER_NAMES = ["map id", "party size", "gold", "steps", "play time", "timer", "save count", "battle count", "win count", "escape count"];
 
 /** Control Variables' Game Data operand. Item counts and gold are read
- *  exactly with condition trees, timer uses the native timer read, and the
+ *  exactly with condition trees, Steps and timer use native reads, and the
  *  current map id is a constant for a page. Everything else has no kit source. */
 function gameData(type: number, a: number, b: number, st: State): GameData {
   if (type >= 0 && type <= 2) {
@@ -1297,6 +1342,7 @@ function gameData(type: number, a: number, b: number, st: State): GameData {
     drain.push(...bitsDown(t2, GOLD_BITS, (k) => [{ op: "gold", set: "add", amount: k }]));
     return { compute: drain, from: t1 };
   }
+  if (type === 7 && a === 3) return { steps: true };
   if (type === 7 && a === 5) {
     const tmp = tempVariableId(1);
     return { compute: [{ op: "timer", action: "read", variable: tmp }], from: tmp };
@@ -1836,9 +1882,9 @@ function emitShop(nd: RmNode, p: readonly unknown[], st: State): Command[] {
 }
 
 /** Name Input Processing opens the kit's built-in name-input scene. Actor 1
- *  is the player name (the {name} token); MV's Scene_Name cannot be
- *  cancelled, hence swallowCancel. Other actors' names have no token: the
- *  entry is kept in a variable. */
+ *  is the player name (the {name} token); other actors use the stable
+ *  actorNNN-name variable read by RPG Maker \N/\P escapes. MV's Scene_Name
+ *  cannot be cancelled, hence swallowCancel. */
 function emitNameInput(p: readonly unknown[], st: State): Command[] {
   const actor = int(p[0]);
   const args: { [key: string]: JsonValue } = { maxLength: clamp(int(p[1], 8), 1, 24), swallowCancel: true };
@@ -1846,7 +1892,7 @@ function emitNameInput(p: readonly unknown[], st: State): Command[] {
     rec(st, 303, "Native");
   } else {
     args.variable = `actor${String(actor).padStart(3, "0")}-name`;
-    rec(st, 303, "Degraded", "only actor 1's name is shown in text; other names go to a variable");
+    rec(st, 303, "Native");
   }
   const name = st.ctx.rm.actors[actor]?.name;
   if (name) args.title = name.slice(0, 24);

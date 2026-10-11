@@ -409,6 +409,8 @@ export interface Session {
   /** Projects with an audio table opt into preserving every reference-tick
    * cue across a low-Hz host frame. Absent tables retain the v1 cue fold. */
   audioCues: boolean;
+  /** Project-level opt-in for RPG Maker's global party step counter. */
+  stepCounter: boolean;
   /** Derived, mutable compile cache. It is deliberately outside
    * SessionState, snapshots and reducer hashes. Inline projects retain all
    * maps; sharded projects retain only the deterministic keep set. */
@@ -884,6 +886,17 @@ export function createSession(
     messageBlocksPlayer: project.system?.messageBlocksPlayer === true,
     textVariables: project.system?.textVariables === true,
     characterNames: project.system?.characterNames === true,
+    ...(project.system?.rpgMakerText ? {
+      rpgMakerText: {
+        actors: (project.actors ?? []).flatMap((actor) =>
+          actor.databaseId === undefined ? [] : [{ databaseId: actor.databaseId, name: actor.name }]),
+        partyActorIds: [...project.system.rpgMakerText.party],
+        currencyUnit: project.system.rpgMakerText.currencyUnit,
+        ...(project.system.rpgMakerText.colours
+          ? { colours: [...project.system.rpgMakerText.colours] }
+          : {}),
+      },
+    } : {}),
     // Declaring system.textTokens (the key allowlist) is the explicit {x:}
     // opt-in: a document without it keeps the pre-{x:} literal behavior.
     textTokensEnabled: Array.isArray(project.system?.textTokens),
@@ -921,6 +934,7 @@ export function createSession(
       hz,
       ticksPerFrame: motionTicksPerFrame(hz),
       audioCues: project.audio !== undefined,
+      stepCounter: project.system?.stepCounter === true,
       maps: new Map(),
       worlds: new Map(),
       tables: new Map(),
@@ -973,6 +987,7 @@ export function createSession(
     hz,
     ticksPerFrame: motionTicksPerFrame(hz),
     audioCues: project.audio !== undefined,
+    stepCounter: project.system?.stepCounter === true,
     maps: inlineMaps,
     worlds,
     tables,
@@ -1310,6 +1325,11 @@ function sessionConditionContext(
   }
   if (world.needsTilePropertyContext) {
     context.tileProperties = s.interp.tileProperties;
+    context.mapWidth = world.map.width;
+    context.mapHeight = world.map.height;
+  }
+  if (world.needsRegionContext) {
+    context.regionCells = world.regionCells;
     context.mapWidth = world.map.width;
     context.mapHeight = world.map.height;
   }
@@ -2384,6 +2404,7 @@ interface EntryPageDependencies {
   playerMoving: boolean;
   bgm: boolean;
   timer: boolean;
+  steps: boolean;
   extension: readonly { call: string; args: JsonValue }[];
 }
 
@@ -2431,6 +2452,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
   let playerMoving = false;
   let bgm = false;
   let timer = false;
+  let steps = false;
   const extension: { call: string; args: JsonValue }[] = [];
   for (const { ev, key } of keyedEventsOf(world).events) {
     for (const page of ev.pages) {
@@ -2455,6 +2477,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
           case "playerMoving": playerMoving = true; break;
           case "bgmPlaying": bgm = true; break;
           case "timer": timer = true; break;
+          case "steps": steps = true; break;
           case "ext": extension.push({ call: clause.call, args: clause.args }); break;
           case "tileProperty": break;
         }
@@ -2463,7 +2486,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
   }
   return {
     switches: [...switches], self: [...self], variables: [...variables], items: [...items],
-    gold, facing, playerAppearance, worldIdle, playerMoving, bgm, timer, extension,
+    gold, facing, playerAppearance, worldIdle, playerMoving, bgm, timer, steps, extension,
   };
 }
 
@@ -2494,6 +2517,7 @@ function entryPageSignature(
   if (dependencies.timer) {
     signature.push(s.sw.timer === undefined ? undefined : timerSeconds(s.sw.timer));
   }
+  if (dependencies.steps) signature.push(s.sw.steps ?? 0);
   if (dependencies.extension.length > 0) {
     const context = {
       ext: s.ext,
@@ -2539,6 +2563,7 @@ function pageSyncSignature(
   worldIdle: boolean,
   extensions: ExtensionRuntime,
   playerMoving?: boolean,
+  steps?: number,
 ): readonly unknown[] {
   const signature: unknown[] = [
     recordRevision(s.sw.switches),
@@ -2568,6 +2593,7 @@ function pageSyncSignature(
   // Keep this outside the fixed signature: ordinary projects retain the
   // pre-feature memo shape and avoid a movement dependency altogether.
   if (playerMoving !== undefined) signature.push(playerMoving);
+  if (steps !== undefined) signature.push(steps);
   return signature;
 }
 
@@ -2784,6 +2810,13 @@ function outsideLeftMapRing(left: Readonly<LeftMapSnapshot>, x: number, y: numbe
   return Math.max(dx, dy) > LEFT_MAP_RING_TILES;
 }
 
+/** Count one committed tile landing without allocating state for projects
+ * that do not opt into RPG Maker's Steps value. Saturation keeps saves in
+ * the engine's safe-integer domain during arbitrarily long playthroughs. */
+function incrementStepCounter(s: SessionState): void {
+  s.sw.steps = Math.max(0, clampFiniteVar((s.sw.steps ?? 0) + 1));
+}
+
 function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: number } {
   const handoff = s.handoff!;
   const left = freezeLeftMap(s, sess.maps.get(handoff.sourceMapId)!, handoff);
@@ -2800,6 +2833,7 @@ function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: 
     sess.cfg,
     sess.transferPresentation,
   );
+  if (sess.stepCounter) incrementStepCounter(s);
   runPlayerStepHook(
     sess,
     s,
@@ -2961,6 +2995,7 @@ function stepReferenceTick(
         conditionContext.worldIdle ?? false,
         sess.extensions,
         conditionContext.playerMoving,
+        world.pageReadsSteps ? s.sw.steps ?? 0 : undefined,
       )
     : undefined;
   const memo = cacheablePages ? pageSyncMemo.get(world) : undefined;
@@ -3020,6 +3055,7 @@ function stepReferenceTick(
         conditionContext.worldIdle ?? false,
         sess.extensions,
         conditionContext.playerMoving,
+        world.pageReadsSteps ? s.sw.steps ?? 0 : undefined,
       ),
       motion: syncMotion,
       pages: selectedPages!,
@@ -3051,6 +3087,12 @@ function stepReferenceTick(
   const prevFacing = s.move.facing;
   const playerCellBeforeMovementX = s.move.tx;
   const playerCellBeforeMovementY = s.move.ty;
+  // Keep the pre-feature movement path from reading or comparing the sparse
+  // bank at all. A Steps page can only change on a landing in an opted-in
+  // project, so undefined is also the complete cache-invalidation gate.
+  const stepsBeforeMovement = sess.stepCounter && world.pageReadsSteps === true
+    ? s.sw.steps ?? 0
+    : undefined;
   const busy = isBusy(s.interp);
   const capturesDpad = s.interp.modal?.kind === "choices" || s.interp.modal?.kind === "shop";
   const held = messageHoldsPlayer(world, s.interp);
@@ -3193,6 +3235,11 @@ function stepReferenceTick(
   if (s.playerRoute && !handoffAtStart) {
     stepPlayerRoute(s, sess, playerRouteSettings, playerRouteEventSettings, contacts);
   }
+  if (sess.stepCounter &&
+      (s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY)) {
+    incrementStepCounter(s);
+  }
+  const stepPageChanged = stepsBeforeMovement !== undefined && (s.sw.steps ?? 0) !== stepsBeforeMovement;
   const playerStep = sess.extensions.playerStep;
   if (playerStep !== null &&
       (s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY)) {
@@ -3243,7 +3290,7 @@ function stepReferenceTick(
     s.interp,
     interpInput,
     s.ext,
-    cacheablePages
+    cacheablePages && !stepPageChanged
       ? {
           indices: selectedPages!,
           facing: syncFacing,
