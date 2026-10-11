@@ -196,6 +196,13 @@ export class AudioDriver {
     this.lastFrame = undefined;
   }
 
+  /** Allow an incremental resource provider to retry one previously missing
+   * pak key without discarding live voices or replaying reducer cues. Loaded
+   * assets remain untouched; providers call this only after availability. */
+  retryResource(pakKey: string): void {
+    if (this.assetCache.get(pakKey) === null) this.assetCache.delete(pakKey);
+  }
+
   private drainEvents(): void {
     for (let line = this.ops.poll(); line !== undefined; line = this.ops.poll()) {
       let event: { t?: unknown; h?: unknown; free?: unknown };
@@ -388,7 +395,13 @@ export class AudioDriver {
       // Optional audio must not turn a missing or malformed resource into a
       // gameplay failure. Cache the miss so it stays off the frame path.
     }
-    this.assetCache.set(pakKey, asset);
+    // A live QoaStream owns the encoded bytes and parsed frame index it needs.
+    // Do not retain a second container after open: desktop sidecars can then
+    // hand resources into one long-lived driver without accumulating every
+    // song played during the session. WAV PCM and misses remain cached.
+    if (asset === null || !pakKey.startsWith("audio:qoa.")) {
+      this.assetCache.set(pakKey, asset);
+    }
     return asset;
   }
 

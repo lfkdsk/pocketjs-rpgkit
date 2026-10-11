@@ -222,6 +222,33 @@ describe("opt-in audio host", () => {
     }
   });
 
+  test("retries a staged QOA miss without rebuilding the driver", () => {
+    const ops = new MockAudioOps();
+    const key = "audio:qoa.music/field.qoa";
+    const bytes = encodeQoa(qoaSamples(AUDIO_RING_FRAMES + 100), 1, 11_025);
+    let ready = false;
+    let reads = 0;
+    const driver = new AudioDriver(ops, { field: key }, () => {
+      reads++;
+      if (!ready) throw new Error("not staged");
+      return bytes;
+    });
+
+    driver.sync(frame(1, {
+      bgm: { id: "field", volume: 100, pitch: 100, positionTicks: 0 },
+    }));
+    expect(ops.created).toEqual([]);
+    ready = true;
+    driver.retryResource(key);
+    driver.sync(frame(2, {
+      bgm: { id: "field", volume: 100, pitch: 100, positionTicks: 1 },
+    }));
+
+    expect(reads).toBe(2);
+    expect(ops.created).toHaveLength(1);
+    expect(ops.plays).toEqual([1]);
+  });
+
   test("keeps BGM/BGS/ME ahead of deterministic oldest-SE eviction", () => {
     const ops = new MockAudioOps();
     const resources = Object.fromEntries(
