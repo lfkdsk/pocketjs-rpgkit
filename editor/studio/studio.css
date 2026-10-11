@@ -557,6 +557,17 @@ button.layer-name:hover { background: var(--raised); }
 .art-status.missing, .art-status.broken { color: var(--warn); }
 .noscript { padding: 20px; }
 
+/* Keep the desktop three-column workspace at laptop widths, but compact the
+   toolbar early enough that every layer button remains reachable at its natural
+   scroll origin. The full narrow-screen layout still starts below 900 px. */
+@media (min-width: 901px) and (max-width: 1100px) {
+  .toolbar { gap: 2px; padding-inline: 6px; }
+  .toolbar .brand { gap: 0; margin-right: 0; }
+  .toolbar .brand span:last-child, .toolbar .icon-button.with-text span { display: none; }
+  .toolbar > .group { padding-inline: 3px; }
+  .toolbar > .segmented button { padding-inline: 6px; }
+}
+
 /* ---- narrow screens ----------------------------------------------------------- */
 
 @media (max-width: 900px) {

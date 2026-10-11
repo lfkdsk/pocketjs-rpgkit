@@ -593,6 +593,7 @@ async function main(): Promise<void> {
       boxes: Record<string, { x: number; y: number; w: number; h: number } | null>;
       layers: number;
       commandPalette: boolean;
+      compactToolbar: { scrollLeft: number | null; edgesCenterHit: boolean };
     }>(`(() => {
       const box = (selector) => {
         const el = document.querySelector(selector);
@@ -600,6 +601,12 @@ async function main(): Promise<void> {
         const r = el.getBoundingClientRect();
         return { x: r.left, y: r.top, w: r.width, h: r.height };
       };
+      const toolbar = document.getElementById("toolbar");
+      const edges = document.querySelector('#toolbar [data-layer="edges"]');
+      const edgesRect = edges?.getBoundingClientRect();
+      const edgesHit = edgesRect
+        ? document.elementFromPoint(edgesRect.left + edgesRect.width / 2, edgesRect.top + edgesRect.height / 2)
+        : null;
       const root = getComputedStyle(document.documentElement);
       return {
         vw: innerWidth,
@@ -623,8 +630,13 @@ async function main(): Promise<void> {
           layers: box('[data-testid="layers-panel"]'),
           minimap: box('[data-testid="minimap"]'),
           minimapViewport: box('[data-testid="minimap-viewport"]'),
+          edgesLayer: box('#toolbar [data-layer="edges"]'),
         },
         layers: document.querySelectorAll('[data-testid="layers-panel"] .layer-row').length,
+        compactToolbar: {
+          scrollLeft: toolbar?.scrollLeft ?? null,
+          edgesCenterHit: !!edges && !!edgesHit && (edgesHit === edges || edges.contains(edgesHit)),
+        },
       };
     })()`);
     const data = await captureStable(name);
@@ -672,7 +684,7 @@ async function main(): Promise<void> {
       !!inner && !!outer && inner.x >= outer.x - 1 && inner.y >= outer.y - 1 && inner.x + inner.w <= outer.x + outer.w + 1 && inner.y + inner.h <= outer.y + outer.h + 1;
     const inWindow = (box: { x: number; y: number; w: number; h: number } | null, minWidth: number, minHeight: number) =>
       !!box && box.w >= minWidth && box.h >= minHeight && box.x >= 0 && box.y >= 0 && box.x + box.w <= layout.vw + 1 && box.y + box.h <= layout.vh + 1;
-    const { toolbar, canvasHost, canvas, palette, inspector, layers, minimap, minimapViewport } = layout.boxes;
+    const { toolbar, canvasHost, canvas, palette, inspector, layers, minimap, minimapViewport, edgesLayer } = layout.boxes;
     const panel = rgb(layout.colors.panel);
     const canvasBackground = rgb(layout.colors.canvas);
     const toolbarBackground = rgb(layout.colors.toolbar);
@@ -694,6 +706,22 @@ async function main(): Promise<void> {
       ["the five-layer panel and minimap have usable boxes inside the canvas", layout.layers === 5 && !!layers && layers.w >= 200 && layers.h >= 100 && !!minimap && minimap.w >= 44 && minimap.h >= 32 && !!minimapViewport && minimapViewport.w >= 5 && minimapViewport.h >= 5 && inside(layers, canvasHost) && inside(minimap, canvasHost) && inside(minimapViewport, minimap), { layers: layout.layers, panel: layers, minimap, viewport: minimapViewport }],
       ["the map and minimap contain rendered art pixels", canvasColors >= 12 && minimapColors >= 6, { canvasColors, minimapColors }],
     ];
+    if (expectedViewport.width === 1024 && expectedViewport.height === 768) {
+      const edgesInsideToolbar = !!edgesLayer && !!toolbar &&
+        edgesLayer.x >= toolbar.x && edgesLayer.y >= toolbar.y &&
+        edgesLayer.x + edgesLayer.w <= toolbar.x + toolbar.w &&
+        edgesLayer.y + edgesLayer.h <= toolbar.y + toolbar.h;
+      checks.push(
+        ["the compact toolbar gives the Edges layer control a non-zero rectangle",
+          !!edgesLayer && edgesLayer.w > 0 && edgesLayer.h > 0, edgesLayer],
+        ["the compact toolbar keeps the entire Edges layer control inside its visible bounds",
+          edgesInsideToolbar, { toolbar, edgesLayer }],
+        ["the compact toolbar leaves the Edges layer control unobscured at its center",
+          layout.compactToolbar.edgesCenterHit, { edgesLayer, ...layout.compactToolbar }],
+        ["the compact toolbar exposes Edges without horizontal scrolling",
+          layout.compactToolbar.scrollLeft === 0, layout.compactToolbar],
+      );
+    }
     let all = true;
     for (const [label, pass, detail] of checks) {
       expect(`shot ${name}: ${label}`, pass, JSON.stringify(detail));
