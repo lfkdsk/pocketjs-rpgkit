@@ -75,6 +75,7 @@ const BOX_MARGIN = 8;
 /** Screen height assumed when the props give none: the PSP's 272 px. */
 const SCREEN_H = 272;
 const NO_OPTIONS: readonly string[] = [];
+const NO_COLOUR_ROWS: readonly ChoiceColourRow[] = [];
 const sameLines = (a: readonly string[], b: readonly string[]): boolean =>
   a === b || (a.length === b.length && a.every((line, i) => line === b[i]));
 const sameColourColumns = (
@@ -242,8 +243,8 @@ export function ChoiceIconBox(props: ChoiceIconBoxProps) {
             const at = () => win().start + row;
             const shown = () => at() < win().end;
             const rows = createMemo(
-              () => (shown() ? labels()[at()]! : [] as ChoiceColourRow[]),
-              [] as ChoiceColourRow[],
+              () => (shown() ? labels()[at()] ?? NO_COLOUR_ROWS : NO_COLOUR_ROWS),
+              NO_COLOUR_ROWS,
               { equals: choiceColourRowsEqual },
             );
             return iconRow(at, shown, rows, props, arts, theme);
