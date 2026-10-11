@@ -85,6 +85,12 @@ export function audioTrackVolume(track: Readonly<AudioTrackState>): number {
     : track.volume * track.fade.leftTicks / track.fade.totalTicks;
 }
 
+/** RPG Maker clears its current-track identity as soon as fade-out starts,
+ * even though the old buffer remains audible until the fade completes. */
+export function audioTrackIsFadingOut(track: Readonly<AudioTrackState>): boolean {
+  return track.fade !== undefined && track.fade.direction !== "in";
+}
+
 /** True when no durable audio fact remains. */
 export function audioStateEmpty(audio: Readonly<AudioState>): boolean {
   return !audio.bgm && !audio.bgs && !audio.me && !audio.savedBgm &&
@@ -108,7 +114,7 @@ function advanceFade(track: AudioTrackState): boolean {
 export function stopMeAndResumeBgmInPlace(audio: AudioState): boolean {
   if (!audio.me) return false;
   delete audio.me;
-  if (audio.bgm) {
+  if (audio.bgm && !audioTrackIsFadingOut(audio.bgm)) {
     audio.bgm.fade = {
       totalTicks: ME_REPLAY_FADE_TICKS,
       leftTicks: ME_REPLAY_FADE_TICKS,
@@ -122,9 +128,10 @@ export function stopMeAndResumeBgmInPlace(audio: AudioState): boolean {
 export function advanceAudioStateInPlace(audio: AudioState): void {
   const meWasPlaying = audio.me !== undefined;
 
-  // RPG Maker stops the BGM buffer while an ME owns the music channel, so
-  // both its playback cursor and any in-flight fade remain held.
-  if (audio.bgm && !meWasPlaying) {
+  // RPG Maker stops a current BGM buffer while an ME owns the music channel.
+  // A buffer already fading out is no longer current, so it continues beside
+  // the ME instead of being held or resumed afterward.
+  if (audio.bgm && (!meWasPlaying || audioTrackIsFadingOut(audio.bgm))) {
     if (advanceFade(audio.bgm)) {
       delete audio.bgm;
     } else if (!audio.bgm.paused) {

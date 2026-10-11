@@ -297,6 +297,14 @@ function vehicleId(value: unknown): typeof VEHICLE_IDS[number] | null {
   return VEHICLE_IDS[int(value, -1)] ?? null;
 }
 
+/** The imported walking player is RPG Maker's initial party leader, not a
+ * hard-coded database actor. Keep name input/change-name aligned with the
+ * same identity used for playerName and \N/\P expansion at runtime. */
+function playerActorId(st: State): number | undefined {
+  const id = st.ctx.rm.system.partyMembers?.[0];
+  return typeof id === "number" && Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
 function makeState(ctx: EventContext, trigger: OwnerTrigger, pageSpeed?: number): State {
   return {
     ctx,
@@ -783,8 +791,8 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       return emitNameInput(p, st);
     case 320: {
       const actor = int(p[0]);
-      if (actor !== 1) {
-        rec(st, 320, "Degraded", "only actor 1 maps to the kit player name; other actor names are not modelled");
+      if (actor !== playerActorId(st)) {
+        rec(st, 320, "Degraded", "only the initial party leader maps to the kit player name; other fixed actor-name writes are not modelled");
         return [];
       }
       const name = String(p[1] ?? "");
@@ -1082,35 +1090,49 @@ function convertCondition(p: readonly unknown[], st: State): CondResult {
       });
     case 4: {
       const actorNumber = int(p[1]);
-      if (!st.ctx.rm.actors[actorNumber]) return unknown("Dropped", `actor ${actorNumber} is missing`);
+      const sourceActor = st.ctx.rm.actors[actorNumber];
+      if (!sourceActor) return unknown("Dropped", `actor ${actorNumber} is missing`);
       const actor = actorId(actorNumber);
       const subtype = int(p[2], -1);
       if (subtype === 0) return ok({ kind: "switch", id: partySwitchId(actorNumber) });
       if (subtype === 1) {
         if (typeof p[3] !== "string") return unknown("Dropped", "actor name comparison is malformed");
+        if (sourceActor.name.length === 0) {
+          return unknown("Degraded", `actor ${actorNumber} has an empty name and cannot be represented`);
+        }
         return ok({ kind: "actor", actor, test: "name", value: p[3] });
       }
+      const initialFact = (cond: Condition): CondResult => ({
+        pre: [],
+        cond,
+        swap: false,
+        d: "Degraded",
+        reason: "actor class, skill, equipment, and state conditions read initial actor facts only",
+      });
+      const representedInitialFact = (cond: Condition): CondResult => sourceActor.name.length === 0
+        ? unknown("Degraded", `actor ${actorNumber} has an empty name and cannot be represented`)
+        : initialFact(cond);
       const value = int(p[3]);
       switch (subtype) {
         case 2:
           return st.ctx.rm.classes[value]
-            ? ok({ kind: "actor", actor, test: "class", value: classId(value) })
+            ? representedInitialFact({ kind: "actor", actor, test: "class", value: classId(value) })
             : unknown("Dropped", `class ${value} is missing`);
         case 3:
           return st.ctx.rm.skills[value]
-            ? ok({ kind: "actor", actor, test: "skill", value: skillId(value) })
+            ? representedInitialFact({ kind: "actor", actor, test: "skill", value: skillId(value) })
             : unknown("Dropped", `skill ${value} is missing`);
         case 4:
           return st.ctx.rm.weapons[value]
-            ? ok({ kind: "actor", actor, test: "weapon", value: itemId("weapon", value) })
+            ? representedInitialFact({ kind: "actor", actor, test: "weapon", value: itemId("weapon", value) })
             : unknown("Dropped", `weapon ${value} is missing`);
         case 5:
           return st.ctx.rm.armors[value]
-            ? ok({ kind: "actor", actor, test: "armor", value: itemId("armor", value) })
+            ? representedInitialFact({ kind: "actor", actor, test: "armor", value: itemId("armor", value) })
             : unknown("Dropped", `armor ${value} is missing`);
         case 6:
           return st.ctx.rm.states[value]
-            ? ok({ kind: "actor", actor, test: "state", value: stateId(value) })
+            ? representedInitialFact({ kind: "actor", actor, test: "state", value: stateId(value) })
             : unknown("Dropped", `state ${value} is missing`);
         default:
           return unknown("Dropped", `unknown actor condition subtype ${subtype}`);
@@ -2035,14 +2057,14 @@ function emitShop(nd: RmNode, p: readonly unknown[], st: State): Command[] {
   return [cmd];
 }
 
-/** Name Input Processing opens the kit's built-in name-input scene. Actor 1
- *  is the player name (the {name} token); other actors use the stable
- *  actorNNN-name variable read by RPG Maker \N/\P escapes. MV's Scene_Name
- *  cannot be cancelled, hence swallowCancel. */
+/** Name Input Processing opens the kit's built-in name-input scene. The
+ *  initial party leader is the player name (the {name} token); other actors
+ *  use the stable actorNNN-name variable read by RPG Maker \N/\P escapes.
+ *  MV's Scene_Name cannot be cancelled, hence swallowCancel. */
 function emitNameInput(p: readonly unknown[], st: State): Command[] {
   const actor = int(p[0]);
   const args: { [key: string]: JsonValue } = { maxLength: clamp(int(p[1], 8), 1, 24), swallowCancel: true };
-  if (actor === 1) {
+  if (actor === playerActorId(st)) {
     rec(st, 303, "Native");
   } else {
     args.variable = `actor${String(actor).padStart(3, "0")}-name`;

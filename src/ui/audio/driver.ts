@@ -9,7 +9,13 @@ import {
   type WavPcm,
 } from "@pocketjs/framework/audio";
 import { get as pakGet } from "@pocketjs/framework/pak";
-import { audioTrackVolume, type AudioMeState, type AudioState, type AudioTrackState } from "../../engine/audio.ts";
+import {
+  audioTrackIsFadingOut,
+  audioTrackVolume,
+  type AudioMeState,
+  type AudioState,
+  type AudioTrackState,
+} from "../../engine/audio.ts";
 import type { SoundCue } from "../../engine/interpreter.ts";
 import { QoaFile } from "./qoa.ts";
 
@@ -85,14 +91,16 @@ function normalizedPan(pan: number | undefined): number {
   return Math.max(-100, Math.min(100, Math.round(pan!)));
 }
 
-function pannedSample(sample: number, gain: number): number {
-  return Math.max(-32_768, Math.min(32_767, Math.round(sample * gain)));
+function pannedSample(sample: number): number {
+  return Math.max(-32_768, Math.min(32_767, Math.round(sample)));
 }
 
-/** Equal-power attenuation used by RPG Maker's WebAudio panner. The near
- * channel remains at unity while the far channel follows a cosine curve. */
-function equalPowerFarGain(pan: number): number {
-  return Math.cos(Math.abs(pan) * Math.PI / 200);
+/** Azimuth produced by RPG Maker's PannerNode position (x=pan,
+ * z=1-|pan|), after WebAudio folds rear positions into [-90, 90]. */
+function pannerAzimuth(pan: number): number {
+  const x = pan / 100;
+  const z = 1 - Math.abs(x);
+  return Math.atan2(x, z) * 180 / Math.PI;
 }
 
 function outputFrameAtTick(ticks: number, sampleRate: number): number {
@@ -206,7 +214,14 @@ export class AudioDriver {
     gameFrame: number,
     elapsedTicksPerFrame: number,
   ): void {
-    this.reconcileTrack("bgm", audio?.bgm, !audio?.bgm?.paused && !audio?.me, true, gameFrame, elapsedTicksPerFrame);
+    this.reconcileTrack(
+      "bgm",
+      audio?.bgm,
+      !!audio?.bgm && !audio.bgm.paused && (!audio.me || audioTrackIsFadingOut(audio.bgm)),
+      true,
+      gameFrame,
+      elapsedTicksPerFrame,
+    );
     this.reconcileTrack("bgs", audio?.bgs, audio?.bgs !== undefined, true, gameFrame, elapsedTicksPerFrame);
     this.reconcileTrack("me", audio?.me, audio?.me !== undefined, false, gameFrame, elapsedTicksPerFrame);
   }
@@ -465,15 +480,30 @@ export class AudioDriver {
           out[output * channels + channel] = voice.source.sample(source, channel);
         }
       } else {
-        // RPG Maker uses WebAudio's equal-power panner. Keep centred PCM
-        // byte-for-byte and apply its cosine attenuation to the far side.
-        const farGain = equalPowerFarGain(voice.pan);
-        const leftGain = voice.pan > 0 ? farGain : 1;
-        const rightGain = voice.pan < 0 ? farGain : 1;
+        // Centred PCM deliberately retains its legacy source shape above.
+        // Nonzero pan follows PannerNode's normative equal-power mono/stereo
+        // algorithms, including stereo crossfeed into the near channel.
+        const azimuth = pannerAzimuth(voice.pan);
         const left = voice.source.sample(source, 0);
-        const right = voice.source.channels === 1 ? left : voice.source.sample(source, 1);
-        out[output * 2] = pannedSample(left, leftGain);
-        out[output * 2 + 1] = pannedSample(right, rightGain);
+        if (voice.source.channels === 1) {
+          const x = (azimuth + 90) / 180;
+          const leftGain = Math.cos(x * Math.PI / 2);
+          const rightGain = Math.sin(x * Math.PI / 2);
+          out[output * 2] = pannedSample(left * leftGain);
+          out[output * 2 + 1] = pannedSample(left * rightGain);
+        } else {
+          const right = voice.source.sample(source, 1);
+          const x = azimuth <= 0 ? (azimuth + 90) / 90 : azimuth / 90;
+          const leftGain = Math.cos(x * Math.PI / 2);
+          const rightGain = Math.sin(x * Math.PI / 2);
+          if (azimuth <= 0) {
+            out[output * 2] = pannedSample(left + right * leftGain);
+            out[output * 2 + 1] = pannedSample(right * rightGain);
+          } else {
+            out[output * 2] = pannedSample(left * leftGain);
+            out[output * 2 + 1] = pannedSample(right + left * rightGain);
+          }
+        }
       }
     }
     return out;

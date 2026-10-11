@@ -39,7 +39,7 @@ import {
 } from "./save.ts";
 import { beginStateMetadata, endStateMetadata, RecentStateMetadata } from "./state-metadata.ts";
 import { startupProfileMark } from "../startup-profile.ts";
-import { audioStateEmpty, cloneAudioState, type AudioState } from "./audio.ts";
+import { audioStateEmpty, audioTrackIsFadingOut, cloneAudioState, type AudioState } from "./audio.ts";
 
 import {
   activeIndexAt,
@@ -1461,6 +1461,10 @@ function sessionConditionContext(
   if (playerMoving !== undefined) context.playerMoving = playerMoving;
   if (vehicle !== undefined) context.vehicle = vehicle;
   if (s.interp.audio) context.audio = s.interp.audio;
+  if (world.needsActorContext) {
+    if (world.actors) context.actors = world.actors;
+    if (world.playerActor !== undefined) context.playerActor = world.playerActor;
+  }
   if (eventPages) {
     context.eventPages = eventPages;
     context.eventAppearances = s.interp.eventAppearances;
@@ -2569,6 +2573,7 @@ interface EntryPageDependencies {
   bgm: boolean;
   timer: boolean;
   steps: boolean;
+  playerName: boolean;
   extension: readonly { call: string; args: JsonValue }[];
 }
 
@@ -2617,6 +2622,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
   let bgm = false;
   let timer = false;
   let steps = false;
+  let playerName = false;
   const extension: { call: string; args: JsonValue }[] = [];
   for (const { ev, key } of keyedEventsOf(world).events) {
     for (const page of ev.pages) {
@@ -2643,6 +2649,16 @@ function entryPageDependencies(world: World): EntryPageDependencies {
           case "timer": timer = true; break;
           case "vehicle": break;
           case "steps": steps = true; break;
+          case "actor": {
+            if (clause.test !== "name") break;
+            const actor = world.actors?.get(clause.actor);
+            if (actor?.id === world.playerActor) {
+              playerName = true;
+            } else if (actor?.databaseId !== undefined) {
+              variables.add(`actor${String(actor.databaseId).padStart(3, "0")}-name`);
+            }
+            break;
+          }
           case "ext": extension.push({ call: clause.call, args: clause.args }); break;
           case "tileProperty": break;
         }
@@ -2651,7 +2667,7 @@ function entryPageDependencies(world: World): EntryPageDependencies {
   }
   return {
     switches: [...switches], self: [...self], variables: [...variables], items: [...items],
-    gold, facing, playerAppearance, worldIdle, playerMoving, bgm, timer, steps, extension,
+    gold, facing, playerAppearance, worldIdle, playerMoving, bgm, timer, steps, playerName, extension,
   };
 }
 
@@ -2677,12 +2693,14 @@ function entryPageSignature(
   if (dependencies.playerMoving) signature.push(s.move.moving);
   if (dependencies.bgm) {
     signature.push(s.interp.audio?.bgm?.id, s.interp.audio?.bgm?.paused === true,
+      s.interp.audio?.bgm === undefined ? undefined : audioTrackIsFadingOut(s.interp.audio.bgm),
       s.interp.audio?.me !== undefined);
   }
   if (dependencies.timer) {
     signature.push(s.sw.timer === undefined ? undefined : timerSeconds(s.sw.timer));
   }
   if (dependencies.steps) signature.push(s.sw.steps ?? 0);
+  if (dependencies.playerName) signature.push(s.sw.playerName);
   if (dependencies.extension.length > 0) {
     const context = {
       ext: s.ext,
@@ -2757,6 +2775,7 @@ function pageSyncSignature(
       : JSON.stringify(s.interp.tileProperties),
     s.interp.audio?.bgm?.id,
     s.interp.audio?.bgm?.paused === true,
+    s.interp.audio?.bgm === undefined ? undefined : audioTrackIsFadingOut(s.interp.audio.bgm),
     s.interp.audio?.me !== undefined,
   ];
   // Keep this outside the fixed signature: ordinary projects retain the

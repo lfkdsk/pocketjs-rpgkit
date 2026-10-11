@@ -106,11 +106,21 @@ const PAGE_OWNER: Owner = {
   eventIds: new Map([[1, "ev001"], [2, "ev002"]]),
 };
 
-function makeCtx(opts: { placeholders?: "visible" | "silent"; owner?: Owner; balloon?: boolean; flavor?: "MV" | "MZ" } = {}): EventContext {
+function makeCtx(opts: {
+  placeholders?: "visible" | "silent";
+  owner?: Owner;
+  balloon?: boolean;
+  flavor?: "MV" | "MZ";
+  party?: number[];
+} = {}): EventContext {
   let shop = 0;
   let animation = 0;
+  const flavored = opts.flavor ? { ...RM, flavor: opts.flavor } : RM;
+  const rm = opts.party
+    ? { ...flavored, system: { ...flavored.system, partyMembers: opts.party } }
+    : flavored;
   return {
-    rm: opts.flavor ? { ...RM, flavor: opts.flavor } : RM,
+    rm,
     cov: new Coverage(),
     placeholders: opts.placeholders ?? "visible",
     maps: MAPS,
@@ -637,11 +647,11 @@ describe("conditional branch", () => {
     ["timer <=", [3, 30, 1], [{ op: "if", if: { kind: "timer", op: "<=", seconds: 30 }, then: [THEN], else: [ELSE] }], "timer", "Native"],
     ["actor in party", [4, 2, 0], [{ op: "if", if: { kind: "switch", id: "party-actor002" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
     ["actor name", [4, 2, 1, "Therese"], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "name", value: "Therese" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
-    ["actor class", [4, 2, 2, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "class", value: "class001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
-    ["actor skill", [4, 2, 3, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "skill", value: "skill001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
-    ["actor weapon", [4, 2, 4, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "weapon", value: "weapon001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
-    ["actor armor", [4, 2, 5, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "armor", value: "armor001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
-    ["actor state", [4, 2, 6, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "state", value: "state001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
+    ["actor class", [4, 2, 2, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "class", value: "class001" }, then: [THEN], else: [ELSE] }], "actor", "Degraded"],
+    ["actor skill", [4, 2, 3, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "skill", value: "skill001" }, then: [THEN], else: [ELSE] }], "actor", "Degraded"],
+    ["actor weapon", [4, 2, 4, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "weapon", value: "weapon001" }, then: [THEN], else: [ELSE] }], "actor", "Degraded"],
+    ["actor armor", [4, 2, 5, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "armor", value: "armor001" }, then: [THEN], else: [ELSE] }], "actor", "Degraded"],
+    ["actor state", [4, 2, 6, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "state", value: "state001" }, then: [THEN], else: [ELSE] }], "actor", "Degraded"],
     ["enemy", [5, 0, 0], dead([THEN], [ELSE]), "enemy", "Degraded"],
     ["player facing", [6, -1, 8], [{ op: "if", if: { kind: "facing", dir: "up" }, then: [THEN], else: [ELSE] }], "character", "Native"],
     ["event facing", [6, 1, 8], dead([THEN], [ELSE]), "character", "Degraded"],
@@ -1222,6 +1232,30 @@ describe("battle, shop, name input", () => {
 
     r = conv([C(320, 0, [1, "abcdefghijklmnopqrstuvwxyz"])]);
     expect(r.cmds).toEqual([{ op: "changeName", name: "abcdefghijklmnopqrstuvwx" }]);
+    expect(only(r.cov, 320)).toBe("Degraded");
+  });
+
+  test("name commands follow a non-actor-1 starting leader", () => {
+    let r = conv([C(303, 0, [2, 8])], { party: [2, 1] });
+    expect(r.cmds).toEqual([{
+      op: "scene", id: "rpgkit.nameInput",
+      args: { maxLength: 8, swallowCancel: true, title: "Therese" },
+    }]);
+    expect(only(r.cov, 303)).toBe("Native");
+
+    r = conv([C(303, 0, [1, 8])], { party: [2, 1] });
+    expect(r.cmds).toEqual([{
+      op: "scene", id: "rpgkit.nameInput",
+      args: { maxLength: 8, swallowCancel: true, variable: "actor001-name", title: "Harold" },
+    }]);
+    expect(only(r.cov, 303)).toBe("Native");
+
+    r = conv([C(320, 0, [2, "Leader"])] , { party: [2, 1] });
+    expect(r.cmds).toEqual([{ op: "changeName", name: "Leader" }]);
+    expect(only(r.cov, 320)).toBe("Native");
+
+    r = conv([C(320, 0, [1, "Companion"])] , { party: [2, 1] });
+    expect(r.cmds).toEqual([]);
     expect(only(r.cov, 320)).toBe("Degraded");
   });
 

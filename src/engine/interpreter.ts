@@ -50,6 +50,7 @@ import {
   ME_REPLAY_FADE_TICKS,
   advanceAudioStateInPlace,
   audioStateEmpty,
+  audioTrackIsFadingOut,
   cloneAudioState,
   cloneAudioTrack,
   stopMeAndResumeBgmInPlace,
@@ -537,7 +538,8 @@ export function evalCondition(
     }
     case "bgmPlaying": {
       const bgm = context?.audio?.bgm;
-      const playing = bgm !== undefined && bgm.paused !== true && context?.audio?.me === undefined &&
+      const playing = bgm !== undefined && !audioTrackIsFadingOut(bgm) &&
+        bgm.paused !== true && context?.audio?.me === undefined &&
         (c.id === undefined || bgm.id === c.id);
       return c.negate === true ? !playing : playing;
     }
@@ -4525,7 +4527,10 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
       break;
     case "playBgm": {
       const audio = (s.audio ??= {});
-      const held = audio.bgm?.id === ins.id ? audio.bgm : undefined;
+      const held = audio.bgm?.id === ins.id &&
+          !audioTrackIsFadingOut(audio.bgm) && audio.bgm.pitch === ins.pitch
+        ? audio.bgm
+        : undefined;
       audio.bgm = {
         ...freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0),
         ...(held ? { positionTicks: held.positionTicks } : {}),
@@ -4536,7 +4541,10 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
     }
     case "fadeoutBgm":
       if (s.audio?.bgm) {
-        if (ins.frames <= 0) delete s.audio.bgm;
+        // playMe has already stopped and detached the BGM's gain node. RPG
+        // Maker still clears current identity here, so there is no audible
+        // fade and stopMe must not resume it.
+        if (ins.frames <= 0 || s.audio.me) delete s.audio.bgm;
         else s.audio.bgm.fade = { totalTicks: ins.frames, leftTicks: ins.frames };
         pruneAudioState(s);
       }
@@ -4555,7 +4563,10 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
       break;
     case "playBgs": {
       const audio = (s.audio ??= {});
-      const held = audio.bgs?.id === ins.id ? audio.bgs : undefined;
+      const held = audio.bgs?.id === ins.id &&
+          !audioTrackIsFadingOut(audio.bgs) && audio.bgs.pitch === ins.pitch
+        ? audio.bgs
+        : undefined;
       audio.bgs = {
         ...freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0),
         ...(held ? { positionTicks: held.positionTicks } : {}),
@@ -4597,7 +4608,7 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
       s.cues.push({ stop: true });
       break;
     case "saveBgm":
-      if (s.audio?.bgm) {
+      if (s.audio?.bgm && !audioTrackIsFadingOut(s.audio.bgm)) {
         s.audio.savedBgm = {
           id: s.audio.bgm.id,
           volume: s.audio.bgm.volume,
@@ -4613,23 +4624,31 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
     case "replayBgm":
       if (s.audio?.savedBgm) {
         const saved = s.audio.savedBgm;
-        const held = s.audio.bgm?.id === saved.id ? s.audio.bgm : undefined;
-        s.audio.bgm = {
-          ...saved,
-          ...(held ? { positionTicks: held.positionTicks } : {}),
-          ...(held?.paused ? { paused: true as const } : {}),
-          ...(held?.fade
-            ? { fade: { ...held.fade } }
-            : held
-              ? {}
-              : {
-                  fade: {
-                    totalTicks: ME_REPLAY_FADE_TICKS,
-                    leftTicks: ME_REPLAY_FADE_TICKS,
-                    direction: "in" as const,
-                  },
-                }),
-        };
+        const current = s.audio.bgm?.id === saved.id && !audioTrackIsFadingOut(s.audio.bgm)
+          ? s.audio.bgm
+          : undefined;
+        const held = current?.pitch === saved.pitch ? current : undefined;
+        if (held) {
+          s.audio.bgm = {
+            ...saved,
+            positionTicks: held.positionTicks,
+            ...(held.paused ? { paused: true as const } : {}),
+            ...(held.fade ? { fade: { ...held.fade } } : {}),
+          };
+        } else if (current) {
+          // Same current name with a new pitch restarts at zero, but remains
+          // the same track for replayBgm and gets no replay fade.
+          s.audio.bgm = { ...saved, positionTicks: 0 };
+        } else {
+          s.audio.bgm = {
+            ...saved,
+            fade: {
+              totalTicks: ME_REPLAY_FADE_TICKS,
+              leftTicks: ME_REPLAY_FADE_TICKS,
+              direction: "in",
+            },
+          };
+        }
       }
       break;
   }
@@ -5436,10 +5455,11 @@ function characterNameInFiber(
 
 function rpgMakerTextActors(s: InterpState, w: World): readonly RpgMakerTextActor[] {
   const configured = w.rpgMakerText?.actors ?? [];
+  const leaderDatabaseId = w.rpgMakerText?.partyActorIds[0];
   return configured.map((actor) => {
     const variable = `actor${String(actor.databaseId).padStart(3, "0")}-name`;
     const renamed = s.sw.variables[variable];
-    const name = actor.databaseId === 1
+    const name = actor.databaseId === leaderDatabaseId
       ? s.sw.playerName ?? actor.name
       : typeof renamed === "string" ? renamed : actor.name;
     return name === actor.name ? actor : { databaseId: actor.databaseId, name };

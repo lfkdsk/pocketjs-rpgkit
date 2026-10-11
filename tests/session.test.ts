@@ -39,6 +39,21 @@ function project(
   };
 }
 
+function actorProject(
+  maps: MapDef[],
+  start?: { map: string; x: number; y: number; dir: "up" | "down" | "left" | "right" },
+): Project {
+  return {
+    ...project(maps, start),
+    playerName: "Leader Two",
+    system: { rpgMakerText: { party: [2, 1], currencyUnit: "G" } },
+    actors: [
+      { id: "actor001", databaseId: 1, name: "Actor One", classId: "class001" },
+      { id: "actor002", databaseId: 2, name: "Leader Two", classId: "class002" },
+    ],
+  };
+}
+
 function map(id: string, w: number, h: number, events: GameEvent[]): MapDef {
   return {
     id,
@@ -257,6 +272,68 @@ describe("P1④ session — command move routes", () => {
 });
 
 describe("immutable session page cache", () => {
+  test("actor clauses select pages through the session and track the starting leader", () => {
+    const leader = ge("leader", 5, 5, [
+      { trigger: "action", commands: [] },
+      { trigger: "action", commands: [], condition: {
+        all: [{ kind: "actor", actor: "actor002", test: "name", value: "Leader Two" }],
+      } },
+    ]);
+    const companion = ge("companion", 6, 5, [
+      { trigger: "action", commands: [] },
+      { trigger: "action", commands: [], condition: {
+        all: [{ kind: "actor", actor: "actor001", test: "name", value: "Actor One" }],
+      } },
+    ]);
+    const p = actorProject([map("a", 8, 8, [leader, companion])]);
+    const sess = createSession(p, 60, { immutableState: true });
+    let state = stepSession(sess, startSession(p, sess), { buttons: 0 });
+    expect(state.chars.chars.leader!.pageIndex).toBe(1);
+    expect(state.chars.chars.companion!.pageIndex).toBe(1);
+
+    const sw = {
+      ...state.sw,
+      playerName: "Renamed Leader",
+      variables: { ...state.sw.variables, "actor001-name": "Renamed Companion" },
+    };
+    state = stepSession(sess, { ...state, sw, interp: { ...state.interp, sw } }, { buttons: 0 });
+    expect(state.chars.chars.leader!.pageIndex).toBe(0);
+    expect(state.chars.chars.companion!.pageIndex).toBe(0);
+  });
+
+  test("same-map re-entry invalidates actor-name page templates", () => {
+    const leader = ge("leader", 6, 6, [
+      { trigger: "action", commands: [] },
+      { trigger: "action", commands: [], condition: {
+        all: [{ kind: "actor", actor: "actor002", test: "name", value: "Renamed Leader" }],
+      } },
+    ]);
+    const companion = ge("companion", 7, 6, [
+      { trigger: "action", commands: [] },
+      { trigger: "action", commands: [], condition: {
+        all: [{ kind: "actor", actor: "actor001", test: "name", value: "Renamed Companion" }],
+      } },
+    ]);
+    const transfer = ge("transfer", 2, 1, page("playerTouch", [
+      { op: "transfer", map: "a", x: 6, y: 6, dir: "up" },
+    ]));
+    const p = actorProject([map("a", 8, 8, [leader, companion, transfer])]);
+    const sess = createSession(p, 60, { immutableState: true });
+    let state = stepSession(sess, startSession(p, sess), { buttons: 0 });
+    expect(state.chars.chars.leader!.pageIndex).toBe(0);
+    expect(state.chars.chars.companion!.pageIndex).toBe(0);
+    state = run(sess, state, 8, { buttons: 0x0010 });
+    expect(state.interp.frame).toBe(0);
+    const sw = {
+      ...state.sw,
+      playerName: "Renamed Leader",
+      variables: { ...state.sw.variables, "actor001-name": "Renamed Companion" },
+    };
+    state = stepSession(sess, { ...state, sw, interp: { ...state.interp, sw } }, { buttons: 0 });
+    expect(state.chars.chars.leader!.pageIndex).toBe(1);
+    expect(state.chars.chars.companion!.pageIndex).toBe(1);
+  });
+
   for (const scenario of [
     {
       name: "appearance",
@@ -310,6 +387,39 @@ describe("immutable session page cache", () => {
     expect(state.chars.chars.gate!.pageIndex).toBe(0);
     state = stepSession(sess, scenario.update(state), { buttons: 0 });
     expect(state.chars.chars.gate!.pageIndex).toBe(1);
+  });
+
+  test("starting a BGM fade-out invalidates a bgmPlaying page", () => {
+    const gate = ge("gate", 6, 6, [
+      { trigger: "action", commands: [] },
+      { trigger: "action", commands: [], condition: {
+        all: [{ kind: "bgmPlaying", id: "theme" }],
+      } },
+    ]);
+    const p = project([map("a", 8, 8, [gate])]);
+    const sess = createSession(p, 60, { immutableState: true });
+    let state = startSession(p, sess);
+    state = {
+      ...state,
+      interp: {
+        ...state.interp,
+        audio: { bgm: { id: "theme", volume: 100, pitch: 100, positionTicks: 0 } },
+      },
+    };
+    state = stepSession(sess, state, { buttons: 0 });
+    expect(state.chars.chars.gate!.pageIndex).toBe(1);
+    state = {
+      ...state,
+      interp: {
+        ...state.interp,
+        audio: { bgm: {
+          ...state.interp.audio!.bgm!,
+          fade: { totalTicks: 60, leftTicks: 60 },
+        } },
+      },
+    };
+    state = stepSession(sess, state, { buttons: 0 });
+    expect(state.chars.chars.gate!.pageIndex).toBe(0);
   });
 
   test("an extension condition cache key ignores unrelated extension churn", () => {

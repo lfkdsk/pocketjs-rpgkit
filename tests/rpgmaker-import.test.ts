@@ -138,7 +138,7 @@ describe("rpgmaker-import: output", () => {
       actors: rm.actors.map((entry) => entry?.id === 1
         ? {
             ...entry,
-            equips: [1, 2, 1, 0, 0],
+            equips: [1, 2, 0, 1, 0],
             traits: [...entry.traits, { code: 55, dataId: 1, value: 0 }],
           }
         : entry),
@@ -153,7 +153,7 @@ describe("rpgmaker-import: output", () => {
       // from the equipped staff's TRAIT_SKILL_ADD.
       skills: ["skill001", "skill003"],
       // TRAIT_SLOT_TYPE dual wield makes the second equip a weapon. The
-      // third equip keeps its ordinary armor slot.
+      // fourth equip keeps its ordinary body-armor slot.
       weapons: ["weapon001", "weapon002"],
       armors: ["armor001"],
     });
@@ -198,7 +198,10 @@ describe("rpgmaker-import: output", () => {
       { kind: "actor", actor: "actor001", test: "armor", value: "armor001" },
       { kind: "actor", actor: "actor001", test: "state", value: "state001" },
     ]);
-    expect(imported.cov.list("condition").find((row) => row.key === "actor")?.counts.Native).toBe(6);
+    expect(imported.cov.list("condition").find((row) => row.key === "actor")?.counts).toMatchObject({
+      Native: 1,
+      Degraded: 5,
+    });
   });
 
   test("referenced Ogg media becomes deterministic QOA and supplies exact ME duration", () => {

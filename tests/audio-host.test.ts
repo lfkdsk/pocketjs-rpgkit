@@ -201,7 +201,25 @@ describe("opt-in audio host", () => {
     driver.sync(frame(1, {
       bgm: { id: "tone", volume: 100, pitch: 100, pan: 50, positionTicks: 0 },
     }));
-    expect(ops.writes[0]!.samples.slice(0, 4)).toEqual([707, 1000, -1414, -2000]);
+    expect(ops.writes[0]!.samples.slice(0, 4)).toEqual([383, 924, -765, -1848]);
+
+    const stereoSource = wav([1000, 2000, -3000, 4000], 11_025, 2);
+    for (const [pan, expected] of [
+      [-100, [3000, 0, 1000, 0]],
+      [100, [0, 3000, 0, 1000]],
+    ] as const) {
+      const stereoOps = new MockAudioOps();
+      const stereoDriver = new AudioDriver(
+        stereoOps,
+        { stereo: "audio:wav.stereo" },
+        () => stereoSource,
+      );
+      stereoDriver.sync(frame(1, {
+        bgm: { id: "stereo", volume: 100, pitch: 100, pan, positionTicks: 0 },
+      }));
+      expect(stereoOps.created[0]?.channels).toBe(2);
+      expect(stereoOps.writes[0]!.samples.slice(0, 4), `stereo pan ${pan}`).toEqual([...expected]);
+    }
   });
 
   test("keeps BGM/BGS/ME ahead of deterministic oldest-SE eviction", () => {

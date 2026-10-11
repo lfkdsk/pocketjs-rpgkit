@@ -16,7 +16,7 @@ import { createSession, startSession, stepSession } from "../src/engine/session.
 import type { Command, GameEvent, MapDef, Project } from "../src/engine/types.ts";
 
 const RAW = String.raw`\C[2]\N[1]` + "😀" + String.raw`/\N[2]/\P[1]/\P[2]/\V[3]\G\C[0]!`;
-const VISIBLE = "Aster😀/Magi/Magi/Aster/7G!";
+const VISIBLE = "Hero😀/Aster/Aster/Hero/7G!";
 
 function map(commands: Command[]): MapDef {
   const event: GameEvent = {

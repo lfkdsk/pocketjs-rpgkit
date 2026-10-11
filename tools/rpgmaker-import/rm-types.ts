@@ -37,7 +37,7 @@ export interface RmAudio {
 }
 
 /** One RPG Maker trait. Only `code` and `dataId` are needed when deriving
- * an actor's initial dual-wield slots and trait-added skills. */
+ * an actor's initial equipment permissions, slots and trait-added skills. */
 export interface RmTrait {
   code: number;
   dataId: number;
@@ -213,6 +213,10 @@ export interface RmItem {
   itypeId?: number;
   /** Equipment slot type (weapons are 1; armor types start at 2). */
   etypeId?: number;
+  /** Permitted-weapon type checked by trait code 51 (weapons only). */
+  wtypeId?: number;
+  /** Permitted-armor type checked by trait code 52 (armors only). */
+  atypeId?: number;
   traits?: RmTrait[];
   note: string;
 }
@@ -282,6 +286,8 @@ export interface RmSystem {
   gameTitle: string;
   currencyUnit: string;
   partyMembers: number[];
+  /** Index 0 is blank; indices 1..n define the actor's equipment slots. */
+  equipTypes?: string[];
   /** Initial visibility of the party trail and player, respectively. */
   optFollowers?: boolean;
   optTransparent?: boolean;

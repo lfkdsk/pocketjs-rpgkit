@@ -166,6 +166,10 @@ describe("audio reducer state", () => {
     ], "fades");
     expect(state.audio?.bgm?.fade).toEqual({ totalTicks: 60, leftTicks: 60 });
     expect(state.audio?.bgs?.fade).toEqual({ totalTicks: 30, leftTicks: 30 });
+    expect(evalCondition(
+      { kind: "bgmPlaying", id: "field" }, state.sw, "m/source", undefined, undefined,
+      { worldIdle: true, audio: state.audio },
+    )).toBe(false);
 
     const volumes: number[] = [];
     for (let i = 0; i < 29; i++) {
@@ -234,21 +238,34 @@ describe("audio reducer state", () => {
     });
   });
 
-  test("same-id parameters update in place and an explicit ME stop shares the replay fade", () => {
+  test("same-id volume/pan preserve position, pitch restarts, and explicit ME stop fades", () => {
     let state = issue(createInterpState(), { op: "playBgm", id: "route", volume: 70 });
     state = issue(state, { op: "playBgs", id: "rain", volume: 55 }, "bgs");
     state = idleInterp(state, 12);
     const bgmBeforeUpdate = state.audio!.bgm!.positionTicks;
-    state = issue(state, { op: "playBgm", id: "route", volume: 80, pitch: 120, pan: 25 }, "bgm-update");
+    state = issue(state, { op: "playBgm", id: "route", volume: 80, pitch: 100, pan: 25 }, "bgm-update");
     expect(state.audio?.bgm?.positionTicks).toBe(bgmBeforeUpdate + 1);
     const bgmBeforeBgsUpdate = state.audio!.bgm!.positionTicks;
     const bgsBeforeUpdate = state.audio!.bgs!.positionTicks;
-    state = issue(state, { op: "playBgs", id: "rain", volume: 65, pitch: 90, pan: -30 }, "bgs-update");
+    state = issue(state, { op: "playBgs", id: "rain", volume: 65, pitch: 100, pan: -30 }, "bgs-update");
     expect(state.audio?.bgm).toEqual({
-      id: "route", volume: 80, pitch: 120, pan: 25, positionTicks: bgmBeforeBgsUpdate + 1,
+      id: "route", volume: 80, pitch: 100, pan: 25, positionTicks: bgmBeforeBgsUpdate + 1,
     });
     expect(state.audio?.bgs).toEqual({
-      id: "rain", volume: 65, pitch: 90, pan: -30, positionTicks: bgsBeforeUpdate + 1,
+      id: "rain", volume: 65, pitch: 100, pan: -30, positionTicks: bgsBeforeUpdate + 1,
+    });
+
+    const bgsBeforeBgmPitch = state.audio!.bgs!.positionTicks;
+    state = issue(state, { op: "playBgm", id: "route", volume: 80, pitch: 120, pan: 25 }, "bgm-pitch");
+    expect(state.audio?.bgm).toEqual({
+      id: "route", volume: 80, pitch: 120, pan: 25, positionTicks: 0,
+    });
+    expect(state.audio?.bgs?.positionTicks).toBe(bgsBeforeBgmPitch + 1);
+
+    state = issue(state, { op: "playBgs", id: "rain", volume: 65, pitch: 90, pan: -30 }, "bgs-pitch");
+    expect(state.audio?.bgm?.positionTicks).toBe(1);
+    expect(state.audio?.bgs).toEqual({
+      id: "rain", volume: 65, pitch: 90, pan: -30, positionTicks: 0,
     });
 
     state = issue(state, { op: "playMe", id: "sting", duration: 2 }, "me");
@@ -262,6 +279,42 @@ describe("audio reducer state", () => {
       leftTicks: ME_REPLAY_FADE_TICKS,
       direction: "in",
     });
+  });
+
+  test("fadeout clears BGM identity for same-id play, replay, save, and ME stop", () => {
+    let state = issue(createInterpState(), { op: "playBgm", id: "route", volume: 70 });
+    state = idleInterp(state, 8);
+    state = issue(state, { op: "saveBgm" }, "save");
+    const saved = { ...state.audio!.savedBgm! };
+
+    state = issue(state, { op: "fadeoutBgm", duration: 2 }, "fade");
+    state = idleInterp(state, 5);
+    expect(state.audio!.bgm!.positionTicks).toBeGreaterThan(saved.positionTicks);
+    state = issue(state, { op: "replayBgm" }, "replay-after-fade");
+    expect(state.audio?.bgm).toEqual({
+      ...saved,
+      fade: {
+        totalTicks: ME_REPLAY_FADE_TICKS,
+        leftTicks: ME_REPLAY_FADE_TICKS,
+        direction: "in",
+      },
+    });
+
+    state = issue(state, { op: "fadeoutBgm", duration: 2 }, "fade-again");
+    state = issue(state, { op: "playBgm", id: "route", volume: 80 }, "fresh-same-id");
+    expect(state.audio?.bgm).toEqual({ id: "route", volume: 80, pitch: 100, positionTicks: 0 });
+
+    state = issue(state, { op: "fadeoutBgm", duration: 2 }, "fade-before-save");
+    state = issue(state, { op: "saveBgm" }, "save-fading");
+    expect(state.audio?.savedBgm).toBeUndefined();
+
+    state = issue(state, { op: "playBgm", id: "route" }, "bgm-before-me");
+    state = issue(state, { op: "playMe", id: "sting", duration: 2 }, "me-before-fade");
+    state = issue(state, { op: "fadeoutBgm", duration: 1 }, "fade-during-me");
+    expect(state.audio?.bgm).toBeUndefined();
+    expect(state.audio?.me?.id).toBe("sting");
+    state = issue(state, { op: "stopMe" }, "stop-me-after-fade");
+    expect(state.audio).toBeUndefined();
   });
 
   test("playSe and legacy se share the ordered transient cue channel", () => {
@@ -398,17 +451,13 @@ describe("battle audio lifecycle", () => {
     { op: "pauseBgm" },
   ];
 
-  test("battle BGM suspends the complete map mix and restores it atomically", () => {
+  test("battle BGM suspends the surviving map mix and restores it atomically", () => {
     const p = battleProject(fullMapAudio);
     const session = createSession(p, 60, {
       battle: audioBattleRules({ audio: { bgm: { id: "combat", volume: 88, pitch: 105 } } }),
     });
     const entered = sessionStep(session, startSession(p, session), true);
     expect(battleReturnAudio(entered)).toEqual({
-      bgm: {
-        id: "map", volume: 73, pitch: 120, positionTicks: 0, paused: true,
-        fade: { totalTicks: 60, leftTicks: 60 },
-      },
       bgs: {
         id: "rain", volume: 61, pitch: 90, positionTicks: 0,
         fade: { totalTicks: 30, leftTicks: 30 },

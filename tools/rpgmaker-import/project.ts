@@ -57,7 +57,7 @@ import {
 import { rmParallaxSpeed, rmTileSize } from "./load.ts";
 import { passes, RM_FLAG } from "./passage.ts";
 import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
-import type { RmActor, RmPageImage, RmProject, RmTrait, RmVehicle } from "./rm-types.ts";
+import type { RmActor, RmItem, RmPageImage, RmProject, RmTrait, RmVehicle } from "./rm-types.ts";
 import { downscale, drawTile, loadTilesetImages, type TilesetImages } from "./tile-render.ts";
 
 export interface ImportOptions {
@@ -246,14 +246,43 @@ function nonEmpty(s: string | undefined, fallback: string): string {
 }
 
 const TRAIT_SKILL_ADD = 43;
+const TRAIT_EQUIP_WTYPE = 51;
+const TRAIT_EQUIP_ATYPE = 52;
+// Trait 53 locks changing a slot but does not invalidate its initial item.
+const TRAIT_EQUIP_SEAL = 54;
 const TRAIT_SLOT_TYPE = 55;
 const SLOT_DUAL_WIELD = 1;
+
+interface InitialEquip {
+  kind: "weapon" | "armor";
+  id: number;
+  item: RmItem;
+}
 
 function traitDataIds(traits: readonly RmTrait[] | undefined, code: number): number[] {
   return (traits ?? []).flatMap((trait) =>
     trait.code === code && Number.isInteger(trait.dataId) && trait.dataId > 0
       ? [trait.dataId]
       : []);
+}
+
+function actorEquipSlots(rm: RmProject, traits: readonly RmTrait[]): number[] {
+  const slots = Array.from(
+    { length: Math.max(0, (rm.system.equipTypes?.length ?? 0) - 1) },
+    (_, index) => index + 1,
+  );
+  if (slots.length >= 2 && traits.some((trait) =>
+    trait.code === TRAIT_SLOT_TYPE && trait.dataId === SLOT_DUAL_WIELD)) {
+    slots[1] = 1;
+  }
+  return slots;
+}
+
+function initialEquipTraits(baseTraits: readonly RmTrait[], equips: readonly (InitialEquip | null)[]): RmTrait[] {
+  return [
+    ...baseTraits,
+    ...equips.flatMap((equip) => equip?.item.traits ?? []),
+  ];
 }
 
 /** RPG Maker's Game_Actor.setup/initSkills/initEquips projected onto the
@@ -266,20 +295,47 @@ function importActorDef(rm: RmProject, actor: RmActor): ActorDef {
   if (actorClass) out.classId = classId(actorClass.id);
 
   const baseTraits = [...(actor.traits ?? []), ...(actorClass?.traits ?? [])];
-  const dualWield = baseTraits.some((trait) =>
-    trait.code === TRAIT_SLOT_TYPE && trait.dataId === SLOT_DUAL_WIELD);
-  const weaponNumbers: number[] = [];
-  const armorNumbers: number[] = [];
-  const equipTraits: RmTrait[] = [];
-  for (let slot = 0; slot < (actor.equips ?? []).length; slot++) {
-    const id = actor.equips[slot] ?? 0;
-    if (!Number.isInteger(id) || id <= 0) continue;
-    const weaponSlot = slot === 0 || (slot === 1 && dualWield);
-    const entry = weaponSlot ? rm.weapons[id] : rm.armors[id];
-    if (!entry) continue;
-    (weaponSlot ? weaponNumbers : armorNumbers).push(id);
-    equipTraits.push(...(entry.traits ?? []));
+  // Game_Actor.initEquips decides each raw id's database from the slots
+  // before any equipment exists. Equipment traits can change those slots
+  // only when releaseUnequippableItems subsequently validates the objects.
+  const initialSlots = actorEquipSlots(rm, baseTraits);
+  const equips: (InitialEquip | null)[] = initialSlots.map((slotType, slot) => {
+    const id = actor.equips?.[slot] ?? 0;
+    if (!Number.isInteger(id) || id <= 0) return null;
+    const kind = slotType === 1 ? "weapon" : "armor";
+    const item = kind === "weapon" ? rm.weapons[id] : rm.armors[id];
+    return item ? { kind, id, item } : null;
+  });
+
+  // Match releaseUnequippableItems: slots are fixed for one pass, while
+  // canEquip observes earlier removals in that pass. A later pass then sees
+  // slot changes caused by losing a dual-wield trait. Each changing pass
+  // removes at least one object, so the loop is finite.
+  for (;;) {
+    const slots = actorEquipSlots(rm, initialEquipTraits(baseTraits, equips));
+    let changed = false;
+    for (let slot = 0; slot < equips.length; slot++) {
+      const equip = equips[slot];
+      if (!equip) continue;
+      const traits = initialEquipTraits(baseTraits, equips);
+      const permittedWeaponTypes = new Set(traitDataIds(traits, TRAIT_EQUIP_WTYPE));
+      const permittedArmorTypes = new Set(traitDataIds(traits, TRAIT_EQUIP_ATYPE));
+      const sealedEquipTypes = new Set(traitDataIds(traits, TRAIT_EQUIP_SEAL));
+      const permitted = equip.kind === "weapon"
+        ? permittedWeaponTypes.has(equip.item.wtypeId ?? 0)
+        : permittedArmorTypes.has(equip.item.atypeId ?? 0);
+      if (!permitted || sealedEquipTypes.has(equip.item.etypeId ?? 0) || equip.item.etypeId !== slots[slot]) {
+        equips[slot] = null;
+        changed = true;
+      }
+    }
+    if (!changed) break;
   }
+
+  const survivingEquips = equips.flatMap((equip) => equip ? [equip] : []);
+  const weaponNumbers = survivingEquips.filter((equip) => equip.kind === "weapon").map((equip) => equip.id);
+  const armorNumbers = survivingEquips.filter((equip) => equip.kind === "armor").map((equip) => equip.id);
+  const equipTraits = survivingEquips.flatMap((equip) => equip.item.traits ?? []);
   if (weaponNumbers.length > 0) {
     out.weapons = [...new Set(weaponNumbers)].sort((a, b) => a - b).map((id) => itemId("weapon", id));
   }
