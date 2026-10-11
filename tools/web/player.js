@@ -425,6 +425,7 @@ function initAuthUI(config) {
     nameOpen = true;
     nameInput.value = typeof ev.value === "string" ? ev.value : "";
     nameBox.hidden = false;
+    revealPageControls();
     nameInput.focus({ preventScroll: true });
   };
   const hideName = () => {
@@ -442,12 +443,19 @@ function initAuthUI(config) {
   let login = null;
   const refresh = () => setAuthUI(signIn, signOut, login, { label: nameLabel, input: nameInput, submit: nameSubmit }, invite);
   const inviteUrl = (token) => `${location.origin}${location.pathname}${location.search}#invite=${encodeURIComponent(token)}`;
+  // The normal page bar is intentionally hidden during immersive play. A
+  // page-owned text field or share sheet therefore leaves immersive first,
+  // making the control visible instead of opening it behind the game.
+  const revealPageControls = () => {
+    if (document.body.classList.contains("immersive")) document.getElementById("immersive-exit")?.click();
+  };
   const showInvite = (ev) => {
     if (typeof ev.token !== "string" || !ev.token) return;
     const seconds = Number(ev.expiresIn);
     invite.minutes = Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0;
     inviteInput.value = inviteUrl(ev.token);
     inviteBox.hidden = false;
+    revealPageControls();
     refresh();
   };
   const hideInvite = () => {
@@ -1873,6 +1881,7 @@ class Player {
     this.fullscreenToggle.setAttribute("aria-pressed", "true");
     this.fullscreenToggle.textContent = t("exit-fullscreen", "Exit fullscreen");
     this.immersiveExit.hidden = false;
+    this.padToggle.hidden = false;
     this.fit();
     // A history entry lets the device back button exit the CSS fallback.
     try {
@@ -1900,6 +1909,7 @@ class Player {
     this.fullscreenToggle.setAttribute("aria-pressed", "false");
     this.fullscreenToggle.textContent = t("fullscreen", "Fullscreen");
     this.immersiveExit.hidden = true;
+    this.padToggle.hidden = true;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
     }
@@ -1989,9 +1999,10 @@ class Player {
   // ---- sizing -------------------------------------------------------------
 
   /** Position the immersive pad so its clusters straddle the screen's left
-   *  and right edges: the maximised screen is letterboxed on narrow phones,
-   *  and viewport-corner buttons would sit in the black bars instead of over
-   *  the picture. The pad keeps its CSS band everywhere else (normal flow,
+   *  and right edges, vertically centred between the game's top and bottom
+   *  HUD strips. The maximised screen is letterboxed on narrow phones, and
+   *  viewport-corner buttons would sit in the black bars instead of over the
+   *  picture. The pad keeps its CSS band everywhere else (normal flow,
    *  portrait immersive). Called from fit() and the immersive transitions. */
   layoutPad() {
     const pad = document.querySelector(".pad");
@@ -2012,10 +2023,10 @@ class Player {
     const straddle = Math.min(96, leftGap, rightGap);
     pad.style.left = `${Math.max(0, stage.left - surface.left - straddle)}px`;
     pad.style.right = `${Math.max(0, surface.right - stage.right - straddle)}px`;
-    // Rest the pad's bottom edge on the screen's bottom edge so the buttons
-    // overlap the picture instead of the black bar below a letterboxed
-    // screen.
-    pad.style.bottom = `${Math.max(0, surface.bottom - stage.bottom)}px`;
+    // Centre the taller cluster vertically on the stage. This keeps controls
+    // off the status plate and the bottom help/log/errand strips while still
+    // leaving the middle of the playfield unobstructed.
+    pad.style.bottom = `${Math.max(0, surface.bottom - stage.bottom + (stage.height - pad.offsetHeight) / 2)}px`;
   }
 
   /** Height of the on-screen pad when it is displayed, plus a gap. */

@@ -129,6 +129,7 @@ ${parts.join("\n")}
 
 let commands = [];
 let leaked = [];
+let immersiveExits = 0;
 const AUTH = { github: { clientId: "client", worker: "https://auth.invalid" } };
 const useLanguage = (language) => {
   const dictionaries = {
@@ -201,6 +202,8 @@ const snapshot = () => {
     nameHidden: nameBox ? nameBox.hidden : null,
     signInText: signIn ? signIn.textContent : null,
     signOutHidden: signOut ? signOut.hidden : null,
+    immersive: document.body.classList.contains("immersive"),
+    immersiveExits,
     commands: commands.slice(),
     leaked: leaked.slice(),
     stored: storedInvite(),
@@ -213,8 +216,14 @@ window.setup = (withAuth, language = "en") => {
   delete globalThis.__pocketPageLanguageEvent;
   commands = [];
   leaked = [];
+  immersiveExits = 0;
   useLanguage(language);
-  document.body.innerHTML = '<div class="bar"><span class="audio-controls"></span></div>';
+  document.body.className = "";
+  document.body.innerHTML = '<div class="bar"><span class="audio-controls"></span></div><button id="immersive-exit"></button>';
+  document.getElementById("immersive-exit").addEventListener("click", () => {
+    immersiveExits++;
+    document.body.classList.remove("immersive");
+  });
   globalThis.__pocketAuthCommand = (command, value) => {
     commands.push(value === undefined ? [command] : [command, value]);
   };
@@ -258,6 +267,10 @@ window.withRefusingClipboard = async () => {
 };
 window.clickClose = () => {
   document.getElementById("auth-invite-close").click();
+  return snapshot();
+};
+window.enterImmersive = () => {
+  document.body.classList.add("immersive");
   return snapshot();
 };
 window.pressKey = (key) => {
@@ -329,6 +342,8 @@ interface Snapshot {
   nameHidden: boolean | null;
   signInText: string | null;
   signOutHidden: boolean | null;
+  immersive: boolean;
+  immersiveExits: number;
   commands: string[][];
   leaked: string[];
   stored: string | null;
@@ -460,6 +475,16 @@ describe.skipIf(!existsSync(CHROME))("web page invite-link box", () => {
     const bogus = await gameEvent({ type: "invite", token: "" });
     expect(bogus.value).toBe(`${origin}/#invite=${TOKEN}`);
     expect(bogus.hidden).toBe(false);
+  }, 20_000);
+
+  test("an invite leaves immersive play before exposing the page share controls", async () => {
+    await setup(true);
+    const immersed = await evaluate<Snapshot>("window.enterImmersive()");
+    expect(immersed.immersive).toBe(true);
+    const shown = await gameEvent(INVITE);
+    expect(shown.hidden).toBe(false);
+    expect(shown.immersive).toBe(false);
+    expect(shown.immersiveExits).toBe(1);
   }, 20_000);
 
   test("Copy puts the URL on the real clipboard and reads Copied for a moment", async () => {

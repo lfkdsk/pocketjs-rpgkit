@@ -110,6 +110,7 @@ ${setAuthUI}
 
 let commands = [];
 let leaked = [];
+let immersiveExits = 0;
 const AUTH = { github: { clientId: "client", worker: "https://auth.invalid" } };
 const useLanguage = (language) => {
   const dictionaries = {
@@ -166,6 +167,8 @@ const snapshot = () => {
     errorHidden: error ? error.hidden : null,
     signInText: signIn ? signIn.textContent : null,
     signOutHidden: signOut ? signOut.hidden : null,
+    immersive: document.body.classList.contains("immersive"),
+    immersiveExits,
     commands: commands.slice(),
     leaked: leaked.slice(),
     barChildren: Array.from(document.querySelector(".bar").children).map((node) => node.id || node.className),
@@ -177,8 +180,14 @@ window.setup = (withAuth, language = "en") => {
   delete globalThis.__pocketPageLanguageEvent;
   commands = [];
   leaked = [];
+  immersiveExits = 0;
   useLanguage(language);
-  document.body.innerHTML = '<div class="bar"><span class="audio-controls"></span></div>';
+  document.body.className = "";
+  document.body.innerHTML = '<div class="bar"><span class="audio-controls"></span></div><button id="immersive-exit"></button>';
+  document.getElementById("immersive-exit").addEventListener("click", () => {
+    immersiveExits++;
+    document.body.classList.remove("immersive");
+  });
   globalThis.__pocketAuthCommand = (command, value) => {
     commands.push(value === undefined ? [command] : [command, value]);
   };
@@ -213,6 +222,10 @@ window.clickCreate = () => {
   document.getElementById("auth-name-submit").click();
   return snapshot();
 };
+window.enterImmersive = () => {
+  document.body.classList.add("immersive");
+  return snapshot();
+};
 window.switchLanguage = (language) => {
   useLanguage(language);
   globalThis.__pocketPageLanguageEvent?.(language);
@@ -240,6 +253,8 @@ interface Snapshot {
   errorHidden: boolean | null;
   signInText: string | null;
   signOutHidden: boolean | null;
+  immersive: boolean;
+  immersiveExits: number;
   commands: string[][];
   leaked: string[];
   barChildren: string[];
@@ -330,6 +345,17 @@ describe.skipIf(!existsSync(CHROME))("web page character-name box", () => {
     expect(again.value).toBe("旅人甲");
     expect(again.maxLength).toBe("8");
     expect(again.hidden).toBe(false);
+  }, 20_000);
+
+  test("nameInput leaves immersive play before exposing the page text box", async () => {
+    await setup(true);
+    const immersed = await evaluate<Snapshot>("window.enterImmersive()");
+    expect(immersed.immersive).toBe(true);
+    const shown = await gameEvent(OPEN);
+    expect(shown.hidden).toBe(false);
+    expect(shown.focused).toBe(true);
+    expect(shown.immersive).toBe(false);
+    expect(shown.immersiveExits).toBe(1);
   }, 20_000);
 
   test("a real Enter after real inserted text submits the trimmed Chinese name; Create submits too; empty submits nothing", async () => {

@@ -640,7 +640,7 @@ body.embedded .stage { box-shadow: none; }
   max-width: 220px;
 }
 .pad .actions button { border-radius: 24px; padding: 0 12px; }
-.pad .pad-select, .pad .pad-start { font-size: 12px; height: 36px; }
+.pad .pad-select, .pad .pad-start { font-size: 12px; height: 44px; }
 
 /* ---- immersive (fullscreen play) ----------------------------------------
    body.immersive is added by tools/web/player.js when the Fullscreen button
@@ -704,11 +704,15 @@ body.immersive .pad {
 
 /* Landscape immersive: the pad floats OVER the maximised screen. The
    container receives no touch (only the buttons do), so taps on the game
-   picture between the buttons reach the game. Buttons rest at a light
-   translucent opacity and turn solid while held; Start/Select shrink to a
-   centered pair on the bottom edge. Portrait immersive is untouched. */
+   picture between the buttons reach the game. The two clusters are centred
+   vertically at the screen edges, clear of both the top status plate and the
+   bottom HUD strips. Buttons rest at a light translucent opacity and turn
+   solid while held. Portrait immersive is untouched. */
 @media (orientation: landscape) {
-  body.immersive .pad { pointer-events: none; }
+  body.immersive .pad { align-items: center; pointer-events: none; }
+  /* Three 48px columns keep the action cluster against the right edge;
+     four columns would intrude into the middle of an 844px phone screen. */
+  body.immersive .pad .actions { max-width: 164px; }
   body.immersive .pad button {
     pointer-events: auto;
     opacity: 0.38;
@@ -723,14 +727,6 @@ body.immersive .pad {
     color: var(--accent-ink);
     text-shadow: none;
   }
-  body.immersive .pad .pad-select,
-  body.immersive .pad .pad-start {
-    position: fixed;
-    top: calc(8px + env(safe-area-inset-top));
-    bottom: auto;
-  }
-  body.immersive .pad .pad-select { left: calc(8px + env(safe-area-inset-left)); }
-  body.immersive .pad .pad-start { left: calc(66px + env(safe-area-inset-left)); }
   body.immersive .pad-toggle { display: block; }
   /* Hidden: the pad is gone and the toggle shrinks to a small translucent
      "show" button in the corner. */
@@ -808,6 +804,25 @@ body.immersive .pad {
 }
 @media (orientation: portrait) {
   body.immersive .rotate-hint:not([hidden]) { display: flex; }
+}
+
+/* Touch targets in the page chrome follow the 44 CSS-pixel mobile floor.
+   This covers auth/name/invite controls and the always-visible immersive
+   escape hatch; the game pad already uses 48px controls. */
+@media (hover: none) and (pointer: coarse) {
+  .bar { align-items: center; gap: 8px 12px; }
+  .bar-button,
+  .auth-name input,
+  .auth-invite input,
+  .audio-controls button,
+  .lang-switch .lang-button,
+  .overlay button,
+  .immersive-tools > button,
+  .rotate-hint button {
+    min-height: 44px;
+  }
+  .auth-name,
+  .auth-invite { align-items: center; }
 }
 
 /* ---- player page language switch ----------------------------------------
