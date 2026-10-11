@@ -57,6 +57,9 @@ declare global {
   // Optional follower/vehicle render fixture; omitted by every existing run.
   // eslint-disable-next-line no-var
   var __r2Travel: boolean | undefined;
+  // Isolated coloured-choice fixture used by the RPG Maker escape visual.
+  // eslint-disable-next-line no-var
+  var __r2ChoiceColour: boolean | undefined;
   // Test-only opt-in for the GameView world-overlay presentation slot.
   // eslint-disable-next-line no-var
   var __r2WorldOverlay: boolean | undefined;
@@ -89,6 +92,7 @@ const rewindFixture = globalThis.__r2Rewind === true;
 // battle closes onto a bigger map.
 const battleGrowFixture = globalThis.__r2Kv2BattleGrow === true;
 const travelFixture = globalThis.__r2Travel === true;
+const choiceColourFixture = globalThis.__r2ChoiceColour === true;
 const worldOverlayFixture = globalThis.__r2WorldOverlay === true;
 const syncTick = globalThis.__r2UiSyncTick;
 globalThis.__r2UiSyncTick = undefined;
@@ -106,9 +110,39 @@ globalThis.__r2CapRepro = undefined;
 globalThis.__r2Rewind = undefined;
 globalThis.__r2Kv2BattleGrow = undefined;
 globalThis.__r2Travel = undefined;
+globalThis.__r2ChoiceColour = undefined;
 globalThis.__r2WorldOverlay = undefined;
 
-const project: Project = kv1Fixture
+const project: Project = choiceColourFixture
+  ? {
+      ...R2_UI_PROJECT,
+      system: {
+        ...R2_UI_PROJECT.system,
+        rpgMakerText: { party: [], currencyUnit: "G" },
+      },
+      maps: R2_UI_PROJECT.maps.map((map, index) => index === 0
+        ? {
+            ...map,
+            events: [{
+              id: "choice-colour-visual",
+              x: 0,
+              y: 0,
+              pages: [{
+                trigger: "autorun" as const,
+                commands: [{
+                  op: "choices" as const,
+                  prompt: "\\C[1]Choose a \\C[6]lantern\\C[0] glow",
+                  options: [
+                    { text: "\\C[6]Golden lantern\\C[0] — selected", commands: [] },
+                    { text: "\\C[1]Blue lantern\\C[0] — waiting", commands: [] },
+                  ],
+                }],
+              }],
+            }],
+          }
+        : map),
+    }
+  : kv1Fixture
   ? KV1_UI_PROJECT
   : travelFixture
   ? {

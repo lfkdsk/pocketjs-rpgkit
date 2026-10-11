@@ -76,6 +76,24 @@ function exactColourBounds(
   return { count, minX, minY, maxX, maxY };
 }
 
+function airshipShadowInk(
+  rgba: Uint8Array,
+  width: number,
+  originX: number,
+  originY: number,
+): number {
+  let count = 0;
+  for (let y = 0; y < 6; y++) {
+    const left = y < 2 || y >= 4 ? 2 : 0;
+    const right = y < 2 || y >= 4 ? 10 : 12;
+    for (let x = left; x < right; x++) {
+      const at = ((originY + y) * width + originX + x) * 4;
+      if (rgba[at] === 0 && rgba[at + 1] === 0 && rgba[at + 2] === 0 && rgba[at + 3] === 255) count++;
+    }
+  }
+  return count;
+}
+
 async function golden(name: string, rgba: Uint8Array, width: number, height: number): Promise<void> {
   const url = new URL(`./goldens/${name}.png`, import.meta.url);
   if (process.env.TRAVEL_UPDATE_GOLDENS) await Bun.write(url, encodePNG(rgba, width, height));
@@ -155,6 +173,13 @@ simDescribe("follower and vehicle rendered goldens", () => {
           expect([state.move.tx, state.move.ty]).toEqual([14, 12]);
           expect(Math.abs((airship.minX + airship.maxX) / 2 - logicalWidth / 2)).toBeLessThanOrEqual(16);
           expect(airship.maxY, "the cruising balloon is visibly above the parked boat").toBeLessThan(boat.minY);
+          const camera = world.probes().camera;
+          const shadowX = Math.round(state.move.px - camera.x + 2);
+          const shadowY = Math.round(state.move.py - camera.y + 11);
+          expect(
+            airshipShadowInk(frame, viewport.width, shadowX, shadowY),
+            "all 56 pixels of the ground-fixed three-strip airship shadow are opaque black",
+          ).toBe(56);
         }
 
         await golden(`travel-${scenario}.${viewport.width}x${viewport.height}`, frame, viewport.width, viewport.height);

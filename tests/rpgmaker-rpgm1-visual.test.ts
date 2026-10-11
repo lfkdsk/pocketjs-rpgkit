@@ -76,6 +76,7 @@ simDescribe("RPG Maker coloured message rendering", () => {
         { start: 50, end: 51, colour: "#FFFFFF" },
       ]);
       const frame = world.render().slice();
+      await golden(`rpgmaker-text-colour.${viewport.width}x${viewport.height}`, frame, viewport.width, viewport.height);
       const yellow = colourPixels(frame, viewport.width, viewport.height,
         (r, g, b) => r > 205 && g > 195 && b < 190 && r - b > 35);
       const ink = colourPixels(frame, viewport.width, viewport.height,
