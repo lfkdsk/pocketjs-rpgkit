@@ -529,8 +529,11 @@ simDescribe("sunstone — render budget", () => {
     // bounded-rendering modules), same-phase followers, parked-vehicle bodies,
     // the airship shadow/gather gate and sparse vehicle-BGM save state add a
     // further 22,002 B, measuring 1,092,590 B in this non-travel fixture.
+    // Scrolling-text presentation plus actor-condition and sparse
+    // audio/pan/ME runtime support add 19,597 B of shared code, measuring
+    // 1,112,187 B; Sunstone still declares neither scrolling text nor actors.
     // Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_093_000);
+    expect(jsBytes).toBeLessThan(1_113_000);
   });
 });
 
