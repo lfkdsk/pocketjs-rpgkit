@@ -42,6 +42,7 @@ import {
 import type { Command, Dir, GameEvent, Project } from "../../../../src/engine/types.ts";
 import { makeFinding, type CheckReport, type Finding, type FindingLocation } from "../finding.ts";
 import { anyProjectCommand, collectProjectOp } from "../walk.ts";
+import { BTN_CIRCLE } from "./reach-witness.ts";
 import { CHECK_HZ, checkConditionContext, checkSessionOptions, pageTouchMode } from "./sim.ts";
 
 // Dir4/Facing order: 0 down, 1 left, 2 up, 3 right.
@@ -78,7 +79,8 @@ const BUMP_FRAMES = 12;
 /** Ops that change page-condition inputs (switches/variables/items/gold/
  *  selfSwitches/tileProperties/appearances) or restructure the world
  *  (transfer/place/erase), plus extension commands whose effects are
- *  unknown. A live parallel running ONLY benign ops (wait/se/text/...)
+ *  unknown. A live parallel running ONLY benign ops (wait/se/text/
+ *  scrollText/...)
  *  cannot change which pages are active, so it does not reset the idle
  *  streak — the example projects run ambience parallels (wait+se) that
  *  loop forever and would otherwise make "complete" unreachable. */
@@ -564,6 +566,11 @@ export function checkExplore(project: Project, options: ExploreOptions = {}): Ex
     if (modal) {
       if (modal.kind === "text") {
         confirmEdge = frame % 2 === 0;
+      } else if (modal.kind === "scrollText") {
+        // Scrolling text closes on its own. Hold Circle so commands that
+        // permit fast-forward finish promptly; noFastForward commands
+        // deliberately ignore the held button and advance at authored speed.
+        buttons = BTN_CIRCLE;
       } else if (modal.kind === "choices") {
         // Option 0 is the cursor default; confirm picks it. An empty,
         // non-cancellable choices box is a softlock the lint check flags.

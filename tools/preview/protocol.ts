@@ -161,9 +161,9 @@ export interface PreviewStartResult {
 }
 
 export interface PreviewMessage {
-  kind: "text" | "choices" | "shop";
-  /** Whole dialogue text (lines joined with "\n"), the choice prompt and
-   *  options one per line, or "" for a shop. */
+  kind: "text" | "scrollText" | "choices" | "shop";
+  /** Whole dialogue or scrolling text (lines joined with "\n"), the choice
+   *  prompt and options one per line, or "" for a shop. */
   text: string;
 }
 
@@ -184,7 +184,7 @@ export interface PreviewStateResult {
   running?: number;
   /** Key ("map/event") of the event page running in the main slot. */
   event?: string | null;
-  /** The open message box: dialogue text, a choice prompt, or a shop. */
+  /** The open message: dialogue, scrolling text, a choice prompt, or a shop. */
   message?: PreviewMessage | null;
   switches: Record<string, boolean>;
   variables: Record<string, number | string>;

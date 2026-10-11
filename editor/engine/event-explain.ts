@@ -219,6 +219,7 @@ export function classifyCommand(command: Command): CommandWriteClass {
     // Everything else writes no digest channel (presentation, audio, camera,
     // pictures, control flow, input locks, placement, …).
     case "text":
+    case "scrollText":
     case "choices":
     case "if":
     case "moveRoute":

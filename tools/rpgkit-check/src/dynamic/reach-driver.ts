@@ -14,9 +14,10 @@
 //      non-blocking eventTouch: the
 //      entry already fired it);
 //   3. ride out until the world is idle: text boxes confirm themselves,
-//      shops are dismissed, battles step under the registered rules, and a
-//      choices box BRANCHES — every option (plus cancel, when allowed) is
-//      its own leaf with its own tape suffix.
+//      scrolling text is fast-forwarded when its command permits, shops are
+//      dismissed, battles step under the registered rules, and a choices box
+//      BRANCHES — every option (plus cancel, when allowed) is its own leaf
+//      with its own tape suffix.
 //
 // Every leaf is a real engine state the recorded tape really reaches. The
 // search (reach.ts) turns leaves into graph nodes; this module never decides
@@ -635,6 +636,15 @@ function rideOut(run: MacroRun, depth: number): void {
     const modal = s.interp.modal;
     if (modal?.kind === "text") {
       const states = step(run, { hold: 0, confirm: true });
+      if (states === "budget") return;
+      for (const { state: st, mark, blockEnd } of states) observe(run, st, false, mark, blockEnd);
+      if (run.parked) return;
+      continue;
+    }
+    if (modal?.kind === "scrollText") {
+      // This modal is time-driven rather than confirm-to-close. Circle is a
+      // held fast-forward control; noFastForward commands ignore it.
+      const states = step(run, { hold: BTN_CIRCLE });
       if (states === "budget") return;
       for (const { state: st, mark, blockEnd } of states) observe(run, st, false, mark, blockEnd);
       if (run.parked) return;

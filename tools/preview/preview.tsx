@@ -127,6 +127,7 @@ function messageResult(state: SessionState): PreviewMessage | null {
   const modal = state.interp.modal;
   if (!modal) return null;
   if (modal.kind === "text") return { kind: "text", text: modal.lines.join("\n") };
+  if (modal.kind === "scrollText") return { kind: "scrollText", text: modal.lines.join("\n") };
   if (modal.kind === "choices") return { kind: "choices", text: [modal.prompt, ...modal.options].join("\n") };
   return { kind: "shop", text: "" };
 }

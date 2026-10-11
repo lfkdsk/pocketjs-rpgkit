@@ -58,6 +58,7 @@ const CATEGORY_OF: Readonly<Record<string, CommandCategory>> = {
   label: "flow",
   jumpLabel: "flow",
   text: "message",
+  scrollText: "message",
   choices: "message",
   balloon: "message",
   inputNumber: "message",
@@ -125,6 +126,7 @@ export function commandCategory(op: unknown): CommandCategory {
 
 const OP_LABELS: Readonly<Record<string, string>> = {
   if: "If",
+  scrollText: "Scrolling text",
   se: "Sound effect",
   playBgm: "Play BGM",
   fadeoutBgm: "Fade out BGM",

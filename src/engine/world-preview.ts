@@ -255,6 +255,7 @@ function collectWrites(
       // Presentation, audio, flow and per-visit visual state: none of these
       // changes page selection, a character's cell/facing, or its sprite.
       case "text":
+      case "scrollText":
       case "changeName":
       case "mapNameDisplay":
       case "menuAccess":

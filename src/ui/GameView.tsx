@@ -101,6 +101,8 @@ import {
 } from "../engine/screen.ts";
 import { DialogBox } from "./DialogBox.tsx";
 import { createDialogPaginator } from "./dialog-pages.ts";
+import { ScrollTextLayer } from "./ScrollTextLayer.tsx";
+import { createScrollTextLayout } from "./scroll-text.ts";
 import { slotMeasure } from "./text-measure.ts";
 import { wrapLabel } from "./list-window.ts";
 import { formatUiText, KIT_UI_TEXT, mergeUiText, withUiText, type UiTextOverrides } from "../engine/ui-text.ts";
@@ -1309,6 +1311,10 @@ export function GameView(props: GameViewProps) {
     { viewportWidth: SCREEN_W, faces: props.faces, faceWidth: props.faceWidth, rim: !!resolveUiTheme(props.theme).rim },
     slotMeasure(),
   );
+  // Scrolling text follows the fixed 480x272 RPG Maker design surface. Its
+  // measured height becomes reducer state, so a desktop resize cannot alter
+  // the command's duration or replay timeline.
+  const layoutScrollText = createScrollTextLayout(slotMeasure());
   // The controller folds the published 60 Hz tape on its source timeline
   // and maps each host frame onto that timeline. The rewind record is
   // picked field-by-field (never spread) so a hand-built demo config cannot
@@ -1325,6 +1331,7 @@ export function GameView(props: GameViewProps) {
         scene: props.scene,
         immutableState: props.immutableState,
         paginateText,
+        layoutScrollText,
         textTokens: props.textTokens,
         worldTraversal: props.attractTape !== undefined
           ? props.attractTapeWorldTraversal ?? "legacy-transfer"
@@ -1345,6 +1352,7 @@ export function GameView(props: GameViewProps) {
         scene: props.scene,
         immutableState: props.immutableState,
         paginateText,
+        layoutScrollText,
         textTokens: props.textTokens,
         handoff: worldRenderer?.handoff,
         handoffCapability: props.handoffCapability,
@@ -2399,6 +2407,10 @@ export function GameView(props: GameViewProps) {
           uiText={uiTextOverrides()}
         />
       </ProfileMount>
+      <ScrollTextLayer
+        modal={() => sceneActive() ? null : modal()}
+        theme={props.theme}
+      />
       <ScreenFadeLayer screen={presentedScreen} />
 
       {/* The battle scene mounts on first use and stays mounted (hidden),

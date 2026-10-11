@@ -31,6 +31,7 @@ import { walkCommands } from "../walk.ts";
 import { NAME_INPUT_SCENE_ID } from "../../../../src/engine/name-input.ts";
 import { NUMBER_INPUT_SCENE_ID } from "../../../../src/engine/number-input.ts";
 import { SELECT_ITEM_SCENE_ID } from "../../../../src/engine/select-item.ts";
+import { BTN_CIRCLE } from "./reach-witness.ts";
 
 /** Built-in scene ids the engine compiles commands into (inputNumber,
  *  selectItem) or that a game may scene into explicitly (nameInput). They
@@ -240,8 +241,9 @@ export function worldFingerprint(state: SessionState): string {
 }
 
 /** Drive one frame, auto-advancing any open text/choices modal (confirm on
- *  alternate frames, so a modal that opens this frame is observable). When
- *  `buttons` is supplied the d-pad is held unless a modal is open. */
+ *  alternate frames, so a modal that opens this frame is observable) and
+ *  holding Circle to fast-forward scrolling text when the command permits.
+ *  When `buttons` is supplied the d-pad is held unless a modal is open. */
 export function stepAuto(
   session: Session,
   state: SessionState,
@@ -249,9 +251,10 @@ export function stepAuto(
   buttons = 0,
 ): SessionState {
   const modal = state.interp.modal;
+  const scrolling = modal?.kind === "scrollText";
   return stepSession(session, state, {
-    buttons: modal ? 0 : buttons,
-    confirmEdge: modal !== null && frame % 2 === 0,
+    buttons: scrolling ? BTN_CIRCLE : modal ? 0 : buttons,
+    confirmEdge: modal !== null && !scrolling && frame % 2 === 0,
     cancelEdge: false,
     upEdge: false,
     downEdge: false,

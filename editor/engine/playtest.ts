@@ -206,8 +206,8 @@ interface CommandScan {
   battles?: Set<string>;
   backdrops?: Set<string>;
   scenes?: Set<string>;
-  /** project.system.textVariables: `{v:<id>}` in text lines, choices
-   *  prompts/options and extChoice prompts names a variable. */
+  /** project.system.textVariables: `{v:<id>}` in text and scrolling-text
+   *  lines, choices prompts/options and extChoice prompts names a variable. */
   textVariables?: boolean;
 }
 
@@ -226,7 +226,7 @@ function addTextVariables(value: string, scan: CommandScan): void {
 
 function addCommands(commands: readonly Command[], scan: CommandScan): void {
   for (const command of commands) {
-    if (command.op === "text") {
+    if (command.op === "text" || command.op === "scrollText") {
       for (const line of command.lines) addTextVariables(line, scan);
     } else if (command.op === "switch") scan.switches.add(command.id);
     else if (command.op === "variable") {

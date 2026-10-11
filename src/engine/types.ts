@@ -425,6 +425,11 @@ export type Command =
    *  them draws the default box: docked to the bottom, framed, words from
    *  the top left. */
   | ({ op: "text"; lines: string[]; cps?: number } & TextBoxLayout)
+  /** RPG Maker Show Scrolling Text. The transparent full-screen layer moves
+   *  the complete block upward by `speed / 2` pixels per 60 Hz reference
+   *  tick. Holding the confirm button triples that speed unless
+   *  `noFastForward` is set. */
+  | { op: "scrollText"; lines: string[]; speed: number; noFastForward?: boolean }
   | {
       op: "choices";
       prompt: string;

@@ -528,10 +528,14 @@ describe("messages", () => {
     expect(r.cmds).toEqual([{ op: "text", lines: ["Ready?", "OK"], position: "top", background: "dim" }]);
   });
 
-  test("Show Scrolling Text becomes message pages", () => {
-    const r = conv([C(105, 0, [2, false]), ...["a", "b", "c", "d", "e"].map((t) => C(405, 0, [t]))]);
-    expect(r.cmds).toEqual([{ op: "text", lines: ["a", "b", "c", "d"] }, { op: "text", lines: ["e"] }]);
-    expect(only(r.cov, 105)).toBe("Degraded");
+  test("Show Scrolling Text preserves rows, speed and fast-forward policy", () => {
+    let r = conv([C(105, 0, [3, false]), ...["a", "", "c", "d", "e"].map((t) => C(405, 0, [t]))]);
+    expect(r.cmds).toEqual([{ op: "scrollText", lines: ["a", "", "c", "d", "e"], speed: 3 }]);
+    expect(only(r.cov, 105)).toBe("Native");
+
+    r = conv([C(105, 0, [8, true]), C(405, 0, ["No skipping"])]);
+    expect(r.cmds).toEqual([{ op: "scrollText", lines: ["No skipping"], speed: 8, noFastForward: true }]);
+    expect(only(r.cov, 105)).toBe("Native");
   });
 });
 

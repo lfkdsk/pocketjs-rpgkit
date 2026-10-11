@@ -291,6 +291,7 @@ describe("event explanation", () => {
     // silently call a state-changing command "no change".
     const examples: Record<Command["op"], { command: Command; expected: CommandWriteClass["kind"] }> = {
       text: { command: { op: "text", lines: [] }, expected: "none" },
+      scrollText: { command: { op: "scrollText", lines: [""], speed: 2 }, expected: "none" },
       choices: { command: { op: "choices", prompt: "", options: [] }, expected: "none" },
       switch: { command: { op: "switch", id: "s", value: true }, expected: "static" },
       variable: { command: { op: "variable", id: "v", set: { op: "set", value: 1 } }, expected: "static" },

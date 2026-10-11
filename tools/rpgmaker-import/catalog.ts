@@ -38,7 +38,7 @@ export const RM_COMMANDS: readonly CommandInfo[] = [
   { code: 404, name: "Choices End", flavor: "MV/MZ", continuation: true },
   { code: 103, name: "Input Number", flavor: "MV/MZ" },
   { code: 104, name: "Select Item", flavor: "MV/MZ" },
-  { code: 105, name: "Show Scrolling Text", flavor: "MV/MZ", needsKit: "a scrolling credits-style text box" },
+  { code: 105, name: "Show Scrolling Text", flavor: "MV/MZ" },
   { code: 405, name: "Show Scrolling Text (line)", flavor: "MV/MZ", continuation: true },
   { code: 108, name: "Comment", flavor: "MV/MZ" },
   { code: 408, name: "Comment (line)", flavor: "MV/MZ", continuation: true },

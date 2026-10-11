@@ -20,7 +20,7 @@ import { MOTION_HZ } from "./motion-clock.ts";
 import { scalarLength } from "./text-break.ts";
 
 const INTEGER_OPS = new Set([
-  "text", "choices", "switch", "variable", "selfSwitch", "if", "jmp", "repeat", "break",
+  "text", "scrollText", "choices", "switch", "variable", "selfSwitch", "if", "jmp", "repeat", "break",
   "label", "jumpLabel",
   "wait", "gold", "item", "se",
   "playBgm", "fadeoutBgm", "stopBgm", "pauseBgm", "resumeBgm",
@@ -624,6 +624,19 @@ function validateProg(prog: unknown, path: string): string | null {
         if (ins.box !== undefined) {
           const e = validateTextBox(ins.box, `${here}.box`);
           if (e) return e;
+        }
+        break;
+      }
+      case "scrollText": {
+        if (!Array.isArray(ins.lines) || ins.lines.length === 0 ||
+            !ins.lines.every((l) => typeof l === "string")) {
+          return fail(`${here}.lines`, "non-empty string array required");
+        }
+        if (!isNonNegInt(ins.speed) || ins.speed < 1) {
+          return fail(`${here}.speed`, "positive integer required");
+        }
+        if (typeof ins.noFastForward !== "boolean") {
+          return fail(`${here}.noFastForward`, "boolean required");
         }
         break;
       }
@@ -1348,7 +1361,7 @@ function validateProg(prog: unknown, path: string): string | null {
 }
 
 const FIBER_MODES = new Set([
-  "run", "text", "choices", "shop", "wait", "animWait", "screenWait", "external",
+  "run", "text", "scrollText", "choices", "shop", "wait", "animWait", "screenWait", "external",
 ]);
 
 /** Keys a frame completion transfer may carry: a PendingTransfer minus the
@@ -1492,11 +1505,13 @@ function validateFiber(
       return fail(`${path}.mode`, "a save cannot park a fiber in external mode unless a saved route resumes it");
     }
     case "text":
+    case "scrollText":
     case "choices":
     case "shop": {
       const ins = top.pc < top.prog.length ? top.prog[top.pc] : undefined;
       const instructionMatches = isRecord(ins) && (
         v.mode === "text" ? ins.op === "text" :
+        v.mode === "scrollText" ? ins.op === "scrollText" :
         v.mode === "choices" ? ins.op === "choices" || ins.op === "extChoice" :
         ins.op === "shop"
       );
@@ -2081,6 +2096,31 @@ function validateModal(v: unknown, path: string, liveKeys: ReadonlySet<string>):
       if (e) return e;
     }
     if (v.box !== undefined) return validateTextBox(v.box, `${path}.box`);
+    return null;
+  }
+  if (v.kind === "scrollText") {
+    if (!Array.isArray(v.lines) || v.lines.length === 0 ||
+        !v.lines.every((line) => typeof line === "string")) {
+      return fail(`${path}.lines`, "non-empty string array required");
+    }
+    if (!isNonNegInt(v.speed) || v.speed < 1) {
+      return fail(`${path}.speed`, "positive integer required");
+    }
+    if (typeof v.noFastForward !== "boolean") {
+      return fail(`${path}.noFastForward`, "boolean required");
+    }
+    if (!isNonNegInt(v.contentHeight) || v.contentHeight < 1 ||
+        !isNonNegInt(v.viewportHeight) || v.viewportHeight < 1) {
+      return fail(`${path}`, "positive integer contentHeight/viewportHeight required");
+    }
+    const end = 2 * ((v.contentHeight as number) + (v.viewportHeight as number));
+    if (!Number.isSafeInteger(end) || !isNonNegInt(v.offset2) || v.offset2 >= end) {
+      return fail(`${path}.offset2`, "half-pixel offset before the completion boundary required");
+    }
+    if (v.colours !== undefined) {
+      const e = validateColourSpans(v.colours, scalarLength(v.lines.join("\n")), `${path}.colours`);
+      if (e) return e;
+    }
     return null;
   }
   if (v.kind === "choices") {

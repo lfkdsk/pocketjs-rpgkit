@@ -290,6 +290,8 @@ describe("messageBlocksPlayer — determinism", () => {
           phase: s.move.phase,
           modal: m && (m.kind === "text"
             ? { kind: m.kind, fiber: m.fiber, revealed: m.revealed, complete: m.complete }
+            : m.kind === "scrollText"
+              ? { kind: m.kind, fiber: m.fiber, offset2: m.offset2 }
             : { kind: m.kind, fiber: m.fiber, index: m.index }),
           intro: s.sw.variables["intro"] ?? 0,
         });

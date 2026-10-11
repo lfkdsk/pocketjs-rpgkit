@@ -546,9 +546,16 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       return [];
     }
     case 105: {
-      const lines = wrap(convertMessage(nd.lines.map((l) => String(l.parameters?.[0] ?? "")), ctx));
-      rec(st, 105, "Degraded", "scrolling text shown as message pages");
-      return lines.length > 0 ? textCommands(lines) : [];
+      const lines = convertMessage(nd.lines.map((l) => String(l.parameters?.[0] ?? "")), ctx);
+      rec(st, 105, "Native");
+      if (lines.length === 0) return [];
+      const command: Extract<Command, { op: "scrollText" }> = {
+        op: "scrollText",
+        lines,
+        speed: Math.max(1, int(p[0], 2)),
+      };
+      if (p[1] === true) command.noFastForward = true;
+      return [command];
     }
     case 108:
       rec(st, 108, "Native");

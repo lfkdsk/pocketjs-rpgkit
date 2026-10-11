@@ -826,6 +826,17 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["op", "lines", "speed"],
+          "properties": {
+            "op": { "const": "scrollText" },
+            "lines": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "speed": { "type": "integer", "minimum": 1, "description": "Upward velocity in half-pixels per 60 Hz reference tick, matching RPG Maker Show Scrolling Text." },
+            "noFastForward": { "type": "boolean", "description": "When true, held confirm does not apply RPG Maker's 3x scrolling multiplier." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["op", "prompt", "options"],
           "properties": {
             "op": { "const": "choices" },

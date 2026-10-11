@@ -695,6 +695,7 @@ export function eventIdLess(a: string, b: string): boolean {
 
 export type Instr =
   | { op: "text"; lines: string[]; cps: number; box?: TextBoxLayout }
+  | { op: "scrollText"; lines: string[]; speed: number; noFastForward: boolean }
   | {
       op: "choices";
       prompt: string;
@@ -1004,6 +1005,14 @@ function compileScoped(
           emit(ins);
           break;
         }
+        case "scrollText":
+          emit({
+            op: "scrollText",
+            lines: c.lines,
+            speed: c.speed,
+            noFastForward: c.noFastForward === true,
+          });
+          break;
         case "choices": {
           const ins: Extract<Instr, { op: "choices" }> = {
             op: "choices",
@@ -1653,6 +1662,9 @@ export interface InterpInput {
   cancelEdge?: boolean;
   upEdge?: boolean;
   downEdge?: boolean;
+  /** Held RPG Maker fast-forward intent for Show Scrolling Text. Unlike a
+   *  confirm edge this never closes a modal; it only changes its velocity. */
+  scrollFastHeld?: boolean;
   /** Player cell this frame and last frame (playerTouch fires on entry). */
   playerCell: Cell;
   prevCell: Cell;
@@ -1741,6 +1753,22 @@ export interface TextModal {
   colours?: readonly RpgMakerTextColourSpan[];
 }
 
+/** Full-screen transparent RPG Maker scrolling text. Distances use integer
+ * half-pixels so odd authored speeds stay exact across save/load, rewind and
+ * every host rate. Layout dimensions are captured when the modal opens and
+ * never follow a later desktop resize. */
+export interface ScrollTextModal {
+  kind: "scrollText";
+  fiber: string;
+  lines: string[];
+  speed: number;
+  noFastForward: boolean;
+  offset2: number;
+  contentHeight: number;
+  viewportHeight: number;
+  colours?: readonly RpgMakerTextColourSpan[];
+}
+
 /** The layout fields of a text command that differ from the default box,
  *  or undefined when it draws the default one (the common case, which then
  *  carries no field at all). */
@@ -1777,6 +1805,42 @@ function openTextModal(
     modal.pageStarts = starts;
     modal.page = 0;
   }
+  return modal;
+}
+
+const DEFAULT_SCROLL_TEXT_VIEWPORT_HEIGHT = 272;
+const DEFAULT_SCROLL_TEXT_ROW_HEIGHT = 15;
+
+function positiveLayoutPixels(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.max(1, Math.round(value))
+    : fallback;
+}
+
+/** Open a transparent full-screen scrolling block. Layout is resolved once
+ * and becomes reducer state: resize, save/load and rewind can never change
+ * the tick on which the block finishes. */
+function openScrollTextModal(
+  w: World,
+  fiber: string,
+  lines: string[],
+  speed: number,
+  noFastForward: boolean,
+  colours?: readonly RpgMakerTextColourSpan[],
+): ScrollTextModal {
+  const fallbackContentHeight = Math.max(1, lines.length) * DEFAULT_SCROLL_TEXT_ROW_HEIGHT;
+  const measured = w.layoutScrollText?.(lines);
+  const modal: ScrollTextModal = {
+    kind: "scrollText",
+    fiber,
+    lines,
+    speed,
+    noFastForward,
+    offset2: 0,
+    contentHeight: positiveLayoutPixels(measured?.contentHeight, fallbackContentHeight),
+    viewportHeight: positiveLayoutPixels(measured?.viewportHeight, DEFAULT_SCROLL_TEXT_VIEWPORT_HEIGHT),
+  };
+  if (colours && colours.length > 0) modal.colours = colours;
   return modal;
 }
 
@@ -1847,7 +1911,7 @@ export interface ShopModal {
   rows: readonly ShopRow[];
 }
 
-export type Modal = TextModal | ChoiceModal | ShopModal;
+export type Modal = TextModal | ScrollTextModal | ChoiceModal | ShopModal;
 
 /** Backpack stack cap a shop purchase refuses to exceed (T2-10; matches the
  *  `item` command's authored count range). */
@@ -1900,6 +1964,18 @@ export function modalChanged(a: Modal | null, b: Modal | null): boolean {
         a.pageStarts.length !== b.pageStarts!.length ||
         a.pageStarts.some((start, i) => start !== b.pageStarts![i])
       ))
+    );
+  }
+  if (a.kind === "scrollText" && b.kind === "scrollText") {
+    return (
+      a.offset2 !== b.offset2 ||
+      a.speed !== b.speed ||
+      a.noFastForward !== b.noFastForward ||
+      a.contentHeight !== b.contentHeight ||
+      a.viewportHeight !== b.viewportHeight ||
+      a.lines.length !== b.lines.length ||
+      a.lines.some((line, i) => line !== b.lines[i]) ||
+      !colourSpansEqual(a.colours, b.colours)
     );
   }
   if (a.kind === "choices" && b.kind === "choices") {
@@ -2103,7 +2179,7 @@ interface Fiber {
    *  against the topmost unit frame's program and its branch programs. The
    *  marker is saved and restored like the rest of the frame. */
   stack: Frame[];
-  mode: "run" | "text" | "choices" | "shop" | "wait" | "animWait" | "screenWait" | "external";
+  mode: "run" | "text" | "scrollText" | "choices" | "shop" | "wait" | "animWait" | "screenWait" | "external";
   /** Frame on which the current wait/text started. */
   since: number;
   erase: boolean;
@@ -2359,6 +2435,8 @@ export interface World {
   onInstruction?: (key: string, pageIndex: number, ins: Instr) => void;
   /** Message pagination (see WorldOptions.paginateText). */
   paginateText?: TextPaginator;
+  /** Fixed design-size layout for a scrolling-text block. */
+  layoutScrollText?: ScrollTextLayout;
   /** Project animation catalog (AnimationDef id -> compiled timing), for
    *  mapAnim commands and the UI's frame selection. */
   anims: ReadonlyMap<string, CompiledAnim>;
@@ -2416,11 +2494,22 @@ export interface WorldOptions {
    *  narrower, so its words take more pages). Absent (headless callers,
    *  boxes that never wrap): every message is one page. */
   paginateText?: TextPaginator;
+  /** Measure a scrolling-text block once when it opens. The returned design
+   *  dimensions are serialized in the modal, so completion never changes
+   *  with a later host resize. */
+  layoutScrollText?: ScrollTextLayout;
 }
 
 /** Code-point offsets into `lines.join("\n")` where each page of a message
  *  starts ([0, ...]), or null when it fits one box. */
 export type TextPaginator = (lines: readonly string[], box?: TextBoxLayout) => readonly number[] | null;
+
+export interface ScrollTextDimensions {
+  contentHeight: number;
+  viewportHeight: number;
+}
+
+export type ScrollTextLayout = (lines: readonly string[]) => ScrollTextDimensions;
 
 export interface KeyedEvent {
   ev: GameEvent;
@@ -2941,6 +3030,7 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     onFiberStart: options.onFiberStart,
     onInstruction: options.onInstruction,
     paginateText: options.paginateText,
+    layoutScrollText: options.layoutScrollText,
     anims: animsById,
     extensions: options.extensions ?? createExtensionRuntime(),
   };
@@ -2988,6 +3078,11 @@ export function messageHoldsPlayer(w: World, s: InterpState): boolean {
 export function cloneModal(m: Modal | null): Modal | null {
   if (m === null) return null;
   if (m.kind === "text") return {
+    ...m,
+    lines: [...m.lines],
+    ...(m.colours ? { colours: m.colours.map((span) => ({ ...span })) } : {}),
+  };
+  if (m.kind === "scrollText") return {
     ...m,
     lines: [...m.lines],
     ...(m.colours ? { colours: m.colours.map((span) => ({ ...span })) } : {}),
@@ -5458,6 +5553,38 @@ function runFiber(
       f.mode = "run"; // modal slot was busy last frame; retry
     }
   }
+  if (f.mode === "scrollText") {
+    const top = f.stack[0]!;
+    const ins = top.prog[top.pc]!;
+    if (ins.op === "scrollText") {
+      if (s.modal && s.modal.fiber !== f.key) return;
+      if (!s.modal || s.modal.kind !== "scrollText") {
+        const expanded = boxLines(s, w, ins.lines, extension.ext, f.key);
+        s.modal = openScrollTextModal(
+          w,
+          f.key,
+          expanded.lines,
+          ins.speed,
+          ins.noFastForward,
+          expanded.colours,
+        );
+        return;
+      }
+      const open = s.modal;
+      const multiplier = !open.noFastForward && input.scrollFastHeld === true ? 3 : 1;
+      const offset2 = open.offset2 + open.speed * multiplier;
+      if (offset2 >= 2 * (open.viewportHeight + open.contentHeight)) {
+        s.modal = null;
+        f.mode = "run";
+        top.pc++;
+      } else {
+        s.modal = { ...open, offset2 };
+        return;
+      }
+    } else {
+      f.mode = "run";
+    }
+  }
   if (f.mode === "choices") {
     const top = f.stack[0]!;
     const ins = top.prog[top.pc]!;
@@ -6211,6 +6338,24 @@ function runFiber(
         const first = boxLines(s, w, ins.lines, extension.ext, f.key);
         s.modal = openTextModal(w, f.key, first.lines, ins.box, first.colours);
         return;
+      case "scrollText": {
+        // Scrolling text shares the one modal slot with messages, choices
+        // and shops. It opens stationary below the viewport; motion begins
+        // on the following reference tick, matching Window_ScrollText.
+        if (s.modal) return;
+        f.mode = "scrollText";
+        f.since = s.frame;
+        const first = boxLines(s, w, ins.lines, extension.ext, f.key);
+        s.modal = openScrollTextModal(
+          w,
+          f.key,
+          first.lines,
+          ins.speed,
+          ins.noFastForward,
+          first.colours,
+        );
+        return;
+      }
       case "choices": {
         // Same single-slot rule for the choices box.
         if (s.modal) return;

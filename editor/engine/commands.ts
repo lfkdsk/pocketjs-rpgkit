@@ -93,6 +93,7 @@ export function commandAddressKey(address: CommandAddress): string {
 
 export const EDITABLE_COMMAND_OPS = [
   "text",
+  "scrollText",
   "choices",
   "switch",
   "variable",
@@ -191,6 +192,9 @@ export function defaultCommand<Op extends EditableCommandOp>(op: Op): CommandOf<
   switch (op) {
     case "text":
       command = { op, lines: [""] };
+      break;
+    case "scrollText":
+      command = { op, lines: [""], speed: 2 };
       break;
     case "choices":
       command = {
@@ -481,6 +485,13 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
         .map((key) => command[key])
         .filter((value): value is string => typeof value === "string");
       return `Text: ${truncate(lines.join(" / ") || "(empty)", 64, full)}${layout.length > 0 ? ` [${layout.join(", ")}]` : ""}`;
+    }
+    case "scrollText": {
+      const lines = Array.isArray(command.lines)
+        ? command.lines.filter((line): line is string => typeof line === "string")
+        : [];
+      const mode = command.noFastForward === true ? ", no fast-forward" : "";
+      return `Scrolling text: ${truncate(lines.join(" / ") || "(empty)", 64, full)} [speed ${numberText(command.speed)}${mode}]`;
     }
     case "choices":
       return `Choices: ${truncate(text(command.prompt, "(no prompt)"), 64, full)} (${Array.isArray(command.options) ? command.options.length : 0})`;

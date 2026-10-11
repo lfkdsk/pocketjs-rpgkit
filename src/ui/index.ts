@@ -35,6 +35,19 @@ export {
   type ScreenEffectsLayerProps,
 } from "./ScreenEffectsLayer.tsx";
 export {
+  ScrollTextLayer,
+  type ScrollTextLayerProps,
+} from "./ScrollTextLayer.tsx";
+export {
+  createScrollTextLayout,
+  SCROLL_TEXT_CONTENT_WIDTH,
+  SCROLL_TEXT_INSET_X,
+  SCROLL_TEXT_ROW_HEIGHT,
+  SCROLL_TEXT_VIEWPORT_HEIGHT,
+  SCROLL_TEXT_VIEWPORT_WIDTH,
+  scrollTextFlow,
+} from "./scroll-text.ts";
+export {
   dispatchGameViewHostActions,
   dispatchGameViewHostEffects,
   hostActionAllowed,

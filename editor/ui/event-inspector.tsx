@@ -54,6 +54,7 @@ const READ_ONLY_BADGE_W = 76;
 
 /** Friendly names for screen-presentation commands in the editable rows. */
 const SCREEN_COMMAND_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  scrollText: "scrolling text",
   screenFade: "screen fade",
   screenTint: "screen tint",
   screenFlash: "screen flash",

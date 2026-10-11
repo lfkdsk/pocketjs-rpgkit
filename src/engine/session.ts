@@ -90,6 +90,7 @@ import {
   type SwitchState,
   type WorldIdleBlockers,
   type TextPaginator,
+  type ScrollTextLayout,
   type TextTokenResolver,
   type WorldOptions,
   type World,
@@ -536,6 +537,8 @@ export interface SessionOptions {
    *  every world (see WorldOptions.paginateText). GameView passes the
    *  dialog box's paginator; without one every message is one page. */
   paginateText?: TextPaginator;
+  /** Fixed design-size scrolling-text layout, forwarded to every world. */
+  layoutScrollText?: ScrollTextLayout;
   /** Resolver for `{x:<key>}` text tokens, forwarded to every world. Called
    *  once per token when a text or choices box opens; it must be a pure
    *  function of the view (no clock, randomness or mutation), so the
@@ -959,6 +962,7 @@ export function createSession(
     textTokens: options.textTokens,
   };
   if (options.paginateText) worldOptions.paginateText = options.paginateText;
+  if (options.layoutScrollText) worldOptions.layoutScrollText = options.layoutScrollText;
   assertRegisteredExtensions(extensions, commonExtensionCalls(commonEvents));
   assertBattleRegistered(options.battle ?? null, commonEvents.some((event) => commandsUseBattle(event.commands)));
   assertScenesRegistered(options.scenes ?? {}, (() => {
@@ -3517,6 +3521,7 @@ function stepReferenceTick(
     cancelEdge: handoffAtStart ? false : input.cancelEdge,
     upEdge: handoffAtStart ? false : input.upEdge,
     downEdge: handoffAtStart ? false : input.downEdge,
+    scrollFastHeld: (input.buttons & 0x2000) !== 0,
     playerCell: { x: s.move.tx, y: s.move.ty },
     prevCell: prevCellIn,
     facing: s.move.facing,

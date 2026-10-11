@@ -154,11 +154,13 @@ export function characterNameTargets(text: string): string[] {
 }
 
 /** The player-visible strings of one command that the runtime expands
- *  tokens in: text lines, a choices prompt and its option rows, an
- *  extChoice prompt (its rows come from the extension at runtime). */
+ *  tokens in: text/scrolling-text lines, a choices prompt and its option
+ *  rows, or an extChoice prompt (its rows come from the extension at
+ *  runtime). */
 function commandTexts(command: Command): string[] {
   switch (command.op) {
     case "text":
+    case "scrollText":
       return command.lines;
     case "choices":
       return [command.prompt, ...command.options.map((option) => option.text)];

@@ -39,7 +39,13 @@
 import type { MapRepository, ProjectSource, WorldTraversalMode } from "./types.ts";
 import type { MapContentVersion } from "./map-repository.ts";
 import type { WorldHandoffResolver } from "./world-handoff-contract.ts";
-import { textModalPage, type Modal, type TextPaginator, type TextTokenResolver } from "./interpreter.ts";
+import {
+  textModalPage,
+  type Modal,
+  type ScrollTextLayout,
+  type TextPaginator,
+  type TextTokenResolver,
+} from "./interpreter.ts";
 import type { ExtensionOptions } from "./extensions.ts";
 import type { BattleRules } from "./battle.ts";
 import type { SceneRules } from "./scene.ts";
@@ -180,6 +186,8 @@ export interface AttractOptions {
   /** Message pagination, forwarded to createSession (pure, like the
    *  registrations above). */
   paginateText?: TextPaginator;
+  /** Fixed scrolling-text design layout, forwarded to createSession. */
+  layoutScrollText?: ScrollTextLayout;
   /** Resolver for `{x:<key>}` text tokens, forwarded to createSession (the
    *  same one GameView registers for live play, so a demo, a rewind and a
    *  re-fold expand text identically). Called once per token when a box
@@ -433,6 +441,7 @@ export class AttractController {
       scene: opts.scene,
       immutableState: opts.immutableState,
       paginateText: opts.paginateText,
+      layoutScrollText: opts.layoutScrollText,
       textTokens: opts.textTokens,
       worldTraversal: opts.worldTraversal ?? (tape.length > 0 ? "legacy-transfer" : project.worldTraversal),
       handoff: opts.handoff,

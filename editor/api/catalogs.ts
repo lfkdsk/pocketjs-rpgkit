@@ -238,7 +238,7 @@ function addCommandReferences(
     const command = row.command;
     const address = `${rootAddress}/command:${commandAddressKey(row.address)}`;
     if (textVariables) {
-      if (command.op === "text") {
+      if (command.op === "text" || command.op === "scrollText") {
         command.lines.forEach((line, at) => addTextVariableReferences(index, line, address, `lines[${at}]`));
       } else if (command.op === "choices") {
         addTextVariableReferences(index, command.prompt, address, "prompt");

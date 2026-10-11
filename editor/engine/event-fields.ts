@@ -466,6 +466,12 @@ export function commandFields(
           return { ...field(key, label, command[key] ?? fallback, "enum", values), hint, inlineHint: true };
         }),
       ];
+    case "scrollText":
+      return [
+        field("lines", "LINES", command.lines.join("\n")),
+        field("speed", "SPEED", command.speed, "integer"),
+        field("noFastForward", "NO FAST FORWARD", command.noFastForward ?? false, "boolean", BOOLS),
+      ];
     case "choices":
       return [
         field("prompt", "PROMPT", command.prompt),
@@ -1041,6 +1047,19 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
         if (value.value !== fallback) return good({ ...command, [layoutKey]: value.value });
         const { [layoutKey]: _, ...rest } = command;
         return good(rest);
+      }
+      break;
+    }
+    case "scrollText": {
+      if (key === "lines") return good({ ...command, lines: raw.split("\n") });
+      if (key === "speed") {
+        const value = integer(raw, "speed", 1);
+        return value.ok ? good({ ...command, speed: value.value }) : value;
+      }
+      if (key === "noFastForward") {
+        const value = bool(raw);
+        if (value === null) return bad("noFastForward must be true or false");
+        return good(setOptional(command, "noFastForward", value || undefined));
       }
       break;
     }
