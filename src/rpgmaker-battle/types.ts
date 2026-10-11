@@ -3,6 +3,7 @@
 // means projects that do not import this module retain their original bundle.
 
 import type { RpgMakerFormulaNode } from "./formula.ts";
+import type { JsonValue } from "../engine/types.ts";
 
 export type RpgMakerFlavor = "MV" | "MZ";
 
@@ -220,5 +221,94 @@ export interface RpgMakerBattleRuntime {
 /** The module owns one namespaced member and preserves every sibling. */
 export interface RpgMakerBattleExtensionRoot {
   rpgmakerBattle: RpgMakerBattleRuntime;
+}
+
+export interface RpgMakerBattleBuff {
+  /** -2..2 mirrors RPG Maker's debuff/buff stages. */
+  level: number;
+  turns: number;
+}
+
+export interface RpgMakerBattleCombatant {
+  key: string;
+  side: "actor" | "enemy";
+  databaseId: number;
+  name: string;
+  hp: number;
+  mp: number;
+  tp: number;
+  params: [number, number, number, number, number, number, number, number];
+  states: { id: number; turns: number }[];
+  buffs: RpgMakerBattleBuff[];
+  guarding: boolean;
+  hidden: boolean;
+  image?: string;
+  actor?: { classId: number; level: number; exp: number; skills: number[] };
+}
+
+export interface RpgMakerBattleAction {
+  side: "actor" | "enemy";
+  user: number;
+  kind: "skill" | "item" | "guard";
+  id: number;
+  /** -1 means resolve the usable item's all/random/user scope at execution. */
+  target: number;
+  speed: number;
+}
+
+export type RpgMakerBattleAfterMessage =
+  | "party"
+  | "nextAction"
+  | "win"
+  | "lose"
+  | "escape";
+
+/** Complete reducer-owned scene state. Presentation reads this JSON only. */
+export interface RpgMakerBattleState {
+  format: "rpgmaker-battle-state/v1";
+  databaseHash: string;
+  rng: number;
+  nowTick: number;
+  phase: "message" | "party" | "command" | "skill" | "item" | "target" | "done";
+  turn: number;
+  canEscape: boolean;
+  canLose: boolean;
+  escapeAttempts: number;
+  troopId: number;
+  actors: RpgMakerBattleCombatant[];
+  enemies: RpgMakerBattleCombatant[];
+  actorIndex: number;
+  menuIndex: number;
+  listIndex: number;
+  targetIndex: number;
+  actorActions: RpgMakerBattleAction[];
+  queue: RpgMakerBattleAction[];
+  queueIndex: number;
+  selected?: { kind: "skill" | "item"; id: number };
+  message: string;
+  messageStart: number;
+  afterMessage: RpgMakerBattleAfterMessage;
+  result: "win" | "lose" | "escape" | null;
+  /** Most recently committed HP change, used only for state-driven tweening. */
+  effect: {
+    side: "actor" | "enemy";
+    index: number;
+    from: number;
+    to: number;
+    startTick: number;
+    duration: number;
+    kind: "hit" | "heal" | "faint";
+  } | null;
+  pageRuns: { battle: boolean; lastTurn: number; active: boolean }[];
+  variables: Record<string, number | string>;
+  initialVariables: Record<string, number | string>;
+  switches: Record<string, boolean>;
+  initialSwitches: Record<string, boolean>;
+  items: Record<string, number>;
+  initialItems: Record<string, number>;
+  gold: number;
+  initialGold: number;
+  reward: { exp: number; gold: number; items: Record<string, number>; levels: string[] };
+  ext: JsonValue;
 }
 

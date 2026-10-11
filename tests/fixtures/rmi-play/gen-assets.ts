@@ -11,7 +11,8 @@
 // per-frame images, and bakes item icons, parallaxes, and pictures. Every
 // output is a pure function of tests/fixtures/rpgmaker/.
 //
-// games.ts (committed) carries the imported projects and their GameAssets.
+// games.ts (committed) carries the imported projects, normalized battle
+// databases, battler image names, and their GameAssets.
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -181,6 +182,18 @@ for (const source of RMI_SOURCES) {
     );
   }
 
+  // --- front-view battlers ------------------------------------------------
+  // ImportAssets keeps the source dimensions for downstream cookers. These
+  // fixture battlers are already power-of-two PNGs, so the registered image
+  // can be copied byte-for-byte into the pak input.
+  const battlerSource: string[] = [];
+  for (const [id, battler] of Object.entries(assets.battlers).sort(([a], [b]) => a.localeCompare(b))) {
+    const image = result.images.get(battler.png);
+    if (!image) throw new Error(`rmi-play: battler ${id} has no imported image ${battler.png}`);
+    const file = writeAsset(`${prefix}/battler-${id}.png`, encodePNG(image.data, image.width, image.height));
+    battlerSource.push(`${q(id)}: ${q(file)}`);
+  }
+
   // --- map animations and balloons ---------------------------------------
   const animSource: string[] = [];
   for (const def of project.animations ?? []) {
@@ -235,6 +248,7 @@ for (const source of RMI_SOURCES) {
   gameSources.push(
     `const WALKERS_${source.id}: Record<string, CharacterFrames> = {\n  ${walkerSource.join(",\n  ")}\n};\n\n` +
       `const PROJECT_${source.id}: Project = ${JSON.stringify(project)};\n\n` +
+      `const BATTLE_${source.id}: RpgMakerBattleDatabase = ${JSON.stringify(result.battle)};\n\n` +
       `const ASSETS_${source.id}: GameAssets = {\n` +
       `  ground: ${q(ground)},\n  upper: ${q(upper)},\n  chunkColumns: ${q(columns)},\n` +
       `  maxChunks: ${maxChunks},\n  maxActors: ${maxActors},\n  world: ${q(world)},\n` +
@@ -248,10 +262,13 @@ for (const source of RMI_SOURCES) {
       `  layers: { picture: { placement: "screen", defaultVisible: false, variants: { ${pictureVariants.join(", ")} } } },\n` +
       `};\n`,
   );
+  gameSources.push(
+    `const BATTLERS_${source.id}: Record<string, string> = { ${battlerSource.join(", ")} };\n`,
+  );
   summaries.push(
     `${source.id}: ${project.maps.length} maps, ${Object.keys(assets.sprites).length} sprites, ` +
     `${project.animations?.length ?? 0} animations, ${Object.keys(assets.parallaxes).length} parallaxes, ` +
-    `${Object.keys(assets.pictures).length} pictures`,
+    `${Object.keys(assets.pictures).length} pictures, ${Object.keys(assets.battlers).length} battlers`,
   );
 }
 
@@ -280,12 +297,13 @@ writeFileSync(
     `// the importer's output verbatim; the asset names are full literals so the\n` +
     `// PocketJS pak pass bakes them.\n\n` +
     `import type { Project } from "../../../src/engine/types.ts";\n` +
+    `import type { RpgMakerBattleDatabase } from "../../../src/rpgmaker-battle/types.ts";\n` +
     `import type { CharacterFrames, GameAssets } from "../../../src/ui/game-assets.ts";\n\n` +
     `export type RmiGameId = ${RMI_SOURCES.map((s) => q(s.id)).join(" | ")};\n\n` +
     animatedSources.join("\n") + "\n" +
     gameSources.join("\n") + "\n" +
-    `export const RMI_GAMES: Record<RmiGameId, { project: Project; assets: GameAssets }> = {\n` +
-    RMI_SOURCES.map((s) => `  ${s.id}: { project: PROJECT_${s.id}, assets: ASSETS_${s.id} },`).join("\n") +
+    `export const RMI_GAMES: Record<RmiGameId, { project: Project; battle: RpgMakerBattleDatabase; enemyImages: Record<string, string>; assets: GameAssets }> = {\n` +
+    RMI_SOURCES.map((s) => `  ${s.id}: { project: PROJECT_${s.id}, battle: BATTLE_${s.id}, enemyImages: BATTLERS_${s.id}, assets: ASSETS_${s.id} },`).join("\n") +
     `\n};\n`,
 );
 console.log(`rmi-play gen-assets: ${summaries.join("; ")}; ${cooked.atlases.length} animated atlases`);

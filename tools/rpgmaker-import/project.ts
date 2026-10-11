@@ -32,6 +32,9 @@ import type {
   VehicleDef,
 } from "../../src/engine/types.ts";
 import type { RpgMakerBattleDatabase } from "../../src/rpgmaker-battle/types.ts";
+import {
+  RPGMAKER_ENCOUNTER_DUE_VARIABLE,
+} from "../../src/rpgmaker-battle/rules.ts";
 import { cookMvAnimation, MV_ANIMATION_RATE, MvAnimationCookError } from "./animation.ts";
 import {
   audioMediaKey,
@@ -718,6 +721,39 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       events.push({ id: kitId, name: truncate(nonEmpty(ev.name, kitId), 40), x: ev.x, y: ev.y, pages });
     }
 
+    // Stock map encounters run from a hidden parallel page. The opt-in
+    // RPG Maker player-step extension raises a private variable after the
+    // saved encounter countdown reaches zero; the ordinary generic battle
+    // command then owns scene lifecycle and Game Over semantics.
+    if (rmMap.encounterList?.length) {
+      events.push({
+        id: "rmi-random-encounter",
+        name: "Random Encounter",
+        x: 0,
+        y: 0,
+        pages: [{
+          trigger: "parallel",
+          condition: { variable: { id: RPGMAKER_ENCOUNTER_DUE_VARIABLE, op: ">=", value: 1 } },
+          through: true,
+          commands: [
+            {
+              op: "battle",
+              setup: {
+                system: "rpgmaker",
+                databaseHash: battle.databaseHash,
+                encounter: true,
+                map: id,
+                canEscape: true,
+                canLose: false,
+              },
+              onLose: [{ op: "gameOver" }, { op: "exit" }],
+            },
+            { op: "variable", id: RPGMAKER_ENCOUNTER_DUE_VARIABLE, set: { op: "set", value: 0 } },
+          ],
+        }],
+      });
+    }
+
     const parallaxArt = parallaxFor(rmMap.parallaxName);
     const parallax: ParallaxDef | undefined = parallaxArt ? {
       image: parallaxArt.image,
@@ -947,7 +983,9 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
         currencyUnit: String(rm.system.currencyUnit ?? "").slice(0, 24),
         ...(rpgMakerTextColours ? { colours: rpgMakerTextColours } : {}),
       },
-      ...(containsStepRead({ events: maps.map((map) => map.events), commonEvents }) ? { stepCounter: true } : {}),
+      ...(battle.encounters.length > 0 || containsStepRead({ events: maps.map((map) => map.events), commonEvents })
+        ? { stepCounter: true }
+        : {}),
     },
     ...(leader?.name ? { playerName: leader.name } : {}),
     ...(followerMembers.length > 0 ? { followers: { enabled: rm.system.optFollowers !== false, members: followerMembers } } : {}),

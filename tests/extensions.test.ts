@@ -303,6 +303,27 @@ describe("KB1 extension commands and conditions", () => {
     ] });
   });
 
+  test("playerStep receives the landed map, cell, and sparse region without affecting ordinary commands", () => {
+    const hook: ExtensionOptions = {
+      initial: null,
+      commands: {
+        "demo.spatial_step": (context) => ({
+          ext: {
+            map: context.mapId ?? null,
+            cell: context.playerCell ?? null,
+          },
+        }),
+      },
+      playerStep: { call: "demo.spatial_step" },
+    };
+    const p = projectWithEvents([]);
+    p.maps[0]!.regions = [[2 * p.maps[0]!.width + 3, 7]];
+    const session = createSession(p, 60, { extensions: hook });
+    let state = startSession(p, session);
+    for (let frame = 0; frame < 8; frame++) state = step(session, state, { buttons: RIGHT });
+    expect(state.ext).toEqual({ map: "a", cell: { x: 3, y: 2, region: 7 } });
+  });
+
   test("playerStep registration rejects malformed and missing command hooks", () => {
     expect(() => createExtensionRuntime({
       commands: { "demo.step": () => undefined },

@@ -4940,6 +4940,7 @@ export function runExtensionHookInPlace(
     dy: number;
     kind: "step" | "relocation";
   }>,
+  spatial?: Readonly<Pick<ExtensionReadContext, "mapId" | "playerCell">>,
 ): JsonValue {
   const extension: MutableExtensionScope = { runtime: w.extensions, ext: ext0 };
   const handler = extension.runtime.commands[call];
@@ -4952,10 +4953,11 @@ export function runExtensionHookInPlace(
     w,
     extension,
     `extension command ${JSON.stringify(call)}`,
-    (context) => handler(
-      playerStep === undefined ? context : { ...context, playerStep },
-      deepClone(args),
-    ),
+    (context) => handler({
+      ...context,
+      ...(spatial ?? {}),
+      ...(playerStep === undefined ? {} : { playerStep }),
+    }, deepClone(args)),
   );
   return extension.ext;
 }

@@ -145,6 +145,32 @@ describe("RPG Maker battle database import", () => {
         { troopId: 1, weight: 3, regions: [] },
       ],
     }]);
+    expect(result.project.system?.stepCounter).toBe(true);
+    const encounterEvent = result.project.maps[0]!.events?.find((event) => event.id === "rmi-random-encounter");
+    expect(encounterEvent).toMatchObject({
+      x: 0,
+      y: 0,
+      pages: [{
+        trigger: "parallel",
+        condition: { variable: { id: "rmi-encounter-due", op: ">=", value: 1 } },
+        through: true,
+        commands: [
+          {
+            op: "battle",
+            setup: {
+              system: "rpgmaker",
+              databaseHash: result.battle.databaseHash,
+              encounter: true,
+              map: "map001",
+              canEscape: true,
+              canLose: false,
+            },
+            onLose: [{ op: "gameOver" }, { op: "exit" }],
+          },
+          { op: "variable", id: "rmi-encounter-due", set: { op: "set", value: 0 } },
+        ],
+      }],
+    });
     expect(result.cov.list("tile").find((row) => row.key === "map encounters")?.counts.Native).toBe(1);
   });
 });

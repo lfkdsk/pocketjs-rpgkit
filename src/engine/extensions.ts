@@ -18,6 +18,11 @@ export interface ExtensionReadContext {
   /** KG1: the live player name, so a scene (name input) can prefill its
    *  edit buffer from the current value. */
   readonly playerName: string;
+  /** Current map/cell for scene starts that need authored spatial data
+   * (for example an RPG Maker random-encounter table). Ordinary extension
+   * command contexts may omit these fields. */
+  readonly mapId?: string;
+  readonly playerCell?: Readonly<{ x: number; y: number; region: number }>;
   /** The player's sparse appearance state (walking sprite baseline/override,
    *  battle back-sheet baseline/override), so a scene (battle) can read the
    *  current combat sheet. Populated by the session for scene/battle starts;

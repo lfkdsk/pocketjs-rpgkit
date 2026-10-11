@@ -652,6 +652,8 @@ export const SANDBOX_PREVIEW_STAMPED_CONTEXT: {
   items: "record",
   gold: "value",
   playerName: "value",
+  mapId: "project",
+  playerCell: "project",
   playerAppearance: "record",
   itemCatalog: "project",
 };

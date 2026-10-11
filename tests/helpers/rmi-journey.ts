@@ -10,7 +10,11 @@ import { NAME_INPUT_SCENE_ID, nameInputRules } from "../../src/engine/name-input
 import { canStepFrom, type Dir4 } from "../../src/engine/passability.ts";
 import { createSession, startSession, stepSession, type Session, type SessionState } from "../../src/engine/session.ts";
 import type { Project } from "../../src/engine/types.ts";
-import { placeholderBattleRules } from "../fixtures/rmi-play/placeholder-battle.ts";
+import {
+  createRpgMakerBattleExtensions,
+  createRpgMakerBattleRules,
+} from "../../src/rpgmaker-battle/rules.ts";
+import type { RpgMakerBattleDatabase } from "../../src/rpgmaker-battle/types.ts";
 
 export const BTN_UP = 0x0010;
 export const BTN_RIGHT = 0x0020;
@@ -24,9 +28,10 @@ const DY = [1, 0, -1, 0] as const;
 const DIR_BTN = [BTN_DOWN, BTN_LEFT, BTN_UP, BTN_RIGHT] as const;
 export const FACE = { down: 0, left: 1, up: 2, right: 3 } as const satisfies Record<string, Dir4>;
 
-export function rmiSession(project: Project, hz = 60): Session {
+export function rmiSession(project: Project, battle: RpgMakerBattleDatabase, hz = 60): Session {
   return createSession(project, hz, {
-    battle: placeholderBattleRules,
+    extensions: createRpgMakerBattleExtensions(battle),
+    battle: createRpgMakerBattleRules(battle),
     scenes: { [NAME_INPUT_SCENE_ID]: nameInputRules },
   });
 }
@@ -43,8 +48,8 @@ export class RmiDriver {
   /** Predicates that mark the first frame they hold (see watch()). */
   private readonly watches: [string, (s: SessionState) => boolean][] = [];
 
-  constructor(readonly project: Project) {
-    this.session = rmiSession(project);
+  constructor(readonly project: Project, readonly battle: RpgMakerBattleDatabase) {
+    this.session = rmiSession(project, battle);
     this.state = startSession(project, this.session);
   }
 
@@ -268,9 +273,9 @@ export class RmiDriver {
 // --- the two fixture playthroughs (tests/fixtures/rpgmaker/README.md) -------
 
 /** hollow-mz main path: intro, elder, house chest, guard, cave golem
- *  (placeholder battle, Win), back to the elder. */
-export function playHollow(project: Project): RmiDriver {
-  const d = new RmiDriver(project);
+ *  (real front-view battle, Win), back to the elder. */
+export function playHollow(project: Project, battle: RpgMakerBattleDatabase): RmiDriver {
+  const d = new RmiDriver(project, battle);
   d.watch("intro", (s) => s.interp.modal?.kind === "text");
   d.watch("battle", (s) => s.scene?.kind === "battle");
   d.settle();
@@ -331,8 +336,8 @@ export function playHollow(project: Project): RmiDriver {
 
 /** stage-mv: the opening cutscene, then the usher. The Director's native
  *  polling loop waits for the Stagehand's three claps before continuing. */
-export function playStage(project: Project): RmiDriver {
-  const d = new RmiDriver(project);
+export function playStage(project: Project, battle: RpgMakerBattleDatabase): RmiDriver {
+  const d = new RmiDriver(project, battle);
   d.watch("curtain", (s) => s.interp.screen?.pictures?.["1"] !== undefined && s.interp.modal?.kind === "text");
   d.watch("tint", (s) => Object.keys(s.interp.screen?.tints ?? {}).length > 0 && s.interp.modal?.kind === "text");
   d.watch("balloon", (s) => Object.keys(s.interp.screen?.balloons ?? {}).length > 0);

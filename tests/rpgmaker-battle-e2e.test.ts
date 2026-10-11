@@ -1,0 +1,187 @@
+// Imported Battle Processing exercised through the complete session/interpreter
+// lifecycle. These cases deliberately start beside Hollow's real Golem event:
+// the 301 setup and 601/602/603 branches all come from the importer fixture.
+
+import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { createSession, startSession, stepSession, type Session, type SessionInput, type SessionState } from "../src/engine/session.ts";
+import type { ExtensionOptions } from "../src/engine/extensions.ts";
+import type { Project } from "../src/engine/types.ts";
+import { NAME_INPUT_SCENE_ID, nameInputRules } from "../src/engine/name-input.ts";
+import {
+  createRpgMakerBattleExtensions,
+  createRpgMakerBattleRules,
+  rpgMakerBattleState,
+} from "../src/rpgmaker-battle/rules.ts";
+import type { RpgMakerBattleDatabase } from "../src/rpgmaker-battle/types.ts";
+import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
+import { importRmProject } from "../tools/rpgmaker-import/project.ts";
+
+const HOLLOW = join(import.meta.dir, "fixtures/rpgmaker/hollow-mz");
+const imported = await importRmProject(loadRmProject(HOLLOW));
+const RIGHT = 0x0020;
+
+type Outcome = "win" | "escape" | "lose";
+
+function battleProject(): Project {
+  const project = structuredClone(imported.project);
+  project.start = { map: "map003", x: 10, y: 5, dir: "up" };
+  const cave = project.maps.find((map) => map.id === "map003")!;
+  cave.events = cave.events?.filter((event) => event.id === "ev002");
+  return project;
+}
+
+function options(
+  db: RpgMakerBattleDatabase,
+  initial?: ExtensionOptions["initial"],
+): Parameters<typeof createSession>[2] {
+  return {
+    extensions: { ...createRpgMakerBattleExtensions(db), ...(initial === undefined ? {} : { initial }) },
+    battle: createRpgMakerBattleRules(db),
+    scenes: { [NAME_INPUT_SCENE_ID]: nameInputRules },
+  };
+}
+
+function pulse(session: Session, state: SessionState, edges: Omit<SessionInput, "buttons"> = {}): SessionState {
+  const pressed = stepSession(session, state, { buttons: 0, ...edges });
+  return stepSession(session, pressed, { buttons: 0 });
+}
+
+function enterBattle(session: Session, initial: SessionState): SessionState {
+  let state = initial;
+  for (let frame = 0; frame < 500 && state.scene?.kind !== "battle"; frame++) {
+    state = pulse(session, state, { confirmEdge: true });
+  }
+  expect(state.scene?.kind).toBe("battle");
+  return state;
+}
+
+function finishBattle(session: Session, initial: SessionState, outcome: Outcome): SessionState {
+  let state = initial;
+  let choseParty = false;
+  let choseGuard = false;
+  for (let frame = 0; frame < 2_000 && state.scene !== null; frame++) {
+    const battle = rpgMakerBattleState(state.scene!.state);
+    if (outcome === "escape" && battle.phase === "party" && !choseParty) {
+      state = pulse(session, state, { downEdge: true });
+      choseParty = true;
+    } else if (outcome === "lose" && battle.phase === "command" && !choseGuard) {
+      state = pulse(session, state, { downEdge: true });
+      choseGuard = true;
+    } else {
+      state = pulse(session, state, { confirmEdge: true });
+    }
+  }
+  expect(state.scene).toBeNull();
+  return state;
+}
+
+function settleEvent(session: Session, initial: SessionState): SessionState {
+  let state = initial;
+  for (let frame = 0; frame < 2_000; frame++) {
+    if (state.interp.main === null && state.interp.modal === null && state.scene === null) return state;
+    state = pulse(session, state, { confirmEdge: true });
+  }
+  throw new Error("imported battle branch did not settle");
+}
+
+function lowHpExtension(): ExtensionOptions["initial"] {
+  return {
+    rpgmakerBattle: {
+      version: 1,
+      actors: {
+        "1": {
+          actorId: 1, classId: 1, level: 1, exp: 0,
+          hp: 1, mp: 60, tp: 0, skills: [1], states: [], buffs: [],
+        },
+      },
+      battleCount: 0,
+      winCount: 0,
+      escapeCount: 0,
+      encounter: null,
+    },
+  };
+}
+
+describe("imported RPG Maker Battle Processing end to end", () => {
+  for (const hz of [60, 30, 20]) test(`win executes 601, rewards, drops, and levels at ${hz} Hz`, () => {
+    const db = structuredClone(imported.battle);
+    db.enemies[0]!.params[0] = 1;
+    db.enemies[0]!.exp = 200;
+    db.enemies[0]!.gold = 37;
+    db.enemies[0]!.drops = [{ kind: 1, dataId: 1, denominator: 1, item: "item001" }];
+    const project = battleProject();
+    const session = createSession(project, hz, options(db));
+    let state = enterBattle(session, startSession(project, session));
+    state = settleEvent(session, finishBattle(session, state, "win"));
+
+    expect(state.sw.switches.s010).toBe(true);
+    expect(state.sw.variables.v005).toBe(100);
+    expect(state.sw.gold).toBe(137);
+    expect(state.sw.items.item001).toBe(1);
+    expect((state.ext as Record<string, any>).rpgmakerBattle.actors["1"].level).toBeGreaterThan(1);
+  });
+
+  test("escape executes the imported 602 branch", () => {
+    const db = structuredClone(imported.battle);
+    db.enemies[0]!.params[6] = 1;
+    const project = battleProject();
+    const session = createSession(project, 60, options(db));
+    let state = enterBattle(session, startSession(project, session));
+    state = settleEvent(session, finishBattle(session, state, "escape"));
+
+    expect(state.sw.variables.v006).toBe(1);
+    expect(state.sw.switches.s010).not.toBe(true);
+    expect((state.ext as Record<string, any>).rpgmakerBattle.escapeCount).toBe(1);
+  });
+
+  test("allowed defeat executes the imported 603 branch without Game Over", () => {
+    const db = structuredClone(imported.battle);
+    db.enemies[0]!.params[2] = 999;
+    const project = battleProject();
+    const session = createSession(project, 60, options(db, lowHpExtension()));
+    let state = enterBattle(session, startSession(project, session));
+    state = settleEvent(session, finishBattle(session, state, "lose"));
+
+    expect(state.sw.variables.v007).toBe(1);
+    expect(state.sw.switches.s010).not.toBe(true);
+    expect((state.ext as Record<string, any>).rpgmakerBattle.actors["1"].hp).toBe(0);
+  });
+
+  test("a completed player step raises and consumes a region-filtered random encounter", async () => {
+    const raw = loadRmProject(HOLLOW);
+    raw.maps.get(1)!.encounterStep = 1;
+    raw.maps.get(1)!.encounterList = [{ troopId: 1, weight: 1, regionSet: [7] }];
+    const generated = await importRmProject(raw);
+    const project = structuredClone(generated.project);
+    const map = project.maps.find((entry) => entry.id === "map001")!;
+    const encounterEvent = map.events!.find((event) => event.id === "rmi-random-encounter")!;
+    const floor = map.ground[0]!;
+    Object.assign(map, {
+      width: 4,
+      height: 4,
+      ground: Array(16).fill(floor),
+      upper: [],
+      regions: [[1 * 4 + 2, 7]],
+      events: [encounterEvent],
+      passage: [],
+    });
+    delete map.vehiclePassage;
+    project.maps = [map];
+    delete project.vehicles;
+    delete project.followers;
+    project.start = { map: "map001", x: 1, y: 1, dir: "right" };
+    const session = createSession(project, 60, options(generated.battle));
+    let state = startSession(project, session);
+    for (let frame = 0; frame < 20 && state.scene === null; frame++) {
+      state = stepSession(session, state, { buttons: (state.sw.steps ?? 0) === 0 ? RIGHT : 0 });
+    }
+
+    expect(state.sw.steps).toBe(1);
+    expect(state.sw.variables["rmi-encounter-due"]).toBe(1);
+    expect(state.scene?.kind).toBe("battle");
+    expect(rpgMakerBattleState(state.scene!.state).troopId).toBe(1);
+    expect((state.ext as Record<string, any>).rpgmakerBattle.encounter)
+      .toEqual({ map: "map001", remaining: 1 });
+  });
+});

@@ -5,7 +5,7 @@
 // tape replayed against the built GameView bundle (tests/fixtures/rmi-play)
 // on the wasm sim host. The replay must reach the same state at every
 // marked frame, and the marked frames are checked by what they show:
-// water in the village, the dialog and choices boxes, the placeholder
+// water in the village, the dialog and choices boxes, the front-view
 // battle screen, the curtain picture, the tint.
 //
 // RMI_SHOTS=<dir> also writes marked frames as nearest-neighbour PNGs for
@@ -32,8 +32,10 @@ if (!preflight.ok) console.warn(`rpgmaker-import bundle replays skipped: ${prefl
 const simTest = preflight.ok ? test : test.skip;
 installGameSimIsolation();
 
-const hollowProject = (await importRmProject(loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/hollow-mz")))).project;
-const stageProject = (await importRmProject(loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/stage-mv")))).project;
+const hollowImport = await importRmProject(loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/hollow-mz")));
+const stageImport = await importRmProject(loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/stage-mv")));
+const hollowProject = hollowImport.project;
+const stageProject = stageImport.project;
 
 /** Everything the story depends on (no pixels, no clocks). */
 function storyState(s: SessionState): Record<string, unknown> {
@@ -76,7 +78,7 @@ const water = (r: number, g: number, b: number) => b > 150 && b > r + 60 && b > 
 const grass = (r: number, g: number, b: number) => g > 120 && g > r + 30 && g > b + 30;
 /** The kit dialog paper (#0b1626). */
 const navy = (r: number, g: number, b: number) => r === 11 && g === 22 && b === 38;
-const battleBg = (r: number, g: number, b: number) => r === 0x1b && g === 0x14 && b === 0x30;
+const battleBg = (r: number, g: number, b: number) => r === 0x16 && g === 0x25 && b === 0x36;
 const curtain = (r: number, g: number, b: number) => r > 60 && r > 2 * g && r > 2 * b;
 /** Mean brightness of the stage above the dialog box (x 104..375, y 32..169). */
 const stageBrightness = (rgba: Uint8Array): number => {
@@ -137,7 +139,7 @@ const stateAt = (shots: Map<string, Uint8Array>, name: string): unknown =>
   JSON.parse(new TextDecoder().decode(shots.get(`${name}:state`)!));
 
 describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", () => {
-  const d = playHollow(hollowProject);
+  const d = playHollow(hollowProject, hollowImport.battle);
 
   test("the tape reaches the walkthrough's final state", () => {
     const s = d.state;
@@ -171,7 +173,7 @@ describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", ()
   });
 
   test("the tape is deterministic", () => {
-    expect(playHollow(hollowProject).masks).toEqual(d.masks);
+    expect(playHollow(hollowProject, hollowImport.battle).masks).toEqual(d.masks);
   });
 
   simTest("the GameView bundle replays the tape to the same states and pictures", async () => {
@@ -203,13 +205,18 @@ describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", ()
       shots.get("shop-icons")!, 240, 68, 258, 92,
       (r, g, b) => r === 255 && g === 144 && b === 176,
     )).toBeGreaterThanOrEqual(4);
-    // The placeholder battle fills the screen with its backdrop.
-    expect(census(shots.get("battle")!, battleBg)).toBeGreaterThan(W * H * 0.8);
+    // The real front-view battle paints its upper backdrop and the imported
+    // Golem sprite before any command is selected.
+    expect(census(shots.get("battle")!, battleBg)).toBeGreaterThan(W * H * 0.25);
+    expect(censusRect(
+      shots.get("battle")!, 192, 40, 288, 152,
+      (r, g, b) => r > 90 && g > 90 && b > 90,
+    )).toBeGreaterThan(300);
   }, 60_000);
 });
 
 describe("rpgmaker-import journey: stage-mv (cutscene)", () => {
-  const d = playStage(stageProject);
+  const d = playStage(stageProject, stageImport.battle);
 
   test("the tape reaches the walkthrough's final state", () => {
     const s = d.state;

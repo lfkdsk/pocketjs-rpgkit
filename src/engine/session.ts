@@ -1902,6 +1902,9 @@ function startBattleScene(sess: Session, s: SessionState, request: PendingBattle
   s.sw = s.interp.sw;
   const seed = Math.floor(draw.value * 4294967296) >>> 0;
   const startExt = cloneExtension(sess.extensions, s.ext);
+  const currentMap = sess.maps.get(s.mapId);
+  const playerIndex = currentMap ? s.move.ty * currentMap.width + s.move.tx : -1;
+  const playerRegion = currentMap?.regions?.find(([index]) => index === playerIndex)?.[1] ?? 0;
   const started = rules.start(
     startExt,
     deepClone(request.setup),
@@ -1913,6 +1916,8 @@ function startBattleScene(sess: Session, s: SessionState, request: PendingBattle
       items: keyedRecord(s.interp.sw.items),
       gold: s.interp.sw.gold,
       playerName: s.interp.sw.playerName,
+      mapId: s.mapId,
+      playerCell: { x: s.move.tx, y: s.move.ty, region: playerRegion },
       ...(s.interp.sw.playerAppearance
         ? { playerAppearance: s.interp.sw.playerAppearance }
         : {}),
@@ -4035,6 +4040,14 @@ function runPlayerStepHook(
     hook.call,
     hook.args,
     hook.displacement ? { dx, dy, kind } : undefined,
+    {
+      mapId: s.mapId,
+      playerCell: {
+        x: s.move.tx,
+        y: s.move.ty,
+        region: world.regionCells?.get(s.move.ty * world.map.width + s.move.tx) ?? 0,
+      },
+    },
   );
   s.sw = s.interp.sw;
 }

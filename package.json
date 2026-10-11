@@ -14,6 +14,8 @@
     "./ui/item-icons": "./src/ui/ItemIconRow.tsx",
     "./ui/parallax": "./src/ui/ParallaxLayer.tsx",
     "./ui/battle": "./src/ui/battle/index.ts",
+    "./rpgmaker-battle": "./src/rpgmaker-battle/index.ts",
+    "./ui/rpgmaker-battle": "./src/ui/rpgmaker-battle/index.tsx",
     "./ui/demo": "./src/ui/demo/index.ts",
     "./ui/world": "./src/ui/world/index.ts",
     "./ui/saves": "./src/ui/session-saves.ts",
