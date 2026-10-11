@@ -441,17 +441,20 @@ export class AudioDriver {
   /** Persistent tracks and new SE both evict only the oldest transient voice. */
   private makeRoom(): boolean {
     if (this.voices.size < MAX_STREAMS) return true;
-    // A return candidate is an optimization, never a correctness resource.
-    // Release it before evicting a live one-shot when all native slots are in
-    // use.
-    if (this.suspendedBgm) this.destroyVoice(this.suspendedBgm);
-    if (this.voices.size < MAX_STREAMS) return true;
     let oldest: Voice | undefined;
     for (const voice of this.voices.values()) {
       if (voice.kind === "se" && (!oldest || voice.serial < oldest.serial)) oldest = voice;
     }
-    if (!oldest) return false;
-    this.destroyVoice(oldest);
+    if (oldest) {
+      this.destroyVoice(oldest);
+      return true;
+    }
+    // The return candidate is still only an optimization: if every other
+    // native slot is occupied by durable BGM/BGS/ME, release it rather than
+    // rejecting that persistent track (or the first SE). Once transient
+    // voices exist, their established oldest-first policy preserves it.
+    if (!this.suspendedBgm) return false;
+    this.destroyVoice(this.suspendedBgm);
     return true;
   }
 

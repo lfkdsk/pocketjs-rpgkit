@@ -693,6 +693,30 @@ describe("opt-in audio host", () => {
     expect(ops.writes.filter(({ handle }) => handle === 1)).toHaveLength(mapWritesBeforeRestore);
   });
 
+  test("battle SE pressure evicts the oldest transient before the suspended map stream", () => {
+    const ops = new MockAudioOps();
+    const resources = Object.fromEntries(
+      ["map", "battle", "a", "b", "c"].map((id) => [id, `audio:wav.${id}`]),
+    );
+    const driver = new AudioDriver(ops, resources, () => wav([1, 2, 3, 4]));
+    const bgm = (id: string, positionTicks: number) => ({
+      id, volume: 100, pitch: 100, positionTicks,
+    });
+
+    driver.sync(frame(1, { bgm: bgm("map", 7) }));
+    driver.sync(frame(2, { bgm: bgm("battle", 0) }, [
+      { name: "a", volume: 100, pitch: 100 },
+      { name: "b", volume: 100, pitch: 100 },
+      { name: "c", volume: 100, pitch: 100 },
+    ]));
+    driver.sync(frame(3, { bgm: bgm("map", 8) }, [{ stop: true }]));
+
+    expect(ops.created.map(({ handle }) => handle)).toEqual([1, 2, 3, 4, 5]);
+    expect(ops.destroyed).toEqual([3, 2, 4, 5]);
+    expect([...ops.streams.keys()]).toEqual([1]);
+    expect(ops.plays.filter((handle) => handle === 1)).toEqual([1, 1]);
+  });
+
   test("decodes only the QOA slices needed to fill credited ring space", () => {
     const sourceFrames = AUDIO_RING_FRAMES + 1_000;
     const bytes = encodeQoa(qoaSamples(sourceFrames), 1, 11_025);
