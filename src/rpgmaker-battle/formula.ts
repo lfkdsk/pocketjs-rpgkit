@@ -282,8 +282,46 @@ class Parser {
   }
 }
 
+function validateParsedFormula(node: RpgMakerFormulaNode, sourceLength: number): void {
+  let nodes = MAX_TOKENS;
+  const visit = (value: RpgMakerFormulaNode, depth: number): void => {
+    if (depth > MAX_DEPTH) {
+      throw new RpgMakerFormulaError(sourceLength, `formula exceeds AST depth ${MAX_DEPTH}`);
+    }
+    if (--nodes < 0) {
+      throw new RpgMakerFormulaError(sourceLength, `formula exceeds ${MAX_TOKENS} AST nodes`);
+    }
+    switch (value.kind) {
+      case "number":
+      case "param":
+      case "variable":
+      case "mathConst":
+        return;
+      case "group":
+      case "unary":
+        visit(value.value, depth + 1);
+        return;
+      case "binary":
+        visit(value.left, depth + 1);
+        visit(value.right, depth + 1);
+        return;
+      case "ternary":
+        visit(value.test, depth + 1);
+        visit(value.yes, depth + 1);
+        visit(value.no, depth + 1);
+        return;
+      case "math":
+        for (const argument of value.args) visit(argument, depth + 1);
+        return;
+    }
+  };
+  visit(node, 0);
+}
+
 export function parseRpgMakerFormula(source: string): RpgMakerFormulaNode {
-  return new Parser(source, tokenize(source)).parse();
+  const formula = new Parser(source, tokenize(source)).parse();
+  validateParsedFormula(formula, source.length);
+  return formula;
 }
 
 export interface RpgMakerFormulaBattler extends Record<RpgMakerBattlerParam, number> {}

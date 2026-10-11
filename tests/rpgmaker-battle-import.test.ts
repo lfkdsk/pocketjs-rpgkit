@@ -116,6 +116,17 @@ describe("RPG Maker battle database import", () => {
     expect(row.reasons.join(" ")).toContain(`fallback ${RPGMAKER_FORMULA_FALLBACK}`);
   });
 
+  test("reports formulas beyond the runtime depth budget as degraded", async () => {
+    const project = loadRmProject(HOLLOW);
+    project.skills[1]!.damage!.formula = `${"(".repeat(65)}1${")".repeat(65)}`;
+    const result = await importRmProject(project);
+    const row = formulaCoverage(result).find((entry) => entry.key === "formula skill 1")!;
+
+    expect(result.battle.skills[0]!.damage.fallback).toBe(true);
+    expect(row.counts).toMatchObject({ Native: 0, Degraded: 1 });
+    expect(row.reasons.join(" ")).toContain("exceeds AST depth 64");
+  });
+
   test("imports weighted region encounters and step threshold", async () => {
     const project = loadRmProject(HOLLOW);
     const map = project.maps.get(1)!;

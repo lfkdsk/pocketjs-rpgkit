@@ -7,6 +7,7 @@ import {
   parseRpgMakerFormula,
   RpgMakerFormulaError,
   type RpgMakerFormulaBattler,
+  type RpgMakerFormulaNode,
 } from "../src/rpgmaker-battle/formula.ts";
 
 const battler = (values: Partial<RpgMakerFormulaBattler> = {}): RpgMakerFormulaBattler => ({
@@ -93,6 +94,25 @@ describe("safe RPG Maker formula subset", () => {
     const source = readFileSync(join(import.meta.dir, "../src/rpgmaker-battle/formula.ts"), "utf8");
     expect(source).not.toMatch(/\beval\s*\(/);
     expect(source).not.toMatch(/new\s+Function\s*\(/);
+  });
+
+  test("enforces source, token, argument, and AST depth budgets at parse time", () => {
+    expect(() => parseRpgMakerFormula("1".repeat(2_049))).toThrow("exceeds 2048 characters");
+    expect(() => parseRpgMakerFormula(`${"1+".repeat(256)}1`)).toThrow("exceeds 512 tokens");
+    expect(() => parseRpgMakerFormula(`Math.max(${Array(33).fill("1").join(",")})`))
+      .toThrow("at most 32 arguments");
+    expect(run(`${"(".repeat(64)}1${")".repeat(64)}`)).toBe(1);
+    expect(() => parseRpgMakerFormula(`${"(".repeat(65)}1${")".repeat(65)}`))
+      .toThrow("exceeds AST depth 64");
+  });
+
+  test("forged persisted ASTs fail closed", () => {
+    const unknown = { kind: "call", source: "globalThis.process.exit(1)" } as unknown as RpgMakerFormulaNode;
+    let deep: RpgMakerFormulaNode = { kind: "number", value: 9 };
+    for (let i = 0; i < 66; i++) deep = { kind: "group", value: deep };
+
+    expect(evaluateRpgMakerFormula(unknown, context)).toBe(0);
+    expect(evaluateRpgMakerFormula(deep, context)).toBe(0);
   });
 });
 
