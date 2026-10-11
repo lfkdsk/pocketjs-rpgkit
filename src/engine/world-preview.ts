@@ -295,6 +295,7 @@ function collectWrites(
       case "playBgs":
       case "fadeoutBgs":
       case "playMe":
+      case "stopMe":
       case "playSe":
       case "stopSe":
       case "saveBgm":
@@ -333,6 +334,7 @@ function clauseContext(clause: Condition): ContextReason | null {
     case "bgmPlaying":
     case "timer":
     case "vehicle":
+    case "actor":
       return "runtime-condition";
     case "ext": return "extension-condition";
     case "tileProperty":

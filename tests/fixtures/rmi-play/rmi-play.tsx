@@ -10,6 +10,7 @@
 
 import { mount } from "@pocketjs/framework";
 import { GameView } from "../../../src/ui/GameView.tsx";
+import { createAudioEffects } from "../../../src/ui/audio/index.ts";
 import { ItemIconRow } from "../../../src/ui/ItemIconRow.tsx";
 import { ParallaxLayer } from "../../../src/ui/ParallaxLayer.tsx";
 import { krm2ScreenPresentation } from "../../../src/ui/krm2/index.ts";
@@ -26,6 +27,7 @@ declare global {
 
 const game = RMI_GAMES[globalThis.__rmiGame ?? "hollow"];
 globalThis.__rmiGame = undefined;
+const AudioEffects = createAudioEffects(game.project.audio ?? {});
 
 mount(() => (
   <GameView
@@ -38,5 +40,6 @@ mount(() => (
     battleScene={PlaceholderBattleScene}
     scenes={{ [NAME_INPUT_SCENE_ID]: nameInputRules }}
     sceneViews={{ [NAME_INPUT_SCENE_ID]: NameInputScene }}
+    effects={AudioEffects}
   />
 ));

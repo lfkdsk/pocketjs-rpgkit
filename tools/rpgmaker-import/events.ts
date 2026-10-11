@@ -42,10 +42,14 @@ import type {
 import { RM_COMMAND_BY_CODE, RM_CONDITION_TYPES, RM_ROUTE_BY_CODE } from "./catalog.ts";
 import type { Coverage, Disposition } from "./coverage.ts";
 import {
+  actorId,
+  classId,
   commonId,
   eventId,
   itemId,
   partySwitchId,
+  skillId,
+  stateId,
   switchId,
   tempVariableId,
   variableId,
@@ -125,9 +129,6 @@ const FADE_FRAMES = 24;
 const TRANSFER_FADE_SECONDS = (2 * FADE_FRAMES) / FPS;
 /** Sprite_Balloon: 8 frames x speed 8 + waitTime 12. */
 const BALLOON_FRAMES = 76;
-/** The kit's playMe needs an authored length and the importer does not
- *  decode audio; most stock MEs (Item, Inn, Victory) run 2..6 s. */
-export const ME_DEFAULT_SECONDS = 4;
 /** RM's default movement speed (events and the player). Route waits are
  *  converted against the mover's speed; an unknown mover is assumed at it. */
 const RM_DEFAULT_SPEED = 4;
@@ -1079,9 +1080,42 @@ function convertCondition(p: readonly unknown[], st: State): CondResult {
         op: int(p[2]) === 0 ? ">=" : "<=",
         seconds: Math.max(0, int(p[1])),
       });
-    case 4:
-      if (int(p[2]) === 0) return ok({ kind: "switch", id: partySwitchId(int(p[1])) });
-      return unknown("Degraded", "actor name/class/skill/equipment/state not modelled");
+    case 4: {
+      const actorNumber = int(p[1]);
+      if (!st.ctx.rm.actors[actorNumber]) return unknown("Dropped", `actor ${actorNumber} is missing`);
+      const actor = actorId(actorNumber);
+      const subtype = int(p[2], -1);
+      if (subtype === 0) return ok({ kind: "switch", id: partySwitchId(actorNumber) });
+      if (subtype === 1) {
+        if (typeof p[3] !== "string") return unknown("Dropped", "actor name comparison is malformed");
+        return ok({ kind: "actor", actor, test: "name", value: p[3] });
+      }
+      const value = int(p[3]);
+      switch (subtype) {
+        case 2:
+          return st.ctx.rm.classes[value]
+            ? ok({ kind: "actor", actor, test: "class", value: classId(value) })
+            : unknown("Dropped", `class ${value} is missing`);
+        case 3:
+          return st.ctx.rm.skills[value]
+            ? ok({ kind: "actor", actor, test: "skill", value: skillId(value) })
+            : unknown("Dropped", `skill ${value} is missing`);
+        case 4:
+          return st.ctx.rm.weapons[value]
+            ? ok({ kind: "actor", actor, test: "weapon", value: itemId("weapon", value) })
+            : unknown("Dropped", `weapon ${value} is missing`);
+        case 5:
+          return st.ctx.rm.armors[value]
+            ? ok({ kind: "actor", actor, test: "armor", value: itemId("armor", value) })
+            : unknown("Dropped", `armor ${value} is missing`);
+        case 6:
+          return st.ctx.rm.states[value]
+            ? ok({ kind: "actor", actor, test: "state", value: stateId(value) })
+            : unknown("Dropped", `state ${value} is missing`);
+        default:
+          return unknown("Dropped", `unknown actor condition subtype ${subtype}`);
+      }
+    }
     case 5:
       return unknown("Degraded", "enemy conditions are battle-only");
     case 6: {
@@ -1607,8 +1641,8 @@ function emitVehicleBgm(p: readonly unknown[], st: State): Command[] {
   }
   const audio = p[1] as RmAudio | undefined;
   const name = typeof audio?.name === "string" ? audio.name : "";
-  const panned = num(audio?.pan, 0) !== 0;
-  rec(st, 140, panned ? "Degraded" : "Native", panned ? "audio pan ignored" : undefined);
+  const pan = clamp(Math.round(num(audio?.pan, 0)), -100, 100);
+  rec(st, 140, "Native");
   return [{
     op: "setVehicleBgm",
     id,
@@ -1618,6 +1652,7 @@ function emitVehicleBgm(p: readonly unknown[], st: State): Command[] {
           id: st.ctx.audio("bgm", name),
           volume: clamp(Math.round(num(audio?.volume, 90)), 0, 100),
           pitch: clamp(Math.round(num(audio?.pitch, 100)), 50, 150),
+          ...(pan !== 0 ? { pan } : {}),
         },
   }];
 }
@@ -1742,7 +1777,14 @@ function emitSplitRoute(route: RmMoveRoute, target: RouteTarget, speed: number, 
       case 44: {
         const audio = p[0] as RmAudio | undefined;
         if (audio?.name) {
-          out.push({ op: "playSe", id: st.ctx.audio("se", audio.name), volume: int(audio.volume, 90), pitch: int(audio.pitch, 100) });
+          const pan = clamp(Math.round(num(audio.pan, 0)), -100, 100);
+          out.push({
+            op: "playSe",
+            id: st.ctx.audio("se", audio.name),
+            volume: clamp(int(audio.volume, 90), 0, 100),
+            pitch: clamp(int(audio.pitch, 100), 50, 150),
+            ...(pan !== 0 ? { pan } : {}),
+          });
         }
         break;
       }
@@ -1908,11 +1950,8 @@ function emitAudio(code: number, a: RmAudio | undefined, st: State): Command[] {
   const name = typeof a?.name === "string" ? a.name : "";
   const volume = clamp(Math.round(num(a?.volume, 90)), 0, 100);
   const pitch = clamp(Math.round(num(a?.pitch, 100)), 50, 150);
-  const panned = num(a?.pan, 0) !== 0;
-  const native = (): void => {
-    if (panned) rec(st, code, "Degraded", "audio pan ignored");
-    else rec(st, code, "Native");
-  };
+  const pan = clamp(Math.round(num(a?.pan, 0)), -100, 100);
+  const panning = pan !== 0 ? { pan } : {};
   switch (code) {
     case 241:
       // An empty BGM name stops the BGM (AudioManager.playBgm).
@@ -1920,29 +1959,31 @@ function emitAudio(code: number, a: RmAudio | undefined, st: State): Command[] {
         rec(st, 241, "Native");
         return [{ op: "stopBgm" }];
       }
-      native();
-      return [{ op: "playBgm", id: st.ctx.audio("bgm", name), volume, pitch }];
+      rec(st, 241, "Native");
+      return [{ op: "playBgm", id: st.ctx.audio("bgm", name), volume, pitch, ...panning }];
     case 245:
       if (name === "") {
         rec(st, 245, "Native");
         return [{ op: "fadeoutBgs", duration: 0 }];
       }
-      native();
-      return [{ op: "playBgs", id: st.ctx.audio("bgs", name), volume, pitch }];
+      rec(st, 245, "Native");
+      return [{ op: "playBgs", id: st.ctx.audio("bgs", name), volume, pitch, ...panning }];
     case 249:
       if (name === "") {
-        rec(st, 249, "Dropped", "stopping an ME is not supported");
-        return [];
+        rec(st, 249, "Native");
+        return [{ op: "stopMe" }];
       }
-      rec(st, 249, "Degraded", `ME length unknown; plays for ${ME_DEFAULT_SECONDS} s`);
-      return [{ op: "playMe", id: st.ctx.audio("me", name), duration: ME_DEFAULT_SECONDS, volume, pitch }];
+      // project.ts replaces this zero with the decoded medium's exact
+      // pitch-adjusted duration after all referenced media is converted.
+      rec(st, 249, "Native");
+      return [{ op: "playMe", id: st.ctx.audio("me", name), duration: 0, volume, pitch, ...panning }];
     default:
       if (name === "") {
         rec(st, 250, "Native");
         return [];
       }
-      native();
-      return [{ op: "playSe", id: st.ctx.audio("se", name), volume, pitch }];
+      rec(st, 250, "Native");
+      return [{ op: "playSe", id: st.ctx.audio("se", name), volume, pitch, ...panning }];
   }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { audioTrackVolume, type AudioState } from "../src/engine/audio.ts";
+import { ME_REPLAY_FADE_TICKS, audioTrackVolume, type AudioState } from "../src/engine/audio.ts";
 import {
   evalCondition,
   createInterpState,
@@ -197,31 +197,82 @@ describe("audio reducer state", () => {
     state = idleInterp(state, 1);
     expect(state.audio?.me).toBeUndefined();
     expect(state.audio?.bgm?.positionTicks).toBe(held);
+    expect(state.audio?.bgm?.fade).toEqual({
+      totalTicks: ME_REPLAY_FADE_TICKS,
+      leftTicks: ME_REPLAY_FADE_TICKS,
+      direction: "in",
+    });
+    expect(audioTrackVolume(state.audio!.bgm!)).toBe(0);
     state = idleInterp(state, 1);
     expect(state.audio?.bgm?.positionTicks).toBe(held + 1);
+    expect(audioTrackVolume(state.audio!.bgm!)).toBeCloseTo(100 / ME_REPLAY_FADE_TICKS);
+    state = idleInterp(state, ME_REPLAY_FADE_TICKS - 1);
+    expect(state.audio?.bgm?.fade).toBeUndefined();
+    expect(audioTrackVolume(state.audio!.bgm!)).toBe(100);
   });
 
-  test("saveBgm/replayBgm restore id, parameters and virtual position", () => {
-    let state = issue(createInterpState(), { op: "playBgm", id: "first", volume: 73, pitch: 120 });
+  test("saveBgm/replayBgm restore id, parameters and virtual position without stopping ME", () => {
+    let state = issue(createInterpState(), { op: "playBgm", id: "first", volume: 73, pitch: 120, pan: -40 });
     state = idleInterp(state, 8);
     state = issue(state, { op: "saveBgm" }, "save");
     const saved = { ...state.audio!.savedBgm! };
     state = issue(state, { op: "playBgm", id: "second" }, "replace");
     state = issue(state, { op: "playMe", id: "sting", duration: 2 }, "me");
     state = issue(state, { op: "replayBgm" }, "replay");
-    expect(state.audio?.bgm).toEqual(saved);
+    expect(state.audio?.bgm).toEqual({
+      ...saved,
+      fade: { totalTicks: ME_REPLAY_FADE_TICKS, leftTicks: ME_REPLAY_FADE_TICKS, direction: "in" },
+    });
+    expect(state.audio?.me?.id).toBe("sting");
+
+    state = issue(state, { op: "saveBgm" }, "save-again");
+    const position = state.audio!.bgm!.positionTicks;
+    state = issue(state, { op: "replayBgm" }, "replay-same");
+    expect(state.audio?.bgm?.positionTicks).toBe(position);
+    expect(state.audio?.bgm?.fade).toEqual({
+      totalTicks: ME_REPLAY_FADE_TICKS, leftTicks: ME_REPLAY_FADE_TICKS, direction: "in",
+    });
+  });
+
+  test("same-id parameters update in place and an explicit ME stop shares the replay fade", () => {
+    let state = issue(createInterpState(), { op: "playBgm", id: "route", volume: 70 });
+    state = issue(state, { op: "playBgs", id: "rain", volume: 55 }, "bgs");
+    state = idleInterp(state, 12);
+    const bgmBeforeUpdate = state.audio!.bgm!.positionTicks;
+    state = issue(state, { op: "playBgm", id: "route", volume: 80, pitch: 120, pan: 25 }, "bgm-update");
+    expect(state.audio?.bgm?.positionTicks).toBe(bgmBeforeUpdate + 1);
+    const bgmBeforeBgsUpdate = state.audio!.bgm!.positionTicks;
+    const bgsBeforeUpdate = state.audio!.bgs!.positionTicks;
+    state = issue(state, { op: "playBgs", id: "rain", volume: 65, pitch: 90, pan: -30 }, "bgs-update");
+    expect(state.audio?.bgm).toEqual({
+      id: "route", volume: 80, pitch: 120, pan: 25, positionTicks: bgmBeforeBgsUpdate + 1,
+    });
+    expect(state.audio?.bgs).toEqual({
+      id: "rain", volume: 65, pitch: 90, pan: -30, positionTicks: bgsBeforeUpdate + 1,
+    });
+
+    state = issue(state, { op: "playMe", id: "sting", duration: 2 }, "me");
+    state = idleInterp(state, 5);
+    const held = state.audio!.bgm!.positionTicks;
+    state = issue(state, { op: "stopMe" }, "stop-me");
     expect(state.audio?.me).toBeUndefined();
+    expect(state.audio?.bgm?.positionTicks).toBe(held);
+    expect(state.audio?.bgm?.fade).toEqual({
+      totalTicks: ME_REPLAY_FADE_TICKS,
+      leftTicks: ME_REPLAY_FADE_TICKS,
+      direction: "in",
+    });
   });
 
   test("playSe and legacy se share the ordered transient cue channel", () => {
     const world = createWorld(testMap("m", [action("source", [
       { op: "se", name: "legacy", volume: 40 },
-      { op: "playSe", id: "modern", pitch: 125 },
+      { op: "playSe", id: "modern", pitch: 125, pan: 100 },
     ])]), []);
     let state = stepInterp(world, createInterpState(), { ...SILENT_INPUT, confirmEdge: true });
     expect(state.cues).toEqual([
       { name: "legacy", volume: 40, pitch: 100 },
-      { name: "modern", volume: 100, pitch: 125 },
+      { name: "modern", volume: 100, pitch: 125, pan: 100 },
     ]);
     state = idleInterp(state, 1);
     expect(state.cues).toEqual([]);
@@ -256,7 +307,10 @@ describe("session audio clock", () => {
     }
     for (const snapshot of snapshots.slice(1)) expect(snapshot).toEqual(snapshots[0]);
     expect(snapshots[0]).toEqual({
-      bgm: { id: "route", volume: 100, pitch: 100, positionTicks: 29 },
+      bgm: {
+        id: "route", volume: 100, pitch: 100, positionTicks: 29,
+        fade: { totalTicks: ME_REPLAY_FADE_TICKS, leftTicks: 1, direction: "in" },
+      },
       bgs: { id: "rain", volume: 100, pitch: 100, positionTicks: 59 },
     });
   });

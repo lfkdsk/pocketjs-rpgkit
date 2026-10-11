@@ -350,6 +350,7 @@ describe("event explanation", () => {
       playBgs: { command: { op: "playBgs", id: "b" }, expected: "none" },
       fadeoutBgs: { command: { op: "fadeoutBgs", duration: 0 }, expected: "none" },
       playMe: { command: { op: "playMe", id: "m", duration: 0 }, expected: "none" },
+      stopMe: { command: { op: "stopMe" }, expected: "none" },
       playSe: { command: { op: "playSe", id: "s" }, expected: "none" },
       stopSe: { command: { op: "stopSe" }, expected: "none" },
       saveBgm: { command: { op: "saveBgm" }, expected: "none" },

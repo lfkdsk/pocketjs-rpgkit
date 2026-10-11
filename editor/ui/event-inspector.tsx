@@ -210,6 +210,7 @@ function conditionSummary(condition: Condition): string {
     }
     case "timer": return `timer ${condition.op} ${condition.seconds}s`;
     case "vehicle": return `${condition.negate ? "not " : ""}riding ${condition.id}`;
+    case "actor": return `${condition.actor} ${condition.test} ${condition.value}`;
     case "ext": return condition.call;
     case "appearance": return `appearance ${condition.sprite ?? "default"}`;
     case "tileProperty": return `tile (${condition.x}, ${condition.y})`;

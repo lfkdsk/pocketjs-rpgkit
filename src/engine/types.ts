@@ -61,6 +61,7 @@ export interface VehicleBgm {
   id: string;
   volume?: number;
   pitch?: number;
+  pan?: number;
 }
 
 /** Initial position and art for one persistent vehicle. */
@@ -305,6 +306,14 @@ export type Condition =
   | { kind: "timer"; op: ">=" | "<="; seconds: number }
   /** True while the player rides the named vehicle. */
   | { kind: "vehicle"; id: string; negate?: boolean }
+  /** Compare one imported actor's current name or database-derived RPG
+   * Maker facts. Actors need not be in the party; a missing actor is false. */
+  | {
+      kind: "actor";
+      actor: string;
+      test: "name" | "class" | "skill" | "weapon" | "armor" | "state";
+      value: string;
+    }
   /** Game-owned pure condition handler, registered on createSession(). */
   | { kind: "ext"; call: string; args: JsonValue };
 
@@ -652,18 +661,19 @@ export type Command =
   | { op: "wait"; seconds: number }
   | { op: "gold"; set: "add" | "sub"; amount: number }
   | { op: "item"; item: string; set: "add" | "sub"; count: number }
-  | { op: "se"; name: string; volume?: number; pitch?: number }
-  | { op: "playBgm"; id: string; volume?: number; pitch?: number }
+  | { op: "se"; name: string; volume?: number; pitch?: number; pan?: number }
+  | { op: "playBgm"; id: string; volume?: number; pitch?: number; pan?: number }
   | { op: "fadeoutBgm"; duration: number }
   | { op: "stopBgm" }
   | { op: "pauseBgm" }
   | { op: "resumeBgm" }
-  | { op: "playBgs"; id: string; volume?: number; pitch?: number }
+  | { op: "playBgs"; id: string; volume?: number; pitch?: number; pan?: number }
   | { op: "fadeoutBgs"; duration: number }
   /** ME is a deterministic one-shot. `duration` is virtual seconds; when
    *  it expires, an unpaused BGM resumes from its held position. */
-  | { op: "playMe"; id: string; duration: number; volume?: number; pitch?: number }
-  | { op: "playSe"; id: string; volume?: number; pitch?: number }
+  | { op: "playMe"; id: string; duration: number; volume?: number; pitch?: number; pan?: number }
+  | { op: "stopMe" }
+  | { op: "playSe"; id: string; volume?: number; pitch?: number; pan?: number }
   /** Stop every sound effect currently playing (RPG Maker 251). A
    *  one-shot side effect: it appends a stop entry to the deterministic
    *  cue sequence the host audio bridge drains, and is never saved. */
@@ -1162,7 +1172,7 @@ export type SpriteDef = ImageSpriteDef | WalkerSpriteDef;
  * them or report the semantic loss. */
 export interface AnimationTimingDef {
   frame: number;
-  se?: { id: string; volume?: number; pitch?: number };
+  se?: { id: string; volume?: number; pitch?: number; pan?: number };
   flash?: { color: ScreenColor; intensity: number; duration: number };
 }
 
@@ -1264,6 +1274,13 @@ export interface ActorDef {
   id: string;
   databaseId?: number;
   name: string;
+  /** Initial RPG Maker database facts used by actor conditional branches.
+   * Omitted arrays mean no imported fact of that kind. */
+  classId?: string;
+  skills?: string[];
+  weapons?: string[];
+  armors?: string[];
+  states?: string[];
   sprite?: string;
   moveSeconds?: number;
 }

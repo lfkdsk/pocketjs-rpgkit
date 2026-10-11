@@ -8,8 +8,10 @@
 export interface AudioFadeState {
   /** Fade duration in reference ticks. Always positive. */
   totalTicks: number;
-  /** Ticks remaining before the track is removed. */
+  /** Ticks remaining before the transition completes. */
   leftTicks: number;
+  /** Omitted keeps the original fade-out save shape and semantics. */
+  direction?: "in";
 }
 
 export interface AudioTrackState {
@@ -18,6 +20,8 @@ export interface AudioTrackState {
   volume: number;
   /** Playback-rate percentage, 50..150. */
   pitch: number;
+  /** Stereo balance, -100 (left) through 100 (right). Omitted is centred. */
+  pan?: number;
   /** Virtual playback position in reference ticks. */
   positionTicks: number;
   /** Only BGM can be explicitly paused. */
@@ -36,8 +40,12 @@ export interface SavedBgmState {
   id: string;
   volume: number;
   pitch: number;
+  pan?: number;
   positionTicks: number;
 }
+
+/** RPG Maker MV/MZ resumes BGM through a 0.5 second fade after an ME. */
+export const ME_REPLAY_FADE_TICKS = 30;
 
 /** Sparse persistent audio intent. Missing fields mean silence. */
 export interface AudioState {
@@ -71,9 +79,10 @@ export function cloneAudioState(audio: Readonly<AudioState>): AudioState {
 
 /** Effective host volume after a reducer-owned fade. */
 export function audioTrackVolume(track: Readonly<AudioTrackState>): number {
-  return track.fade
-    ? track.volume * track.fade.leftTicks / track.fade.totalTicks
-    : track.volume;
+  if (!track.fade) return track.volume;
+  return track.fade.direction === "in"
+    ? track.volume * (track.fade.totalTicks - track.fade.leftTicks) / track.fade.totalTicks
+    : track.volume * track.fade.leftTicks / track.fade.totalTicks;
 }
 
 /** True when no durable audio fact remains. */
@@ -85,18 +94,40 @@ export function audioStateEmpty(audio: Readonly<AudioState>): boolean {
 function advanceFade(track: AudioTrackState): boolean {
   if (!track.fade) return false;
   track.fade.leftTicks--;
-  if (track.fade.leftTicks <= 0) return true;
+  if (track.fade.leftTicks <= 0) {
+    if (track.fade.direction === "in") {
+      delete track.fade;
+      return false;
+    }
+    return true;
+  }
   return false;
+}
+
+/** Stop a live ME and resume the held BGM through RPG Maker's replay fade. */
+export function stopMeAndResumeBgmInPlace(audio: AudioState): boolean {
+  if (!audio.me) return false;
+  delete audio.me;
+  if (audio.bgm) {
+    audio.bgm.fade = {
+      totalTicks: ME_REPLAY_FADE_TICKS,
+      leftTicks: ME_REPLAY_FADE_TICKS,
+      direction: "in",
+    };
+  }
+  return true;
 }
 
 /** Advance one fixed reference tick on a caller-owned state object. */
 export function advanceAudioStateInPlace(audio: AudioState): void {
   const meWasPlaying = audio.me !== undefined;
 
-  if (audio.bgm) {
+  // RPG Maker stops the BGM buffer while an ME owns the music channel, so
+  // both its playback cursor and any in-flight fade remain held.
+  if (audio.bgm && !meWasPlaying) {
     if (advanceFade(audio.bgm)) {
       delete audio.bgm;
-    } else if (!audio.bgm.paused && !meWasPlaying) {
+    } else if (!audio.bgm.paused) {
       audio.bgm.positionTicks++;
     }
   }
@@ -109,6 +140,6 @@ export function advanceAudioStateInPlace(audio: AudioState): void {
   if (audio.me) {
     audio.me.positionTicks++;
     audio.me.leftTicks--;
-    if (audio.me.leftTicks <= 0) delete audio.me;
+    if (audio.me.leftTicks <= 0) stopMeAndResumeBgmInPlace(audio);
   }
 }

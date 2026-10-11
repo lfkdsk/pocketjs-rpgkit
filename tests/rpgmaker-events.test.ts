@@ -20,7 +20,6 @@ import type { Command, Condition, GameEvent, MapDef, TextBoxLayout } from "../sr
 import { RM_COMMANDS, RM_COMMAND_BY_CODE, RM_CONDITION_TYPES, RM_ROUTE_CODES, sampleCommands } from "../tools/rpgmaker-import/catalog.ts";
 import { Coverage, type Disposition } from "../tools/rpgmaker-import/coverage.ts";
 import {
-  ME_DEFAULT_SECONDS,
   convertCommands,
   convertCommonEvent,
   convertMoveRoute,
@@ -73,7 +72,8 @@ function rmProject(): RmProject {
     ],
   } as unknown as RmMap;
   const actor = (id: number, name: string) => ({
-    id, name, nickname: "", characterName: "", characterIndex: 0, faceName: "", faceIndex: 0, classId: 1, initialLevel: 1, note: "",
+    id, name, nickname: "", characterName: "", characterIndex: 0, faceName: "", faceIndex: 0,
+    classId: 1, initialLevel: 1, equips: [1, 1], traits: [], note: "",
   });
   return {
     root: "",
@@ -86,9 +86,12 @@ function rmProject(): RmProject {
     tilesets: [null],
     commonEvents: [null, { id: 1, name: "Shared", trigger: 0, switchId: 0, list: [END(0)] }],
     items: [null],
-    weapons: [null],
-    armors: [null],
+    weapons: [null, { id: 1, name: "Sword", description: "", iconIndex: 0, price: 0, etypeId: 1, traits: [], note: "" }],
+    armors: [null, { id: 1, name: "Coat", description: "", iconIndex: 0, price: 0, etypeId: 4, traits: [], note: "" }],
     actors: [null, actor(1, "Harold"), actor(2, "Therese")],
+    classes: [null, { id: 1, name: "Adventurer", learnings: [{ level: 1, skillId: 1 }], traits: [], note: "" }],
+    skills: [null, { id: 1, name: "Attack", note: "" }],
+    states: [null, { id: 1, name: "Knockout", note: "" }],
     troops: [null, { id: 1, name: "Bats", members: [], pages: [] }],
     animations: [null],
   };
@@ -633,7 +636,12 @@ describe("conditional branch", () => {
     ["timer >=", [3, 60, 0], [{ op: "if", if: { kind: "timer", op: ">=", seconds: 60 }, then: [THEN], else: [ELSE] }], "timer", "Native"],
     ["timer <=", [3, 30, 1], [{ op: "if", if: { kind: "timer", op: "<=", seconds: 30 }, then: [THEN], else: [ELSE] }], "timer", "Native"],
     ["actor in party", [4, 2, 0], [{ op: "if", if: { kind: "switch", id: "party-actor002" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
-    ["actor name", [4, 2, 1, "Bob"], dead([THEN], [ELSE]), "actor", "Degraded"],
+    ["actor name", [4, 2, 1, "Therese"], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "name", value: "Therese" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
+    ["actor class", [4, 2, 2, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "class", value: "class001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
+    ["actor skill", [4, 2, 3, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "skill", value: "skill001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
+    ["actor weapon", [4, 2, 4, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "weapon", value: "weapon001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
+    ["actor armor", [4, 2, 5, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "armor", value: "armor001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
+    ["actor state", [4, 2, 6, 1], [{ op: "if", if: { kind: "actor", actor: "actor002", test: "state", value: "state001" }, then: [THEN], else: [ELSE] }], "actor", "Native"],
     ["enemy", [5, 0, 0], dead([THEN], [ELSE]), "enemy", "Degraded"],
     ["player facing", [6, -1, 8], [{ op: "if", if: { kind: "facing", dir: "up" }, then: [THEN], else: [ELSE] }], "character", "Native"],
     ["event facing", [6, 1, 8], dead([THEN], [ELSE]), "character", "Degraded"],
@@ -657,6 +665,15 @@ describe("conditional branch", () => {
   test("gold <= without else swaps into an empty then", () => {
     const { cmds } = conv(branch([7, 50, 1]));
     expect(cmds).toEqual([{ op: "if", if: { kind: "gold", amount: 51 }, then: [], else: [THEN] }]);
+  });
+
+  test("missing actor database references remain an explicit false branch", () => {
+    for (const params of [[4, 99, 1, "Nobody"], [4, 1, 2, 99], [4, 1, 3, 99], [4, 1, 4, 99], [4, 1, 5, 99], [4, 1, 6, 99]]) {
+      const { cmds, cov } = conv(branch(params, true));
+      expect(cmds).toEqual(dead([THEN], [ELSE]));
+      expect(only(cov, 111)).toBe("Dropped");
+      expect(counts(cov, "condition", "actor").Dropped).toBe(1);
+    }
   });
 
   test("script condition: placeholder in both modes", () => {
@@ -913,16 +930,16 @@ describe("transfer", () => {
     for (const code of [140, 202, 206, 216, 217, 323]) expect(counts(cov, "command", String(code)).Native).toBeGreaterThan(0);
   });
 
-  test("vehicle BGM imports silence, clamps parameters, ignores pan and rejects unknown vehicles", () => {
+  test("vehicle BGM imports silence, clamps parameters, preserves pan and rejects unknown vehicles", () => {
     let converted = conv([C(140, 0, [1, { name: "", volume: 90, pitch: 100, pan: 0 }])]);
     expect(converted.cmds).toEqual([{ op: "setVehicleBgm", id: "ship", bgm: null }]);
     expect(only(converted.cov, 140)).toBe("Native");
 
     converted = conv([C(140, 0, [2, { name: "Sky", volume: 999, pitch: -10, pan: 25 }])]);
     expect(converted.cmds).toEqual([{
-      op: "setVehicleBgm", id: "airship", bgm: { id: "bgm-sky", volume: 100, pitch: 50 },
+      op: "setVehicleBgm", id: "airship", bgm: { id: "bgm-sky", volume: 100, pitch: 50, pan: 25 },
     }]);
-    expect(only(converted.cov, 140)).toBe("Degraded");
+    expect(only(converted.cov, 140)).toBe("Native");
 
     converted = conv([C(140, 0, [9, { name: "Bad", volume: 90, pitch: 100, pan: 0 }])]);
     expect(converted.cmds).toEqual([]);
@@ -1143,12 +1160,12 @@ describe("screen and audio", () => {
       { op: "playBgs", id: "bgs-rain", volume: 80, pitch: 110 },
       { op: "fadeoutBgs", duration: 0 },
       { op: "fadeoutBgs", duration: 1 },
-      { op: "playMe", id: "me-inn", duration: ME_DEFAULT_SECONDS, volume: 80, pitch: 110 },
-      { op: "playSe", id: "se-cursor1", volume: 80, pitch: 110 },
+      { op: "playMe", id: "me-inn", duration: 0, volume: 80, pitch: 110 },
+      { op: "playSe", id: "se-cursor1", volume: 80, pitch: 110, pan: 20 },
     ]);
     expect(counts(cov, "command", "241")).toMatchObject({ Native: 2 });
-    expect(counts(cov, "command", "249")).toMatchObject({ Degraded: 1 });
-    expect(counts(cov, "command", "250")).toMatchObject({ Degraded: 1, Native: 1 });
+    expect(counts(cov, "command", "249")).toMatchObject({ Native: 1 });
+    expect(counts(cov, "command", "250")).toMatchObject({ Native: 2 });
   });
 });
 

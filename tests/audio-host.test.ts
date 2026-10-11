@@ -172,6 +172,38 @@ describe("opt-in audio host", () => {
     expect(ops.plays).toEqual([1]);
   });
 
+  test("renders centred and panned WAV/QOA PCM with deterministic equal-power samples", () => {
+    const wavSource = wav([1000, -2000, 3000, -4000]);
+    const qoaSource = encodeQoa(qoaSamples(41), 1, 11_025);
+    const fixtures = [
+      { key: "audio:wav.tone", bytes: wavSource, decoded: [1000, -2000, 3000, -4000] },
+      { key: "audio:qoa.tone", bytes: qoaSource, decoded: decodedQoa(qoaSource) },
+    ];
+
+    for (const fixture of fixtures) {
+      for (const [pan, channels, expected] of [
+        [0, 1, fixture.decoded.slice(0, 4)],
+        [-100, 2, fixture.decoded.slice(0, 2).flatMap((sample) => [sample, 0])],
+        [100, 2, fixture.decoded.slice(0, 2).flatMap((sample) => [0, sample])],
+      ] as const) {
+        const ops = new MockAudioOps();
+        const driver = new AudioDriver(ops, { tone: fixture.key }, () => fixture.bytes);
+        driver.sync(frame(1, {
+          bgm: { id: "tone", volume: 100, pitch: 100, pan, positionTicks: 0 },
+        }));
+        expect(ops.created[0]?.channels, `${fixture.key} pan ${pan}`).toBe(channels);
+        expect(ops.writes[0]!.samples.slice(0, expected.length), `${fixture.key} pan ${pan}`).toEqual(expected);
+      }
+    }
+
+    const ops = new MockAudioOps();
+    const driver = new AudioDriver(ops, { tone: "audio:wav.tone" }, () => wavSource);
+    driver.sync(frame(1, {
+      bgm: { id: "tone", volume: 100, pitch: 100, pan: 50, positionTicks: 0 },
+    }));
+    expect(ops.writes[0]!.samples.slice(0, 4)).toEqual([707, 1000, -1414, -2000]);
+  });
+
   test("keeps BGM/BGS/ME ahead of deterministic oldest-SE eviction", () => {
     const ops = new MockAudioOps();
     const resources = Object.fromEntries(

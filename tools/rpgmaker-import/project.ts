@@ -13,6 +13,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
+  ActorDef,
   AnimationDef,
   AnimationTimingDef,
   CommonEvent,
@@ -31,14 +32,32 @@ import type {
   VehicleDef,
 } from "../../src/engine/types.ts";
 import { cookMvAnimation, MV_ANIMATION_RATE, MvAnimationCookError } from "./animation.ts";
+import {
+  audioMediaKey,
+  convertRpgMakerAudioMedia,
+  type AudioMediaRecord,
+  type AudioMediaSuccess,
+  type RpgMakerAudioKind,
+} from "./audio-media.ts";
 import { Coverage } from "./coverage.ts";
 import { TileAtlas, composeMap } from "./compose.ts";
 import { convertCommonEvent, convertPage, type EventContext } from "./events.ts";
-import { actorId, animationId, commonId, eventId, itemId, mapId, partySwitchId, slug } from "./ids.ts";
+import {
+  actorId,
+  animationId,
+  classId,
+  commonId,
+  eventId,
+  itemId,
+  mapId,
+  partySwitchId,
+  skillId,
+  slug,
+} from "./ids.ts";
 import { rmParallaxSpeed, rmTileSize } from "./load.ts";
 import { passes, RM_FLAG } from "./passage.ts";
 import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
-import type { RmPageImage, RmProject, RmVehicle } from "./rm-types.ts";
+import type { RmActor, RmPageImage, RmProject, RmTrait, RmVehicle } from "./rm-types.ts";
 import { downscale, drawTile, loadTilesetImages, type TilesetImages } from "./tile-render.ts";
 
 export interface ImportOptions {
@@ -63,6 +82,8 @@ export interface ImportAssets {
   animations: Record<string, { sheet: string; offsetX: number; offsetY: number }>;
   /** Map id -> animated cells (water, waterfalls): sheet cells per step. */
   animated: Record<string, { x: number; y: number; above: boolean; frames: TileId[]; frameSeconds: number }[]>;
+  /** Logical audio id -> converted output-relative QOA path. */
+  audio: Record<string, string>;
   /** The balloon sheet (8 columns x 15 rows of 16 px frames), when used. */
   balloon?: string;
   /** Sprite key of the starting party leader's walking character. */
@@ -73,6 +94,10 @@ export interface ImportResult {
   project: Project;
   /** Generated images keyed by their output-relative path. */
   images: Map<string, RgbaImage>;
+  /** Converted QOA files keyed by their output-relative path. */
+  audioFiles: Map<string, Uint8Array>;
+  /** Per-logical-medium conversion facts for coverage and duration checks. */
+  audioMedia: AudioMediaRecord[];
   assets: ImportAssets;
   cov: Coverage;
   warnings: string[];
@@ -84,6 +109,57 @@ const KIT_TILE = 16;
 const BALLOON_FRAME_SECONDS = 8 / 60;
 
 const truncate = (s: string, n: number): string => (s.length > n ? s.slice(0, n) : s);
+
+interface RegisteredAudio {
+  kind: RpgMakerAudioKind;
+  name: string;
+  id: string;
+}
+
+function meDurationSeconds(media: AudioMediaSuccess, pitch: number): number {
+  const outputFrames = Math.ceil(media.frames * 100 / pitch);
+  return Math.ceil(outputFrames * 60 / media.sampleRate) / 60;
+}
+
+/** Fill every imported ME command after media decoding, including commands
+ * nested inside choices, branches, loops and battle/scene continuations. */
+function applyImportedMeDurations(
+  project: Project,
+  mediaById: ReadonlyMap<string, AudioMediaSuccess>,
+): void {
+  const nestedKeys = [
+    "commands", "then", "else", "onWin", "onLose", "onEscape", "onDone", "onCancel",
+  ] as const;
+  const visit = (commands: Command[]): void => {
+    for (let index = 0; index < commands.length;) {
+      const command = commands[index]!;
+      if (command.op === "playMe") {
+        const media = mediaById.get(command.id);
+        // A zero-duration playMe is the runtime spelling for an explicit ME
+        // stop. Missing/corrupt named media must instead be a true dropped
+        // import, as recorded in the audio coverage section.
+        if (!media) {
+          commands.splice(index, 1);
+          continue;
+        }
+        command.duration = meDurationSeconds(media, command.pitch ?? 100);
+      }
+      const record = command as Command & Record<string, unknown>;
+      for (const key of nestedKeys) {
+        if (Array.isArray(record[key])) visit(record[key] as Command[]);
+      }
+      if (command.op === "choices") {
+        for (const option of command.options) visit(option.commands);
+        if (command.cancel) visit(command.cancel.commands);
+      }
+      index++;
+    }
+  };
+  for (const map of project.maps) {
+    for (const event of map.events ?? []) for (const page of event.pages) visit(page.commands);
+  }
+  for (const common of project.commonEvents ?? []) visit(common.commands);
+}
 
 /** Sparse [index, value] pairs for a row-major plane, keeping only nonzero
  *  cells so a map without regions/terrain carries no data. */
@@ -169,6 +245,63 @@ function nonEmpty(s: string | undefined, fallback: string): string {
   return t.length > 0 ? t : fallback;
 }
 
+const TRAIT_SKILL_ADD = 43;
+const TRAIT_SLOT_TYPE = 55;
+const SLOT_DUAL_WIELD = 1;
+
+function traitDataIds(traits: readonly RmTrait[] | undefined, code: number): number[] {
+  return (traits ?? []).flatMap((trait) =>
+    trait.code === code && Number.isInteger(trait.dataId) && trait.dataId > 0
+      ? [trait.dataId]
+      : []);
+}
+
+/** RPG Maker's Game_Actor.setup/initSkills/initEquips projected onto the
+ * immutable actor facts used by imported conditional branches. Runtime
+ * change-class/skill/equipment/state commands remain separately reported
+ * as unsupported, so these are intentionally initial facts. */
+function importActorDef(rm: RmProject, actor: RmActor): ActorDef {
+  const out: ActorDef = { id: actorId(actor.id), databaseId: actor.id, name: actor.name };
+  const actorClass = rm.classes[actor.classId] ?? null;
+  if (actorClass) out.classId = classId(actorClass.id);
+
+  const baseTraits = [...(actor.traits ?? []), ...(actorClass?.traits ?? [])];
+  const dualWield = baseTraits.some((trait) =>
+    trait.code === TRAIT_SLOT_TYPE && trait.dataId === SLOT_DUAL_WIELD);
+  const weaponNumbers: number[] = [];
+  const armorNumbers: number[] = [];
+  const equipTraits: RmTrait[] = [];
+  for (let slot = 0; slot < (actor.equips ?? []).length; slot++) {
+    const id = actor.equips[slot] ?? 0;
+    if (!Number.isInteger(id) || id <= 0) continue;
+    const weaponSlot = slot === 0 || (slot === 1 && dualWield);
+    const entry = weaponSlot ? rm.weapons[id] : rm.armors[id];
+    if (!entry) continue;
+    (weaponSlot ? weaponNumbers : armorNumbers).push(id);
+    equipTraits.push(...(entry.traits ?? []));
+  }
+  if (weaponNumbers.length > 0) {
+    out.weapons = [...new Set(weaponNumbers)].sort((a, b) => a - b).map((id) => itemId("weapon", id));
+  }
+  if (armorNumbers.length > 0) {
+    out.armors = [...new Set(armorNumbers)].sort((a, b) => a - b).map((id) => itemId("armor", id));
+  }
+
+  const skillNumbers = new Set<number>();
+  for (const learning of actorClass?.learnings ?? []) {
+    if (Number.isInteger(learning.level) && learning.level <= actor.initialLevel && rm.skills[learning.skillId]) {
+      skillNumbers.add(learning.skillId);
+    }
+  }
+  for (const id of traitDataIds([...baseTraits, ...equipTraits], TRAIT_SKILL_ADD)) {
+    if (rm.skills[id]) skillNumbers.add(id);
+  }
+  if (skillNumbers.size > 0) {
+    out.skills = [...skillNumbers].sort((a, b) => a - b).map(skillId);
+  }
+  return out;
+}
+
 export async function importRmProject(rm: RmProject, options: ImportOptions = {}): Promise<ImportResult> {
   const cov = new Coverage();
   const warnings: string[] = [];
@@ -187,6 +320,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     parallaxes: {},
     animations: {},
     animated: {},
+    audio: {},
   };
 
   // --- tilesets -----------------------------------------------------------
@@ -267,10 +401,17 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     balloonsUsed.add(n);
     return `balloon${n}`;
   };
-  const audioUsed = new Set<string>();
-  const audioFor = (kind: "bgm" | "bgs" | "me" | "se", name: string): string => {
-    const id = `${kind}-${slug(name)}`;
-    audioUsed.add(id);
+  const audioRequests = new Map<string, RegisteredAudio>();
+  const audioIds = new Set<string>();
+  const audioFor = (kind: RpgMakerAudioKind, name: string): string => {
+    const key = audioMediaKey(kind, name);
+    const known = audioRequests.get(key);
+    if (known) return known.id;
+    const base = `${kind}-${slug(name) || "audio"}`;
+    let id = base;
+    for (let suffix = 2; audioIds.has(id); suffix++) id = `${base}-${suffix}`;
+    audioIds.add(id);
+    audioRequests.set(key, { kind, name, id });
     return id;
   };
 
@@ -321,8 +462,10 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
             id: audioFor("se", timing.se.name),
             volume: clampNumber(timing.se.volume, 0, 100, 100),
             pitch: clampNumber(timing.se.pitch, 50, 150, 100),
+            ...(timing.se.pan !== 0
+              ? { pan: Math.round(clampNumber(timing.se.pan, -100, 100, 0)) }
+              : {}),
           };
-          if (timing.se.pan !== 0) degradations.push("animation sound pan is ignored");
         }
         if (timing.flashScope === 2) {
           const color = Array.isArray(timing.flashColor) ? timing.flashColor : [255, 255, 255, 0];
@@ -427,9 +570,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     if (!sprite) continue;
     const sourceBgm = vehicle.bgm;
     const bgmName = typeof sourceBgm?.name === "string" ? sourceBgm.name : "";
-    if (clampNumber(sourceBgm?.pan, -100, 100, 0) !== 0) {
-      warnings.push(`${id}: vehicle BGM pan is not supported and was ignored`);
-    }
+    const pan = Math.round(clampNumber(sourceBgm?.pan, -100, 100, 0));
     vehicles.push({
       id,
       kind: id,
@@ -441,6 +582,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
             id: audioFor("bgm", bgmName),
             volume: Math.round(clampNumber(sourceBgm?.volume, 0, 100, 90)),
             pitch: Math.round(clampNumber(sourceBgm?.pitch, 50, 150, 100)),
+            ...(pan !== 0 ? { pan } : {}),
           },
     });
   }
@@ -706,7 +848,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
 
   const actors = rm.actors.flatMap((actor) =>
     actor && Number.isInteger(actor.id) && actor.id > 0 && actor.name.length > 0
-      ? [{ id: actorId(actor.id), databaseId: actor.id, name: actor.name }]
+      ? [importActorDef(rm, actor)]
       : []);
   const project: Project = {
     format: "rpgkit-project/v1",
@@ -735,10 +877,26 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     maps,
   };
   invertInitialParty(project, rm.system.partyMembers ?? []);
-  if (audioUsed.size > 0) {
-    warnings.push(`${audioUsed.size} audio ids are referenced; audio files are not converted (project.audio is left empty)`);
+  const audioMedia = convertRpgMakerAudioMedia(rm.root, audioRequests.values());
+  const audioFiles = new Map<string, Uint8Array>();
+  const successfulById = new Map<string, AudioMediaSuccess>();
+  for (const media of audioMedia) {
+    const request = audioRequests.get(media.key)!;
+    if (media.status === "success") {
+      const rel = `audio/${request.id}.qoa`;
+      const pakKey = `audio:qoa.${request.id}`;
+      (project.audio ??= {})[request.id] = pakKey;
+      assets.audio[request.id] = rel;
+      audioFiles.set(rel, media.qoaBytes);
+      successfulById.set(request.id, media);
+      cov.record("audio", media.key, "Native");
+    } else {
+      cov.record("audio", media.key, "Dropped", media.reason);
+      warnings.push(`${media.key}: ${media.reason}`);
+    }
   }
-  return { project, images, assets, cov, warnings };
+  applyImportedMeDurations(project, successfulById);
+  return { project, images, audioFiles, audioMedia, assets, cov, warnings };
 }
 
 /** Read the 8 x 4 text-colour grid from the bottom-right of MV/MZ's standard

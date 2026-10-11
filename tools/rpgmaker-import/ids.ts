@@ -20,6 +20,12 @@ export const itemId = (kind: "item" | "weapon" | "armor", n: number): string => 
 export const animationId = (n: number): string => `anim${pad3(n)}`;
 /** Database actor 4 -> "actor004". */
 export const actorId = (n: number): string => `actor${pad3(n)}`;
+/** Database class 4 -> "class004". */
+export const classId = (n: number): string => `class${pad3(n)}`;
+/** Database skill 4 -> "skill004". */
+export const skillId = (n: number): string => `skill${pad3(n)}`;
+/** Database state 4 -> "state004". */
+export const stateId = (n: number): string => `state${pad3(n)}`;
 /** Party membership is a switch per actor: Change Party Member writes it,
  *  the "actor in party" condition reads it. */
 export const partySwitchId = (actorId: number): string => `party-actor${pad3(actorId)}`;

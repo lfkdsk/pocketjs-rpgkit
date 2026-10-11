@@ -49,6 +49,9 @@ interface Voice {
   readonly pakKey: string;
   readonly source: AudioSource;
   readonly pitch: number;
+  readonly pan: number;
+  /** Panned mono is expanded to stereo; centred voices retain source shape. */
+  readonly outputChannels: number;
   readonly looping: boolean;
   readonly serial: number;
   /** Absolute output-frame cursor. Pitch is applied only when selecting source samples. */
@@ -75,6 +78,21 @@ function clampVolume(percent: number): number {
 function normalizedPitch(pitch: number): number {
   if (!Number.isFinite(pitch)) return 100;
   return Math.max(1, Math.round(pitch));
+}
+
+function normalizedPan(pan: number | undefined): number {
+  if (!Number.isFinite(pan)) return 0;
+  return Math.max(-100, Math.min(100, Math.round(pan!)));
+}
+
+function pannedSample(sample: number, gain: number): number {
+  return Math.max(-32_768, Math.min(32_767, Math.round(sample * gain)));
+}
+
+/** Equal-power attenuation used by RPG Maker's WebAudio panner. The near
+ * channel remains at unity while the far channel follows a cosine curve. */
+function equalPowerFarGain(pan: number): number {
+  return Math.cos(Math.abs(pan) * Math.PI / 200);
 }
 
 function outputFrameAtTick(ticks: number, sampleRate: number): number {
@@ -213,7 +231,9 @@ export class AudioDriver {
       return;
     }
     const pitch = normalizedPitch(track.pitch);
-    const sameTrack = voice && voice.id === track.id && voice.pakKey === pakKey && voice.pitch === pitch;
+    const pan = normalizedPan(track.pan);
+    const sameTrack = voice && voice.id === track.id && voice.pakKey === pakKey &&
+      voice.pitch === pitch && voice.pan === pan;
     if (voice && !sameTrack) {
       this.destroyVoice(voice);
       voice = undefined;
@@ -254,6 +274,7 @@ export class AudioDriver {
         pakKey,
         source,
         pitch,
+        pan,
         looping,
         cursor,
         gameFrame,
@@ -291,6 +312,7 @@ export class AudioDriver {
       pakKey,
       asset.open(),
       normalizedPitch(cue.pitch),
+      normalizedPan(cue.pan),
       false,
       0,
     );
@@ -335,6 +357,7 @@ export class AudioDriver {
     pakKey: string,
     source: AudioSource,
     pitch: number,
+    pan: number,
     looping: boolean,
     cursor: number,
     gameFrame = 0,
@@ -343,7 +366,7 @@ export class AudioDriver {
     if (!this.makeRoom()) return undefined;
     let handle: number;
     try {
-      handle = this.ops.createStream(source.sampleRate, source.channels);
+      handle = this.ops.createStream(source.sampleRate, pan === 0 ? source.channels : 2);
     } catch {
       return undefined;
     }
@@ -355,6 +378,8 @@ export class AudioDriver {
       pakKey,
       source,
       pitch,
+      pan,
+      outputChannels: pan === 0 ? source.channels : 2,
       looping,
       serial: this.nextSerial++,
       cursor,
@@ -418,9 +443,9 @@ export class AudioDriver {
   }
 
   private renderFrames(voice: Voice, frames: number): Int16Array {
-    const channels = voice.source.channels;
+    const channels = voice.outputChannels;
     const out = new Int16Array(frames * channels);
-    if (voice.pitch === 100 && voice.source.readInto) {
+    if (voice.pan === 0 && voice.pitch === 100 && voice.source.readInto) {
       let outputFrame = 0;
       let sourceFrame = voice.looping ? voice.cursor % voice.source.frames : voice.cursor;
       while (outputFrame < frames) {
@@ -435,8 +460,20 @@ export class AudioDriver {
     for (let output = 0; output < frames; output++) {
       let source = Math.floor((voice.cursor + output) * voice.pitch / 100);
       if (voice.looping) source %= voice.source.frames;
-      for (let channel = 0; channel < channels; channel++) {
-        out[output * channels + channel] = voice.source.sample(source, channel);
+      if (voice.pan === 0) {
+        for (let channel = 0; channel < channels; channel++) {
+          out[output * channels + channel] = voice.source.sample(source, channel);
+        }
+      } else {
+        // RPG Maker uses WebAudio's equal-power panner. Keep centred PCM
+        // byte-for-byte and apply its cosine attenuation to the far side.
+        const farGain = equalPowerFarGain(voice.pan);
+        const leftGain = voice.pan > 0 ? farGain : 1;
+        const rightGain = voice.pan < 0 ? farGain : 1;
+        const left = voice.source.sample(source, 0);
+        const right = voice.source.channels === 1 ? left : voice.source.sample(source, 1);
+        out[output * 2] = pannedSample(left, leftGain);
+        out[output * 2 + 1] = pannedSample(right, rightGain);
       }
     }
     return out;

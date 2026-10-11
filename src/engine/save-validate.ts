@@ -24,7 +24,7 @@ const INTEGER_OPS = new Set([
   "label", "jumpLabel",
   "wait", "gold", "item", "se",
   "playBgm", "fadeoutBgm", "stopBgm", "pauseBgm", "resumeBgm",
-  "playBgs", "fadeoutBgs", "playMe", "playSe", "saveBgm", "replayBgm", "stopSe",
+  "playBgs", "fadeoutBgs", "playMe", "stopMe", "playSe", "saveBgm", "replayBgm", "stopSe",
   "erase", "exit", "transfer",
   "moveRoute", "moveControl", "followers", "gatherFollowers", "vehicle",
   "setVehicleLocation", "setVehicleImage", "setVehicleBgm", "common", "lockInput", "unlockInput", "place", "shop",
@@ -302,6 +302,15 @@ function validateCondition(v: unknown, path: string): string | null {
         return fail(`${path}.negate`, "boolean required");
       }
       return null;
+    case "actor":
+      if (typeof v.actor !== "string" || v.actor.length === 0) {
+        return fail(`${path}.actor`, "non-empty string required");
+      }
+      if (!["name", "class", "skill", "weapon", "armor", "state"].includes(v.test as string)) {
+        return fail(`${path}.test`, "known actor comparison required");
+      }
+      if (typeof v.value !== "string") return fail(`${path}.value`, "string required");
+      return null;
     case "ext":
       if (typeof v.call !== "string" || !extensionCallNameValid(v.call)) {
         return fail(`${path}.call`, "namespaced extension call required");
@@ -482,7 +491,7 @@ type AudioTrackShape = "track" | "me" | "savedBgm";
 
 function validateAudioTrack(v: unknown, path: string, shape: AudioTrackShape): string | null {
   if (!isRecord(v)) return fail(path, "audio track object required");
-  const allowed = new Set(["id", "volume", "pitch", "positionTicks"]);
+  const allowed = new Set(["id", "volume", "pitch", "pan", "positionTicks"]);
   if (shape !== "savedBgm") {
     allowed.add("paused");
     allowed.add("fade");
@@ -503,6 +512,9 @@ function validateAudioTrack(v: unknown, path: string, shape: AudioTrackShape): s
   if (!Number.isInteger(v.pitch) || (v.pitch as number) < 50 || (v.pitch as number) > 150) {
     return fail(`${path}.pitch`, "integer 50..150 required");
   }
+  if (v.pan !== undefined && (!Number.isInteger(v.pan) || (v.pan as number) < -100 || (v.pan as number) > 100)) {
+    return fail(`${path}.pan`, "integer -100..100 required");
+  }
   if (!isNonNegInt(v.positionTicks)) {
     return fail(`${path}.positionTicks`, "non-negative integer required");
   }
@@ -513,7 +525,7 @@ function validateAudioTrack(v: unknown, path: string, shape: AudioTrackShape): s
   if (v.fade !== undefined) {
     if (!isRecord(v.fade)) return fail(`${path}.fade`, "fade object required");
     for (const key of Object.keys(v.fade)) {
-      if (key !== "totalTicks" && key !== "leftTicks") {
+      if (key !== "totalTicks" && key !== "leftTicks" && key !== "direction") {
         return fail(`${path}.fade.${key}`, "unknown fade field");
       }
     }
@@ -523,6 +535,9 @@ function validateAudioTrack(v: unknown, path: string, shape: AudioTrackShape): s
     if (!isNonNegInt(v.fade.leftTicks) || v.fade.leftTicks === 0 ||
         v.fade.leftTicks > v.fade.totalTicks) {
       return fail(`${path}.fade.leftTicks`, "positive integer no greater than totalTicks required");
+    }
+    if (v.fade.direction !== undefined && v.fade.direction !== "in") {
+      return fail(`${path}.fade.direction`, "in or omitted required");
     }
   }
   if (shape === "me") {
@@ -568,7 +583,7 @@ function validateAudioState(v: unknown, path: string): string | null {
 function validateVehicleBgm(v: unknown, path: string): string | null {
   if (!isRecord(v)) return fail(path, "vehicle BGM object required");
   for (const key of Object.keys(v)) {
-    if (key !== "id" && key !== "volume" && key !== "pitch") {
+    if (key !== "id" && key !== "volume" && key !== "pitch" && key !== "pan") {
       return fail(`${path}.${key}`, "unknown vehicle BGM field");
     }
   }
@@ -582,6 +597,9 @@ function validateVehicleBgm(v: unknown, path: string): string | null {
       (!Number.isInteger(v.pitch) || (v.pitch as number) < 50 || (v.pitch as number) > 150)) {
     return fail(`${path}.pitch`, "integer 50..150 required");
   }
+  if (v.pan !== undefined && (!Number.isInteger(v.pan) || (v.pan as number) < -100 || (v.pan as number) > 100)) {
+    return fail(`${path}.pan`, "integer -100..100 required");
+  }
   return null;
 }
 
@@ -594,6 +612,9 @@ function validateCompiledAudioTrack(v: Record<string, unknown>, path: string): s
   }
   if (!Number.isInteger(v.pitch) || (v.pitch as number) < 50 || (v.pitch as number) > 150) {
     return fail(`${path}.pitch`, "integer 50..150 required");
+  }
+  if (v.pan !== undefined && (!Number.isInteger(v.pan) || (v.pan as number) < -100 || (v.pan as number) > 100)) {
+    return fail(`${path}.pan`, "integer -100..100 required");
   }
   return null;
 }
@@ -785,6 +806,12 @@ function validateProg(prog: unknown, path: string): string | null {
       case "se": {
         const e = needStr("name") || needNum("volume") || needNum("pitch");
         if (e) return e;
+        if (
+          ins.pan !== undefined &&
+          (typeof ins.pan !== "number" || !Number.isInteger(ins.pan) || ins.pan < -100 || ins.pan > 100)
+        ) {
+          return fail(`${here}.pan`, "integer -100..100 required");
+        }
         break;
       }
       case "playBgm":
@@ -811,6 +838,7 @@ function validateProg(prog: unknown, path: string): string | null {
       case "stopBgm":
       case "pauseBgm":
       case "resumeBgm":
+      case "stopMe":
       case "saveBgm":
       case "replayBgm":
         break;

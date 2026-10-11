@@ -76,6 +76,9 @@ export function loadRmProject(rootArg: string): RmProject {
     weapons: readOptional(dataDir, "Weapons.json"),
     armors: readOptional(dataDir, "Armors.json"),
     actors: readOptional(dataDir, "Actors.json"),
+    classes: readOptional(dataDir, "Classes.json"),
+    skills: readOptional(dataDir, "Skills.json"),
+    states: readOptional(dataDir, "States.json"),
     troops: readOptional(dataDir, "Troops.json"),
     animations: readOptional(dataDir, "Animations.json"),
   };

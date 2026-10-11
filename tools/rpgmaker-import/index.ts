@@ -9,6 +9,7 @@
 //   tiles/ts<N>.png     generated 16 px tile sheets, one per RM tileset
 //   sprites/*.png       character blocks and tile-image events
 //   pictures/*.png      pictures used by Show Picture (copied verbatim)
+//   audio/*.qoa         referenced BGM/BGS/ME/SE converted from Ogg/M4A
 //   system/balloon.png  the balloon sheet, when Show Balloon Icon is used
 //   assets.json         the render manifest a cooker bakes (ImportAssets)
 //   coverage.md/.json   per-construct dispositions and the full MV/MZ
@@ -51,6 +52,9 @@ export async function importToDirectory(projectDir: string, outDir: string, opti
   for (const [rel, img] of [...result.images.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     write(rel, writePngBytes(img));
   }
+  for (const [rel, bytes] of [...result.audioFiles.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    write(rel, bytes);
+  }
   for (const [variant, rel] of Object.entries(result.assets.pictures)) {
     // Pictures keep their source file (the screen layer scales them).
     const src = findPicture(rm.root, variant);
@@ -62,8 +66,16 @@ export async function importToDirectory(projectDir: string, outDir: string, opti
     }
   }
   write("assets.json", JSON.stringify(result.assets, null, 2) + "\n");
+  write("audio-media.json", JSON.stringify(result.audioMedia.map((record) => {
+    if (record.status !== "success") return record;
+    const { qoaBytes: _, ...facts } = record;
+    return facts;
+  }), null, 2) + "\n");
   write("coverage.json", JSON.stringify(result.cov.toJSON(), null, 2) + "\n");
-  write("coverage.md", coverageMarkdown(`${result.project.title}: RPG Maker import coverage`, result.cov, { staticTable: true }));
+  write("coverage.md", coverageMarkdown(`${result.project.title}: RPG Maker import coverage`, result.cov, {
+    staticTable: true,
+    audioMedia: result.audioMedia,
+  }));
   return result;
 }
 

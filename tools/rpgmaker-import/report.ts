@@ -12,6 +12,7 @@
 //   names the kit capability a native mapping would take.
 
 import { Coverage, DISPOSITIONS, type CoverageSection, type Disposition } from "./coverage.ts";
+import type { AudioMediaRecord } from "./audio-media.ts";
 import { RM_COMMANDS, sampleCommands } from "./catalog.ts";
 import { convertCommands, type EventContext } from "./events.ts";
 import type { RmProject } from "./rm-types.ts";
@@ -24,9 +25,10 @@ const SECTION_TITLES: Record<CoverageSection, string> = {
   route: "Movement route commands",
   escape: "Message escape codes",
   tile: "Tiles and map attributes",
+  audio: "Audio media",
 };
 
-const SECTION_ORDER: CoverageSection[] = ["command", "condition", "pageCondition", "trigger", "route", "escape", "tile"];
+const SECTION_ORDER: CoverageSection[] = ["command", "condition", "pageCondition", "trigger", "route", "escape", "tile", "audio"];
 
 export interface StaticCommandRow {
   code: number;
@@ -61,8 +63,11 @@ function sampleContext(cov: Coverage): EventContext {
     armors: [null, { id: 1, name: "Shield", description: "", iconIndex: 0, price: 10, note: "" }],
     actors: [null, {
       id: 1, name: "Hero", nickname: "", characterName: "", characterIndex: 0,
-      faceName: "", faceIndex: 0, classId: 1, initialLevel: 1, note: "",
+      faceName: "", faceIndex: 0, classId: 1, initialLevel: 1, equips: [1, 1], traits: [], note: "",
     }],
+    classes: [null, { id: 1, name: "Hero", learnings: [{ level: 1, skillId: 1 }], traits: [], note: "" }],
+    skills: [null, { id: 1, name: "Attack", note: "" }],
+    states: [null, { id: 1, name: "Knockout", note: "" }],
     troops: [null, { id: 1, name: "Slime", members: [], pages: [] }],
     animations: [null],
   };
@@ -123,7 +128,11 @@ function pct(n: number, total: number): string {
   return total === 0 ? "—" : `${((100 * n) / total).toFixed(1)}%`;
 }
 
-export function coverageMarkdown(title: string, cov: Coverage, opts: { staticTable?: boolean } = {}): string {
+export function coverageMarkdown(
+  title: string,
+  cov: Coverage,
+  opts: { staticTable?: boolean; audioMedia?: readonly AudioMediaRecord[] } = {},
+): string {
   const out: string[] = [];
   out.push(`# ${title}`, "");
   out.push(
@@ -158,6 +167,37 @@ export function coverageMarkdown(title: string, cov: Coverage, opts: { staticTab
       const label = section === "command" ? `${r.key} ${names.get(r.key) ?? "(unknown code)"}` : `\`${r.key}\``;
       const total = DISPOSITIONS.reduce((s, d) => s + r.counts[d], 0);
       out.push(`| ${esc(label)} | ${r.counts.Native} | ${r.counts.Degraded} | ${r.counts.Placeholder} | ${r.counts.Dropped} | ${total} | ${esc(r.reasons.join("; "))} |`);
+    }
+    out.push("");
+  }
+  if (opts.audioMedia && opts.audioMedia.length > 0) {
+    const success = opts.audioMedia.filter((record) => record.status === "success");
+    const sourceBytes = success.reduce((sum, record) => sum + record.sourceBytes, 0);
+    const outputBytes = success.reduce((sum, record) => sum + record.outputBytes, 0);
+    const duration = success.reduce((sum, record) =>
+      sum + (record.status === "success" ? record.frames / record.sampleRate : 0), 0);
+    out.push(
+      "## Imported audio statistics",
+      "",
+      `Converted ${success.length}/${opts.audioMedia.length} referenced media; ` +
+        `${sourceBytes} compressed source bytes became ${outputBytes} QOA bytes; ` +
+        `${duration.toFixed(3)} s decoded duration at pitch 100.`,
+      "",
+      "| Medium | Status | Source bytes | QOA bytes | PCM | Duration | Notes |",
+      "|---|---|---:|---:|---|---:|---|",
+    );
+    for (const record of opts.audioMedia) {
+      if (record.status === "success") {
+        out.push(
+          `| \`${esc(record.key)}\` | Native | ${record.sourceBytes} | ${record.outputBytes} | ` +
+          `${record.channels}ch ${record.sampleRate} Hz, ${record.frames} frames | ` +
+          `${(record.frames / record.sampleRate).toFixed(3)} s | ${record.sourceFormat.toUpperCase()} |`,
+        );
+      } else {
+        out.push(
+          `| \`${esc(record.key)}\` | Dropped | ${record.sourceBytes} | 0 | — | — | ${esc(record.reason)} |`,
+        );
+      }
     }
     out.push("");
   }

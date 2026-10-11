@@ -1,0 +1,10 @@
+[
+  {
+    "key": "audio:qoa.bgm-stage-overture",
+    "file": "assets/stage/audio/bgm-stage-overture.qoa"
+  },
+  {
+    "key": "audio:qoa.me-stage-fanfare",
+    "file": "assets/stage/audio/me-stage-fanfare.qoa"
+  }
+]

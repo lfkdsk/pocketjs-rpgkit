@@ -548,7 +548,7 @@ function classes(name: string): unknown[] {
     {
       expParams: [30, 20, 30, 30],
       id: 1,
-      learnings: [],
+      learnings: [{ level: 1, skillId: 1, note: "" }],
       name,
       note: "",
       params: [curve(400, 40), curve(60, 6), curve(16, 2), curve(14, 2), curve(12, 2), curve(12, 2), curve(14, 2), curve(10, 1)],

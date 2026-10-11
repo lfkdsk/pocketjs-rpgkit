@@ -36,6 +36,14 @@ export interface RmAudio {
   pan: number;
 }
 
+/** One RPG Maker trait. Only `code` and `dataId` are needed when deriving
+ * an actor's initial dual-wield slots and trait-added skills. */
+export interface RmTrait {
+  code: number;
+  dataId: number;
+  value: number;
+}
+
 /** One cell in an MV frame. Patterns 0..99 address animation1 and 100..199
  * address animation2; each source pattern is a 192 px square in a five-column
  * sheet. The remaining fields are the values written by MV's animation
@@ -203,6 +211,9 @@ export interface RmItem {
   consumable?: boolean;
   /** 1 regular, 2 key item, 3 hidden A, 4 hidden B (items only). */
   itypeId?: number;
+  /** Equipment slot type (weapons are 1; armor types start at 2). */
+  etypeId?: number;
+  traits?: RmTrait[];
   note: string;
 }
 
@@ -216,6 +227,37 @@ export interface RmActor {
   faceIndex: number;
   classId: number;
   initialLevel: number;
+  /** Database ids aligned with the actor's equip slots. */
+  equips: number[];
+  traits: RmTrait[];
+  note: string;
+}
+
+export interface RmLearning {
+  level: number;
+  skillId: number;
+  note?: string;
+}
+
+export interface RmClass {
+  id: number;
+  name: string;
+  learnings: RmLearning[];
+  traits: RmTrait[];
+  note: string;
+}
+
+/** Skills and states only need stable ids for conditional-branch
+ * validation. Their remaining database fields are deliberately ignored. */
+export interface RmSkill {
+  id: number;
+  name: string;
+  note: string;
+}
+
+export interface RmState {
+  id: number;
+  name: string;
   note: string;
 }
 
@@ -278,6 +320,9 @@ export interface RmProject {
   weapons: (RmItem | null)[];
   armors: (RmItem | null)[];
   actors: (RmActor | null)[];
+  classes: (RmClass | null)[];
+  skills: (RmSkill | null)[];
+  states: (RmState | null)[];
   troops: (RmTroop | null)[];
   animations: (RmAnimation | null)[];
 }

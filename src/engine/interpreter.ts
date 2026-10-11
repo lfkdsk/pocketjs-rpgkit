@@ -47,10 +47,12 @@ import {
   type TextTokenView,
 } from "./player-name.ts";
 import {
+  ME_REPLAY_FADE_TICKS,
   advanceAudioStateInPlace,
   audioStateEmpty,
   cloneAudioState,
   cloneAudioTrack,
+  stopMeAndResumeBgmInPlace,
   type AudioState,
   type AudioTrackState,
 } from "./audio.ts";
@@ -84,6 +86,7 @@ import {
   type ScreenEffectsState,
 } from "./screen.ts";
 import type {
+  ActorDef,
   AnimationDef,
   ChoiceIcon,
   CameraTarget,
@@ -434,6 +437,10 @@ export interface ConditionContext {
   playerMoving?: boolean;
   /** Current persistent audio intent. Omitted means silence. */
   audio?: Readonly<AudioState>;
+  /** Imported actor facts. `playerActor` names the actor whose live name is
+   * stored in SwitchState.playerName. */
+  actors?: ReadonlyMap<string, Readonly<ActorDef>>;
+  playerActor?: string;
   /** Current page index and authored sprite for each live map event. */
   eventPages?: Readonly<Record<string, EventPageAppearance>>;
   /** Per-visit overrides are separate so an event page switch can discard
@@ -542,6 +549,26 @@ export function evalCondition(
     case "vehicle": {
       const riding = context?.vehicle === c.id;
       return c.negate === true ? !riding : riding;
+    }
+    case "actor": {
+      const actor = context?.actors?.get(c.actor);
+      if (!actor) return false;
+      if (c.test === "name") {
+        const variable = actor.databaseId === undefined
+          ? undefined
+          : `actor${String(actor.databaseId).padStart(3, "0")}-name`;
+        const renamed = variable === undefined ? undefined : keyedValue(s.variables, variable);
+        const name = context?.playerActor === actor.id
+          ? s.playerName
+          : typeof renamed === "string" ? renamed : actor.name;
+        return name === c.value;
+      }
+      if (c.test === "class") return actor.classId === c.value;
+      const facts = c.test === "skill" ? actor.skills
+        : c.test === "weapon" ? actor.weapons
+        : c.test === "armor" ? actor.armors
+        : actor.states;
+      return facts?.includes(c.value) ?? false;
     }
     case "ext": {
       // Map acquisition validates registration. Missing handlers and
@@ -741,16 +768,17 @@ export type Instr =
   | { op: "wait"; frames: number }
   | { op: "gold"; set: "add" | "sub"; amount: number }
   | { op: "item"; item: string; set: "add" | "sub"; count: number }
-  | { op: "se"; name: string; volume: number; pitch: number }
-  | { op: "playBgm"; id: string; volume: number; pitch: number }
+  | { op: "se"; name: string; volume: number; pitch: number; pan?: number }
+  | { op: "playBgm"; id: string; volume: number; pitch: number; pan?: number }
   | { op: "fadeoutBgm"; frames: number }
   | { op: "stopBgm" }
   | { op: "pauseBgm" }
   | { op: "resumeBgm" }
-  | { op: "playBgs"; id: string; volume: number; pitch: number }
+  | { op: "playBgs"; id: string; volume: number; pitch: number; pan?: number }
   | { op: "fadeoutBgs"; frames: number }
-  | { op: "playMe"; id: string; durationFrames: number; volume: number; pitch: number }
-  | { op: "playSe"; id: string; volume: number; pitch: number }
+  | { op: "playMe"; id: string; durationFrames: number; volume: number; pitch: number; pan?: number }
+  | { op: "stopMe" }
+  | { op: "playSe"; id: string; volume: number; pitch: number; pan?: number }
   | { op: "stopSe" }
   | { op: "saveBgm" }
   | { op: "replayBgm" }
@@ -1058,10 +1086,10 @@ function compileScoped(
           emit({ op: "item", item: c.item, set: c.set, count: c.count });
           break;
         case "se":
-          emit({ op: "se", name: c.name, volume: c.volume ?? 80, pitch: c.pitch ?? 100 });
+          emit({ op: "se", name: c.name, volume: c.volume ?? 80, pitch: c.pitch ?? 100, pan: c.pan ?? 0 });
           break;
         case "playBgm":
-          emit({ op: "playBgm", id: c.id, volume: c.volume ?? 100, pitch: c.pitch ?? 100 });
+          emit({ op: "playBgm", id: c.id, volume: c.volume ?? 100, pitch: c.pitch ?? 100, pan: c.pan ?? 0 });
           break;
         case "fadeoutBgm":
           emit({ op: "fadeoutBgm", frames: secondsToFrames(c.duration, hz) });
@@ -1069,12 +1097,13 @@ function compileScoped(
         case "stopBgm":
         case "pauseBgm":
         case "resumeBgm":
+        case "stopMe":
         case "saveBgm":
         case "replayBgm":
           emit({ op: c.op });
           break;
         case "playBgs":
-          emit({ op: "playBgs", id: c.id, volume: c.volume ?? 100, pitch: c.pitch ?? 100 });
+          emit({ op: "playBgs", id: c.id, volume: c.volume ?? 100, pitch: c.pitch ?? 100, pan: c.pan ?? 0 });
           break;
         case "fadeoutBgs":
           emit({ op: "fadeoutBgs", frames: secondsToFrames(c.duration, hz) });
@@ -1086,10 +1115,11 @@ function compileScoped(
             durationFrames: secondsToFrames(c.duration, hz),
             volume: c.volume ?? 100,
             pitch: c.pitch ?? 100,
+            pan: c.pan ?? 0,
           });
           break;
         case "playSe":
-          emit({ op: "playSe", id: c.id, volume: c.volume ?? 100, pitch: c.pitch ?? 100 });
+          emit({ op: "playSe", id: c.id, volume: c.volume ?? 100, pitch: c.pitch ?? 100, pan: c.pan ?? 0 });
           break;
         case "stopSe":
           emit({ op: "stopSe" });
@@ -2034,7 +2064,7 @@ function shopRowEquals(a: ShopRow, b: ShopRow): boolean {
  *  Stop SE). Cues are runtime-only: drained after each step, never saved,
  *  never replayed on a refold/rewind. */
 export type SoundCue =
-  | { name: string; volume: number; pitch: number }
+  | { name: string; volume: number; pitch: number; pan?: number }
   | { stop: true };
 
 /** P1④ consumes these: the fiber is parked in "external" mode until
@@ -2364,6 +2394,8 @@ export interface World {
   /** True when some page or program reads `playerMoving`; the session then
    *  samples the mover only for this map. */
   needsPlayerMovingContext?: boolean;
+  /** True when this map or a common event evaluates an actor condition. */
+  needsActorContext?: boolean;
   /** True when page selection reads the persistent step count. Command-only
    * reads do not invalidate the page-selection cache while walking. */
   pageReadsSteps?: boolean;
@@ -2420,6 +2452,9 @@ export interface World {
     currencyUnit: string;
     colours?: readonly string[];
   };
+  /** Actor database facts used by imported actor conditions. */
+  actors?: ReadonlyMap<string, Readonly<ActorDef>>;
+  playerActor?: string;
   /** Project.system.textTokens is declared: text and choices expand {x:<key>}
    *  through the session's resolver. Absent: {x:…} braces print verbatim,
    *  the pre-{x:} behavior, so a document without the declaration is
@@ -2458,6 +2493,8 @@ export interface WorldOptions {
     currencyUnit: string;
     colours?: readonly string[];
   };
+  actors?: readonly ActorDef[];
+  playerActor?: string;
   /** Project.system.textTokens is declared: switches {x:<key>} expansion on.
    *  Absent: {x:…} prints verbatim. */
   textTokensEnabled?: boolean;
@@ -2726,6 +2763,10 @@ function liveConditionContext(
   if (playerMoving !== undefined) context.playerMoving = playerMoving;
   if (vehicle !== undefined) context.vehicle = vehicle;
   if (s.audio) context.audio = s.audio;
+  if (w.actors) {
+    context.actors = w.actors;
+    if (w.playerActor !== undefined) context.playerActor = w.playerActor;
+  }
   if (eventPages) {
     context.eventPages = eventPages;
     context.eventAppearances = s.eventAppearances;
@@ -2748,6 +2789,7 @@ const CONTEXT_TILE_PROPERTIES = 2;
 const CONTEXT_MAP_ANIM_TARGET = 4;
 const CONTEXT_REGION = 8;
 const CONTEXT_PLAYER_MOVING = 16;
+const CONTEXT_ACTOR = 32;
 
 function conditionContextFlags(condition: Condition): number {
   if (condition.kind === "appearance" && condition.target !== "player") {
@@ -2756,6 +2798,7 @@ function conditionContextFlags(condition: Condition): number {
   if (condition.kind === "tileProperty") return CONTEXT_TILE_PROPERTIES;
   if (condition.kind === "region") return CONTEXT_REGION;
   if (condition.kind === "playerMoving") return CONTEXT_PLAYER_MOVING;
+  if (condition.kind === "actor") return CONTEXT_ACTOR;
   return 0;
 }
 
@@ -2991,6 +3034,9 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     maxKinds: options.inventory?.maxKinds,
   };
   const animsById = new Map((options.animations ?? []).map((def) => [def.id, compileAnim(def, hz)]));
+  const actorsById = (contextFlags & CONTEXT_ACTOR) !== 0 && options.actors && options.actors.length > 0
+    ? new Map(options.actors.map((actor) => [actor.id, actor] as const))
+    : undefined;
   const keyed = indexEvents(map);
   const pageReadsSteps = (map.events ?? []).some((event) => event.pages.some((page) =>
     page.condition?.all?.some((condition) => condition.kind === "steps") === true));
@@ -3011,6 +3057,7 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     needsTilePropertyContext: (contextFlags & CONTEXT_TILE_PROPERTIES) !== 0,
     needsRegionContext: (contextFlags & CONTEXT_REGION) !== 0,
     needsPlayerMovingContext: (contextFlags & CONTEXT_PLAYER_MOVING) !== 0,
+    needsActorContext: (contextFlags & CONTEXT_ACTOR) !== 0,
     ...(pageReadsSteps ? { pageReadsSteps: true } : {}),
     ...(regionCells ? { regionCells } : {}),
     ...(terrainCells ? { terrainCells } : {}),
@@ -3025,6 +3072,8 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     textVariables: options.textVariables === true,
     characterNames: options.characterNames === true,
     ...(options.rpgMakerText ? { rpgMakerText: options.rpgMakerText } : {}),
+    ...(actorsById ? { actors: actorsById } : {}),
+    ...(options.playerActor !== undefined ? { playerActor: options.playerActor } : {}),
     textTokensEnabled: options.textTokensEnabled === true,
     textTokens: options.textTokens,
     onFiberStart: options.onFiberStart,
@@ -4001,6 +4050,9 @@ function guardMask(c: Condition, runtime: ExtensionRuntime): number {
     case "facing": return 32;
     case "worldIdle": return 64;
     case "playerMoving": return 512;
+    // Static database facts never change, while names can read either the
+    // leader's playerName or a nonleader's actorNNN-name variable.
+    case "actor": return 2 | 256;
     case "steps": return -1;
     case "ext":
       return runtime.immutableConditions && runtime.deterministicConditions
@@ -4202,6 +4254,7 @@ type InstantInstr = Extract<
   | { op: "playBgs" }
   | { op: "fadeoutBgs" }
   | { op: "playMe" }
+  | { op: "stopMe" }
   | { op: "playSe" }
   | { op: "stopSe" }
   | { op: "saveBgm" }
@@ -4468,11 +4521,19 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
       break;
     }
     case "se":
-      s.cues.push({ name: ins.name, volume: ins.volume, pitch: ins.pitch });
+      s.cues.push(soundCue(ins.name, ins.volume, ins.pitch, ins.pan ?? 0));
       break;
-    case "playBgm":
-      (s.audio ??= {}).bgm = freshAudioTrack(ins.id, ins.volume, ins.pitch);
+    case "playBgm": {
+      const audio = (s.audio ??= {});
+      const held = audio.bgm?.id === ins.id ? audio.bgm : undefined;
+      audio.bgm = {
+        ...freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0),
+        ...(held ? { positionTicks: held.positionTicks } : {}),
+        ...(held?.paused ? { paused: true as const } : {}),
+        ...(held?.fade ? { fade: { ...held.fade } } : {}),
+      };
       break;
+    }
     case "fadeoutBgm":
       if (s.audio?.bgm) {
         if (ins.frames <= 0) delete s.audio.bgm;
@@ -4492,9 +4553,16 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
     case "resumeBgm":
       if (s.audio?.bgm) delete s.audio.bgm.paused;
       break;
-    case "playBgs":
-      (s.audio ??= {}).bgs = freshAudioTrack(ins.id, ins.volume, ins.pitch);
+    case "playBgs": {
+      const audio = (s.audio ??= {});
+      const held = audio.bgs?.id === ins.id ? audio.bgs : undefined;
+      audio.bgs = {
+        ...freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0),
+        ...(held ? { positionTicks: held.positionTicks } : {}),
+        ...(held?.fade ? { fade: { ...held.fade } } : {}),
+      };
       break;
+    }
     case "fadeoutBgs":
       if (s.audio?.bgs) {
         if (ins.frames <= 0) delete s.audio.bgs;
@@ -4505,19 +4573,25 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
     case "playMe":
       if (ins.durationFrames <= 0) {
         if (s.audio) {
-          delete s.audio.me;
+          stopMeAndResumeBgmInPlace(s.audio);
           pruneAudioState(s);
         }
       } else {
         (s.audio ??= {}).me = {
-          ...freshAudioTrack(ins.id, ins.volume, ins.pitch),
+          ...freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0),
           durationTicks: ins.durationFrames,
           leftTicks: ins.durationFrames,
         };
       }
       break;
+    case "stopMe":
+      if (s.audio) {
+        stopMeAndResumeBgmInPlace(s.audio);
+        pruneAudioState(s);
+      }
+      break;
     case "playSe":
-      s.cues.push({ name: ins.id, volume: ins.volume, pitch: ins.pitch });
+      s.cues.push(soundCue(ins.id, ins.volume, ins.pitch, ins.pan ?? 0));
       break;
     case "stopSe":
       s.cues.push({ stop: true });
@@ -4528,6 +4602,7 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
           id: s.audio.bgm.id,
           volume: s.audio.bgm.volume,
           pitch: s.audio.bgm.pitch,
+          ...(s.audio.bgm.pan !== undefined ? { pan: s.audio.bgm.pan } : {}),
           positionTicks: s.audio.bgm.positionTicks,
         };
       } else if (s.audio) {
@@ -4537,15 +4612,35 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
       break;
     case "replayBgm":
       if (s.audio?.savedBgm) {
-        s.audio.bgm = cloneAudioTrack(s.audio.savedBgm as AudioTrackState);
-        delete s.audio.me;
+        const saved = s.audio.savedBgm;
+        const held = s.audio.bgm?.id === saved.id ? s.audio.bgm : undefined;
+        s.audio.bgm = {
+          ...saved,
+          ...(held ? { positionTicks: held.positionTicks } : {}),
+          ...(held?.paused ? { paused: true as const } : {}),
+          ...(held?.fade
+            ? { fade: { ...held.fade } }
+            : held
+              ? {}
+              : {
+                  fade: {
+                    totalTicks: ME_REPLAY_FADE_TICKS,
+                    leftTicks: ME_REPLAY_FADE_TICKS,
+                    direction: "in" as const,
+                  },
+                }),
+        };
       }
       break;
   }
 }
 
-function freshAudioTrack(id: string, volume: number, pitch: number): AudioTrackState {
-  return { id, volume, pitch, positionTicks: 0 };
+function freshAudioTrack(id: string, volume: number, pitch: number, pan: number): AudioTrackState {
+  return { id, volume, pitch, ...(pan !== 0 ? { pan } : {}), positionTicks: 0 };
+}
+
+function soundCue(name: string, volume: number, pitch: number, pan: number): SoundCue {
+  return { name, volume, pitch, ...(pan !== 0 ? { pan } : {}) };
 }
 
 function pruneAudioState(s: InterpState): void {
@@ -5879,6 +5974,7 @@ function runFiber(
       case "playBgs":
       case "fadeoutBgs":
       case "playMe":
+      case "stopMe":
       case "playSe":
       case "stopSe":
       case "saveBgm":

@@ -150,6 +150,7 @@ export const EDITABLE_COMMAND_OPS = [
   "playBgs",
   "fadeoutBgs",
   "playMe",
+  "stopMe",
   "playSe",
   "stopSe",
   "saveBgm",
@@ -355,11 +356,12 @@ export function defaultCommand<Op extends EditableCommandOp>(op: Op): CommandOf<
       command = { op, duration: 0 };
       break;
     case "playMe":
-      command = { op, id: "audio", duration: 1, volume: 100, pitch: 100 };
+      command = { op, id: "audio", duration: 1, volume: 100, pitch: 100, pan: 0 };
       break;
     case "stopBgm":
     case "pauseBgm":
     case "resumeBgm":
+    case "stopMe":
     case "saveBgm":
     case "replayBgm":
     case "erase":
@@ -540,6 +542,8 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
       return `Fade out BGS over ${numberText(command.duration)}s`;
     case "playMe":
       return `Play ME ${text(command.id)} for ${numberText(command.duration)}s`;
+    case "stopMe":
+      return "Stop ME";
     case "playSe":
       return `Play SE ${text(command.id)}`;
     case "stopSe":
@@ -1083,7 +1087,7 @@ export const CONDITION_KINDS = [
 
 /** Runtime-derived conditions remain visible and round-trip intact in the
  * editor, but are not offered by the generic condition form yet. */
-const READ_ONLY_CONDITION_KINDS = ["playerMoving"] as const;
+const READ_ONLY_CONDITION_KINDS = ["playerMoving", "actor"] as const;
 
 export type ConditionKind = (typeof CONDITION_KINDS)[number];
 type ReadOnlyConditionKind = (typeof READ_ONLY_CONDITION_KINDS)[number];

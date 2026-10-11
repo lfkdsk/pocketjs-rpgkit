@@ -269,6 +269,7 @@ export function classifyCommand(command: Command): CommandWriteClass {
     case "playBgs":
     case "fadeoutBgs":
     case "playMe":
+    case "stopMe":
     case "playSe":
     case "stopSe":
     case "saveBgm":

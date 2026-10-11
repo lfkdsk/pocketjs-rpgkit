@@ -426,6 +426,12 @@ export function conditionFields(
         resourceField(p("id"), "VEHICLE", condition.id, resources.vehicles, "Project vehicles"),
         field(p("negate"), "NEGATE", condition.negate ?? false, "boolean", BOOLS),
       ];
+    case "actor":
+      return [
+        field(p("actor"), "ACTOR", condition.actor),
+        field(p("test"), "TEST", condition.test, "enum", ["name", "class", "skill", "weapon", "armor", "state"]),
+        field(p("value"), "VALUE", condition.value),
+      ];
     case "ext":
       return [
         resourceField(p("call"), "CALL", condition.call, resources.extensionCalls, "Authored extension calls"),
@@ -541,7 +547,7 @@ export function commandFields(
     case "wait": return [field("seconds", "SECONDS", command.seconds, "number")];
     case "gold": return [field("set", "MODE", command.set, "enum", ["add", "sub"]), field("amount", "AMOUNT", command.amount, "integer")];
     case "item": return [resourceField("item", "ITEM", command.item, resources.items, "Project items"), field("set", "MODE", command.set, "enum", ["add", "sub"]), field("count", "COUNT", command.count, "integer")];
-    case "se": return [resourceField("name", "NAME", command.name, resources.audio, "Project audio ids"), field("volume", "VOLUME", command.volume ?? "", "integer"), field("pitch", "PITCH", command.pitch ?? "", "integer")];
+    case "se": return [resourceField("name", "NAME", command.name, resources.audio, "Project audio ids"), field("volume", "VOLUME", command.volume ?? "", "integer"), field("pitch", "PITCH", command.pitch ?? "", "integer"), field("pan", "PAN", command.pan ?? "", "integer")];
     case "playBgm":
     case "playBgs":
     case "playSe":
@@ -549,6 +555,7 @@ export function commandFields(
         resourceField("id", "ID", command.id, resources.audio, "Project audio ids"),
         field("volume", "VOLUME", command.volume ?? "", "integer"),
         field("pitch", "PITCH", command.pitch ?? "", "integer"),
+        field("pan", "PAN", command.pan ?? "", "integer"),
       ];
     case "playMe":
       return [
@@ -556,6 +563,7 @@ export function commandFields(
         field("duration", "DURATION", command.duration, "number"),
         field("volume", "VOLUME", command.volume ?? "", "integer"),
         field("pitch", "PITCH", command.pitch ?? "", "integer"),
+        field("pan", "PAN", command.pan ?? "", "integer"),
       ];
     case "fadeoutBgm":
     case "fadeoutBgs":
@@ -831,7 +839,8 @@ export function commandFields(
     case "pauseBgm":
     case "resumeBgm":
     case "saveBgm":
-    case "replayBgm": return [];
+    case "replayBgm":
+    case "stopMe": return [];
     case "scene":
       return [
         field("id", "SCENE ID", command.id),
@@ -1685,9 +1694,9 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
     }
     case "se": {
       if (key === "name") { const value = identifier(raw, "sound name", SOUND_ID); return value.ok ? good({ ...command, name: value.value }) : value; }
-      if (key === "volume" || key === "pitch") {
+      if (key === "volume" || key === "pitch" || key === "pan") {
         if (raw.trim() === "") { const next = { ...command }; delete next[key]; return good(next); }
-        const value = integer(raw, key, key === "volume" ? 0 : 50, key === "volume" ? 100 : 150);
+        const value = integer(raw, key, key === "pan" ? -100 : key === "volume" ? 0 : 50, key === "pan" ? 100 : key === "volume" ? 100 : 150);
         return value.ok ? good({ ...command, [key]: value.value }) : value;
       }
       break;
@@ -1696,8 +1705,8 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
     case "playBgs":
     case "playSe": {
       if (key === "id") return raw.length > 0 ? good({ ...command, id: raw }) : bad("audio id is required");
-      if (key === "volume" || key === "pitch") {
-        const value = optionalInteger(raw, key, key === "volume" ? 0 : 50, key === "volume" ? 100 : 150);
+      if (key === "volume" || key === "pitch" || key === "pan") {
+        const value = optionalInteger(raw, key, key === "pan" ? -100 : key === "volume" ? 0 : 50, key === "pan" ? 100 : key === "volume" ? 100 : 150);
         return value.ok ? good(setOptional(command, key, value.value)) : value;
       }
       break;
@@ -1708,8 +1717,8 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
         const value = finite(raw, "duration", 0);
         return value.ok ? good({ ...command, duration: value.value }) : value;
       }
-      if (key === "volume" || key === "pitch") {
-        const value = optionalInteger(raw, key, key === "volume" ? 0 : 50, key === "volume" ? 100 : 150);
+      if (key === "volume" || key === "pitch" || key === "pan") {
+        const value = optionalInteger(raw, key, key === "pan" ? -100 : key === "volume" ? 0 : 50, key === "pan" ? 100 : key === "volume" ? 100 : 150);
         return value.ok ? good(setOptional(command, key, value.value)) : value;
       }
       break;
@@ -1877,6 +1886,7 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
     case "resumeBgm":
     case "saveBgm":
     case "replayBgm":
+    case "stopMe":
     case "loop":
     case "gatherFollowers":
     case "break": break;

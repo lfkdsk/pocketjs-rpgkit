@@ -26,7 +26,8 @@ export type CoverageSection =
   | "trigger"
   | "route"
   | "escape"
-  | "tile";
+  | "tile"
+  | "audio";
 
 export interface CoverageRow {
   section: CoverageSection;

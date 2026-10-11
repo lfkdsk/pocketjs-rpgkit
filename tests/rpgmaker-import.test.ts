@@ -7,18 +7,18 @@
 
 import { describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import schema from "../src/data/schema.json";
 import { validateSchema } from "../src/engine/schema-validate.ts";
+import { QoaFile } from "../src/ui/audio/qoa.ts";
 import { buildPassage, canStepFrom } from "../src/engine/passability.ts";
-import type { Project } from "../src/engine/types.ts";
+import type { Command, Project } from "../src/engine/types.ts";
 import { RM_COMMANDS } from "../tools/rpgmaker-import/catalog.ts";
 import { itemId } from "../tools/rpgmaker-import/ids.ts";
 import { importToDirectory } from "../tools/rpgmaker-import/index.ts";
 import { loadRmProject, RmLoadError } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject, invertInitialParty } from "../tools/rpgmaker-import/project.ts";
-import type { RmProject } from "../tools/rpgmaker-import/rm-types.ts";
+import type { RmCommand, RmProject } from "../tools/rpgmaker-import/rm-types.ts";
 import { commandTableLines, staticCommandTable } from "../tools/rpgmaker-import/report.ts";
 import { writePngBytes } from "../tools/rpgmaker-import/png.ts";
 import { lintProject } from "../tools/rpgkit-check/src/lint.ts";
@@ -28,6 +28,8 @@ const ROOT = join(import.meta.dir, "..");
 const HOLLOW = join(ROOT, "tests/fixtures/rpgmaker/hollow-mz");
 const STAGE = join(ROOT, "tests/fixtures/rpgmaker/stage-mv");
 const WINDOW_PALETTE = join(HOLLOW, "test-art/Window.png");
+const SCRATCH_ROOT = "/var/tmp/fleet/4306";
+mkdirSync(SCRATCH_ROOT, { recursive: true });
 
 const CUSTOM_WINDOW_COLOURS = [
   "#102030", "#214365", "#32659A", "#4387CF", "#54A904", "#65CB39", "#76ED6E", "#870FA3",
@@ -96,8 +98,14 @@ describe("rpgmaker-import: output", () => {
     expect(hollow.project.start).toEqual({ map: "map001", x: 11, y: 9, dir: "down" });
     expect(hollow.project.playerName).toBe("Wren");
     expect(hollow.project.actors).toEqual([
-      { id: "actor001", databaseId: 1, name: "Wren" },
-      { id: "actor002", databaseId: 2, name: "Moss" },
+      {
+        id: "actor001", databaseId: 1, name: "Wren", classId: "class001",
+        skills: ["skill001"], weapons: ["weapon001"], armors: ["armor001"],
+      },
+      {
+        id: "actor002", databaseId: 2, name: "Moss", classId: "class001",
+        skills: ["skill001"], weapons: ["weapon002"],
+      },
     ]);
     expect(hollow.project.system?.rpgMakerText).toEqual({ party: [1], currencyUnit: "G" });
     expect(hollow.project.sheets.map((s) => s.id)).toEqual(["ts1", "ts2", "iconset"]);
@@ -109,6 +117,156 @@ describe("rpgmaker-import: output", () => {
         const img = r.images.get(`tiles/${sheet.id}.png`)!;
         expect([img.width, img.height]).toEqual([sheet.cols * 16, sheet.rows * 16]);
       }
+    }
+  });
+
+  test("actor facts reproduce initial class, learned skills and equipment", async () => {
+    const rm = loadRmProject(HOLLOW);
+    const extraSkills = [
+      { id: 2, name: "Guard", note: "" },
+      { id: 3, name: "Focus", note: "" },
+    ];
+    const mutated: RmProject = {
+      ...rm,
+      skills: [...rm.skills, ...extraSkills],
+      classes: rm.classes.map((entry) => entry?.id === 1
+        ? { ...entry, learnings: [...entry.learnings, { level: 2, skillId: 2, note: "" }] }
+        : entry),
+      weapons: rm.weapons.map((entry) => entry?.id === 1
+        ? { ...entry, traits: [...(entry.traits ?? []), { code: 43, dataId: 3, value: 0 }] }
+        : entry),
+      actors: rm.actors.map((entry) => entry?.id === 1
+        ? {
+            ...entry,
+            equips: [1, 2, 1, 0, 0],
+            traits: [...entry.traits, { code: 55, dataId: 1, value: 0 }],
+          }
+        : entry),
+    };
+    const imported = await importRmProject(mutated);
+    expect(imported.project.actors?.[0]).toEqual({
+      id: "actor001",
+      databaseId: 1,
+      name: "Wren",
+      classId: "class001",
+      // Skill 2 is above the actor's level and stays absent; skill 3 comes
+      // from the equipped staff's TRAIT_SKILL_ADD.
+      skills: ["skill001", "skill003"],
+      // TRAIT_SLOT_TYPE dual wield makes the second equip a weapon. The
+      // third equip keeps its ordinary armor slot.
+      weapons: ["weapon001", "weapon002"],
+      armors: ["armor001"],
+    });
+  });
+
+  test("fixture actor branches import every database-backed predicate", async () => {
+    const rm = loadRmProject(HOLLOW);
+    const branch = (subtype: number, value: string | number): RmCommand[] => [
+      { code: 111, indent: 0, parameters: [4, 1, subtype, value] },
+      { code: 121, indent: 1, parameters: [20, 20, 0] },
+      { code: 0, indent: 1, parameters: [] },
+      { code: 412, indent: 0, parameters: [] },
+    ];
+    rm.commonEvents = [
+      ...rm.commonEvents,
+      {
+        id: 3,
+        name: "Actor facts",
+        trigger: 0,
+        switchId: 0,
+        list: [
+          ...branch(1, "Wren"),
+          ...branch(2, 1),
+          ...branch(3, 1),
+          ...branch(4, 1),
+          ...branch(5, 1),
+          ...branch(6, 1),
+          { code: 0, indent: 0, parameters: [] },
+        ],
+      },
+    ];
+    const imported = await importRmProject(rm);
+    const conditions = allCommands(imported.project)
+      .filter((command) => command.op === "if")
+      .map((command) => (command as Command & { if: unknown }).if)
+      .filter((condition) => (condition as { kind?: string }).kind === "actor");
+    expect(conditions).toEqual([
+      { kind: "actor", actor: "actor001", test: "name", value: "Wren" },
+      { kind: "actor", actor: "actor001", test: "class", value: "class001" },
+      { kind: "actor", actor: "actor001", test: "skill", value: "skill001" },
+      { kind: "actor", actor: "actor001", test: "weapon", value: "weapon001" },
+      { kind: "actor", actor: "actor001", test: "armor", value: "armor001" },
+      { kind: "actor", actor: "actor001", test: "state", value: "state001" },
+    ]);
+    expect(imported.cov.list("condition").find((row) => row.key === "actor")?.counts.Native).toBe(6);
+  });
+
+  test("referenced Ogg media becomes deterministic QOA and supplies exact ME duration", () => {
+    expect(stage.project.audio).toEqual({
+      "bgm-stage-overture": "audio:qoa.bgm-stage-overture",
+      "me-stage-fanfare": "audio:qoa.me-stage-fanfare",
+    });
+    expect(stage.assets.audio).toEqual({
+      "bgm-stage-overture": "audio/bgm-stage-overture.qoa",
+      "me-stage-fanfare": "audio/me-stage-fanfare.qoa",
+    });
+    expect([...stage.audioFiles.keys()]).toEqual([
+      "audio/bgm-stage-overture.qoa",
+      "audio/me-stage-fanfare.qoa",
+    ]);
+
+    const bgm = stage.audioMedia.find((record) => record.key === "bgm/stage-overture");
+    const me = stage.audioMedia.find((record) => record.key === "me/stage-fanfare");
+    expect(bgm).toMatchObject({
+      status: "success", sourceFormat: "ogg", sourceBytes: 7421,
+      outputBytes: 71384, channels: 2, sampleRate: 44_100, frames: 88_320,
+    });
+    expect(me).toMatchObject({
+      status: "success", sourceFormat: "ogg", sourceBytes: 5545,
+      outputBytes: 28144, channels: 2, sampleRate: 44_100, frames: 34_816, durationTicks: 48,
+    });
+    if (me?.status !== "success") throw new Error("stage fanfare fixture did not convert");
+    const qoa = new QoaFile(stage.audioFiles.get("audio/me-stage-fanfare.qoa")!);
+    expect({ channels: qoa.channels, sampleRate: qoa.sampleRate, frames: qoa.frames }).toEqual({
+      channels: me.channels, sampleRate: me.sampleRate, frames: me.frames,
+    });
+    const playMe = allCommands(stage.project).find((command) => command.op === "playMe") as Command & { duration: number };
+    expect(playMe.duration).toBe(me.durationTicks / 60);
+
+    expect(stage.audioMedia.find((record) => record.key === "bgs/stage-crowd")).toMatchObject({
+      status: "missing", sourceBytes: 0, outputBytes: 0,
+    });
+    expect(stage.cov.list("audio").find((row) => row.key === "bgs/stage-crowd")?.counts.Dropped).toBe(1);
+    expect(stage.warnings).toContain("bgs/stage-crowd: audio/bgs/stage-crowd.ogg or .m4a was not found");
+  });
+
+  test("ME duration follows decoded frames and authored pitch", async () => {
+    const source = loadRmProject(STAGE);
+    const command = [...source.maps.values()]
+      .flatMap((map) => map.events.flatMap((event) => event?.pages.flatMap((page) => page.list) ?? []))
+      .find((entry) => entry.code === 249)!;
+    const audio = command.parameters?.[0] as { pitch: number };
+    audio.pitch = 125;
+    const imported = await importRmProject(source);
+    const me = imported.audioMedia.find((record) => record.key === "me/stage-fanfare");
+    if (me?.status !== "success") throw new Error("stage fanfare fixture did not convert");
+    const expectedTicks = Math.ceil(Math.ceil(me.frames * 100 / 125) * 60 / me.sampleRate);
+    const playMe = allCommands(imported.project).find((entry) => entry.op === "playMe") as Command & { duration: number };
+    expect(playMe.duration).toBe(expectedTicks / 60);
+  });
+
+  test("missing named ME is reported and dropped instead of becoming Stop ME", async () => {
+    const base = mkdtempSync(join(SCRATCH_ROOT, "rmi-missing-me-"));
+    const root = join(base, "stage");
+    try {
+      cpSync(STAGE, root, { recursive: true });
+      rmSync(join(root, "audio", "me"), { recursive: true, force: true });
+      const imported = await importRmProject(loadRmProject(root));
+      expect(allCommands(imported.project).some((entry) => entry.op === "playMe" || entry.op === "stopMe")).toBe(false);
+      expect(imported.cov.list("audio").find((row) => row.key === "me/stage-fanfare")?.counts.Dropped).toBe(1);
+      expect(imported.warnings).toContain("me/stage-fanfare: audio/me/stage-fanfare.ogg or .m4a was not found");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
   });
 
@@ -132,9 +290,9 @@ describe("rpgmaker-import: output", () => {
     expect(imported.project.vehicles).toEqual([{
       id: "boat", kind: "boat", sprite: "chr-people-2",
       start: { map: "map001", x: 3, y: 11, dir: "left" },
-      bgm: { id: "bgm-ship-theme", volume: 100, pitch: 50 },
+      bgm: { id: "bgm-ship-theme", volume: 100, pitch: 50, pan: 5 },
     }]);
-    expect(imported.warnings).toContain("boat: vehicle BGM pan is not supported and was ignored");
+    expect(imported.warnings).not.toContain("boat: vehicle BGM pan is not supported and was ignored");
 
     source.system.partyMembers = [1, 2];
     const withStartingFollower = await importRmProject(source);
@@ -202,7 +360,7 @@ describe("rpgmaker-import: output", () => {
   });
 
   test("Window.png supplies the exact 32-colour palette through case-insensitive lookup", async () => {
-    const base = mkdtempSync(join(tmpdir(), "rmi-window-"));
+    const base = mkdtempSync(join(SCRATCH_ROOT, "rmi-window-"));
     const root = join(base, "project");
     try {
       cpSync(HOLLOW, root, { recursive: true });
@@ -219,7 +377,7 @@ describe("rpgmaker-import: output", () => {
     expect(hollow.project.system?.rpgMakerText?.colours).toBeUndefined();
     expect(stage.project.system?.rpgMakerText?.colours).toBeUndefined();
 
-    const base = mkdtempSync(join(tmpdir(), "rmi-window-bad-"));
+    const base = mkdtempSync(join(SCRATCH_ROOT, "rmi-window-bad-"));
     const root = join(base, "project");
     const window = join(root, "img/system/Window.png");
     try {
@@ -525,7 +683,7 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(111)!.needsKit).not.toContain("timer");
     expect(by.get(111)!.needsKit).not.toContain("vehicles");
     expect(by.get(140)!.disposition).toBe("Native");
-    expect(by.get(140)!.needsKit).toContain("audio pan");
+    expect(by.get(140)!.needsKit).not.toContain("audio pan");
     expect(by.get(122)!.needsKit).not.toContain("timer");
     expect(by.get(118)!.disposition).toBe("Native");
     expect(by.get(119)!.disposition).toBe("Native");
@@ -536,7 +694,7 @@ describe("rpgmaker-import: output", () => {
   });
 
   test("an encrypted deployment is refused", () => {
-    const dir = mkdtempSync(join(tmpdir(), "rmi-enc-"));
+    const dir = mkdtempSync(join(SCRATCH_ROOT, "rmi-enc-"));
     try {
       const data = join(dir, "data");
       mkdirSync(data);
@@ -550,7 +708,7 @@ describe("rpgmaker-import: output", () => {
 
 describe("rpgmaker-import: files and determinism", () => {
   test("the CLI writes byte-identical output twice, inline and sharded", async () => {
-    const base = mkdtempSync(join(tmpdir(), "rmi-cli-"));
+    const base = mkdtempSync(join(SCRATCH_ROOT, "rmi-cli-"));
     try {
       const run = (out: string, ...extra: string[]) => {
         const proc = Bun.spawnSync([process.execPath, join(ROOT, "tools/rpgmaker-import"), HOLLOW, "--out", out, ...extra], { cwd: ROOT });
@@ -561,7 +719,7 @@ describe("rpgmaker-import: files and determinism", () => {
       const b = run(join(base, "b"));
       expect([...a.keys()]).toEqual([...b.keys()]);
       for (const [k, v] of a) expect(v.equals(b.get(k)!)).toBe(true);
-      for (const f of ["project.json", "assets.json", "coverage.md", "coverage.json", "tiles/ts1.png", "tiles/ts2.png"]) {
+      for (const f of ["project.json", "assets.json", "audio-media.json", "coverage.md", "coverage.json", "tiles/ts1.png", "tiles/ts2.png"]) {
         expect(a.has(f)).toBe(true);
       }
       const project = JSON.parse(a.get("project.json")!.toString("utf8")) as Project;
@@ -575,11 +733,15 @@ describe("rpgmaker-import: files and determinism", () => {
     }
   }, 30_000);
 
-  test("generated images are a pure function of the project", async () => {
+  test("generated images and QOA media are a pure function of the project", async () => {
     const again = await importRmProject(loadRmProject(STAGE));
     expect([...again.images.keys()]).toEqual([...stage.images.keys()]);
     for (const [k, img] of stage.images) {
       expect(Buffer.from(writePngBytes(img)).equals(Buffer.from(writePngBytes(again.images.get(k)!)))).toBe(true);
+    }
+    expect([...again.audioFiles.keys()]).toEqual([...stage.audioFiles.keys()]);
+    for (const [key, bytes] of stage.audioFiles) {
+      expect(Buffer.from(bytes).equals(Buffer.from(again.audioFiles.get(key)!))).toBe(true);
     }
   });
 

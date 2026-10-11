@@ -935,10 +935,14 @@ export function createSession(
   const vehiclePassages = (project.vehicles?.length ?? 0) > 0
     ? new Map<string, VehiclePassageTable | undefined>()
     : null;
+  const playerActor = project.actors?.find((actor) =>
+    actor.databaseId === project.system?.rpgMakerText?.party[0])?.id;
   const worldOptions: WorldOptions = {
     messageBlocksPlayer: project.system?.messageBlocksPlayer === true,
     textVariables: project.system?.textVariables === true,
     characterNames: project.system?.characterNames === true,
+    actors: project.actors,
+    ...(playerActor !== undefined ? { playerActor } : {}),
     ...(project.system?.rpgMakerText ? {
       rpgMakerText: {
         actors: (project.actors ?? []).flatMap((actor) =>
@@ -3831,6 +3835,7 @@ function startVehicleBgm(s: SessionState, bgm: Readonly<VehicleBgm> | null | und
         id: audio.bgm.id,
         volume: audio.bgm.volume,
         pitch: audio.bgm.pitch,
+        ...(audio.bgm.pan !== undefined ? { pan: audio.bgm.pan } : {}),
         positionTicks: audio.bgm.positionTicks,
       }
     : null;
@@ -3841,6 +3846,7 @@ function startVehicleBgm(s: SessionState, bgm: Readonly<VehicleBgm> | null | und
       id: bgm.id,
       volume: bgm.volume ?? 100,
       pitch: bgm.pitch ?? 100,
+      ...(bgm.pan !== undefined && bgm.pan !== 0 ? { pan: bgm.pan } : {}),
       positionTicks: 0,
     };
   }
