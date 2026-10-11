@@ -34,7 +34,7 @@ const CUSTOM_WINDOW_COLOURS = [
   "#9831D8", "#A9530D", "#BA7542", "#CB9777", "#DCB9AC", "#EDDBE1", "#FEFD16", "#0F1F4B",
   "#204180", "#3163B5", "#4285EA", "#53A71F", "#64C954", "#75EB89", "#860DBE", "#972FF3",
   "#A85128", "#B9735D", "#CA9592", "#DBB7C7", "#ECD9FC", "#FDFB31", "#0E1D66", "#1F3F9B",
-] as const;
+];
 
 const hollow = await importRmProject(loadRmProject(HOLLOW));
 const stage = await importRmProject(loadRmProject(STAGE));
