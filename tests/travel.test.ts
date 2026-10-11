@@ -8,6 +8,7 @@ import {
   buildVehiclePassage,
   canVehicleStep,
   cloneTravelState,
+  completeVehicleBoarding,
   createTravelState,
   drainCompletedGatherWaiters,
   gatherFollowers,
@@ -107,7 +108,7 @@ describe("optional travel state", () => {
 });
 
 describe("follower historical trail and gather", () => {
-  test("passes vacated cells down the chain without cutting a corner", () => {
+  test("starts the whole spaced chain in the leader's phase without cutting a corner", () => {
     const initial: TravelState = {
       followers: {
         visible: true,
@@ -125,13 +126,13 @@ describe("follower historical trail and gather", () => {
     const started = stepFollowers(initial, leader, CFG, { x: 1, y: 1 })!;
     expect(initial).toEqual(untouched);
     expect(started.followers?.members[0]?.move).toMatchObject({ tx: 0, ty: 1, stepDir: 3, phase: 1, moving: true });
-    expect(started.followers?.members[1]?.move).toMatchObject({ tx: 0, ty: 2, moving: false });
+    expect(started.followers?.members[1]?.move).toMatchObject({ tx: 0, ty: 2, stepDir: 2, phase: 1, moving: true });
 
     const landed = stepFollowers(started, leader, CFG)!;
     expect(landed.followers?.members[0]?.move).toMatchObject({ tx: 1, ty: 1, moving: false });
     // The second follower receives the first follower's old cell (0,1), not
-    // the leader's diagonal position (1,0).
-    expect(landed.followers?.members[1]?.move).toMatchObject({ tx: 0, ty: 2, stepDir: 2, phase: 1, moving: true });
+    // the leader's diagonal position (1,0), and lands on the same tick.
+    expect(landed.followers?.members[1]?.move).toMatchObject({ tx: 0, ty: 1, stepDir: 2, moving: false });
   });
 
   test("retains a non-adjacent historical waypoint until the follower reaches it", () => {
@@ -205,6 +206,8 @@ describe("transfer and seamless coordinate changes", () => {
   test("ordinary transfer synchronizes followers and only the ridden vehicle", () => {
     let state = createTravelState({ followers: FOLLOWERS, vehicles: VEHICLES }, mover(1, 1), CFG)!;
     state = boardVehicle(state, "boat")!;
+    state = stepFollowers(state, mover(1, 1), CFG)!;
+    state = completeVehicleBoarding(state)!;
     const player = mover(7, 6, 3);
     const next = syncTravelAfterTransfer(state, "island", player)!;
     expect(next.followers?.members.every((member) =>
@@ -219,9 +222,14 @@ describe("transfer and seamless coordinate changes", () => {
     state.followers!.members[0]!.move = mover(6, 2, 3);
     state.followers!.members[0]!.trail = [{ x: 7, y: 2 }];
     state = boardVehicle(state, "boat")!;
+    for (let tick = 0; tick < 32 && state.followers?.gathering; tick++) {
+      state = stepFollowers(state, mover(7, 2, 3), CFG)!;
+    }
+    state = completeVehicleBoarding(state)!;
     // Boarding intentionally gathered; restore ordinary trailing state for
     // this direct rebase contract test.
     state.followers!.gathering = false;
+    state.followers!.members[0]!.move = mover(6, 2, 3);
     state.followers!.members[0]!.trail = [{ x: 7, y: 2 }];
     const targetPlayer = mover(0, 2, 3);
     const next = rebaseTravelAfterSeamless(state, {
@@ -246,13 +254,16 @@ describe("persistent vehicle operations", () => {
     expect(boardableVehicle(state, "sea", mover(2, 2, 3))?.id).toBe("airship");
     const noAirship = relocateVehicle(state, "airship", "hangar", 0, 0, CFG)!;
     expect(boardableVehicle(noAirship, "sea", mover(2, 2, 3))?.id).toBe("ship");
-    expect(leaveVehicle(boardVehicle(noAirship, "ship"))?.vehicles?.riding).toBeNull();
+    const boarded = completeVehicleBoarding(boardVehicle(noAirship, "ship"))!;
+    expect(leaveVehicle(boarded)?.vehicles?.riding).toBeNull();
   });
 
   test("ride, synchronize, image and relocation are pure", () => {
     const initial = createTravelState({ vehicles: VEHICLES }, mover(2, 2, 3), CFG)!;
     const before = structuredClone(initial);
     let state = boardVehicle(initial, "airship")!;
+    expect(state.vehicles).toMatchObject({ boarding: "airship", riding: null, airshipPhase: "grounded" });
+    state = completeVehicleBoarding(state)!;
     state = syncRiddenVehicle(state, "sky", mover(8, 4, 2))!;
     state = setVehicleImage(state, "airship", "air-b")!;
     state = relocateVehicle(state, "boat", "lake", 1, 2, CFG, 0)!;
@@ -264,7 +275,9 @@ describe("persistent vehicle operations", () => {
   });
 
   test("airship ascent and requested descent each take exactly 48 ticks", () => {
-    let state = boardVehicle(createTravelState({ vehicles: VEHICLES }, mover(2, 2), CFG), "airship")!;
+    let state = completeVehicleBoarding(
+      boardVehicle(createTravelState({ vehicles: VEHICLES }, mover(2, 2), CFG), "airship"),
+    )!;
     for (let tick = 1; tick < AIRSHIP_TRANSITION_TICKS; tick++) {
       state = stepAirshipAltitude(state, 16)!;
     }
@@ -290,7 +303,7 @@ describe("persistent vehicle operations", () => {
   test("vehicle relocation and airship height reject non-finite coordinates", () => {
     const state = createTravelState({ vehicles: VEHICLES }, mover(2, 2), CFG)!;
     expect(() => relocateVehicle(state, "boat", "lake", Number.NaN, 2, CFG)).toThrow("integer x/y required");
-    const boarded = boardVehicle(state, "airship")!;
+    const boarded = completeVehicleBoarding(boardVehicle(state, "airship"))!;
     expect(() => stepAirshipAltitude(boarded, Number.POSITIVE_INFINITY)).toThrow("finite non-negative");
   });
 });

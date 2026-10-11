@@ -191,9 +191,67 @@ describe("session travel opt-in", () => {
       [2, 2],
     ]);
   });
+
+  test("a spaced follower chain starts and lands in the leader's step phase", () => {
+    const p = project([map("field")], {
+      followers: {
+        enabled: true,
+        members: [
+          { id: "second", sprite: "hero-2" },
+          { id: "third", sprite: "hero-3" },
+        ],
+      },
+    });
+    const session = createSession(p, 60);
+    let state = startSession(p, session);
+    state = stepCell(session, state, BTN.RIGHT);
+    state = stepCell(session, state, BTN.RIGHT);
+    state = idle(session, state);
+    expect(state.travel?.followers?.members.map((member) => [member.move.tx, member.move.ty])).toEqual([
+      [2, 1],
+      [1, 1],
+    ]);
+
+    state = stepSession(session, state, { buttons: BTN.DOWN });
+    expect(state.move).toMatchObject({ moving: true, phase: 1 });
+    expect(state.travel?.followers?.members.map((member) => [member.move.moving, member.move.phase])).toEqual([
+      [true, 1],
+      [true, 1],
+    ]);
+    while (state.move.moving) state = idle(session, state);
+    expect(state.travel?.followers?.members.map((member) => [member.move.tx, member.move.ty, member.move.moving])).toEqual([
+      [3, 1, false],
+      [2, 1, false],
+    ]);
+  });
 });
 
 describe("session boat and ship traversal", () => {
+  test("parked boats and ships block movement while a parked airship remains enterable", () => {
+    const run = (kind: VehicleDef["kind"]): SessionState => {
+      const p = project([map("harbor")], { vehicles: [vehicle(kind, kind, 2, 1)] });
+      const session = createSession(p);
+      return stepCell(session, startSession(p, session), BTN.RIGHT);
+    };
+    expect(run("boat").move.tx).toBe(1);
+    expect(run("ship").move.tx).toBe(1);
+    expect(run("airship").move.tx).toBe(2);
+
+    const water = [1 * 8 + 2, 1 * 8 + 3];
+    const harbor = map("harbor", {
+      passage: water.map((index) => [index, "block"]),
+      vehiclePassage: { boat: water, ship: water },
+    });
+    const p = project([harbor], {
+      vehicles: [vehicle("boat", "boat", 2, 1), vehicle("ship", "ship", 3, 1)],
+    });
+    const session = createSession(p);
+    let state = settle(session, confirm(session, startSession(p, session)));
+    state = stepCell(session, state, BTN.RIGHT);
+    expect(state.travel?.vehicles?.riding).toBe("boat");
+    expect(state.move.tx).toBe(2);
+  });
+
   test("the event command toggles a reachable vehicle without parking its fiber", () => {
     const captain = event("captain", 0, 0, [
       page("autorun", [
@@ -273,6 +331,46 @@ describe("session boat and ship traversal", () => {
 });
 
 describe("session airship lifecycle", () => {
+  test("keeps an airship grounded and followers visible until gathering completes", () => {
+    const p = project([map("harbor")], {
+      followers: {
+        enabled: true,
+        members: [
+          { id: "second", sprite: "hero-2" },
+          { id: "third", sprite: "hero-3" },
+        ],
+      },
+      vehicles: [vehicle("airship", "airship", 3, 1)],
+    });
+    const session = createSession(p, 60);
+    let state = startSession(p, session);
+    state = stepCell(session, state, BTN.RIGHT);
+    state = stepCell(session, state, BTN.RIGHT);
+    state = confirm(session, state);
+    expect(state.travel?.vehicles).toMatchObject({
+      boarding: "airship",
+      riding: null,
+      airshipPhase: "grounded",
+      airshipPhaseTick: 0,
+      airshipAltitude: 0,
+    });
+    expect(state.travel?.followers).toMatchObject({ visible: true, gathering: true });
+
+    for (let tick = 0; tick < 200 && state.travel?.followers?.gathering; tick++) {
+      state = idle(session, state);
+      expect(state.travel?.vehicles?.airshipAltitude).toBe(0);
+    }
+    expect(state.travel?.followers?.gathering).toBe(false);
+    expect(state.travel?.vehicles).toMatchObject({
+      boarding: null,
+      riding: "airship",
+      airshipPhase: "ascending",
+      airshipPhaseTick: 0,
+    });
+    state = idle(session, state);
+    expect(state.travel?.vehicles).toMatchObject({ airshipPhaseTick: 1 });
+  });
+
   test("ascent gates movement, cruising crosses terrain and bodies, and landing takes 48 ticks", () => {
     const body = event("body", 2, 1, [page("action", [], { sprite: "npc", blocks: true })]);
     const harbor = map("harbor", {

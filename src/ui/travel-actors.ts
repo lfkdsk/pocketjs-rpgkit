@@ -39,6 +39,39 @@ export interface TravelActorFrame {
   depth: number;
 }
 
+export interface AirshipShadowFrame {
+  px: number;
+  py: number;
+  opacity: number;
+  visible: boolean;
+  depth: number;
+}
+
+/** RPG Maker's airship shadow stays on the ground while the craft rises and
+ * fades in proportion to altitude. The renderer draws the small oval from
+ * Views, so projects need no extra baked asset. */
+export function airshipShadowFrame(
+  state: Readonly<SessionState>,
+  worldWidth: number,
+): AirshipShadowFrame {
+  const vehicles = state.travel?.vehicles;
+  const riding = vehicles?.riding;
+  const vehicle = riding ? vehicles!.entries.find((entry) => entry.id === riding) : undefined;
+  const altitude = vehicle?.kind === "airship" ? vehicles!.airshipAltitude : 0;
+  return {
+    px: state.move.px + 2,
+    py: state.move.py + 11,
+    opacity: Math.max(0, Math.min(1, altitude / 16)),
+    visible: vehicle?.kind === "airship" && vehicle.mapId === state.mapId && altitude > 0,
+    depth: actorDepth(state.move.px, state.move.py, worldWidth) - 1,
+  };
+}
+
+export function sameAirshipShadowFrame(a: AirshipShadowFrame, b: AirshipShadowFrame): boolean {
+  return a.px === b.px && a.py === b.py && a.opacity === b.opacity &&
+    a.visible === b.visible && a.depth === b.depth;
+}
+
 function travelFrame(
   id: string,
   move: SessionState["move"],

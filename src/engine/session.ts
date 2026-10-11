@@ -100,6 +100,7 @@ import {
   boardVehicle,
   buildVehiclePassage,
   cloneTravelState,
+  completeVehicleBoarding,
   createTravelState,
   drainCompletedGatherWaiters,
   gatherFollowers,
@@ -1516,6 +1517,27 @@ export function tableWithBodies(
     if (ch.moving) add(ch.tx + DX[ch.stepDir], ch.ty + DY[ch.stepDir]);
   }
   return stampBlockedCells(base, cells);
+}
+
+/** RPG Maker treats parked boats and ships as character bodies, but not an
+ * airship (the player must be able to enter its cell to board). Stamp only
+ * same-map water vehicles; the active ride moves with the player and is not
+ * a second body. */
+function tableWithParkedVehicleBodies(
+  base: PassageTable,
+  travel: Readonly<TravelState> | undefined,
+  mapId: string,
+): PassageTable {
+  const vehicles = travel?.vehicles;
+  if (!vehicles) return base;
+  let cells: number[] | undefined;
+  for (const vehicle of vehicles.entries) {
+    if (vehicle.id === vehicles.riding || vehicle.mapId !== mapId || vehicle.kind === "airship") continue;
+    const { tx, ty } = vehicle.move;
+    if (tx < 0 || ty < 0 || tx >= base.width || ty >= base.height) continue;
+    (cells ??= []).push(ty * base.width + tx);
+  }
+  return cells ? stampBlockedCells(base, cells) : base;
 }
 
 /** Original body-overlay loop for worlds without KM1 settings. */
@@ -3029,6 +3051,9 @@ function stepReferenceTick(
         s.move,
       );
     }
+    if (travel.vehicles?.boarding && !travel.followers?.gathering && !s.move.moving) {
+      travel = completeVehicleBoarding(travel)!;
+    }
     if (travel.vehicles?.riding) {
       travel = stepAirshipAltitude(travel, sess.cfg.tile)!;
     }
@@ -3119,7 +3144,7 @@ function stepReferenceTick(
     : undefined;
   const needsMovementControlPath =
     world.needsMovementControlPath === true || s.interp.moveControls !== undefined ||
-    vehicleAtTickStart != null;
+    vehicleAtTickStart != null || travel?.vehicles?.boarding != null;
   const extension: ExtensionScope = { runtime: sess.extensions, ext: s.ext };
   const needsEventPages = world.needsEventPages === true || s.interp.eventAppearances !== undefined;
   const previousEventPages = needsEventPages ? eventPagesOf(map, s.chars) : undefined;
@@ -3242,7 +3267,8 @@ function stepReferenceTick(
   for (const waiter of synced.abortedWaiters) {
     s.interp = continueExternal(s.interp, waiter);
   }
-  const passage = sessionPassageTable(sess, s);
+  const terrainPassage = sessionPassageTable(sess, s);
+  const passage = tableWithParkedVehicleBodies(terrainPassage, travel, s.mapId);
   // eventTouch contacts gathered by this tick's movement phase (mover,
   // characters, player route) and read by this tick's trigger scan. Maps
   // without an eventTouch page skip detection entirely.
@@ -3261,6 +3287,7 @@ function stepReferenceTick(
   const prevFacing = s.move.facing;
   const playerCellBeforeMovementX = s.move.tx;
   const playerCellBeforeMovementY = s.move.ty;
+  const playerMovingBeforeMovement = s.move.moving;
   // Keep the pre-feature movement path from reading or comparing the sparse
   // bank at all. A Steps page can only change on a landing in an opted-in
   // project, so undefined is also the complete cache-invalidation gate.
@@ -3332,14 +3359,18 @@ function stepReferenceTick(
           through: ridden.kind === "airship",
         }
       : authoredPlayerSettings;
-    const vehicleTransition = ridden?.kind === "airship" &&
-      travel?.vehicles?.airshipPhase !== "cruising";
+    const vehicleTransition = (travel?.vehicles?.boarding != null && !s.move.moving) ||
+      (ridden?.kind === "airship" && travel?.vehicles?.airshipPhase !== "cruising");
     const playerPassage = ridden && ridden.kind !== "airship"
-      ? vehicleMovementTable(
-          passage,
-          sess.vehiclePassages?.get(map.id),
-          ridden.kind,
-        ) ?? blockedVehicleTable(passage)
+      ? tableWithParkedVehicleBodies(
+          vehicleMovementTable(
+            terrainPassage,
+            sess.vehiclePassages?.get(map.id),
+            ridden.kind,
+          ) ?? blockedVehicleTable(terrainPassage),
+          travel,
+          s.mapId,
+        )
       : passage;
     playerRouteSettings = playerSettings;
 
@@ -3431,13 +3462,16 @@ function stepReferenceTick(
     stepPlayerRoute(s, sess, playerRouteSettings, playerRouteEventSettings, contacts);
   }
   if (travel !== undefined) {
-    const movedCell = s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY;
+    const startedStep = !playerMovingBeforeMovement && s.move.moving;
     travel = stepFollowers(
       travel,
       s.move,
       sess.cfg,
-      movedCell ? { x: playerCellBeforeMovementX, y: playerCellBeforeMovementY } : undefined,
+      startedStep ? { x: playerCellBeforeMovementX, y: playerCellBeforeMovementY } : undefined,
     )!;
+    if (travel.vehicles?.boarding && !travel.followers?.gathering && !s.move.moving) {
+      travel = completeVehicleBoarding(travel)!;
+    }
     travel = syncRiddenVehicle(travel, s.mapId, s.move)!;
     const drained = drainCompletedGatherWaiters(travel);
     if (drained.state) travel = drained.state;
@@ -3789,6 +3823,9 @@ function tryToggleVehicle(
   passage: PassageTable,
 ): boolean {
   if (!s.travel?.vehicles || s.move.moving) return false;
+  // A second confirm during get-on is consumed by the transition. It must
+  // not also activate an event while the party is still gathering.
+  if (s.travel.vehicles.boarding != null) return true;
   const ridden = ridingVehicle(s.travel);
   if (!ridden) {
     const boardable = boardableVehicle(s.travel, map.id, s.move);
@@ -4038,7 +4075,8 @@ function stepPlayerRoute(
     // fall through to the next command on this landing tick
   }
 
-  const table = tableWithBodies(sessionPassageTable(sess, s), s.chars, eventSettings);
+  const routePassage = tableWithParkedVehicleBodies(sessionPassageTable(sess, s), s.travel, s.mapId);
+  const table = tableWithBodies(routePassage, s.chars, eventSettings);
   // MV advances a move list at most once per stop tick: consume exactly
   // ONE route command on this reference tick (matching chars.stepRoute).
   // Instant-only routes (a repeat face route) therefore take one command

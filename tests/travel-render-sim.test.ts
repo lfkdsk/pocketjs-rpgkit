@@ -47,11 +47,13 @@ simDescribe("travel actor GameView layer", () => {
     const actorRoot = findNode(before, "rpgkit-actors-r2-ui-field");
     expect((actorRoot?.k ?? []).filter((node) => node.t === "image")).toHaveLength(9);
     for (const name of [
+      "rpgkit-airship-shadow",
       "rpgkit-follower-party-two",
       "rpgkit-follower-party-three",
       "rpgkit-vehicle-boat",
       "rpgkit-vehicle-airship",
     ]) expect(findNode(before, name), name).toBeDefined();
+    expect(findNode(before, "rpgkit-airship-shadow")?.t).toBe("view");
     const nodeIds = Object.fromEntries(
       ["rpgkit-player", "rpgkit-follower-party-two", "rpgkit-follower-party-three", "rpgkit-vehicle-boat"]
         .map((name) => [name, findNode(before, name)!.i]),

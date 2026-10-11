@@ -2567,6 +2567,13 @@ function validateTravel(v: unknown, path: string): string | null {
     if (vehicles.riding !== null && (typeof vehicles.riding !== "string" || !ids.has(vehicles.riding))) {
       return fail(`${path}.vehicles.riding`, "null or existing vehicle id required");
     }
+    if (vehicles.boarding !== undefined && vehicles.boarding !== null &&
+        (typeof vehicles.boarding !== "string" || !ids.has(vehicles.boarding))) {
+      return fail(`${path}.vehicles.boarding`, "null, omitted, or existing vehicle id required");
+    }
+    if (vehicles.riding !== null && vehicles.boarding != null) {
+      return fail(`${path}.vehicles`, "riding and boarding cannot both be active");
+    }
     if (!isFiniteNumber(vehicles.airshipAltitude) || vehicles.airshipAltitude < 0 ||
         vehicles.airshipAltitude > SAVE_TILE) {
       return fail(`${path}.vehicles.airshipAltitude`, "finite altitude 0..16 required");
@@ -2577,10 +2584,18 @@ function validateTravel(v: unknown, path: string): string | null {
     }
     const tick = vehicles.airshipPhaseTick as number;
     const phase = vehicles.airshipPhase;
-    if ((phase === "grounded" && (tick !== 0 || vehicles.airshipAltitude !== 0)) ||
-        (phase === "cruising" && (tick !== 48 || vehicles.airshipAltitude !== SAVE_TILE))) {
-      return fail(`${path}.vehicles`, "airship phase must match tick and altitude");
-    }
+    const riding = typeof vehicles.riding === "string"
+      ? vehicles.entries.find((entry) => isRecord(entry) && entry.id === vehicles.riding)
+      : undefined;
+    const ridingAirship = isRecord(riding) && riding.kind === "airship";
+    const expectedAltitude = SAVE_TILE * tick / 48;
+    const transitionMatches = vehicles.airshipAltitude === expectedAltitude;
+    const validPhase = ridingAirship
+      ? (phase === "ascending" && tick < 48 && transitionMatches) ||
+        (phase === "cruising" && tick === 48 && vehicles.airshipAltitude === SAVE_TILE) ||
+        (phase === "descending" && tick > 0 && transitionMatches)
+      : phase === "grounded" && tick === 0 && vehicles.airshipAltitude === 0;
+    if (!validPhase) return fail(`${path}.vehicles`, "airship phase must match ride, tick and altitude");
   }
   if (v.followers === undefined && v.vehicles === undefined) {
     return fail(path, "followers or vehicles required");

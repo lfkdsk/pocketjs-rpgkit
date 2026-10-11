@@ -132,8 +132,11 @@ import { npcArt, npcArtHeight, npcArtKey, spritePaints } from "./npc-art.ts";
 import { StreamedChunkLayer, type StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
 import { actorDepth, OccludingUpperLayer } from "./OccludingUpperLayer.tsx";
 import {
+  airshipShadowFrame,
+  sameAirshipShadowFrame,
   sameTravelActorFrames,
   travelActorFrames,
+  type AirshipShadowFrame,
   type TravelActorFrame,
 } from "./travel-actors.ts";
 import { startupProfileMark } from "../startup-profile.ts";
@@ -382,6 +385,21 @@ function travelActorStyle(frame: TravelActorFrame) {
   };
 }
 
+function airshipShadowStyle(frame: AirshipShadowFrame) {
+  return {
+    posType: 1,
+    insetL: 0,
+    insetT: 0,
+    width: 12,
+    height: 6,
+    zIndex: frame.depth,
+    opacity: frame.opacity,
+    display: frame.visible ? 0 : 1,
+    translateX: frame.px,
+    translateY: frame.py,
+  };
+}
+
 /** Optional actor nodes for party followers and parked vehicles. The parent
  * only constructs this component when TravelState exists, so legacy projects
  * install neither this frame hook nor these signals/nodes. */
@@ -394,18 +412,31 @@ function TravelActors(props: {
   active?: Accessor<boolean>;
 }) {
   const initial = travelActorFrames(props.initial, props.sprites, props.npcSrc, props.worldWidth);
+  const initialShadow = airshipShadowFrame(props.initial, props.worldWidth);
   const [followers, setFollowers] = createSignal<readonly TravelActorFrame[]>(initial.followers);
   const [vehicles, setVehicles] = createSignal<readonly TravelActorFrame[]>(initial.vehicles);
+  const [shadow, setShadow] = createSignal<AirshipShadowFrame>(initialShadow);
 
   onFrame(() => {
     if (props.active && !props.active()) return;
     const next = travelActorFrames(props.state(), props.sprites, props.npcSrc, props.worldWidth);
+    const nextShadow = airshipShadowFrame(props.state(), props.worldWidth);
     setFollowers((current) => sameTravelActorFrames(current, next.followers) ? current : next.followers);
     setVehicles((current) => sameTravelActorFrames(current, next.vehicles) ? current : next.vehicles);
+    setShadow((current) => sameAirshipShadowFrame(current, nextShadow) ? current : nextShadow);
   });
 
   return (
     <>
+      <View
+        class="absolute"
+        style={airshipShadowStyle(shadow())}
+        debugName="rpgkit-airship-shadow"
+      >
+        <View style={{ posType: 1, insetL: 2, insetT: 0, width: 8, height: 2, bgColor: "#000000" }} />
+        <View style={{ posType: 1, insetL: 0, insetT: 2, width: 12, height: 2, bgColor: "#000000" }} />
+        <View style={{ posType: 1, insetL: 2, insetT: 4, width: 8, height: 2, bgColor: "#000000" }} />
+      </View>
       <Index each={followers()}>{(frame) => (
         <Image
           class="absolute"

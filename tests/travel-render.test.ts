@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { createSession, startSession } from "../src/engine/session.ts";
 import type { Project } from "../src/engine/types.ts";
-import { travelActorFrames } from "../src/ui/travel-actors.ts";
+import { airshipShadowFrame, travelActorFrames } from "../src/ui/travel-actors.ts";
 import { actorDepth } from "../src/ui/OccludingUpperLayer.tsx";
 
 const WALKER = {
@@ -82,5 +82,26 @@ describe("travel actor rendering projection", () => {
     const hidden = travelActorFrames(state, sprites, npcSrc, STRIDE);
     expect(hidden.followers[0]!.visible).toBe(false);
     expect(hidden.vehicles.find((frame) => frame.id === "boat-1")!.visible).toBe(true);
+  });
+
+  test("keeps the ridden airship shadow on the ground and fades it by altitude", () => {
+    const session = createSession(project);
+    const state = startSession(project, session);
+    const airship = state.travel!.vehicles!.entries.find((entry) => entry.id === "airship-1")!;
+    airship.mapId = state.mapId;
+    state.travel!.vehicles!.riding = airship.id;
+
+    state.travel!.vehicles!.airshipAltitude = 0;
+    const grounded = airshipShadowFrame(state, STRIDE);
+    state.travel!.vehicles!.airshipAltitude = 8;
+    const halfway = airshipShadowFrame(state, STRIDE);
+    state.travel!.vehicles!.airshipAltitude = 16;
+    const cruising = airshipShadowFrame(state, STRIDE);
+
+    expect([grounded.py, halfway.py, cruising.py]).toEqual([43, 43, 43]);
+    expect([grounded.opacity, halfway.opacity, cruising.opacity]).toEqual([0, 0.5, 1]);
+    expect(grounded.visible).toBe(false);
+    expect(halfway).toMatchObject({ px: 34, visible: true, depth: actorDepth(32, 32, STRIDE) - 1 });
+    expect(cruising.visible).toBe(true);
   });
 });

@@ -72,6 +72,10 @@ export interface VehiclesTravelState {
   /** Project order is retained for deterministic handling of malformed data
    * containing more than one vehicle of a kind. */
   entries: VehicleTravelState[];
+  /** Vehicle selected by the boarding action while the player and visible
+   * followers converge. It becomes `riding` only after both movement and
+   * gathering finish, matching RPG Maker's get-on transition. */
+  boarding?: string | null;
   riding: string | null;
   /** Pixel lift for the ridden airship.  Zero for every other state. */
   airshipAltitude: number;
@@ -170,6 +174,7 @@ export function cloneTravelState(state: Readonly<TravelState>): TravelState {
       ? {
           vehicles: {
             entries: state.vehicles.entries.map(cloneVehicle),
+            boarding: state.vehicles.boarding ?? null,
             riding: state.vehicles.riding,
             airshipAltitude: state.vehicles.airshipAltitude,
             airshipPhase: state.vehicles.airshipPhase,
@@ -227,6 +232,7 @@ function createVehicles(
         cfg,
       ),
     })),
+    boarding: null,
     riding: null,
     airshipAltitude: 0,
     airshipPhase: "grounded",
@@ -438,16 +444,17 @@ function gathered(members: readonly Readonly<FollowerTravelState>[], leader: Rea
   return true;
 }
 
-/** Advance every follower by one fixed reference tick.  `leaderVacated` is
- * supplied only on a player tile landing; this prevents waits from collapsing
- * party spacing.  Followers replay proven cells without consulting passage or
- * body collision, which is both the historical-trajectory invariant and the
- * requested through/non-colliding behavior. */
+/** Advance every follower by one fixed reference tick. `leaderStepOrigin` is
+ * supplied on the tick a successful player step STARTS. Every party member
+ * snapshots its predecessor's current cell on that same tick, so the whole
+ * spaced chain begins interpolation in phase with the leader as RPG Maker's
+ * reverse-order chase does. Followers replay those proven cells without
+ * consulting passage or body collision. */
 export function stepFollowers(
   state: Readonly<TravelState> | undefined,
   leader: Readonly<MovementState>,
   cfg: Readonly<MovementConfig>,
-  leaderVacated?: Readonly<FollowerTrailPoint>,
+  leaderStepOrigin?: Readonly<FollowerTrailPoint>,
 ): TravelState | undefined {
   const followers = state?.followers;
   if (!followers) return state as TravelState | undefined;
@@ -457,7 +464,14 @@ export function stepFollowers(
   }
 
   const members = followers.members.map(cloneFollower);
-  if (!followers.gathering && leaderVacated) pushTrail(members[0]!, leaderVacated);
+  if (!followers.gathering && leaderStepOrigin) {
+    let predecessor = leaderStepOrigin;
+    for (const member of members) {
+      const current = { x: member.move.tx, y: member.move.ty };
+      pushTrail(member, predecessor);
+      predecessor = current;
+    }
+  }
 
   let predecessor: Readonly<MovementState> = leader;
   for (let i = 0; i < members.length; i++) {
@@ -471,12 +485,8 @@ export function stepFollowers(
       : member.trail[0];
     const advanced = advanceFollower(member.move, target, cfg);
     member.move = advanced.move;
-    if (advanced.vacated) {
-      if (!followers.gathering && member.trail[0] && sameCell(member.move, member.trail[0]!)) {
-        member.trail.shift();
-      }
-      const next = members[i + 1];
-      if (next && !followers.gathering) pushTrail(next, advanced.vacated);
+    if (advanced.vacated && !followers.gathering && member.trail[0] && sameCell(member.move, member.trail[0]!)) {
+      member.trail.shift();
     }
     predecessor = member.move;
   }
@@ -585,7 +595,7 @@ export function boardableVehicle(
   mapId: string,
   player: Readonly<MovementState>,
 ): Readonly<VehicleTravelState> | null {
-  if (!state?.vehicles || state.vehicles.riding !== null) return null;
+  if (!state?.vehicles || state.vehicles.riding !== null || state.vehicles.boarding != null) return null;
   for (const kind of BOARDING_ORDER) {
     const x = kind === "airship" ? player.tx : player.tx + DX[player.facing]!;
     const y = kind === "airship" ? player.ty : player.ty + DY[player.facing]!;
@@ -598,29 +608,50 @@ export function boardableVehicle(
   return null;
 }
 
-/** Begin a ride after boardableVehicle has selected the target.  Boarding also
- * starts follower gathering, matching the party transition semantics. */
+/** Begin get-on after boardableVehicle has selected the target. The vehicle
+ * remains parked and followers remain visible until Session observes that the
+ * player's boarding step and follower gathering have both completed. */
 export function boardVehicle(
   state: Readonly<TravelState> | undefined,
   id: string,
 ): TravelState | undefined {
-  if (!state?.vehicles || state.vehicles.riding !== null) {
+  if (!state?.vehicles || state.vehicles.riding !== null || state.vehicles.boarding != null) {
     return state as TravelState | undefined;
   }
   const vehicle = vehicleById(state, id);
   if (!vehicle) return state as TravelState;
-  const isAirship = vehicle.kind === "airship";
   const next: TravelState = {
     ...state,
     vehicles: {
       ...state.vehicles,
-      riding: id,
+      boarding: id,
       airshipAltitude: 0,
-      airshipPhase: isAirship ? "ascending" : "grounded",
+      airshipPhase: "grounded",
       airshipPhaseTick: 0,
     },
   };
   return gatherFollowers(next);
+}
+
+/** Finish a pending get-on after Session has established that the player and
+ * followers are at rest. Kept separate from boardVehicle so an airship cannot
+ * rise (or hide the party) while gathering is still in progress. */
+export function completeVehicleBoarding(
+  state: Readonly<TravelState> | undefined,
+): TravelState | undefined {
+  const id = state?.vehicles?.boarding;
+  if (!id || state.followers?.gathering) return state as TravelState | undefined;
+  const vehicle = vehicleById(state, id);
+  if (!vehicle) return state as TravelState;
+  return {
+    ...state,
+    vehicles: {
+      ...state.vehicles!,
+      boarding: null,
+      riding: id,
+      airshipPhase: vehicle.kind === "airship" ? "ascending" : "grounded",
+    },
+  };
 }
 
 /** Keep a ridden vehicle's durable location and interpolation identical to the
@@ -671,6 +702,7 @@ export function leaveVehicle(state: Readonly<TravelState> | undefined): TravelSt
     ...state,
     vehicles: {
       ...state.vehicles,
+      boarding: null,
       riding: null,
       airshipAltitude: 0,
       airshipPhase: "grounded",
