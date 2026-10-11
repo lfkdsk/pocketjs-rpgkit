@@ -532,8 +532,11 @@ simDescribe("sunstone — render budget", () => {
     // Scrolling-text presentation plus actor-condition and sparse
     // audio/pan/ME runtime support add 19,597 B of shared code, measuring
     // 1,112,187 B; Sunstone still declares neither scrolling text nor actors.
+    // Generic battle completion and active-battle save/restore integration add
+    // 3,783 B, measuring 1,115,970 B. The RPG Maker rules and renderer remain
+    // separate opt-in entries and are absent from Sunstone's source graph.
     // Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_113_000);
+    expect(jsBytes).toBeLessThan(1_117_000);
   });
 });
 

@@ -260,10 +260,14 @@ const maybeTest = preflight.ok ? test : test.skip;
 // save validators add a measured 9,411 B to Meadow, 19,597 B to Sunstone and
 // 16,406 B to the WAV fixture. The audio-enabled graphs also reach the host
 // panner; Meadow still excludes both decoder and driver needles below.
+// Generic battle completion plus opt-in active-battle save/restore hooks add
+// 669 B to Meadow and the WAV fixture, and 3,783 B to battle-using Sunstone.
+// The concrete RPG Maker rules and renderer stay outside all three graphs;
+// tests/rpgmaker-battle-isolation.test.ts pins that source-level boundary.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 701_132;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_112_187;
-const EXPECTED_WAV_FIXTURE_BYTES = 885_738;
+const EXPECTED_MEADOW_BYTES = 701_801;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_115_970;
+const EXPECTED_WAV_FIXTURE_BYTES = 886_407;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
