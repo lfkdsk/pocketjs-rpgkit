@@ -1194,6 +1194,8 @@ export function conditionSummary(condition: unknown, opts: { full?: boolean } = 
       return condition.negate === true
         ? `Not riding vehicle ${text(condition.id)}`
         : `Riding vehicle ${text(condition.id)}`;
+    case "actor":
+      return `Actor ${text(condition.actor)} ${text(condition.test)} ${text(condition.value)}`;
     case "ext":
       return `Extension ${text(condition.call)} ${jsonPreview(condition.args, 48, full)}`;
     default:

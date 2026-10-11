@@ -693,6 +693,7 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(355)!.disposition).toBe("Placeholder");
     expect(by.get(357)!.disposition).toBe("Placeholder");
     expect(by.get(301)!.disposition).toBe("Native");
+    expect(by.get(301)!.needsKit).toBe("");
     expect(by.get(236)!.needsKit).not.toBe("");
   });
 

@@ -536,6 +536,17 @@ describe("editor condition and route helpers", () => {
     })]);
   });
 
+  test("summarizes imported actor conditions as read-only", () => {
+    const actor: Condition = { kind: "actor", actor: "actor002", test: "skill", value: "skill007" };
+    expect(conditionSummary(actor)).toBe("Actor actor002 skill skill007");
+    expect(pageConditionClauses({ all: [actor] })).toEqual([expect.objectContaining({
+      condition: actor,
+      summary: "Actor actor002 skill skill007",
+      editable: false,
+      readOnly: true,
+    })]);
+  });
+
   test("summarizes appearance and tile-property conditions", () => {
     expect(conditionSummary({ kind: "appearance", target: { event: "guard" }, sprite: "armored" }))
       .toBe("Appearance event guard uses armored");

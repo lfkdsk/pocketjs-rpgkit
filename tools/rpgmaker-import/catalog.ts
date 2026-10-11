@@ -111,7 +111,7 @@ export const RM_COMMANDS: readonly CommandInfo[] = [
   { code: 283, name: "Change Battle Background", flavor: "MV/MZ", needsKit: "battle backgrounds in the battle setup" },
   { code: 284, name: "Change Parallax", flavor: "MV/MZ" },
   { code: 285, name: "Get Location Info", flavor: "MV/MZ" },
-  { code: 301, name: "Battle Processing", flavor: "MV/MZ", needsKit: "an RPG Maker battle system (troops, actors, skills) behind the battle op" },
+  { code: 301, name: "Battle Processing", flavor: "MV/MZ" },
   { code: 601, name: "If Win", flavor: "MV/MZ", continuation: true },
   { code: 602, name: "If Escape", flavor: "MV/MZ", continuation: true },
   { code: 603, name: "If Lose", flavor: "MV/MZ", continuation: true },

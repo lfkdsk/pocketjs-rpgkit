@@ -59,6 +59,7 @@ with a `www/` folder work too). The output folder receives:
 | `audio/*.qoa` | Referenced BGM/BGS/ME/SE, decoded to signed 16-bit stereo at 44.1 kHz and encoded with the kit's deterministic QOA encoder. |
 | `system/balloon.png` | The balloon sheet, when Show Balloon Icon is used. |
 | `assets.json` | The render manifest an asset cooker bakes: sheets (including item cells), sprites, animations, parallaxes, pictures, audio, animated water cells per map, the balloon sheet, and the player's sprite. |
+| `battle.json` | Normalized actors, classes, enemies, troops, skills, items, states, terms and map encounters for the opt-in front-view battle module. |
 | `audio-media.json` | Stable per-track source/output byte counts, source format, decoded channels/rate/frames and 60 Hz duration; missing/corrupt media includes its reason. |
 | `coverage.md` | What happened to every construct in this project, followed by the table of every MV/MZ command. |
 | `coverage.json` | The machine-readable per-project construct counts (the static command table is Markdown-only). |
@@ -79,10 +80,12 @@ atlases, slices balloons and animations, carries parallaxes and item cells,
 fits pictures into a screen layer, packs imported QOA under the generated
 audio keys, and writes the `GameAssets` manifest. Its `rmi-play.tsx` mounts
 `GameView` with `createAudioEffects`, the opt-in parallax renderer and
-item-icon row, a placeholder battle and the kit's name-input scene. Production
-games use `pocket-rpgkit/ui/audio`, `pocket-rpgkit/ui/parallax` and
-`pocket-rpgkit/ui/item-icons` the same way; omitting an opt-in entry keeps its
-concrete implementation out of the bundle.
+item-icon row, the RPG Maker battle reducer and front-view scene, and the kit's
+name-input scene. Production games use `pocket-rpgkit/rpgmaker-battle` and
+`pocket-rpgkit/ui/rpgmaker-battle` to wire the generated `battle.json` into
+`GameView`'s `extensions`, `battle` and `battleScene` props. The battle module,
+audio, parallax and item-icon renderers all have separate entry points;
+omitting one keeps its implementation out of the bundle.
 
 ## Ids
 
@@ -160,17 +163,18 @@ In short:
   becomes a visible text box naming it (or nothing with
   `--placeholders silent`) and is counted as Placeholder.
 - Battle Processing becomes the kit's `battle` command with
-  `{ troop, name, canEscape, canLose }` and the If Win / If Escape /
-  If Lose branches. The kit has no RPG Maker battle system; the test
-  fixture registers a placeholder battle that lets the player choose the
-  outcome.
+  `{ troop, name, canEscape, canLose }`, a hash binding it to `battle.json`,
+  and real If Win / If Escape / If Lose branches. Fixed troops, variable troop
+  ids and random map encounters all resolve through the opt-in module. A win
+  grants deterministic experience, levels, gold and drops; a disallowed loss
+  follows the ordinary Game Over path.
 
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 68 of the 107 commands map natively, 1 runs degraded, 4 become
-placeholders (Battle Processing, Script and the two plugin commands) and
-34 are dropped, many of them actor, enemy and battle-only commands. "Needs
+use of it: 69 of the 107 commands map natively, 1 runs degraded, 3 become
+placeholders (Script and the two plugin commands) and 34 are dropped, many
+of them actor, enemy and battle-only commands. "Needs
 kit" names the runtime capability a native mapping would take; it is the
 list of what the kit would need to import an RPG Maker game completely.
 `tests/rpgmaker-import.test.ts` keeps this table in step with the
@@ -251,7 +255,7 @@ for that project, to `coverage.md`.
 | 283 | Change Battle Background | MV/MZ | Dropped |  | battle backgrounds in the battle setup |
 | 284 | Change Parallax | MV/MZ | Native |  |  |
 | 285 | Get Location Info | MV/MZ | Native |  |  |
-| 301 | Battle Processing | MV/MZ | Native |  | an RPG Maker battle system (troops, actors, skills) behind the battle op |
+| 301 | Battle Processing | MV/MZ | Native |  |  |
 | 302 | Shop Processing | MV/MZ | Native |  |  |
 | 303 | Name Input Processing | MV/MZ | Native |  |  |
 | 311 | Change HP | MV/MZ | Dropped |  | actor stats |
@@ -379,11 +383,26 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
 - **Missing or corrupt audio is omitted.** The reference remains in event
   intent but no `project.audio` entry or QOA file is emitted; `coverage.md`,
   `coverage.json`, `audio-media.json` and the CLI warning carry the reason.
-- **No battle system or dynamic actor simulation.** Actor ids, database names,
-  initial class/skills/equipment/states and their conditions are imported, but
-  actor stats, later class/skill/equipment/state mutations, enemy conditions
-  and battle-only state are not modelled; Battle Processing is a placeholder.
-  A `\P[n]` lookup uses the initial party order rather than later Change Party
+- **RPG Maker battle support is opt-in and partial.** The deterministic
+  front-view module imports actor/class parameter curves, enemy action patterns,
+  troops and positions, skills/items, states, rewards, weighted region-aware
+  map encounters, and the common turn/enemy-HP/switch troop-page conditions.
+  MV side-view projects intentionally render in front view. Troop pages execute
+  only messages, switches and constant-variable changes; battle backgrounds,
+  battle BGM/ME settings and battle-only event commands such as Force Action or
+  Enemy Transform remain dropped. Encounter Disable, vehicle suppression and
+  Encounter Half are not modelled.
+- **Damage formulas use a safe subset, never `eval`.** Battler parameters
+  (`a.atk`, `b.def`, and the other basic parameters), literal `v[n]`, arithmetic,
+  comparisons, boolean operators, ternaries and common `Math` functions are
+  parsed into a bounded JSON tree. A formula outside that subset is reported as
+  Degraded and deterministically falls back to
+  `Math.max(0, a.atk * 4 - b.def * 2)`.
+- **Event-time actor simulation is still incomplete.** Battles persist HP, MP,
+  TP, experience, levels, learned skills and states in the extension state, but
+  map-event Change HP/MP/TP/EXP/Level/Class/Skill/Equipment/State commands are
+  still dropped and actor event conditions read imported initial facts. A
+  `\P[n]` lookup uses the initial party order rather than later Change Party
   Member results.
 - **Maps are capped at 256 × 256**, the kit's limit.
 - Region ids and terrain tags are carried over as sparse per-cell map data
