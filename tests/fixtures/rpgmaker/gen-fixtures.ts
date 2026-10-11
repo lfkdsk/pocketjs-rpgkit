@@ -10,11 +10,12 @@
 //   stage-mv/    MV flavour, 48 px tiles: one stage map with an autorun
 //                opening cutscene
 //
-// Each project is a `data/` directory in the public MV/MZ JSON layout and an
-// `img/` directory of generated placeholder art (art.ts). Nothing is copied
-// from any RPG Maker runtime package or game: names, maps, events and pixels
-// are authored here. Audio files are referenced by name only and are not
-// written. README.md has the walkthroughs the input tapes follow.
+// Each project is a `data/` directory in the public MV/MZ JSON layout, an
+// `img/` directory of generated placeholder art (art.ts), and two small
+// original synthesized Ogg fixture tones (audio-bytes.ts). Nothing is copied
+// from any RPG Maker runtime package or game: names, maps, events, pixels and
+// audio are authored here. README.md has the walkthroughs the input tapes
+// follow.
 //
 // Autotile ids are painted with any shape and then passed through
 // reshapeAutotiles, so the stored shapes are the ones the editor would save.
@@ -69,6 +70,7 @@ import {
   type Material,
   type TileDraw,
 } from "./art.ts";
+import { STAGE_FANFARE_OGG, STAGE_OVERTURE_OGG } from "./audio-bytes.ts";
 
 export const FIXTURE_PROJECTS = ["hollow-mz", "stage-mv"] as const;
 
@@ -1753,6 +1755,8 @@ function stageArt(files: Files): void {
   for (let x = 0; x < 272; x += 4) curtain.rect(x, 196, 2, 12, rgb("#d0a040"));
   curtain.rect(0, 194, 272, 2, rgb("#d0a040"));
   img("pictures/Curtain.png", curtain);
+  files.set(`${STAGE}/audio/bgm/stage-overture.ogg`, STAGE_OVERTURE_OGG);
+  files.set(`${STAGE}/audio/me/stage-fanfare.ogg`, STAGE_FANFARE_OGG);
 }
 
 function stageMap(): RmMap {
