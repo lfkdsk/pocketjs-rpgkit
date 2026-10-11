@@ -242,7 +242,7 @@ export class AudioDriver {
     let voice = this.persistent[kind];
     if (!track) {
       if (voice) {
-        if (kind === "bgm") this.suspendBgm(voice);
+        if (kind === "bgm") this.suspendBgm(voice, gameFrame, elapsedTicksPerFrame);
         else this.destroyVoice(voice);
       }
       return;
@@ -265,7 +265,7 @@ export class AudioDriver {
         this.destroyVoice(voice);
         voice = returning;
       } else if (kind === "bgm") {
-        this.suspendBgm(voice);
+        this.suspendBgm(voice, gameFrame, elapsedTicksPerFrame);
         voice = undefined;
       } else {
         this.destroyVoice(voice);
@@ -551,11 +551,25 @@ export class AudioDriver {
   /** Pause, detach and retain at most one BGM. If a scene has already parked
    * its map track, later battle/result transitions are destroyed normally so
    * they cannot displace the return candidate. */
-  private suspendBgm(voice: Voice): void {
+  private suspendBgm(
+    voice: Voice,
+    gameFrame: number,
+    elapsedTicksPerFrame: number,
+  ): void {
     if (this.suspendedBgm && this.suspendedBgm !== voice) {
       this.destroyVoice(voice);
       return;
     }
+    // Reconciliation observes the state after the current host frame. The
+    // native stream played under the PREVIOUS reducer gate during that
+    // interval, so park it at that advanced reducer position. At 60 Hz this
+    // is also the exact position captured by a scene that replaces BGM on
+    // this tick; keeping the old metadata would make the later scene return
+    // look like a seek and synchronously reopen/refill the QOA stream.
+    if (voice.reducerPlaying && gameFrame > voice.gameFrame) {
+      voice.positionTicks += (gameFrame - voice.gameFrame) * elapsedTicksPerFrame;
+    }
+    voice.gameFrame = gameFrame;
     if (this.persistent.bgm === voice) delete this.persistent.bgm;
     voice.desiredPlaying = false;
     voice.reducerPlaying = false;

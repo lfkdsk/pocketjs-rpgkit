@@ -677,7 +677,9 @@ describe("opt-in audio host", () => {
     driver.sync(frame(2, { bgm: bgm("battle", 0) }));
     driver.sync(frame(3, { bgm: bgm("victory", 0) }));
     const mapWritesBeforeRestore = ops.writes.filter(({ handle }) => handle === 1).length;
-    driver.sync(frame(4, { bgm: bgm("map", 7) }));
+    // The map stream played for the frame before scene ownership changed,
+    // matching the reducer's returnAudio capture at the next reference tick.
+    driver.sync(frame(4, { bgm: bgm("map", 8) }));
 
     expect(ops.created.map(({ handle }) => handle)).toEqual([1, 2, 3]);
     expect(ops.destroyed).toEqual([2, 3]);
