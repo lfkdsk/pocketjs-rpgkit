@@ -525,9 +525,12 @@ simDescribe("sunstone — render budget", () => {
     // reducer, save, session and render code to this non-travel game,
     // measuring 1,070,588 B. Runtime travel state and actor nodes stay absent;
     // 322 B of that delta is the tick-local no-travel fast path that keeps the
-    // QuickJS regression below 3%.
+    // QuickJS regression below 3%. Choice colour runs (including the two new
+    // bounded-rendering modules), same-phase followers, parked-vehicle bodies,
+    // the airship shadow/gather gate and sparse vehicle-BGM save state add a
+    // further 22,002 B, measuring 1,092,590 B in this non-travel fixture.
     // Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_071_000);
+    expect(jsBytes).toBeLessThan(1_093_000);
   });
 });
 
