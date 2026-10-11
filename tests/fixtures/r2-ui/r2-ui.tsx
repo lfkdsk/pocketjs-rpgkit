@@ -60,6 +60,9 @@ declare global {
   // Isolated coloured-choice fixture used by the RPG Maker escape visual.
   // eslint-disable-next-line no-var
   var __r2ChoiceColour: boolean | undefined;
+  // Isolated continuous scrolling-text fixture used by its visual proof.
+  // eslint-disable-next-line no-var
+  var __r2ScrollText: boolean | undefined;
   // Test-only opt-in for the GameView world-overlay presentation slot.
   // eslint-disable-next-line no-var
   var __r2WorldOverlay: boolean | undefined;
@@ -93,6 +96,7 @@ const rewindFixture = globalThis.__r2Rewind === true;
 const battleGrowFixture = globalThis.__r2Kv2BattleGrow === true;
 const travelFixture = globalThis.__r2Travel === true;
 const choiceColourFixture = globalThis.__r2ChoiceColour === true;
+const scrollTextFixture = globalThis.__r2ScrollText === true;
 const worldOverlayFixture = globalThis.__r2WorldOverlay === true;
 const syncTick = globalThis.__r2UiSyncTick;
 globalThis.__r2UiSyncTick = undefined;
@@ -111,9 +115,60 @@ globalThis.__r2Rewind = undefined;
 globalThis.__r2Kv2BattleGrow = undefined;
 globalThis.__r2Travel = undefined;
 globalThis.__r2ChoiceColour = undefined;
+globalThis.__r2ScrollText = undefined;
 globalThis.__r2WorldOverlay = undefined;
 
-const project: Project = choiceColourFixture
+const scrollTextLongCjk =
+  "长卷逐字排版不丢失，𠮷野春风吹过山川河流，灯火照亮归途，旅人记下每一段故事。".repeat(4);
+
+const project: Project = scrollTextFixture
+  ? {
+      ...R2_UI_PROJECT,
+      system: {
+        ...R2_UI_PROJECT.system,
+        rpgMakerText: { party: [], currencyUnit: "G" },
+      },
+      maps: R2_UI_PROJECT.maps.map((map, index) => index === 0
+        ? {
+            ...map,
+            events: [{
+              id: "scroll-text-visual",
+              x: 0,
+              y: 0,
+              pages: [{
+                trigger: "autorun" as const,
+                commands: [{
+                  op: "scrollText" as const,
+                  speed: 2,
+                  lines: [
+                    "SCROLLING TEXT VISUAL — clipped prelude",
+                    "\\C[2]TOP EDGE — CORAL BAND — TOP EDGE\\C[0]",
+                    "02  The map remains visible through this layer",
+                    "03  Continuous credits cross the whole screen",
+                    "04  Every authored row keeps its place",
+                    "05  Half-pixel travel remains deterministic",
+                    "06  The camera waits beneath the transparent text",
+                    "07  Checker ground remains crisp",
+                    "08  Colour escapes survive wrapping",
+                    "09  Reference ticks own the motion",
+                    "10  No dialog window is painted",
+                    "11  Rows pass cleanly through the viewport",
+                    "12  The long passage continues below",
+                    "13  Every glyph stays in source order",
+                    "14  Integer presentation keeps hard pixels",
+                    "15  The journey continues upward",
+                    "16  Nothing is paginated or dismissed",
+                    "17  The lower edge approaches",
+                    "\\C[1]BOTTOM EDGE — BLUE BAND — BOTTOM EDGE\\C[0]",
+                    scrollTextLongCjk,
+                  ],
+                }],
+              }],
+            }],
+          }
+        : map),
+    }
+  : choiceColourFixture
   ? {
       ...R2_UI_PROJECT,
       system: {
