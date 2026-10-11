@@ -169,6 +169,8 @@ export interface RpgMakerBattleDatabase {
   flavor: RpgMakerFlavor;
   /** True means authored side-view data is intentionally rendered front-view. */
   sideView: boolean;
+  /** Authored battle canvas used to scale troop member coordinates. */
+  screen: { width: number; height: number };
   party: number[];
   actors: RpgMakerBattleActor[];
   classes: RpgMakerBattleClass[];

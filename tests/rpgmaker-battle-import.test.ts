@@ -22,6 +22,7 @@ describe("RPG Maker battle database import", () => {
     expect(battle.format).toBe("rpgmaker-battle/v1");
     expect(battle.flavor).toBe("MZ");
     expect(battle.sideView).toBe(false);
+    expect(battle.screen).toEqual({ width: 480, height: 272 });
     expect(battle.party).toEqual([1]);
     expect(battle.actors.map(({ id, name, classId, initialLevel }) => ({ id, name, classId, initialLevel })))
       .toEqual([

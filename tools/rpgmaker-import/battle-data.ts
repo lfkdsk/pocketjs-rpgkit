@@ -330,6 +330,10 @@ export function importBattleDatabase(
     format: "rpgmaker-battle/v1",
     flavor: rm.flavor,
     sideView: rm.system.optSideView === true,
+    screen: {
+      width: Math.max(1, nonNegative(rm.system.advanced?.screenWidth, 816)),
+      height: Math.max(1, nonNegative(rm.system.advanced?.screenHeight, 624)),
+    },
     party: (rm.system.partyMembers ?? []).map((id) => nonNegative(id)).filter((id) => id > 0),
     actors,
     classes,

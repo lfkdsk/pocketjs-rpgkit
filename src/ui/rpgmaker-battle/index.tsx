@@ -130,10 +130,10 @@ function FrontViewScene(
           const member = () => troop()?.members[index()];
           const size = () => Math.max(48, Math.min(96, Math.floor(props.height * 0.24)));
           const x = () => member()
-            ? clampPosition(member()!.x / 816 * props.width - size() / 2, 8, props.width - size() - 8)
+            ? clampPosition(member()!.x / db.screen.width * props.width - size() / 2, 8, props.width - size() - 8)
             : (index() + 1) * props.width / (state().enemies.length + 1) - size() / 2;
           const y = () => member()
-            ? clampPosition(member()!.y / 624 * props.height - size() / 2, 20, props.height * 0.48)
+            ? clampPosition(member()!.y / db.screen.height * props.height - size() / 2, 20, props.height * 0.48)
             : 32;
           const source = () => enemy.image ? options.enemyImages?.[enemy.image] : undefined;
           return (
@@ -200,6 +200,7 @@ function FrontViewScene(
                 max={rpgMakerCombatantParam(db, actor, 0)}
                 width={Math.min(210, Math.max(120, props.width * 0.42))}
                 showNumbers
+                uiText={props.uiText}
                 debugName={`rpgmaker-actor-hp-${index()}`}
               />
             </View>
