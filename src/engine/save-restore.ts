@@ -42,6 +42,7 @@ import { cloneInterp, createSwitchState, reconstructLabelScopes } from "./interp
 import { cloneChars, createChars } from "./chars.ts";
 import { clonePathSearch } from "./pathfind.ts";
 import { decodeExtension } from "./extensions.ts";
+import { cloneTravelState, createTravelState } from "./travel.ts";
 import {
   acquireSessionMap,
   releaseSessionMapsExcept,
@@ -77,7 +78,15 @@ export function restoreProblem(
   } catch (error) {
     return `runtime tile properties are invalid: ${error instanceof Error ? error.message : String(error)}`;
   }
-  if (!isStandable(effectiveTable, tx, ty)) {
+  const ridingId = snap.travel?.vehicles?.riding;
+  const riding = ridingId
+    ? snap.travel?.vehicles?.entries.find((vehicle) => vehicle.id === ridingId)
+    : undefined;
+  const ridingCellAllowed = riding?.kind === "airship" || (
+    (riding?.kind === "boat" || riding?.kind === "ship") &&
+    (map.vehiclePassage?.[riding.kind]?.includes(ty * map.width + tx) ?? false)
+  );
+  if (!ridingCellAllowed && !isStandable(effectiveTable, tx, ty)) {
     return `player tile (${tx},${ty}) is not standable on ${map.id}`;
   }
   if (snap.player.moving) {
@@ -191,6 +200,18 @@ export function restoreSessionSnapshot(
   const table = session.tables.get(snap.map)!;
   const problem = restoreProblem(snap, map, table);
   if (problem) throw new SaveError("shape", `save cannot be restored: ${problem}`);
+  for (const vehicle of snap.travel?.vehicles?.entries ?? []) {
+    const dimensions = session.maps.get(vehicle.mapId) ?? session.mapIndex?.get(vehicle.mapId);
+    if (!dimensions) {
+      throw new SaveError("shape", `save cannot be restored: vehicle ${vehicle.id} uses unknown map ${vehicle.mapId}`);
+    }
+    if (vehicle.move.tx >= dimensions.width || vehicle.move.ty >= dimensions.height) {
+      throw new SaveError(
+        "shape",
+        `save cannot be restored: vehicle ${vehicle.id} tile (${vehicle.move.tx},${vehicle.move.ty}) is outside ${vehicle.mapId}`,
+      );
+    }
+  }
   const interp = cloneInterp(snap.interp);
   // B1 (fix 3): the restore boundary normalizes through
   // the same constructor a fresh session uses, so this entry point shares
@@ -240,6 +261,12 @@ export function restoreSessionSnapshot(
     ext,
     scene: null,
   };
+  if (snap.travel) {
+    state.travel = cloneTravelState(snap.travel);
+  } else if (session.travelProject) {
+    const travel = createTravelState(session.travelProject, state.move, session.cfg, state.sw.switches);
+    if (travel) state.travel = travel;
+  }
   // Older saves have no left-map snapshot: that map shows its entry preview.
   if (runtime?.leftMap) state.leftMap = cloneLeftMap(runtime.leftMap);
   releaseSessionMapsExcept(session, [snap.map]);

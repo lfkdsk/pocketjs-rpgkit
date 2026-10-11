@@ -1,4 +1,16 @@
 {
+  "assets/travel-boat.png": {
+    "psm": 3
+  },
+  "assets/travel-airship.png": {
+    "psm": 3
+  },
+  "assets/travel-follower-coral.png": {
+    "psm": 3
+  },
+  "assets/travel-follower-mint.png": {
+    "psm": 3
+  },
   "assets/map-r2-ui-field-ground-0.png": {
     "psm": 3
   },

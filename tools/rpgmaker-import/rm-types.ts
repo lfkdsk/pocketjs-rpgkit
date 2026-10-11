@@ -226,10 +226,26 @@ export interface RmTroop {
   pages: unknown[];
 }
 
+/** One of System.json's built-in boat, ship or airship records. */
+export interface RmVehicle {
+  bgm: RmAudio;
+  characterIndex: number;
+  characterName: string;
+  startMapId: number;
+  startX: number;
+  startY: number;
+}
+
 export interface RmSystem {
   gameTitle: string;
   currencyUnit: string;
   partyMembers: number[];
+  /** Initial visibility of the party trail and player, respectively. */
+  optFollowers?: boolean;
+  optTransparent?: boolean;
+  boat?: RmVehicle;
+  ship?: RmVehicle;
+  airship?: RmVehicle;
   startMapId: number;
   startX: number;
   startY: number;

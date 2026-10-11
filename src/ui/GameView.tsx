@@ -25,7 +25,7 @@
 // the world camera commit through one precompiled jump batch; chunk images
 // stay mounted while the player walks.
 
-import { batch, createMemo, createSignal, onCleanup, onMount, Show, type Accessor, type Component } from "solid-js";
+import { batch, createMemo, createSignal, Index, onCleanup, onMount, Show, type Accessor, type Component } from "solid-js";
 import { Image, Text, View, type NodeMirror } from "@pocketjs/framework/components";
 import { createJumpBatch, type JumpBatch } from "@pocketjs/framework/animation";
 import { createElement, insertNode, setProp } from "@pocketjs/framework/renderer";
@@ -131,6 +131,11 @@ import { ChunkLayer } from "./ChunkLayer.tsx";
 import { npcArt, npcArtHeight, npcArtKey, spritePaints } from "./npc-art.ts";
 import { StreamedChunkLayer, type StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
 import { actorDepth, OccludingUpperLayer } from "./OccludingUpperLayer.tsx";
+import {
+  sameTravelActorFrames,
+  travelActorFrames,
+  type TravelActorFrame,
+} from "./travel-actors.ts";
 import { startupProfileMark } from "../startup-profile.ts";
 import { frameProfileMark } from "../frame-profile.ts";
 import { attractRewindOptions, type GameViewDemoConfig, type GameViewOverlayConfig, type GameViewSessionHost } from "./demo-contract.ts";
@@ -336,6 +341,91 @@ function playerFrame(
   };
 }
 
+/** Vehicle-aware player paint. The ordinary player helper remains the chosen
+ * hot path for projects without vehicles; opted-in projects replace the hero
+ * art with the ridden vehicle while preserving player transparency. */
+function riddenPlayerFrame(
+  state: SessionState,
+  sprites: Sprites,
+  npcSrc: GameAssets["npcSrc"],
+  builtIn: GameAssets["player"],
+  builtInHeight: 16 | 32,
+): PlayerRenderFrame {
+  const id = state.travel?.vehicles?.riding;
+  const vehicle = id
+    ? state.travel!.vehicles!.entries.find((entry) => entry.id === id)
+    : undefined;
+  if (!vehicle) return playerFrame(state, sprites, npcSrc, builtIn, builtInHeight);
+  const appearance = effectivePlayerAppearance(state.sw);
+  const art = npcArt(vehicle.sprite, sprites, npcSrc);
+  return {
+    src: npcArtKey(art, walkPose(state.move.phase), state.move.facing),
+    height: npcArtHeight(art),
+    opacity: appearance.opacity / 255,
+    visible: appearance.visible && art !== "",
+  };
+}
+
+function ordinaryPlayerY(state: SessionState): number {
+  return state.move.py;
+}
+
+function riddenPlayerY(state: SessionState): number {
+  return state.move.py - (state.travel?.vehicles?.airshipAltitude ?? 0);
+}
+
+function travelActorStyle(frame: TravelActorFrame) {
+  return {
+    ...npcStyle(frame.height, frame.depth, 1, frame.visible),
+    translateX: frame.px,
+    translateY: frame.py,
+  };
+}
+
+/** Optional actor nodes for party followers and parked vehicles. The parent
+ * only constructs this component when TravelState exists, so legacy projects
+ * install neither this frame hook nor these signals/nodes. */
+function TravelActors(props: {
+  initial: Readonly<SessionState>;
+  state: () => SessionState;
+  sprites: Sprites;
+  npcSrc: GameAssets["npcSrc"];
+  worldWidth: number;
+  active?: Accessor<boolean>;
+}) {
+  const initial = travelActorFrames(props.initial, props.sprites, props.npcSrc, props.worldWidth);
+  const [followers, setFollowers] = createSignal<readonly TravelActorFrame[]>(initial.followers);
+  const [vehicles, setVehicles] = createSignal<readonly TravelActorFrame[]>(initial.vehicles);
+
+  onFrame(() => {
+    if (props.active && !props.active()) return;
+    const next = travelActorFrames(props.state(), props.sprites, props.npcSrc, props.worldWidth);
+    setFollowers((current) => sameTravelActorFrames(current, next.followers) ? current : next.followers);
+    setVehicles((current) => sameTravelActorFrames(current, next.vehicles) ? current : next.vehicles);
+  });
+
+  return (
+    <>
+      <Index each={followers()}>{(frame) => (
+        <Image
+          class="absolute"
+          src={frame().src}
+          style={travelActorStyle(frame())}
+          debugName={`rpgkit-follower-${frame().id}`}
+        />
+      )}</Index>
+      <Index each={vehicles()}>{(frame) => (
+        <Image
+          class="absolute"
+          src={frame().src}
+          style={travelActorStyle(frame())}
+          debugName={`rpgkit-vehicle-${frame().id}`}
+        />
+      )}</Index>
+    </>
+  );
+}
+
 /** Per-map actor node pool statistics (GameView's onActorStats). */
 export interface ActorPoolStats extends ActorRenderStats {
   /** The map whose events the pool is currently bound to. */
@@ -387,6 +477,8 @@ function CurrentMapActors(props: {
 }) {
   startupProfileMark("ui-actors:start");
   const initial = props.state();
+  const renderPlayer = initial.travel?.vehicles ? riddenPlayerFrame : playerFrame;
+  const renderPlayerY = initial.travel?.vehicles ? riddenPlayerY : ordinaryPlayerY;
   let slots = props.slots();
   const stride = props.worldWidth;
   let created = 0;
@@ -454,15 +546,16 @@ function CurrentMapActors(props: {
 
   const [playerDepth, setPlayerDepth] = createSignal(actorDepth(initial.move.px, initial.move.py, stride));
   const [playerVisual, setPlayerVisual] = createSignal(
-    playerFrame(initial, props.sprites, props.npcSrc, props.player, props.playerHeight),
+    renderPlayer(initial, props.sprites, props.npcSrc, props.player, props.playerHeight),
   );
   let hero: NodeMirror | undefined;
   let positions: JumpBatch | undefined;
-  let { px, py } = initial.move;
+  let { px } = initial.move;
+  let heroPy = renderPlayerY(initial);
   let { x: cx, y: cy } = props.camera();
   let order = depthOrder(
     [
-      [initial.move.px, initial.move.py],
+      [initial.move.px, heroPy],
       ...npcs.slice(0, slots.length).map((npc) => [npc.px, npc.py] as const),
     ],
     stride,
@@ -487,7 +580,7 @@ function CurrentMapActors(props: {
     positions.set(0, -camera.x);
     positions.set(1, -camera.y);
     positions.set(2, state.move.px);
-    positions.set(3, state.move.py);
+    positions.set(3, renderPlayerY(state));
     for (let index = 0; index < slots.length; index++) {
       const npc = npcs[index]!;
       positions!.set(4 + index * 2, npc.px);
@@ -495,7 +588,7 @@ function CurrentMapActors(props: {
     }
     positions.commit();
     px = state.move.px;
-    py = state.move.py;
+    heroPy = renderPlayerY(state);
     cx = camera.x;
     cy = camera.y;
   };
@@ -534,9 +627,10 @@ function CurrentMapActors(props: {
       positions?.set(1, -camera.y);
       moved = true;
     }
-    if (!transfer && (state.move.px !== px || state.move.py !== py)) {
+    const nextHeroPy = renderPlayerY(state);
+    if (!transfer && (state.move.px !== px || nextHeroPy !== heroPy)) {
       positions?.set(2, state.move.px);
-      positions?.set(3, state.move.py);
+      positions?.set(3, nextHeroPy);
       moved = true;
       dirty = true;
     }
@@ -586,7 +680,7 @@ function CurrentMapActors(props: {
     let reorder = transfer;
     if (dirty) {
       const nextOrder = depthOrder([
-        [state.move.px, state.move.py],
+        [state.move.px, nextHeroPy],
         ...npcs.slice(0, slots.length).map((npc) => npc.frame),
       ], stride);
       reorder ||= order !== nextOrder;
@@ -594,7 +688,9 @@ function CurrentMapActors(props: {
     }
     if (transfer) compilePositions();
     else if (moved) positions?.commit();
-    if (reorder) setPlayerDepth(actorDepth(state.move.px, state.move.py, stride));
+    if (reorder || (initial.travel?.vehicles !== undefined && nextHeroPy !== heroPy)) {
+      setPlayerDepth(actorDepth(state.move.px, nextHeroPy, stride));
+    }
     const paintAll = transfer || reorder;
     const paintCount = paintAll ? touched : scanCount;
     for (let paint = 0; paint < paintCount; paint++) {
@@ -630,10 +726,10 @@ function CurrentMapActors(props: {
       npc.needsPaint = false;
     }
     px = state.move.px;
-    py = state.move.py;
+    heroPy = nextHeroPy;
     cx = camera.x;
     cy = camera.y;
-    const nextPlayer = playerFrame(state, props.sprites, props.npcSrc, props.player, props.playerHeight);
+    const nextPlayer = renderPlayer(state, props.sprites, props.npcSrc, props.player, props.playerHeight);
     setPlayerVisual((current) =>
       current.src === nextPlayer.src &&
       current.height === nextPlayer.height &&
@@ -662,6 +758,16 @@ function CurrentMapActors(props: {
         }}
       />
       {npcs.map((npc) => npc.node as any)}
+      {initial.travel ? (
+        <TravelActors
+          initial={initial}
+          state={props.state}
+          sprites={props.sprites}
+          npcSrc={props.npcSrc}
+          worldWidth={stride}
+          active={props.active}
+        />
+      ) : null}
     </>
   );
   startupProfileMark("ui-actors:end");

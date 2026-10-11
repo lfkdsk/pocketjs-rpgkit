@@ -1,8 +1,8 @@
 // tools/rpgkit-check/src/conditions.ts — conservative proofs over page/if
 // conditions. switch / selfSwitch / variable / appearance / tileProperty
 // clauses are provable statically; item / gold / facing / worldIdle /
-// bgmPlaying / ext clauses are treated as unknown (never satisfy a proof, so
-// the checks stay sound).
+// bgmPlaying / vehicle / ext clauses are treated as unknown (never satisfy a
+// proof, so the checks stay sound).
 
 import type { AppearanceTarget, Condition, Dir, PageCondition } from "../../../src/engine/types.ts";
 import type { SelfKey } from "../../../src/engine/interpreter.ts";
@@ -158,7 +158,8 @@ export function conditionContradiction(conditions: readonly Condition[]): boolea
       }
       tileCells.set(key, cell);
     }
-    // item / gold / facing / worldIdle / bgmPlaying / ext: not statically provable.
+    // item / gold / facing / worldIdle / bgmPlaying / vehicle / ext: not
+    // statically provable.
   }
   return false;
 }
@@ -211,8 +212,8 @@ export function conditionImplies(
     } else if (w.kind === "variable") {
       if (!varImplies(sVars.get(w.id), w)) return false;
     } else {
-      // item / gold / facing / worldIdle / bgmPlaying / ext in the weaker side: the
-      // implication is not provable.
+      // item / gold / facing / worldIdle / bgmPlaying / vehicle / ext in the
+      // weaker side: the implication is not provable.
       return false;
     }
   }

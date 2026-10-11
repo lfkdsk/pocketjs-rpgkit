@@ -30,6 +30,7 @@ import { mountPalette } from "./palette.ts";
 import { keyLabel, SHORTCUT_GROUPS } from "./shortcuts.ts";
 import { doctorProblems, mergeCheckAndDoctor, schemaProblems, type StudioProblem } from "./problems.ts";
 import { LintScheduler } from "./problem-lint.ts";
+import type { VehicleDef, VehicleKind } from "../../src/engine/types.ts";
 
 const host: StudioHost = (globalThis as { studioHost?: StudioHost }).studioHost ?? new BrowserHost();
 const app = new StudioApp();
@@ -178,6 +179,7 @@ function studioCommands(): StudioCommand[] {
     { id: "event:new", label: "New event", detail: selection.kind === "cell" ? `At (${selection.x}, ${selection.y})` : "Activate the event tool", keywords: "create npc", shortcut: "N", section: "Actions", disabled: noDocument, run: addEventFromPalette },
     { id: "view:fit", label: "Fit map", detail: "Center the whole map", shortcut: "0", section: "Actions", disabled: noDocument, run: () => canvas?.fit() },
     { id: "view:settings", label: "View settings", detail: "Motion and camera behavior", section: "Actions", run: openViewSettings },
+    { id: "project:mobility", label: "Followers & vehicles…", detail: "Party trail and vehicle starts", keywords: "project followers boat ship airship", section: "Actions", disabled: noDocument, run: openMobilitySettings },
     { id: "view:theme", label: `Use ${effectiveTheme() === "dark" ? "light" : "dark"} theme`, keywords: "appearance color", section: "Actions", run: toggleTheme },
     { id: "view:art", label: "Manage project art…", keywords: "image png sheet sprite", section: "Actions", disabled: noDocument, run: openArtDialog },
     { id: "play:start", label: "Play-test", detail: "Run from the selected cell", shortcut: `${MOD}+Enter`, section: "Actions", disabled: !session ? "Open a project first" : can("preview").available ? undefined : can("preview").reason, run: () => playPanel.open() },
@@ -309,6 +311,7 @@ function renderToolbar(): void {
       iconButton("zoomIn", "Zoom in", () => canvas?.zoomStep(1), { shortcut: "=" })),
     h("div", { class: "spacer" }),
     h("div", { class: "group" },
+      iconButton("map", "Followers & vehicles", () => openMobilitySettings(), { disabled: !session, id: "studio-mobility" }),
       iconButton("image", "Art…", () => openArtDialog(), { disabled: !session, id: "studio-art", text: true }),
       iconButton("play", can("preview").available ? "Play-test the open document" : `Play-test: ${can("preview").reason}`, () => playPanel.open(), { shortcut: `${MOD}+Enter`, disabled: !session || !can("preview").available, id: "studio-play", pressed: play.open }),
       iconButton("agent", can("agent").available ? "Ask an agent" : `Agent: ${can("agent").reason}`, () => agentPanel.toggle(), { disabled: !session || !can("agent").available, id: "studio-agent", pressed: agentPanel.isOpen }),
@@ -597,6 +600,160 @@ function openViewSettings(): void {
         }),
         h("span", null, h("strong", null, label), h("small", null, hint)))),
       h("p", { class: "hint" }, `System currently ${app.systemReducedMotion ? "prefers reduced motion" : "allows motion"}.`)),
+  );
+}
+
+const VEHICLE_KINDS: readonly VehicleKind[] = ["boat", "ship", "airship"];
+const VEHICLE_DIRECTIONS: readonly VehicleDef["start"]["dir"][] = ["down", "left", "right", "up"];
+
+function openMobilitySettings(): void {
+  const session = app.session;
+  if (!session) return;
+  const globals = session.globals();
+  const maps = session.maps();
+  const byKind = new Map((globals.vehicles ?? []).map((vehicle) => [vehicle.kind, vehicle]));
+  const followerToggle = h("input", {
+    type: "checkbox",
+    checked: globals.followers?.enabled ?? false,
+    dataset: { mobilityFollowers: "enabled" },
+  });
+  const spriteIds = [...new Set([
+    ...Object.keys(session.sprites()),
+    ...(globals.vehicles ?? []).map((vehicle) => vehicle.sprite),
+  ])].sort((a, b) => a.localeCompare(b));
+  const spriteListId = `mobility-sprites-${Date.now()}`;
+  const spriteList = h("datalist", { id: spriteListId }, spriteIds.map((id) => h("option", { value: id })));
+
+  const selected = app.selection.kind === "cell"
+    ? { map: app.mapId, x: app.selection.x, y: app.selection.y }
+    : undefined;
+  const fallbackMap = maps.find((map) => map.id === globals.start.map) ?? maps[0];
+  const fallback = selected ?? {
+    map: fallbackMap?.id ?? globals.start.map,
+    x: fallbackMap?.id === globals.start.map ? globals.start.x : 0,
+    y: fallbackMap?.id === globals.start.map ? globals.start.y : 0,
+  };
+
+  type VehicleControls = {
+    kind: VehicleKind;
+    enabled: HTMLInputElement;
+    id: HTMLInputElement;
+    sprite: HTMLInputElement;
+    map: HTMLSelectElement;
+    x: HTMLInputElement;
+    y: HTMLInputElement;
+    dir: HTMLSelectElement;
+  };
+  const controls: VehicleControls[] = [];
+  const rows = VEHICLE_KINDS.map((kind) => {
+    const existing = byKind.get(kind);
+    const start = existing?.start ?? { ...fallback, dir: "down" as const };
+    const enabled = h("input", { type: "checkbox", checked: existing !== undefined, "aria-label": `Configure ${kind}` });
+    const id = h("input", { value: existing?.id ?? kind, pattern: "[A-Za-z0-9_-]+", "aria-label": `${kind} id` });
+    const sprite = h("input", { value: existing?.sprite ?? spriteIds[0] ?? "", list: spriteListId, "aria-label": `${kind} sprite` });
+    const map = h("select", { "aria-label": `${kind} start map` },
+      maps.map((entry) => h("option", { value: entry.id, selected: entry.id === start.map }, entry.name ?? entry.id)),
+      maps.some((entry) => entry.id === start.map) ? null : h("option", { value: start.map, selected: true }, `${start.map} (missing)`),
+    );
+    const x = h("input", { type: "number", min: 0, step: 1, value: start.x, "aria-label": `${kind} start x` });
+    const y = h("input", { type: "number", min: 0, step: 1, value: start.y, "aria-label": `${kind} start y` });
+    const dir = h("select", { "aria-label": `${kind} start direction` },
+      VEHICLE_DIRECTIONS.map((value) => h("option", { value, selected: value === start.dir }, value)),
+    );
+    const syncBounds = () => {
+      const selectedMap = maps.find((entry) => entry.id === map.value);
+      x.max = selectedMap ? String(selectedMap.width - 1) : "";
+      y.max = selectedMap ? String(selectedMap.height - 1) : "";
+    };
+    map.addEventListener("change", syncBounds);
+    syncBounds();
+    const placeHere = h("button", {
+      type: "button",
+      class: "text-button mobility-place",
+      disabled: selected === undefined,
+      title: selected ? `Use selected cell (${selected.x}, ${selected.y}) on ${selected.map}` : "Select a map cell first",
+      onclick: () => {
+        if (!selected) return;
+        map.value = selected.map;
+        x.value = String(selected.x);
+        y.value = String(selected.y);
+        syncBounds();
+      },
+    }, "Place here");
+    controls.push({ kind, enabled, id, sprite, map, x, y, dir });
+    return h("tr", { dataset: { vehicleKind: kind } },
+      h("th", { scope: "row" }, h("label", null, enabled, h("span", null, kind))),
+      h("td", null, id),
+      h("td", null, sprite),
+      h("td", null, map),
+      h("td", { class: "mobility-coordinate" }, x),
+      h("td", { class: "mobility-coordinate" }, y),
+      h("td", null, dir),
+      h("td", null, placeHere),
+    );
+  });
+
+  let element: HTMLDialogElement;
+  const apply = () => {
+    const ids = new Set<string>();
+    const vehicles: VehicleDef[] = [];
+    for (const row of controls) {
+      if (!row.enabled.checked) continue;
+      const id = row.id.value.trim();
+      const sprite = row.sprite.value.trim();
+      const mapId = row.map.value;
+      const map = maps.find((entry) => entry.id === mapId);
+      const x = Number(row.x.value);
+      const y = Number(row.y.value);
+      if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+        app.notify("error", `${row.kind} id needs only letters, digits, underscore or hyphen.`);
+        row.id.focus();
+        return;
+      }
+      if (ids.has(id)) {
+        app.notify("error", `Vehicle id “${id}” is used more than once.`);
+        row.id.focus();
+        return;
+      }
+      ids.add(id);
+      if (!sprite) {
+        app.notify("error", `${row.kind} needs a sprite id.`);
+        row.sprite.focus();
+        return;
+      }
+      if (!map || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= map.width || y >= map.height) {
+        app.notify("error", `${row.kind} start must be an in-bounds cell on an existing map.`);
+        (map ? row.x : row.map).focus();
+        return;
+      }
+      vehicles.push({
+        id,
+        kind: row.kind,
+        sprite,
+        start: { map: map.id, x, y, dir: row.dir.value as VehicleDef["start"]["dir"] },
+      });
+    }
+    const response = app.run("update-mobility", {
+      followersEnabled: followerToggle.checked,
+      vehicles,
+    }, "Update followers & vehicles");
+    if (response?.ok) element.close();
+  };
+
+  element = dialog("Followers & vehicles",
+    h("div", { class: "mobility-settings", dataset: { role: "mobility-settings" } },
+      h("label", { class: "mobility-followers" }, followerToggle,
+        h("span", null, h("strong", null, "Followers enabled"), h("small", null, "Show the configured party trail at the start of a game."))),
+      spriteList,
+      h("div", { class: "mobility-table-wrap" }, h("table", { class: "mobility-table" },
+        h("thead", null, h("tr", null,
+          h("th", null, "Kind"), h("th", null, "ID"), h("th", null, "Sprite"), h("th", null, "Start map"),
+          h("th", null, "X"), h("th", null, "Y"), h("th", null, "Dir"), h("th", null, ""))),
+        h("tbody", null, rows))),
+      h("p", { class: "hint" }, "Enable a row to configure that vehicle. IDs must be unique; starts must be inside the selected map."),
+      h("div", { class: "dialog-actions" },
+        h("button", { type: "button", class: "text-button", onclick: () => element.close() }, "Cancel"),
+        h("button", { type: "button", class: "primary-button", dataset: { action: "save-mobility" }, onclick: apply }, "Apply"))),
   );
 }
 

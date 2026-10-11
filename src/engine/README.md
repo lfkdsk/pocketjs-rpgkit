@@ -677,6 +677,67 @@ Transfer semantics:
   an `Image` src change and a container `display` toggle — O(maps), not the
   1998-op sliding-chunk burst the R1 review measured.
 
+### Followers and vehicles
+
+Followers and RPG Maker-style vehicles are additive project capabilities. A
+project that omits both fields keeps `SessionState.travel` absent and mounts
+no travel actor nodes:
+
+```json
+{
+  "followers": {
+    "enabled": true,
+    "members": [
+      { "id": "partner", "sprite": "partner" },
+      { "id": "monster", "sprite": "monster", "activeSwitch": "monster-follows" }
+    ]
+  },
+  "vehicles": [
+    {
+      "id": "boat",
+      "kind": "boat",
+      "sprite": "boat",
+      "start": { "map": "harbour", "x": 12, "y": 8, "dir": "down" }
+    }
+  ]
+}
+```
+
+The active follower chain replays the cells vacated by the player and then by
+each preceding member. It therefore keeps corners and spacing instead of
+pathfinding shortcuts. Followers are through characters: they neither block
+the player/NPCs nor consult passage while replaying an already proven trail.
+`activeSwitch` (with optional `activeValue`, default `true`) lets a game express
+party membership or a Tuxemon-style lead monster without adding an actor
+subsystem. `{op:"followers", visible}` changes visibility and
+`{op:"gatherFollowers"}` waits until the visible chain reaches the leader.
+An ordinary transfer brings the whole chain to the landing cell and clears its
+trail; a `seamless-v1` handoff rebases the live positions and trail into the
+neighbour map, so the chain continues across the seam.
+
+`boat`, `ship`, and `airship` positions are persistent reducer data. Confirm
+boards an airship on the player's cell, otherwise a ship and then a boat on the
+faced cell; `{op:"vehicle", action:"toggle"}` invokes the same rule. Boat and
+ship move at RPG Maker speed grades 4 and 5 over the destination cells listed
+in `MapDef.vehiclePassage.boat` / `.ship`. On disembark the vehicle stays on its
+water cell and the player steps forward onto ordinary standable ground.
+Airships move at grade 6, ignore terrain and character bodies while cruising,
+and land in place on `.airshipLand`; when that list is omitted, ordinary
+standable ground is the landing rule. Their ascent and descent each take 48
+reference ticks and render up to 16 pixels above the map. A refused landing
+leaves the ride active and lets the confirm press fall through to an action
+event.
+
+`setVehicleLocation` moves a parked vehicle (literal or variable map/x/y),
+`setVehicleImage` replaces its saved sprite, and the `vehicle` condition tests
+which id is currently ridden. Riding survives transfers and seamless handoffs;
+parked vehicles stay on their authored maps. Follower/vehicle positions,
+facings, trails, gathering waiters, riding state, and airship phase are all in
+saves, autosaves, and rewind keyframes. The RPG Maker importer maps
+`System.json` follower/vehicle settings and event commands 202, 206, 216, 217,
+and 323 to these fields and commands. Studio's project mobility panel edits the
+initial follower switch and the three vehicle placements.
+
 ## Host map source (on-demand maps)
 
 Large projects keep map payloads out of the inline document and hand

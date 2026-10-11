@@ -223,6 +223,11 @@ export function classifyCommand(command: Command): CommandWriteClass {
     case "if":
     case "moveRoute":
     case "moveControl":
+    case "followers":
+    case "gatherFollowers":
+    case "vehicle":
+    case "setVehicleLocation":
+    case "setVehicleImage":
     case "appearance":
     case "layer":
     case "changeParallax":

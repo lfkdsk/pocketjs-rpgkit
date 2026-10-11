@@ -288,21 +288,23 @@ export function runSandboxEntry(
 
 // --- static rules for reads two probes cannot vary --------------------------
 
-type RuntimeKind = "facing" | "runtime";
+type RuntimeKind = "facing" | "runtime" | "vehicle";
 
 function conditionKind(c: Condition): RuntimeKind | null {
   if (c.kind === "facing") return "facing";
+  if (c.kind === "vehicle") return "vehicle";
   if (c.kind === "timer" || c.kind === "bgmPlaying") return "runtime";
   return null;
 }
 
-/** Bit 1: a clause reads the facing; bit 2: the timer or BGM. */
+/** Bit 1: facing; bit 2: timer/BGM; bit 4: vehicle state. */
 function pageConditionKinds(condition: PageCondition | undefined): number {
   let bits = 0;
   for (const clause of condition?.all ?? []) {
     const kind = conditionKind(clause);
     if (kind === "facing") bits |= 1;
     else if (kind === "runtime") bits |= 2;
+    else if (kind === "vehicle") bits |= 4;
   }
   return bits;
 }
@@ -502,8 +504,21 @@ export function assembleSandboxPreview(
         }
       }
       if (!paints) {
-        hidden++;
-        continue;
+        // Travel is intentionally absent from the sandbox cache key, so a
+        // two-probe miss cannot prove a vehicle-gated painting page hidden.
+        // Keep it unknown. Preserve the established hidden result for
+        // facing/timer/BGM pages which paint in neither probe.
+        let unprobed = 0;
+        const kinds = rules.pageKinds.get(ev.id)!;
+        for (let i = 0; i < kinds.length; i++) {
+          if (ev.pages[i]!.sprite === null || ev.pages[i]!.sprite === undefined) continue;
+          if (kinds[i]! & 4) unprobed |= 1 << 6;
+        }
+        if (unprobed === 0) {
+          hidden++;
+          continue;
+        }
+        mask |= unprobed;
       }
       if (rules.duplicate.has(ev.id)) mask |= 1 << 0;
       if (rules.entryBranch) mask |= 1 << 4;
@@ -511,6 +526,7 @@ export function assembleSandboxPreview(
       for (let i = mine?.pageIndex ?? 0; i < kinds.length; i++) {
         if (kinds[i]! & 1) mask |= 1 << 5;
         if (kinds[i]! & 2) mask |= 1 << 6;
+        if (kinds[i]! & 4) mask |= 1 << 6;
       }
       if (mask !== 0) masks.set(ev.id, mask);
       else if (mine) actors.push(mine);

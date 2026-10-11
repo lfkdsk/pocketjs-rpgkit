@@ -224,8 +224,14 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 1,022,479 B. Projects that omit the new document fields retain the same
 // control flow. The final unused-feature hot-path guards add 93 B, measuring
 // 1,022,572 B; this pin records the shared code-size cost.
+// Optional follower chains and persistent boat/ship/airship support add the
+// travel schema and reducer/save/interpreter/session paths plus GameView's
+// conditional actor layer. Sunstone still omits every travel document field
+// and mounts no travel nodes. The final tick-local absent-travel fast path
+// trades 322 B for a QuickJS no-travel result below the 3% gate, so the shared
+// bundle grows by a measured 48,016 B to 1,070,588 B.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_022_572;
+const EXPECTED_BYTES = 1_070_588;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

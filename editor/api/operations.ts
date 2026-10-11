@@ -21,6 +21,7 @@ import type {
   ProjectSource,
   JsonValue,
   TileId,
+  VehicleDef,
 } from "../../src/engine/types.ts";
 import { validateMapDefStructure } from "../../src/engine/map-repository.ts";
 import { createSchemaMemo, type SchemaMemo } from "../../src/engine/schema-validate.ts";
@@ -134,6 +135,7 @@ const WRITE_COMMANDS: ReadonlySet<EditCommandName> = new Set([
   "add-variable",
   "update-variable",
   "remove-variable",
+  "update-mobility",
   "update-map",
   "add-map",
   "duplicate-map",
@@ -194,6 +196,7 @@ const ARGUMENT_KEYS: Record<EditCommandName, readonly string[]> = {
   "add-variable": ["variable"],
   "update-variable": ["variable", "changes"],
   "remove-variable": ["variable"],
+  "update-mobility": ["followersEnabled", "vehicles"],
   "update-map": ["map", "changes"],
   "add-map": ["map", "name", "width", "height", "sheets", "fill", "after"],
   "duplicate-map": ["map"],
@@ -1445,11 +1448,119 @@ function modelFailure(error: string, path: string): never {
   throw new EditApiError("INVALID_ARGUMENT", error, path);
 }
 
+const VEHICLE_KINDS = ["boat", "ship", "airship"] as const;
+const VEHICLE_DIRS = ["down", "left", "right", "up"] as const;
+
+/** Parse the project-level mobility form at the protocol boundary. Keeping
+ * this check beside the other operation adapters gives Studio and headless
+ * callers the same id, resource and map-bound failures before schema
+ * validation produces a less focused whole-document error. */
+function mobilityArgs(
+  project: Project,
+  args: Record<string, unknown>,
+): { followersEnabled: boolean; vehicles: VehicleDef[] } {
+  if (typeof args.followersEnabled !== "boolean") {
+    throw new EditApiError(
+      "INVALID_ARGUMENT",
+      "followersEnabled must be true or false",
+      "$.followersEnabled",
+      "boolean",
+      args.followersEnabled,
+    );
+  }
+  if (!Array.isArray(args.vehicles)) {
+    throw new EditApiError("INVALID_ARGUMENT", "vehicles must be an array", "$.vehicles", "vehicle array", args.vehicles);
+  }
+
+  const ids = new Set<string>();
+  const kinds = new Set<string>();
+  const vehicles = args.vehicles.map((raw, index): VehicleDef => {
+    const path = `$.vehicles[${index}]`;
+    if (!isRecord(raw)) {
+      throw new EditApiError("INVALID_ARGUMENT", `vehicle ${index + 1} must be an object`, path, "vehicle object", raw);
+    }
+    const id = raw.id;
+    if (typeof id !== "string" || !EVENT_ID_RE.test(id)) {
+      throw new EditApiError(
+        "INVALID_ARGUMENT",
+        "vehicle id must match ^[A-Za-z0-9_-]+$",
+        `${path}.id`,
+        "letters, digits, underscore, or hyphen",
+        id,
+      );
+    }
+    if (ids.has(id)) {
+      throw new EditApiError("DUPLICATE_VEHICLE", `vehicle id ${JSON.stringify(id)} is duplicated`, `${path}.id`, "unique vehicle id", id);
+    }
+    ids.add(id);
+
+    const kind = raw.kind;
+    if (typeof kind !== "string" || !VEHICLE_KINDS.includes(kind as typeof VEHICLE_KINDS[number])) {
+      throw new EditApiError("INVALID_ARGUMENT", "vehicle kind must be boat, ship, or airship", `${path}.kind`, VEHICLE_KINDS, kind);
+    }
+    if (kinds.has(kind)) {
+      throw new EditApiError("DUPLICATE_VEHICLE", `vehicle kind ${JSON.stringify(kind)} is duplicated`, `${path}.kind`, "one vehicle per kind", kind);
+    }
+    kinds.add(kind);
+
+    const sprite = raw.sprite;
+    if (typeof sprite !== "string" || sprite.length === 0) {
+      throw new EditApiError("INVALID_ARGUMENT", "vehicle sprite must be a non-empty string", `${path}.sprite`, "project sprite id", sprite);
+    }
+    if (!isRecord(raw.start)) {
+      throw new EditApiError("INVALID_ARGUMENT", "vehicle start must be an object", `${path}.start`, "map position", raw.start);
+    }
+    const mapId = raw.start.map;
+    if (typeof mapId !== "string" || mapId.length === 0) {
+      throw new EditApiError("INVALID_ARGUMENT", "vehicle start map must be a non-empty string", `${path}.start.map`, "map id", mapId);
+    }
+    const map = project.maps.find((entry) => entry.id === mapId);
+    if (!map) {
+      throw new EditApiError("MAP_NOT_FOUND", `map ${JSON.stringify(mapId)} does not exist`, `${path}.start.map`, project.maps.map((entry) => entry.id), mapId);
+    }
+    const x = raw.start.x;
+    const y = raw.start.y;
+    if (!Number.isInteger(x) || (x as number) < 0 || (x as number) >= map.width) {
+      throw new EditApiError("INVALID_ARGUMENT", `vehicle x must be within map ${mapId}`, `${path}.start.x`, `integer 0..${map.width - 1}`, x);
+    }
+    if (!Number.isInteger(y) || (y as number) < 0 || (y as number) >= map.height) {
+      throw new EditApiError("INVALID_ARGUMENT", `vehicle y must be within map ${mapId}`, `${path}.start.y`, `integer 0..${map.height - 1}`, y);
+    }
+    const dir = raw.start.dir;
+    if (typeof dir !== "string" || !VEHICLE_DIRS.includes(dir as typeof VEHICLE_DIRS[number])) {
+      throw new EditApiError("INVALID_ARGUMENT", "vehicle direction must be down, left, right, or up", `${path}.start.dir`, VEHICLE_DIRS, dir);
+    }
+    return {
+      id,
+      kind: kind as VehicleDef["kind"],
+      sprite,
+      start: { map: mapId, x: x as number, y: y as number, dir: dir as Dir },
+    };
+  });
+  return { followersEnabled: args.followersEnabled, vehicles };
+}
+
 function mutate(command: EditCommandName, project: Project, args: Record<string, unknown>): MutationResult {
   // The proposal flow registers sprites as {id, sprite: def}; the catalog
   // path speaks {sprite: id, value: def}. Accept both shapes.
   if (command === "add-sprite" && own(args, "id") && typeof args.sprite === "object" && args.sprite !== null) {
     args = { sprite: args.id, value: args.sprite };
+  }
+  if (command === "update-mobility") {
+    const update = mobilityArgs(project, args);
+    const edited: Project = {
+      ...project,
+      followers: {
+        ...(project.followers ?? { members: [] }),
+        enabled: update.followersEnabled,
+      },
+      vehicles: update.vehicles,
+    };
+    return {
+      project: edited,
+      addresses: ["mobility"],
+      result: { followers: cloneJson(edited.followers), vehicles: cloneJson(edited.vehicles) },
+    };
   }
   const catalog = catalogCommandSpec(command);
   if (catalog && catalog.action !== "list" && catalog.action !== "get") {

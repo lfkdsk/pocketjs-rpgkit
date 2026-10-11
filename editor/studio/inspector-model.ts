@@ -70,6 +70,7 @@ const CATEGORY_OF: Readonly<Record<string, CommandCategory>> = {
   shop: "state",
   tileProperty: "state",
   timer: "state",
+  followers: "state",
   changeName: "state",
   menuAccess: "state",
   saveAccess: "state",
@@ -78,6 +79,10 @@ const CATEGORY_OF: Readonly<Record<string, CommandCategory>> = {
   transfer: "move",
   moveControl: "move",
   place: "move",
+  gatherFollowers: "move",
+  vehicle: "move",
+  setVehicleLocation: "move",
+  setVehicleImage: "present",
   pathTo: "move",
   approach: "move",
   screenFade: "present",
@@ -154,6 +159,11 @@ const OP_LABELS: Readonly<Record<string, string>> = {
   locationInfo: "Get location info",
   stopSe: "Stop SE",
   changeParallax: "Change parallax",
+  followers: "Follower visibility",
+  gatherFollowers: "Gather followers",
+  vehicle: "Toggle vehicle",
+  setVehicleLocation: "Set vehicle location",
+  setVehicleImage: "Set vehicle image",
 };
 
 /** "screenFade" → "Screen fade". */

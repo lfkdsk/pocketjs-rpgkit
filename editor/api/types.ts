@@ -43,6 +43,7 @@ export const EDIT_COMMANDS = [
   "add-variable",
   "update-variable",
   "remove-variable",
+  "update-mobility",
   "update-map",
   "add-map",
   "duplicate-map",

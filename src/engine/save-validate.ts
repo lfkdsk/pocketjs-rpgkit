@@ -25,7 +25,8 @@ const INTEGER_OPS = new Set([
   "playBgm", "fadeoutBgm", "stopBgm", "pauseBgm", "resumeBgm",
   "playBgs", "fadeoutBgs", "playMe", "playSe", "saveBgm", "replayBgm", "stopSe",
   "erase", "exit", "transfer",
-  "moveRoute", "moveControl", "common", "lockInput", "unlockInput", "place", "shop",
+  "moveRoute", "moveControl", "followers", "gatherFollowers", "vehicle",
+  "setVehicleLocation", "setVehicleImage", "common", "lockInput", "unlockInput", "place", "shop",
   "mapAnim", "stopAnim", "appearance", "layer", "changeParallax", "tileProperty",
   "screenFade", "screenTint", "screenFlash", "screenShake", "camera", "scrollMap", "balloon", "screenBackdrop",
   "showPicture", "movePicture", "rotatePicture", "tintPicture", "erasePicture",
@@ -269,6 +270,14 @@ function validateCondition(v: unknown, path: string): string | null {
       }
       if (!isFiniteNumber(v.seconds) || v.seconds < 0) {
         return fail(`${path}.seconds`, "non-negative number required");
+      }
+      return null;
+    case "vehicle":
+      if (typeof v.id !== "string" || v.id.length === 0) {
+        return fail(`${path}.id`, "non-empty string required");
+      }
+      if (v.negate !== undefined && typeof v.negate !== "boolean") {
+        return fail(`${path}.negate`, "boolean required");
       }
       return null;
     case "ext":
@@ -821,6 +830,36 @@ function validateProg(prog: unknown, path: string): string | null {
         if (e) return e;
         break;
       }
+      case "followers":
+        if (typeof ins.visible !== "boolean") return fail(`${here}.visible`, "boolean required");
+        break;
+      case "gatherFollowers":
+        break;
+      case "vehicle":
+        if (ins.action !== "toggle") return fail(`${here}.action`, '"toggle" required');
+        break;
+      case "setVehicleLocation": {
+        if (typeof ins.id !== "string" || ins.id.length === 0) {
+          return fail(`${here}.id`, "non-empty string required");
+        }
+        if (typeof ins.map !== "string") {
+          const e = validateVariableRef(ins.map, `${here}.map`);
+          if (e) return e;
+        }
+        for (const field of ["x", "y"] as const) {
+          if (!isFiniteNumber(ins[field])) {
+            const e = validateVariableRef(ins[field], `${here}.${field}`);
+            if (e) return e;
+          }
+        }
+        break;
+      }
+      case "setVehicleImage":
+        if (typeof ins.id !== "string" || ins.id.length === 0 ||
+            typeof ins.sprite !== "string" || ins.sprite.length === 0) {
+          return fail(here, "non-empty id and sprite required");
+        }
+        break;
       case "appearance": {
         const target = validateAppearanceTarget(ins.target ?? "player", `${here}.target`);
         if (target) return target;
@@ -2401,6 +2440,130 @@ function validateMapRuntime(v: unknown, path: string, autosave: boolean): string
   return null;
 }
 
+function validateTravelMovement(
+  v: unknown,
+  path: string,
+  allowNegative: boolean,
+): string | null {
+  if (!isRecord(v)) return fail(path, "movement object required");
+  for (const key of ["tx", "ty"] as const) {
+    if (!isSafeInt(v[key]) || (!allowNegative && (v[key] as number) < 0)) {
+      return fail(`${path}.${key}`, allowNegative ? "safe integer required" : "non-negative safe integer required");
+    }
+  }
+  for (const key of ["facing", "phase", "stepDir"] as const) {
+    if (!isNonNegInt(v[key])) return fail(`${path}.${key}`, "non-negative integer required");
+  }
+  if (!isDir4(v.facing) || !isDir4(v.stepDir)) return fail(path, "facing/stepDir must be 0..3");
+  if (!isFiniteNumber(v.px) || !isFiniteNumber(v.py)) return fail(path, "finite px/py required");
+  if (!isBool(v.moving) || !isBool(v.walking)) return fail(path, "moving/walking booleans required");
+  if (v.stepTilesPerSecond !== undefined &&
+      (!isFiniteNumber(v.stepTilesPerSecond) || v.stepTilesPerSecond <= 0 || v.stepTilesPerSecond > 20)) {
+    return fail(`${path}.stepTilesPerSecond`, "exact speed in (0,20] tiles/second required");
+  }
+  const tx = v.tx as number;
+  const ty = v.ty as number;
+  const px = v.px as number;
+  const py = v.py as number;
+  const phase = v.phase as number;
+  const dir = v.stepDir as number;
+  const ox = tx * SAVE_TILE;
+  const oy = ty * SAVE_TILE;
+  if (v.moving !== true) {
+    if (phase !== 0 || px !== ox || py !== oy) return fail(path, "resting movement must sit on its tile origin");
+    if (v.stepTilesPerSecond !== undefined) return fail(`${path}.stepTilesPerSecond`, "idle movement cannot retain speed");
+    return null;
+  }
+  if (phase < 1) return fail(`${path}.phase`, "moving state needs phase >= 1");
+  const dx = px - ox;
+  const dy = py - oy;
+  const along = dx * STEP_DX[dir]! + dy * STEP_DY[dir]!;
+  const across = STEP_DX[dir] === 0 ? dx : dy;
+  if (across !== 0 || !(along > 0 && along < SAVE_TILE)) {
+    return fail(path, "moving pixels must lie between origin and stepDir neighbour");
+  }
+  return null;
+}
+
+function validateTravel(v: unknown, path: string): string | null {
+  if (!isRecord(v)) return fail(path, "object required");
+  if (v.followers !== undefined) {
+    const followers = v.followers;
+    if (!isRecord(followers)) return fail(`${path}.followers`, "object required");
+    if (!isBool(followers.visible) || !isBool(followers.gathering)) {
+      return fail(`${path}.followers`, "visible/gathering booleans required");
+    }
+    if (!Array.isArray(followers.gatherWaiters) ||
+        !followers.gatherWaiters.every((waiter) => typeof waiter === "string" && waiter.length > 0) ||
+        new Set(followers.gatherWaiters).size !== followers.gatherWaiters.length) {
+      return fail(`${path}.followers.gatherWaiters`, "unique non-empty string array required");
+    }
+    if (!Array.isArray(followers.members)) return fail(`${path}.followers.members`, "array required");
+    const ids = new Set<string>();
+    for (let i = 0; i < followers.members.length; i++) {
+      const member = followers.members[i];
+      const at = `${path}.followers.members[${i}]`;
+      if (!isRecord(member) || typeof member.id !== "string" || member.id.length === 0 ||
+          typeof member.sprite !== "string" || member.sprite.length === 0) {
+        return fail(at, "non-empty id/sprite required");
+      }
+      if (ids.has(member.id)) return fail(`${at}.id`, "unique follower id required");
+      ids.add(member.id);
+      const movement = validateTravelMovement(member.move, `${at}.move`, true);
+      if (movement) return movement;
+      if (!Array.isArray(member.trail)) return fail(`${at}.trail`, "array required");
+      for (let j = 0; j < member.trail.length; j++) {
+        const point = member.trail[j];
+        if (!isRecord(point) || !isSafeInt(point.x) || !isSafeInt(point.y)) {
+          return fail(`${at}.trail[${j}]`, "safe integer x/y required");
+        }
+      }
+    }
+  }
+  if (v.vehicles !== undefined) {
+    const vehicles = v.vehicles;
+    if (!isRecord(vehicles) || !Array.isArray(vehicles.entries)) {
+      return fail(`${path}.vehicles`, "object with entries array required");
+    }
+    const ids = new Set<string>();
+    for (let i = 0; i < vehicles.entries.length; i++) {
+      const vehicle = vehicles.entries[i];
+      const at = `${path}.vehicles.entries[${i}]`;
+      if (!isRecord(vehicle) || typeof vehicle.id !== "string" || vehicle.id.length === 0 ||
+          !["boat", "ship", "airship"].includes(vehicle.kind as string) ||
+          typeof vehicle.sprite !== "string" || vehicle.sprite.length === 0 ||
+          typeof vehicle.mapId !== "string" || vehicle.mapId.length === 0) {
+        return fail(at, "valid id/kind/sprite/mapId required");
+      }
+      if (ids.has(vehicle.id)) return fail(`${at}.id`, "unique vehicle id required");
+      ids.add(vehicle.id);
+      const movement = validateTravelMovement(vehicle.move, `${at}.move`, false);
+      if (movement) return movement;
+    }
+    if (vehicles.riding !== null && (typeof vehicles.riding !== "string" || !ids.has(vehicles.riding))) {
+      return fail(`${path}.vehicles.riding`, "null or existing vehicle id required");
+    }
+    if (!isFiniteNumber(vehicles.airshipAltitude) || vehicles.airshipAltitude < 0 ||
+        vehicles.airshipAltitude > SAVE_TILE) {
+      return fail(`${path}.vehicles.airshipAltitude`, "finite altitude 0..16 required");
+    }
+    if (!isNonNegInt(vehicles.airshipPhaseTick) || vehicles.airshipPhaseTick > 48 ||
+        !["grounded", "ascending", "cruising", "descending"].includes(vehicles.airshipPhase as string)) {
+      return fail(`${path}.vehicles`, "valid airship phase/tick required");
+    }
+    const tick = vehicles.airshipPhaseTick as number;
+    const phase = vehicles.airshipPhase;
+    if ((phase === "grounded" && (tick !== 0 || vehicles.airshipAltitude !== 0)) ||
+        (phase === "cruising" && (tick !== 48 || vehicles.airshipAltitude !== SAVE_TILE))) {
+      return fail(`${path}.vehicles`, "airship phase must match tick and altitude");
+    }
+  }
+  if (v.followers === undefined && v.vehicles === undefined) {
+    return fail(path, "followers or vehicles required");
+  }
+  return null;
+}
+
 export function validateSnapshot(snap: unknown): string | null {
   if (!isRecord(snap)) return "state: snapshot must be an object";
   if (snap.autosave !== undefined && snap.autosave !== true) {
@@ -2412,6 +2575,10 @@ export function validateSnapshot(snap: unknown): string | null {
   if (!isU32(snap.held)) return "state.held: u32 button mask required";
   const extProblem = jsonValueProblem(snap.ext, "state.ext");
   if (extProblem) return extProblem;
+  if (snap.travel !== undefined) {
+    const travel = validateTravel(snap.travel, "state.travel");
+    if (travel) return travel;
+  }
 
   // player
   const p = snap.player;
@@ -2575,6 +2742,9 @@ export function validateSnapshot(snap: unknown): string | null {
   }
   if (!Array.isArray(it.pendingMoveRoutes) || it.pendingMoveRoutes.length !== 0) {
     return "state.interp.pendingMoveRoutes: no parked move routes at a save point";
+  }
+  if (it.pendingTravel !== undefined && (!Array.isArray(it.pendingTravel) || it.pendingTravel.length !== 0)) {
+    return "state.interp.pendingTravel: no pending travel requests at a save point";
   }
   if (!Array.isArray(it.pendingBattles) || it.pendingBattles.length !== 0) {
     return "state.interp.pendingBattles: no queued battles at a save point";

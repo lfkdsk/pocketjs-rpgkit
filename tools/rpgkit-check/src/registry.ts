@@ -112,7 +112,7 @@ const CHECK_TOOL_DEFS: CheckTool[] = [
     description:
       "Static health check of an rpgkit-project/v1 document: switches/variables read but never set " +
       "(or set but never read), dead pages (shadowed or contradictory conditions), missing references " +
-      "(transfer/place/common-event/item/audio/sprite/sheet), empty choices, unreachable maps. " +
+      "(transfer/vehicle/place/common-event/item/audio/sprite/sheet), empty choices, unreachable maps. " +
       "Returns findings with severity, location and a suggestion. Accepts an inline document or a " +
       "ProjectShell (sharded maps are materialized). `map` scopes the pass to one map (only that " +
       "shard is loaded; global checks that need the whole document are skipped). `incremental` caches " +

@@ -37,6 +37,81 @@ function solidTile(colour: Rgba): Uint8Array {
   return out;
 }
 
+function paintRect(
+  image: Uint8Array,
+  width: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  colour: Rgba,
+): void {
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) image.set(colour, (y * width + x) * 4);
+  }
+}
+
+function travelBoat(): Uint8Array {
+  const image = new Uint8Array(TILE * TILE * 4);
+  paintRect(image, TILE, 7, 2, 8, 9, [38, 30, 34, 255]);
+  for (let y = 3; y <= 8; y++) {
+    paintRect(image, TILE, 9, y, 9 + Math.floor((y - 3) / 2), y, [246, 224, 142, 255]);
+  }
+  paintRect(image, TILE, 1, 9, 14, 11, [50, 38, 48, 255]);
+  paintRect(image, TILE, 2, 9, 13, 10, [68, 190, 222, 255]);
+  paintRect(image, TILE, 3, 11, 12, 13, [50, 38, 48, 255]);
+  paintRect(image, TILE, 4, 11, 11, 12, [34, 118, 170, 255]);
+  paintRect(image, TILE, 5, 14, 10, 14, [122, 220, 246, 255]);
+  return image;
+}
+
+function travelAirship(): Uint8Array {
+  const image = new Uint8Array(TILE * 32 * 4);
+  const outline: Rgba = [42, 28, 52, 255];
+  const balloon: Rgba = [236, 92, 114, 255];
+  const highlight: Rgba = [255, 184, 112, 255];
+  const spans = [
+    [6, 9], [4, 11], [3, 12], [2, 13], [2, 13], [1, 14],
+    [1, 14], [2, 13], [2, 13], [3, 12], [4, 11], [6, 9],
+  ] as const;
+  for (let row = 0; row < spans.length; row++) {
+    const [x0, x1] = spans[row]!;
+    paintRect(image, TILE, x0, row + 2, x1, row + 2, outline);
+    if (x1 - x0 > 1) paintRect(image, TILE, x0 + 1, row + 2, x1 - 1, row + 2, balloon);
+  }
+  paintRect(image, TILE, 5, 4, 6, 10, highlight);
+  paintRect(image, TILE, 4, 15, 4, 23, outline);
+  paintRect(image, TILE, 11, 15, 11, 23, outline);
+  paintRect(image, TILE, 3, 23, 12, 29, outline);
+  paintRect(image, TILE, 4, 24, 11, 27, [230, 176, 68, 255]);
+  paintRect(image, TILE, 6, 24, 9, 25, [255, 236, 146, 255]);
+  return image;
+}
+
+function travelFollower(body: Rgba, accent: Rgba, ears: "round" | "pointed"): Uint8Array {
+  const image = new Uint8Array(TILE * 32 * 4);
+  const outline: Rgba = [24, 24, 34, 255];
+  if (ears === "pointed") {
+    paintRect(image, TILE, 3, 9, 5, 13, outline);
+    paintRect(image, TILE, 10, 9, 12, 13, outline);
+    paintRect(image, TILE, 4, 10, 4, 12, accent);
+    paintRect(image, TILE, 11, 10, 11, 12, accent);
+  } else {
+    paintRect(image, TILE, 2, 11, 5, 14, outline);
+    paintRect(image, TILE, 10, 11, 13, 14, outline);
+    paintRect(image, TILE, 3, 12, 4, 13, accent);
+    paintRect(image, TILE, 11, 12, 12, 13, accent);
+  }
+  paintRect(image, TILE, 3, 13, 12, 27, outline);
+  paintRect(image, TILE, 4, 14, 11, 26, body);
+  paintRect(image, TILE, 5, 18, 6, 19, [246, 246, 250, 255]);
+  paintRect(image, TILE, 9, 18, 10, 19, [246, 246, 250, 255]);
+  paintRect(image, TILE, 6, 22, 9, 23, accent);
+  paintRect(image, TILE, 3, 28, 6, 30, outline);
+  paintRect(image, TILE, 9, 28, 12, 30, outline);
+  return image;
+}
+
 const ground = new Uint8Array(TILE * TILE * 4);
 for (let y = 0; y < TILE; y++) {
   for (let x = 0; x < TILE; x++) {
@@ -59,6 +134,17 @@ const bakedSecond = bakeMapChunks(
 );
 
 const imageMeta: Record<string, { psm: number }> = {};
+const travelImages = {
+  "assets/travel-boat.png": travelBoat(),
+  "assets/travel-airship.png": travelAirship(),
+  "assets/travel-follower-coral.png": travelFollower([236, 96, 126, 255], [255, 210, 116, 255], "pointed"),
+  "assets/travel-follower-mint.png": travelFollower([82, 204, 154, 255], [116, 238, 232, 255], "round"),
+} as const;
+for (const [name, rgba] of Object.entries(travelImages)) {
+  const height = name.includes("boat") ? TILE : 32;
+  writeFileSync(join(HERE, name), encodePNG(rgba, TILE, height));
+  imageMeta[name] = { psm: 3 };
+}
 const chunkCount = baked.columns * baked.rows;
 for (let i = 0; i < chunkCount; i++) {
   const groundName = groundChunkAsset(R2_MAP_ID, i, chunkCount);
@@ -178,6 +264,10 @@ const animated = animatedManifestSource([{
 }]);
 const q = JSON.stringify;
 const names = (values: readonly string[]): string => `[${values.map((value) => q(value)).join(", ")}]`;
+const stillWalker = (name: string): string =>
+  `{ idle: ${names([name, name, name, name])} as const, ` +
+  `walkL: ${names([name, name, name, name])} as const, ` +
+  `walkR: ${names([name, name, name, name])} as const, h: 32 as const }`;
 const groundNames = Array.from({ length: chunkCount }, (_, i) => groundChunkAsset(R2_MAP_ID, i, chunkCount));
 const upperNames = Array.from({ length: chunkCount }, (_, i) => upperChunkAsset(R2_MAP_ID, i, chunkCount));
 const secondUpperNames = Array.from(
@@ -194,6 +284,9 @@ writeFileSync(
     `  walkR: ${names(poseFrames.walkR)} as const,\n` +
     `  h: 32 as const,\n` +
     `};\n\n` +
+    `const TRAVEL_FOLLOWER_CORAL = ${stillWalker("assets/travel-follower-coral.png")};\n` +
+    `const TRAVEL_FOLLOWER_MINT = ${stillWalker("assets/travel-follower-mint.png")};\n` +
+    `const TRAVEL_AIRSHIP = ${stillWalker("assets/travel-airship.png")};\n\n` +
     `export const GAME_ASSETS: GameAssets = {\n` +
     `  ground: { ${q(R2_MAP_ID)}: ${names(groundNames)}, ${q(R2_SECOND_MAP_ID)}: ${names(groundNames)} },\n` +
     `  upper: { ${q(R2_MAP_ID)}: ${names(upperNames)}, ${q(R2_SECOND_MAP_ID)}: ${names(secondUpperNames)} },\n` +
@@ -201,7 +294,7 @@ writeFileSync(
     `  maxChunks: ${chunkCount},\n` +
     `  world: { ${q(R2_MAP_ID)}: { w: ${R2_MAP_SIZE.width * TILE}, h: ${R2_MAP_SIZE.height * TILE} }, ${q(R2_SECOND_MAP_ID)}: { w: ${R2_MAP_SIZE.width * TILE}, h: ${R2_MAP_SIZE.height * TILE} } },\n` +
     `  order: [${q(R2_MAP_ID)}, ${q(R2_SECOND_MAP_ID)}],\n` +
-    `  npcSrc: { walker: WALKER, alt: "assets/walker-idle-3.png" },\n` +
+    `  npcSrc: { walker: WALKER, alt: "assets/walker-idle-3.png", travelBoat: "assets/travel-boat.png", travelAirship: TRAVEL_AIRSHIP, travelFollowerCoral: TRAVEL_FOLLOWER_CORAL, travelFollowerMint: TRAVEL_FOLLOWER_MINT },\n` +
     `  player: WALKER,\n` +
     `  playerHeight: 32,\n` +
     `  animated: ${animated},\n` +

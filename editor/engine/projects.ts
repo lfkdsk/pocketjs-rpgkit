@@ -85,6 +85,16 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         }
       }
     },
+    "followers": {
+      "$ref": "#/$defs/followers",
+      "description": "Optional ordered party trail. Omit it to retain the original single-player reducer and render path."
+    },
+    "vehicles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/vehicle" },
+      "uniqueItems": true,
+      "description": "Persistent boat, ship and airship placements. Omit or leave empty for the original walking-only behavior."
+    },
     "worldTraversal": {
       "enum": ["legacy-transfer", "seamless-v1"],
       "description": "Map-transfer timeline identity. Missing means legacy-transfer; seamless-v1 still requires a matching per-transfer handoff marker and coordinate-preserving WorldLayout opening."
@@ -592,6 +602,40 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
+    "followers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "members"],
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Initial follower visibility (RPG Maker System.optFollowers)." },
+        "members": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "sprite"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+              "sprite": { "type": "string", "minLength": 1, "description": "Key in project.sprites." },
+              "activeSwitch": { "type": "string", "minLength": 1, "description": "Optional party-membership switch." },
+              "activeValue": { "type": "boolean", "description": "Value required from activeSwitch; defaults to true." }
+            }
+          }
+        }
+      }
+    },
+    "vehicle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "sprite", "start"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+        "kind": { "enum": ["boat", "ship", "airship"] },
+        "sprite": { "type": "string", "minLength": 1, "description": "Key in project.sprites." },
+        "start": { "$ref": "#/$defs/transferTarget" }
+      }
+    },
     "map": {
       "type": "object",
       "additionalProperties": false,
@@ -628,6 +672,16 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "prefixItems": [{ "type": "integer", "minimum": 0 }, { "enum": ["pass", "block"] }]
           },
           "uniqueItems": true
+        },
+        "vehiclePassage": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "boat": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "Cells a boat may enter." },
+            "ship": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "Cells a ship may enter." },
+            "airshipLand": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "Cells where an airship may land; flight itself ignores terrain and bodies." }
+          }
         },
         "parallax": { "$ref": "#/$defs/parallax" },
         "regions": {
@@ -937,6 +991,57 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "target": { "$ref": "#/$defs/routeTarget" },
             "control": { "$ref": "#/$defs/moveControl" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "visible"],
+          "properties": {
+            "op": { "const": "followers" },
+            "visible": { "type": "boolean" }
+          },
+          "description": "Show or hide the follower chain without discarding its saved positions."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op"],
+          "properties": { "op": { "const": "gatherFollowers" } },
+          "description": "Bring every active follower to the leader and reset the historical trail."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "action"],
+          "properties": {
+            "op": { "const": "vehicle" },
+            "action": { "const": "toggle" }
+          },
+          "description": "Board a reachable vehicle, or leave the currently ridden one."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id", "map", "x", "y"],
+          "properties": {
+            "op": { "const": "setVehicleLocation" },
+            "id": { "type": "string", "minLength": 1 },
+            "map": { "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/variableRef" }] },
+            "x": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/variableRef" }] },
+            "y": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/variableRef" }] }
+          },
+          "description": "Relocate a persistent vehicle; operands may read live variables."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id", "sprite"],
+          "properties": {
+            "op": { "const": "setVehicleImage" },
+            "id": { "type": "string", "minLength": 1 },
+            "sprite": { "type": "string", "minLength": 1 }
+          },
+          "description": "Replace a vehicle's walking sprite for the remainder of the save."
         },
         {
           "type": "object",
@@ -2040,6 +2145,17 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "seconds": { "type": "number", "minimum": 0 }
           },
           "description": "Compare the whole remaining seconds of the running global timer; a stopped timer never matches."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": { "const": "vehicle" },
+            "id": { "type": "string", "minLength": 1 },
+            "negate": { "type": "boolean" }
+          },
+          "description": "True while the player rides the named persistent vehicle; negate inverts the result."
         },
         {
           "type": "object",

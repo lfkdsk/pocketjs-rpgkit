@@ -59,7 +59,7 @@ import { catalogCommandSpec } from "./catalogs.ts";
 export const SHARDED_DOCUMENT_KIND = "rpgkit-edit/sharded-document-v1" as const;
 
 const NO_SHARD_COMMANDS = new Set(["open", "list-maps"]);
-const SHELL_GLOBAL_COMMANDS = new Set(["add-item", "add-sprite"]);
+const SHELL_GLOBAL_COMMANDS = new Set(["add-item", "add-sprite", "update-mobility"]);
 
 /** Commands that cannot be expressed over a shell in patch-v1. Map
  * add/duplicate/delete/move would add, remove or reorder mapIndex entries,
@@ -537,18 +537,46 @@ function executeShellGlobalOperation(
   const { mapIndex: _index, mapManifestHash: _manifest, mapSchemaHash: _schema, ...globals } = shell;
   const args = isRecord(rawArgs) ? rawArgs : {};
   const { envelope: _envelope, ...innerArgs } = args;
+  // Mobility validates a vehicle start against its map dimensions. A shell
+  // already carries those dimensions, so synthesize only the at-most-three
+  // referenced maps and keep the operation shard-free.
+  const mobilityMaps: MapDef[] = [];
+  if (command === "update-mobility" && Array.isArray(args.vehicles)) {
+    const ids = new Set<string>();
+    for (const raw of args.vehicles) {
+      if (mobilityMaps.length >= 3) break;
+      const start = isRecord(raw) && isRecord(raw.start) ? raw.start : undefined;
+      const id = start && typeof start.map === "string" ? start.map : undefined;
+      if (id === undefined || ids.has(id)) continue;
+      const meta = shell.mapIndex.find((entry) => entry.id === id);
+      if (!meta) continue;
+      ids.add(id);
+      mobilityMaps.push({
+        id: meta.id,
+        name: meta.id,
+        width: meta.width,
+        height: meta.height,
+        sheets: [shell.sheets[0]!.id],
+        ground: new Array(meta.width * meta.height).fill(null),
+        events: [],
+      });
+    }
+  }
+  const maps = mobilityMaps.length > 0
+    ? mobilityMaps
+    : [{
+        id: placeholderId,
+        name: "Shell edit placeholder",
+        width: 1,
+        height: 1,
+        sheets: [shell.sheets[0]!.id],
+        ground: [null],
+        events: [],
+      }];
   const project: Project = {
     ...cloneJson(globals),
-    start: { map: placeholderId, x: 0, y: 0, dir: shell.start.dir },
-    maps: [{
-      id: placeholderId,
-      name: "Shell edit placeholder",
-      width: 1,
-      height: 1,
-      sheets: [shell.sheets[0]!.id],
-      ground: [null],
-      events: [],
-    }],
+    start: { map: maps[0]!.id, x: 0, y: 0, dir: shell.start.dir },
+    maps,
   };
   const inline = executeEditOperation(JSON.stringify(project), command, innerArgs);
   if (!inline.response.ok) return { response: inline.response };

@@ -27,14 +27,19 @@
 //   lint/route-target-missing       moveRoute at an unknown event
 //   lint/appearance-target-missing  appearance command targets an event not
 //                                   on the host map
+//   lint/vehicle-missing            condition/command references an unknown
+//                                   persistent vehicle id
+//   lint/vehicle-location-target-missing
+//                                   vehicle start/location names an unknown map
+//                                   or a literal out-of-bounds cell
 //   lint/common-event-missing       common op to an unknown common event
 //   lint/item-missing               item/shop/condition reference to an item
 //                                   not in the catalog
 //   lint/audio-missing              audio command/condition id absent from a
 //                                   declared project.audio table (warning:
 //                                   partial tables and typos are both shown)
-//   lint/sprite-missing             page.sprite / appearance.sprite /
-//                                   choices option icon.sprite key not in
+//   lint/sprite-missing             page/follower/vehicle/appearance/image/
+//                                   choices icon sprite key not in
 //                                   project.sprites
 //   lint/sheet-missing              map.sheets / tile id / item sprite
 //                                   referencing an unknown tile sheet
@@ -65,6 +70,8 @@ import type {
   MapDef,
   PageCondition,
   Project,
+  TransferCoordinate,
+  TransferMap,
 } from "../../../src/engine/types.ts";
 import type { SelfKey } from "../../../src/engine/interpreter.ts";
 import { structuralFindings } from "./structure.ts";
@@ -182,6 +189,7 @@ export interface LintContext {
    *  not checked, matching the inline behaviour). */
   audioIds: Set<string> | null;
   spriteIds: Set<string>;
+  vehicleIds: Set<string>;
   mapIds: Set<string>;
   commonIds: Set<string>;
   textVariables: boolean;
@@ -221,6 +229,7 @@ export function createLintContext(project: Project): LintContext {
     itemIds: new Set(project.items.map((i) => i.id)),
     audioIds: project.audio === undefined ? null : new Set(Object.keys(project.audio)),
     spriteIds: new Set(project.sprites ? Object.keys(project.sprites) : []),
+    vehicleIds: new Set((project.vehicles ?? []).map((vehicle) => vehicle.id)),
     mapIds: new Set(project.maps.map((m) => m.id)),
     commonIds: new Set((project.commonEvents ?? []).map((c) => c.id)),
     textVariables: project.system?.textVariables === true,
@@ -271,6 +280,8 @@ function noteConditionReads(
     if (!ctx.itemIds.has(condition.id)) missingItem(ctx, condition.id, loc);
   } else if (condition.kind === "bgmPlaying") {
     if (condition.id !== undefined) missingAudio(ctx, condition.id, loc);
+  } else if (condition.kind === "vehicle") {
+    missingVehicle(ctx, condition.id, loc, "condition");
   } else if (condition.kind === "appearance") {
     // The engine compares the target's ONE effective sprite key against this
     // value; an unknown key can never be the live sprite (null is the
@@ -351,6 +362,66 @@ function missingAudio(ctx: LintContext, id: string, loc: FindingLocation): void 
     "add the logical id to project.audio or fix the reference",
     loc,
   ));
+}
+
+function missingVehicle(
+  ctx: LintContext,
+  id: string,
+  loc: FindingLocation,
+  source: "condition" | "command",
+): void {
+  if (ctx.vehicleIds.has(id)) return;
+  ctx.findings.push(makeFinding(
+    "lint/vehicle-missing",
+    "error",
+    `${source} references unknown vehicle ${JSON.stringify(id)}`,
+    "add the vehicle to project.vehicles or fix the id",
+    loc,
+  ));
+}
+
+/** Validate the map/coordinates shared by authored vehicle starts and the
+ * setVehicleLocation command. Dynamic operands are usage reads; literal axes
+ * remain independently checkable when another operand is dynamic. */
+function checkVehicleLocation(
+  ctx: LintContext,
+  project: Project,
+  subject: string,
+  map: TransferMap,
+  x: TransferCoordinate,
+  y: TransferCoordinate,
+  loc: FindingLocation,
+): void {
+  if (typeof map !== "string") {
+    note(ctx, "variables", map.variable, "reads", loc);
+  } else {
+    const target = project.maps.find((candidate) => candidate.id === map);
+    if (!target) {
+      ctx.findings.push(makeFinding(
+        "lint/vehicle-location-target-missing",
+        "error",
+        `${subject} targets unknown map ${JSON.stringify(map)}`,
+        "add the map or fix the id; vehicle locations must name a map in the document",
+        loc,
+      ));
+    } else {
+      const oobX = typeof x === "number" && (x < 0 || x >= target.width);
+      const oobY = typeof y === "number" && (y < 0 || y >= target.height);
+      if (oobX || oobY) {
+        const cx = typeof x === "number" ? x : "dynamic";
+        const cy = typeof y === "number" ? y : "dynamic";
+        ctx.findings.push(makeFinding(
+          "lint/vehicle-location-target-missing",
+          "error",
+          `${subject} lands out of bounds at (${cx}, ${cy}) on ${target.width}x${target.height} map ${JSON.stringify(target.id)}`,
+          "move the vehicle location inside the map",
+          loc,
+        ));
+      }
+    }
+  }
+  if (typeof x !== "number") note(ctx, "variables", x.variable, "reads", loc);
+  if (typeof y !== "number") note(ctx, "variables", y.variable, "reads", loc);
 }
 
 // Walk one command tree. `map` is the host map for place/moveRoute/
@@ -515,6 +586,23 @@ function walkCommandTree(
         if (command.dir && typeof command.dir === "object") note(ctx, "variables", command.dir.variable, "reads", cloc);
         break;
       }
+      case "setVehicleLocation":
+        missingVehicle(ctx, command.id, cloc, "command");
+        checkVehicleLocation(ctx, project, `vehicle location for ${JSON.stringify(command.id)}`,
+          command.map, command.x, command.y, cloc);
+        break;
+      case "setVehicleImage":
+        missingVehicle(ctx, command.id, cloc, "command");
+        if (!ctx.spriteIds.has(command.sprite)) {
+          ctx.findings.push(makeFinding(
+            "lint/sprite-missing",
+            "error",
+            `vehicle image sets unknown sprite ${JSON.stringify(command.sprite)}`,
+            "add the sprite to project.sprites or fix the key",
+            cloc,
+          ));
+        }
+        break;
       case "place": {
         if (map) {
           if (typeof command.target === "object") {
@@ -934,6 +1022,39 @@ export function lintGlobal(ctx: LintContext, project: Project): void {
       "register SceneRules for it in code (the kit ships nameInputRules for \"rpgkit.nameInput\") or fix the id; an unregistered scene id throws at session startup",
       loc,
     ));
+  }
+
+  // ---- follower and vehicle catalogs -------------------------------------
+
+  for (const [index, member] of (project.followers?.members ?? []).entries()) {
+    const loc: FindingLocation = { pointer: `/followers/members/${index}` };
+    if (!ctx.spriteIds.has(member.sprite)) {
+      ctx.findings.push(makeFinding(
+        "lint/sprite-missing",
+        "error",
+        `follower ${JSON.stringify(member.id)} uses unknown sprite ${JSON.stringify(member.sprite)}`,
+        "add the sprite to project.sprites or fix the key",
+        loc,
+      ));
+    }
+    if (member.activeSwitch !== undefined) {
+      note(ctx, "switches", member.activeSwitch, "reads", loc);
+    }
+  }
+
+  for (const [index, vehicle] of (project.vehicles ?? []).entries()) {
+    const loc: FindingLocation = { pointer: `/vehicles/${index}` };
+    if (!ctx.spriteIds.has(vehicle.sprite)) {
+      ctx.findings.push(makeFinding(
+        "lint/sprite-missing",
+        "error",
+        `vehicle ${JSON.stringify(vehicle.id)} uses unknown sprite ${JSON.stringify(vehicle.sprite)}`,
+        "add the sprite to project.sprites or fix the key",
+        loc,
+      ));
+    }
+    checkVehicleLocation(ctx, project, `vehicle ${JSON.stringify(vehicle.id)} start`,
+      vehicle.start.map, vehicle.start.x, vehicle.start.y, loc);
   }
 
   // ---- usage findings -----------------------------------------------------

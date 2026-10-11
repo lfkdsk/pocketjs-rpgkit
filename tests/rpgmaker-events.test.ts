@@ -183,6 +183,21 @@ function transfersFor(cmds: Command[], vars: Record<string, number>): Command[] 
   return out;
 }
 
+/** Walk the same map-id search tree and collect selected vehicle moves. */
+function vehicleLocationsFor(cmds: Command[], vars: Record<string, number>): Command[] {
+  const out: Command[] = [];
+  const holds = (c: Condition): boolean => {
+    if (c.kind !== "variable") throw new Error("unexpected condition");
+    const v = vars[c.id] ?? 0;
+    return c.op === "==" ? v === c.value : c.op === "<=" ? v <= c.value : c.op === ">=" ? v >= c.value : v !== c.value;
+  };
+  for (const c of cmds) {
+    if (c.op === "if") out.push(...vehicleLocationsFor(holds(c.if) ? c.then : c.else ?? [], vars));
+    else if (c.op === "setVehicleLocation") out.push(c);
+  }
+  return out;
+}
+
 // --- tree parsing ---------------------------------------------------------------------
 
 describe("tree parsing", () => {
@@ -625,7 +640,7 @@ describe("conditional branch", () => {
     ["weapon", [9, 4, false], [{ op: "if", if: { kind: "item", id: "weapon004", count: 1 }, then: [THEN], else: [ELSE] }], "weapon", "Native"],
     ["armor incl. equipped", [10, 4, true], [{ op: "if", if: { kind: "item", id: "armor004", count: 1 }, then: [THEN], else: [ELSE] }], "armor", "Degraded"],
     ["button", [11, "ok"], dead([THEN], [ELSE]), "button", "Degraded"],
-    ["vehicle", [13, 0], dead([THEN], [ELSE]), "vehicle", "Degraded"],
+    ["vehicle", [13, 0], [{ op: "if", if: { kind: "vehicle", id: "boat" }, then: [THEN], else: [ELSE] }], "vehicle", "Native"],
   ])("%s", (_name, params, expected, key, d) => {
     const { cmds, cov } = conv(branch(params, true));
     expect(cmds).toEqual(expected);
@@ -872,6 +887,51 @@ describe("transfer", () => {
       }]);
     }
     expect(transfersFor(cmds, { v010: 5 })).toEqual([]);
+  });
+
+  test("vehicle location, boarding, followers and image commands are native", () => {
+    const { cmds, cov } = conv([
+      C(202, 0, [2, 0, 3, 4, 5]),
+      C(206, 0),
+      C(216, 0, [0]), C(216, 0, [1]), C(217, 0),
+      C(323, 0, [1, "Vehicle", 2]),
+    ]);
+    expect(cmds).toEqual([
+      { op: "setVehicleLocation", id: "airship", map: "map003", x: 4, y: 5 },
+      { op: "vehicle", action: "toggle" },
+      { op: "followers", visible: true },
+      { op: "followers", visible: false },
+      { op: "gatherFollowers" },
+      { op: "setVehicleImage", id: "ship", sprite: "rm-vehicle-2" },
+    ]);
+    for (const code of [202, 206, 216, 217, 323]) expect(counts(cov, "command", String(code)).Native).toBeGreaterThan(0);
+  });
+
+  test("vehicle location by variables translates numeric RM map ids", () => {
+    const { cmds, cov } = conv([C(202, 0, [0, 1, 10, 11, 12])]);
+    expect(only(cov, 202)).toBe("Native");
+    for (const [rm, kit] of MAPS) {
+      expect(vehicleLocationsFor(cmds, { v010: rm })).toEqual([{
+        op: "setVehicleLocation", id: "boat", map: kit,
+        x: { variable: "v011" }, y: { variable: "v012" },
+      }]);
+    }
+    expect(vehicleLocationsFor(cmds, { v010: 5 })).toEqual([]);
+  });
+
+  test("invalid vehicle operands are dropped", () => {
+    let r = conv([C(202, 0, [9, 0, 3, 4, 5])]);
+    expect(r.cmds).toEqual([]);
+    expect(only(r.cov, 202)).toBe("Dropped");
+    r = conv([C(202, 0, [0, 0, 99, 4, 5])]);
+    expect(r.cmds).toEqual([]);
+    expect(only(r.cov, 202)).toBe("Dropped");
+    r = conv([C(323, 0, [0, "", 0])]);
+    expect(r.cmds).toEqual([]);
+    expect(only(r.cov, 323)).toBe("Dropped");
+    r = conv([C(323, 0, ["not-a-vehicle", "Vehicle", 0])]);
+    expect(r.cmds).toEqual([]);
+    expect(only(r.cov, 323)).toBe("Dropped");
   });
 
   test("scroll map retains direction, distance, speed and wait", () => {

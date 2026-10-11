@@ -54,6 +54,9 @@ declare global {
   var __r2Rewind: boolean | undefined;
   // eslint-disable-next-line no-var
   var __r2Kv2BattleGrow: boolean | undefined;
+  // Optional follower/vehicle render fixture; omitted by every existing run.
+  // eslint-disable-next-line no-var
+  var __r2Travel: boolean | undefined;
   // Test-only opt-in for the GameView world-overlay presentation slot.
   // eslint-disable-next-line no-var
   var __r2WorldOverlay: boolean | undefined;
@@ -85,6 +88,7 @@ const rewindFixture = globalThis.__r2Rewind === true;
 // second map, so a test can prove the actor pool grows (not rebuilds) when a
 // battle closes onto a bigger map.
 const battleGrowFixture = globalThis.__r2Kv2BattleGrow === true;
+const travelFixture = globalThis.__r2Travel === true;
 const worldOverlayFixture = globalThis.__r2WorldOverlay === true;
 const syncTick = globalThis.__r2UiSyncTick;
 globalThis.__r2UiSyncTick = undefined;
@@ -101,10 +105,44 @@ globalThis.__r2Kv2 = undefined;
 globalThis.__r2CapRepro = undefined;
 globalThis.__r2Rewind = undefined;
 globalThis.__r2Kv2BattleGrow = undefined;
+globalThis.__r2Travel = undefined;
 globalThis.__r2WorldOverlay = undefined;
 
 const project: Project = kv1Fixture
   ? KV1_UI_PROJECT
+  : travelFixture
+  ? {
+      ...R2_UI_PROJECT,
+      title: "R2 travel actors",
+      sprites: {
+        ...R2_UI_PROJECT.sprites,
+        alt: { kind: "image", src: "assets/walker-idle-3.png" },
+        travelBoat: { kind: "image", src: "assets/travel-boat.png" },
+        travelAirship: { kind: "walker", sheet: "travel-airship", h: 32 },
+        travelFollowerCoral: { kind: "walker", sheet: "travel-follower-coral", h: 32 },
+        travelFollowerMint: { kind: "walker", sheet: "travel-follower-mint", h: 32 },
+      },
+      followers: {
+        enabled: true,
+        members: [
+          { id: "party-two", sprite: "travelFollowerCoral" },
+          { id: "party-three", sprite: "travelFollowerMint" },
+        ],
+      },
+      vehicles: [
+        { id: "boat", kind: "boat", sprite: "travelBoat", start: { map: "r2-ui-field", x: 15, y: 13, dir: "down" } },
+        { id: "airship", kind: "airship", sprite: "travelAirship", start: { map: "r2-ui-field", x: 14, y: 12, dir: "up" } },
+      ],
+      maps: R2_UI_PROJECT.maps.map((map, index) => index === 0
+        ? {
+            ...map,
+            vehiclePassage: {
+              boat: Array.from({ length: map.width * map.height }, (_, cell) => cell),
+              airshipLand: Array.from({ length: map.width * map.height }, (_, cell) => cell),
+            },
+          }
+        : map),
+    }
   : battleFixture
   ? {
       ...R2_UI_PROJECT,

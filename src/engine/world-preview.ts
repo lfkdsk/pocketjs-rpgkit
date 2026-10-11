@@ -259,6 +259,14 @@ function collectWrites(
       case "mapNameDisplay":
       case "menuAccess":
       case "saveAccess":
+      // Optional travel state is outside this NPC preview. Vehicle
+      // conditions are classified as runtime context below, so preserving
+      // these commands cannot make a vehicle-gated page look decidable.
+      case "followers":
+      case "gatherFollowers":
+      case "vehicle":
+      case "setVehicleLocation":
+      case "setVehicleImage":
       case "layer":
       case "changeParallax":
       case "tileProperty":
@@ -322,6 +330,7 @@ function clauseContext(clause: Condition): ContextReason | null {
     case "steps":
     case "bgmPlaying":
     case "timer":
+    case "vehicle":
       return "runtime-condition";
     case "ext": return "extension-condition";
     case "tileProperty":

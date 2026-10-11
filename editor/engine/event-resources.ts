@@ -10,6 +10,7 @@ export interface EventEditorResources {
   readonly maps: readonly string[];
   readonly items: readonly string[];
   readonly sprites: readonly string[];
+  readonly vehicles: readonly string[];
   readonly animations: readonly string[];
   readonly parallaxes: readonly string[];
   readonly audio: readonly string[];
@@ -25,6 +26,7 @@ export const EMPTY_EVENT_EDITOR_RESOURCES: EventEditorResources = Object.freeze(
   maps: Object.freeze([]),
   items: Object.freeze([]),
   sprites: Object.freeze([]),
+  vehicles: Object.freeze([]),
   animations: Object.freeze([]),
   parallaxes: Object.freeze([]),
   audio: Object.freeze([]),
@@ -66,6 +68,10 @@ export function eventEditorResources(project: Project, map?: MapDef): EventEdito
   const animationInstances = new Set<string>();
   const extensionCalls = new Set<string>();
   const parallaxes = new Set<string>();
+  const sprites = new Set(Object.keys(project.sprites ?? {}));
+
+  for (const follower of project.followers?.members ?? []) sprites.add(follower.sprite);
+  for (const vehicle of project.vehicles ?? []) sprites.add(vehicle.sprite);
 
   for (const projectMap of project.maps) {
     if (projectMap.parallax?.image) parallaxes.add(projectMap.parallax.image);
@@ -95,6 +101,12 @@ export function eventEditorResources(project: Project, map?: MapDef): EventEdito
       case "changeParallax":
         if (command.image) parallaxes.add(command.image);
         break;
+      case "appearance":
+        if (command.sprite) sprites.add(command.sprite);
+        break;
+      case "setVehicleImage":
+        sprites.add(command.sprite);
+        break;
       case "ext":
       case "extChoice":
         extensionCalls.add(command.call);
@@ -119,7 +131,8 @@ export function eventEditorResources(project: Project, map?: MapDef): EventEdito
   return {
     maps: sorted(project.maps.map((entry) => entry.id)),
     items: sorted(project.items.map((entry) => entry.id)),
-    sprites: sorted(Object.keys(project.sprites ?? {})),
+    sprites: sorted(sprites),
+    vehicles: sorted((project.vehicles ?? []).map((entry) => entry.id)),
     animations: sorted((project.animations ?? []).map((entry) => entry.id)),
     parallaxes: sorted(parallaxes),
     audio: sorted(Object.keys(project.audio ?? {})),

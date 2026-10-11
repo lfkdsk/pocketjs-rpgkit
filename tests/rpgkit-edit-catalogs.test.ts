@@ -225,6 +225,39 @@ describe("project catalog operations", () => {
     }
   });
 
+  test("indexes follower, vehicle, and vehicle-command catalog references", () => {
+    const project = fixture();
+    project.followers = {
+      enabled: true,
+      members: [{ id: "friend", sprite: "hero", activeSwitch: "gate" }],
+    };
+    project.vehicles = [{
+      id: "skiff",
+      kind: "boat",
+      sprite: "hero",
+      start: { map: "map", x: 0, y: 0, dir: "down" },
+    }];
+    project.maps[0]!.events![0]!.pages[0]!.commands.push(
+      { op: "setVehicleImage", id: "skiff", sprite: "hero" },
+      { op: "setVehicleLocation", id: "skiff", map: "map", x: { variable: "score" }, y: 0 },
+    );
+    const json = source(project);
+    const sprite = success(executeEditOperation(json, "get-sprite", { sprite: "hero" })).result as any;
+    expect(sprite.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ address: "follower:friend", field: "followers.members[0].sprite" }),
+      expect.objectContaining({ address: "vehicle:skiff", field: "vehicles[0].sprite" }),
+      expect.objectContaining({ field: "sprite" }),
+    ]));
+    const gate = success(executeEditOperation(json, "get-switch", { switch: "gate" })).result as any;
+    expect(gate.references).toContainEqual(expect.objectContaining({
+      address: "follower:friend",
+      field: "followers.members[0].activeSwitch",
+      access: "read",
+    }));
+    const score = success(executeEditOperation(json, "get-variable", { variable: "score" })).result as any;
+    expect(score.references).toContainEqual(expect.objectContaining({ field: "x", access: "read" }));
+  });
+
   test("adds the EDOG key and an NPC giver without constructing a patch by hand", () => {
     const addedItem = success(executeEditOperation(source(), "add-item", {
       item: { id: "storehouse-key", name: "Storehouse Key", sprite: "s.0", type: "key" },

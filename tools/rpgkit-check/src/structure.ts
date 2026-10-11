@@ -5,10 +5,23 @@ import type { Project } from "../../../src/engine/types.ts";
 import { makeFinding, type Finding } from "./finding.ts";
 
 /** Structural sanity that is cheaper to assert once than in every check:
- *  duplicate map ids and duplicate event ids. Returns findings (empty when
- *  the document is clean). */
+ *  duplicate map, event and vehicle ids. Returns findings (empty when the
+ *  document is clean). */
 export function structuralFindings(project: Project): Finding[] {
   const findings: Finding[] = [];
+  const vehicleIds = new Set<string>();
+  for (const [index, vehicle] of (project.vehicles ?? []).entries()) {
+    if (vehicleIds.has(vehicle.id)) {
+      findings.push(makeFinding(
+        "lint/vehicle-id-duplicate",
+        "error",
+        `duplicate vehicle id ${JSON.stringify(vehicle.id)}`,
+        "vehicle ids must be unique; conditions and commands resolve vehicles by id",
+        { pointer: `/vehicles/${index}` },
+      ));
+    }
+    vehicleIds.add(vehicle.id);
+  }
   const mapIds = new Set<string>();
   for (const map of project.maps) {
     if (mapIds.has(map.id)) {

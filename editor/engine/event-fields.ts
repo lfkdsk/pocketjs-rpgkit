@@ -70,6 +70,7 @@ const VAR_MODES = [
   "sub:variable", "mul:variable", "div:variable", "mod:variable", "steps",
 ] as const;
 const IDENTIFIER = /^[A-Za-z0-9_.-]+$/;
+const PROJECT_ID = /^[A-Za-z0-9_-]+$/;
 const SOUND_ID = /^[a-z0-9_-]+$/;
 const EXTENSION_CALL = /^[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)+$/;
 const OMIT = "(unset)";
@@ -419,6 +420,11 @@ export function conditionFields(
         field(p("op"), "OP", condition.op, "enum", [">=", "<="]),
         field(p("seconds"), "SECONDS", condition.seconds, "number"),
       ];
+    case "vehicle":
+      return [
+        resourceField(p("id"), "VEHICLE", condition.id, resources.vehicles, "Project vehicles"),
+        field(p("negate"), "NEGATE", condition.negate ?? false, "boolean", BOOLS),
+      ];
     case "ext":
       return [
         resourceField(p("call"), "CALL", condition.call, resources.extensionCalls, "Authored extension calls"),
@@ -494,6 +500,24 @@ export function commandFields(
         resourceField("map", "MAP", operand(command.map), resources.maps, "Project maps"), field("x", "X", operand(command.x)),
         field("y", "Y", operand(command.y)), field("dir", "DIR", command.dir ? operand(command.dir) : "keep"),
         field("fade", "FADE", command.fade ?? "", "number"),
+      ];
+    case "followers":
+      return [field("visible", "VISIBLE", command.visible, "boolean", BOOLS)];
+    case "gatherFollowers":
+      return [];
+    case "vehicle":
+      return [field("action", "ACTION", command.action, "enum", ["toggle"])];
+    case "setVehicleLocation":
+      return [
+        resourceField("id", "VEHICLE", command.id, resources.vehicles, "Project vehicles"),
+        resourceField("map", "MAP", operand(command.map), resources.maps, "Project maps"),
+        field("x", "X", operand(command.x)),
+        field("y", "Y", operand(command.y)),
+      ];
+    case "setVehicleImage":
+      return [
+        resourceField("id", "VEHICLE", command.id, resources.vehicles, "Project vehicles"),
+        resourceField("sprite", "SPRITE", command.sprite, resources.sprites, "Project sprites"),
       ];
     case "moveRoute":
       return [
@@ -866,6 +890,15 @@ function editConditionUnchecked(condition: Condition, key: string, raw: string):
       const value = finite(raw, "timer seconds", 0);
       return value.ok ? good({ ...condition, seconds: value.value }) : value;
     }
+  } else if (condition.kind === "vehicle") {
+    if (key === "id") {
+      const value = identifier(raw, "vehicle id", PROJECT_ID);
+      return value.ok ? good({ ...condition, id: value.value }) : value;
+    }
+    if (key === "negate") {
+      const value = bool(raw);
+      return value === null ? bad("negate must be true or false") : good({ ...condition, negate: value });
+    }
   } else if (condition.kind === "ext") {
     if (key === "call") {
       const value = identifier(raw, "extension call", EXTENSION_CALL);
@@ -1091,6 +1124,45 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       if (key === "fade") {
         if (raw.trim() === "") { const { fade: _, ...rest } = command; return good(rest); }
         const value = finite(raw, "fade", 0, 2); return value.ok ? good({ ...command, fade: value.value }) : value;
+      }
+      break;
+    }
+    case "followers": {
+      if (key === "visible") {
+        const value = bool(raw);
+        return value === null ? bad("visible must be true or false") : good({ ...command, visible: value });
+      }
+      break;
+    }
+    case "vehicle": {
+      if (key === "action") {
+        const value = enumValue(raw, ["toggle"] as const, "vehicle action");
+        return value.ok ? good({ ...command, action: value.value }) : value;
+      }
+      break;
+    }
+    case "setVehicleLocation": {
+      if (key === "id") {
+        const value = identifier(raw, "vehicle id", PROJECT_ID);
+        return value.ok ? good({ ...command, id: value.value }) : value;
+      }
+      if (key === "map") {
+        const value = parseOperand(raw, "map", false);
+        return value.ok ? good({ ...command, map: value.value as TransferMap }) : value;
+      }
+      if (key === "x" || key === "y") {
+        const value = parseOperand(raw, key, true);
+        return value.ok ? good({ ...command, [key]: value.value as TransferCoordinate }) : value;
+      }
+      break;
+    }
+    case "setVehicleImage": {
+      if (key === "id") {
+        const value = identifier(raw, "vehicle id", PROJECT_ID);
+        return value.ok ? good({ ...command, id: value.value }) : value;
+      }
+      if (key === "sprite") {
+        return raw.length > 0 ? good({ ...command, sprite: raw }) : bad("sprite is required");
       }
       break;
     }
@@ -1770,6 +1842,7 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
     case "saveBgm":
     case "replayBgm":
     case "loop":
+    case "gatherFollowers":
     case "break": break;
   }
   return bad(`field ${key} is not editable for ${command.op}`);

@@ -289,6 +289,13 @@ interface Scope {
 
 const ROOT_SCOPE: Scope = { loop: false, gold: 0, items: new Map() };
 
+/** RPG Maker's vehicle enum is stable across MV/MZ and System.json. */
+const VEHICLE_IDS = ["boat", "ship", "airship"] as const;
+
+function vehicleId(value: unknown): typeof VEHICLE_IDS[number] | null {
+  return VEHICLE_IDS[int(value, -1)] ?? null;
+}
+
 function makeState(ctx: EventContext, trigger: OwnerTrigger, pageSpeed?: number): State {
   return {
     ctx,
@@ -622,12 +629,17 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       return [{ op: "switch", id: partySwitchId(int(p[0])), value: int(p[1]) === 0 }];
     case 201:
       return emitTransfer(p, st);
+    case 202:
+      return emitSetVehicleLocation(p, st);
     case 204:
       return emitScrollMap(p, st);
     case 203:
       return emitPlace(p, st);
     case 205:
       return emitMoveRoute(p, st);
+    case 206:
+      rec(st, 206, "Native");
+      return [{ op: "vehicle", action: "toggle" }];
     case 211:
       // Change Transparency: parameter 0 is ON (transparent).
       rec(st, 211, "Native");
@@ -639,6 +651,12 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
     case 214:
       rec(st, 214, "Native");
       return st.eventless ? [] : [{ op: "erase" }];
+    case 216:
+      rec(st, 216, "Native");
+      return [{ op: "followers", visible: int(p[0]) === 0 }];
+    case 217:
+      rec(st, 217, "Native");
+      return [{ op: "gatherFollowers" }];
     case 221:
     case 222:
       // Fadeout/Fadein Screen wait for their own fade.
@@ -767,6 +785,20 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       const clipped = name.slice(0, 24);
       rec(st, 320, clipped === name ? "Native" : "Degraded", clipped === name ? undefined : "player name truncated to 24 characters");
       return [{ op: "changeName", name: clipped }];
+    }
+    case 323: {
+      const id = vehicleId(p[0]);
+      if (!id) {
+        rec(st, 323, "Dropped", "unknown vehicle");
+        return [];
+      }
+      const sprite = ctx.sprite({ characterName: String(p[1] ?? ""), characterIndex: int(p[2]), tileId: 0 });
+      if (!sprite) {
+        rec(st, 323, "Dropped", "vehicle image is blank");
+        return [];
+      }
+      rec(st, 323, "Native");
+      return [{ op: "setVehicleImage", id, sprite }];
     }
     case 351:
       rec(st, 351, "Native");
@@ -1074,8 +1106,10 @@ function convertCondition(p: readonly unknown[], st: State): CondResult {
       r.placeholder = placeholderText(st, "[Script condition not ported:", String(p[1] ?? ""));
       return r;
     }
-    case 13:
-      return unknown("Degraded", "vehicles not modelled");
+    case 13: {
+      const id = vehicleId(p[1]);
+      return id ? ok({ kind: "vehicle", id }) : unknown("Dropped", "unknown vehicle");
+    }
     default:
       return unknown("Dropped", "unknown condition type");
   }
@@ -1506,6 +1540,51 @@ function emitTransfer(p: readonly unknown[], st: State): Command[] {
     }];
   };
   rec(st, 201, reasons.length ? "Degraded" : "Native", reasons[0]);
+  return build(0, entries.length - 1);
+}
+
+/** Set Vehicle Location. Variable mode stores an RM numeric map id, whereas
+ * the kit's map operand names a string id, so its leaves mirror Transfer
+ * Player's imported-map search tree. */
+function emitSetVehicleLocation(p: readonly unknown[], st: State): Command[] {
+  const id = vehicleId(p[0]);
+  if (!id) {
+    rec(st, 202, "Dropped", "unknown vehicle");
+    return [];
+  }
+  if (int(p[1]) === 0) {
+    const map = st.ctx.maps.get(int(p[2]));
+    if (!map) {
+      rec(st, 202, "Dropped", "destination map not imported");
+      return [];
+    }
+    rec(st, 202, "Native");
+    return [{ op: "setVehicleLocation", id, map, x: Math.max(0, int(p[3])), y: Math.max(0, int(p[4])) }];
+  }
+  const entries = [...st.ctx.maps].sort((a, b) => a[0] - b[0]);
+  if (entries.length === 0) {
+    rec(st, 202, "Dropped", "no imported maps");
+    return [];
+  }
+  const mapVariable = variableId(int(p[2]));
+  const x = { variable: variableId(int(p[3])) };
+  const y = { variable: variableId(int(p[4])) };
+  const leaf = ([rm, map]: [number, string]): Command => ({
+    op: "if",
+    if: { kind: "variable", id: mapVariable, op: "==", value: rm },
+    then: [{ op: "setVehicleLocation", id, map, x, y }],
+  });
+  const build = (lo: number, hi: number): Command[] => {
+    if (hi - lo < 3) return entries.slice(lo, hi + 1).map(leaf);
+    const mid = (lo + hi) >> 1;
+    return [{
+      op: "if",
+      if: { kind: "variable", id: mapVariable, op: "<=", value: entries[mid]![0] },
+      then: build(lo, mid),
+      else: build(mid + 1, hi),
+    }];
+  };
+  rec(st, 202, "Native");
   return build(0, entries.length - 1);
 }
 

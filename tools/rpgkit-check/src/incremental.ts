@@ -33,7 +33,7 @@ import { loadShard, loadShellHeader, realShardPath, stubMap, type ShellHeader } 
 import type { CheckReport, Finding, FindingLocation } from "./finding.ts";
 
 /** Bump when lintMap's finding semantics change, so old caches re-lint. */
-const LINT_VERSION = 1;
+const LINT_VERSION = 2;
 
 const CACHE_FILE = ".rpgkit-check-lint.json";
 
@@ -262,7 +262,12 @@ export async function lintShellIncremental(
   const lintAll: Finding[] = [];
   const lateLoadFindings: Finding[] = [];
 
-  ctx.findings.push(...shellFindings);
+  // Project-global structural checks (currently duplicate vehicle ids) do
+  // not belong to a map shard, so recompute them from the shell every run.
+  ctx.findings.push(...shellFindings, ...structuralFindings({
+    ...scopedProject,
+    maps: [],
+  }));
 
   for (let index = 0; index < shell.mapIndex.length; index++) {
     const meta = shell.mapIndex[index]!;

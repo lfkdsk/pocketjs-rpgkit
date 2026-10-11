@@ -738,6 +738,122 @@ describe("rpgkit-check lint: missing references", () => {
   });
 });
 
+describe("rpgkit-check lint: followers and vehicles", () => {
+  test("accepts configured travel references and all five commands", () => {
+    const p = cleanProject();
+    p.sprites!["boat-alt"] = { kind: "image", src: "boat-alt.png" };
+    p.followers = {
+      enabled: true,
+      members: [{ id: "friend", sprite: "npc", activeSwitch: "s1" }],
+    };
+    p.vehicles = [{
+      id: "boat",
+      kind: "boat",
+      sprite: "npc",
+      start: { map: "m1", x: 0, y: 0, dir: "down" },
+    }];
+    p.maps[0]!.events![0]!.pages[0]!.commands.push(
+      { op: "if", if: { kind: "vehicle", id: "boat" }, then: [] },
+      { op: "followers", visible: false },
+      { op: "gatherFollowers" },
+      { op: "vehicle", action: "toggle" },
+      { op: "setVehicleLocation", id: "boat", map: "m1", x: 1, y: 2 },
+      { op: "setVehicleImage", id: "boat", sprite: "boat-alt" },
+    );
+    expect(lint(p).findings).toEqual([]);
+  });
+
+  test("reports missing vehicle, map and sprite references at their sources", () => {
+    const p = cleanProject();
+    p.followers = {
+      enabled: true,
+      members: [{ id: "friend", sprite: "missing-follower", activeSwitch: "party.friend" }],
+    };
+    p.vehicles = [{
+      id: "boat",
+      kind: "boat",
+      sprite: "missing-boat",
+      start: { map: "missing-start", x: 0, y: 0, dir: "down" },
+    }];
+    p.maps[0]!.events![0]!.pages[0]!.commands.push(
+      { op: "if", if: { kind: "vehicle", id: "ghost" }, then: [] },
+      {
+        op: "setVehicleLocation",
+        id: "ghost",
+        map: "missing-target",
+        x: { variable: "vehicle.x" },
+        y: { variable: "vehicle.y" },
+      },
+      { op: "setVehicleImage", id: "ghost", sprite: "missing-image" },
+    );
+    const report = lint(p);
+    expect(findingsOf(report, "lint/vehicle-missing")).toHaveLength(3);
+    expect(findingsOf(report, "lint/vehicle-location-target-missing")).toHaveLength(2);
+    expect(findingsOf(report, "lint/sprite-missing")).toHaveLength(3);
+    expect(findingsOf(report, "lint/switch-read-never-set")).toHaveLength(1);
+    expect(findingsOf(report, "lint/variable-read-never-set")).toHaveLength(2);
+  });
+
+  test("checks literal axes while preserving dynamic vehicle-location operands", () => {
+    const p = cleanProject();
+    p.vehicles = [{
+      id: "boat",
+      kind: "boat",
+      sprite: "npc",
+      start: { map: "m1", x: 0, y: 0, dir: "down" },
+    }];
+    p.maps[0]!.events![0]!.pages[0]!.commands.push({
+      op: "setVehicleLocation",
+      id: "boat",
+      map: { variable: "vehicle.map" },
+      x: 99,
+      y: { variable: "vehicle.y" },
+    });
+    const report = lint(p);
+    // A dynamic map is not narrowed to any authored map, so the literal x
+    // cannot be called out of bounds. Both variable operands remain reads.
+    expect(findingsOf(report, "lint/vehicle-location-target-missing")).toEqual([]);
+    expect(findingsOf(report, "lint/variable-read-never-set")).toHaveLength(2);
+
+    const command = p.maps[0]!.events![0]!.pages[0]!.commands.at(-1)!;
+    if (command.op !== "setVehicleLocation") throw new Error("fixture command changed");
+    command.map = "m1";
+    expectError(lint(p), "lint/vehicle-location-target-missing");
+  });
+
+  test("reports duplicate persistent vehicle ids", () => {
+    const p = cleanProject();
+    p.vehicles = [
+      { id: "ride", kind: "boat", sprite: "npc", start: { map: "m1", x: 0, y: 0, dir: "down" } },
+      { id: "ride", kind: "ship", sprite: "npc", start: { map: "m1", x: 1, y: 0, dir: "down" } },
+    ];
+    expectError(lint(p), "lint/vehicle-id-duplicate");
+  });
+
+  test("keeps vehicle state unknown to contradiction and shadow proofs", () => {
+    const p = cleanProject();
+    p.vehicles = [{
+      id: "boat",
+      kind: "boat",
+      sprite: "npc",
+      start: { map: "m1", x: 0, y: 0, dir: "down" },
+    }];
+    const event = p.maps[0]!.events![0]!;
+    event.pages[0]!.condition = { all: [
+      { kind: "vehicle", id: "boat" },
+      { kind: "vehicle", id: "boat", negate: true },
+    ] };
+    event.pages.push({
+      trigger: "action",
+      condition: { all: [{ kind: "vehicle", id: "boat" }] },
+      commands: [],
+    });
+    const report = lint(p);
+    expect(findingsOf(report, "lint/page-condition-contradiction")).toEqual([]);
+    expect(findingsOf(report, "lint/page-shadowed")).toEqual([]);
+  });
+});
+
 describe("rpgkit-check lint: declared audio references", () => {
   test("an omitted audio table leaves state-only audio references valid", () => {
     const p = cleanProject();

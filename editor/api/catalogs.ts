@@ -264,6 +264,14 @@ function addCommandReferences(
         variableOperand(index, command.y, address, "y");
         variableOperand(index, command.dir, address, "dir");
         break;
+      case "setVehicleLocation":
+        variableOperand(index, command.map, address, "map");
+        variableOperand(index, command.x, address, "x");
+        variableOperand(index, command.y, address, "y");
+        break;
+      case "setVehicleImage":
+        addReference(index, "sprite", command.sprite, address, "sprite");
+        break;
       case "showPicture":
       case "movePicture":
         variableOperand(index, command.x, address, "x");
@@ -325,6 +333,16 @@ function addCommandReferences(
 export function scanCatalogReferences(project: Project): ReferenceIndex {
   const index = emptyReferenceIndex();
   project.items.forEach((item, at) => addTileReference(index, item.sprite, catalogAddress("item", item.id), `items[${at}].sprite`));
+  project.followers?.members.forEach((follower, at) => {
+    const address = `follower:${encoded(follower.id)}`;
+    addReference(index, "sprite", follower.sprite, address, `followers.members[${at}].sprite`);
+    if (follower.activeSwitch !== undefined) {
+      addReference(index, "switch", follower.activeSwitch, address, `followers.members[${at}].activeSwitch`, "read");
+    }
+  });
+  (project.vehicles ?? []).forEach((vehicle, at) => {
+    addReference(index, "sprite", vehicle.sprite, `vehicle:${encoded(vehicle.id)}`, `vehicles[${at}].sprite`);
+  });
   (project.actors ?? []).forEach((actor, at) => {
     if (actor.sprite !== undefined) addReference(index, "sprite", actor.sprite, `actor:${encoded(actor.id)}`, `actors[${at}].sprite`);
   });

@@ -18,6 +18,9 @@ export const RM_FLAG = {
   BUSH: 0x40,
   COUNTER: 0x80,
   DAMAGE: 0x100,
+  BOAT: 0x200,
+  SHIP: 0x400,
+  AIRSHIP: 0x800,
 } as const;
 
 /** Terrain tag 0..7 of a flag word (MV Game_Map.terrainTag reads
@@ -33,8 +36,10 @@ const DIR_BITS: readonly (readonly [Dir, number])[] = [
 
 /** MV Game_Map.checkPassage for one bit over a cell's tiles, given bottom
  *  to top (z0..z3): the topmost tile that is neither empty nor a star
- *  decides (bit clear passable, bit set blocked); a cell with no deciding
- *  tile is impassable.
+ *  decides (all queried bits clear = pass, all queried bits set = block).
+ *  A partial match continues to the next tile, which matters for MV's
+ *  combined 0x0f airship-landing query. A cell with no deciding tile is
+ *  impassable.
  *
  *  MV skips nothing but stars; tile id 0 is skipped here because the
  *  editor pins B's first tile (id 0, the empty cell) as a star, so both
@@ -46,7 +51,9 @@ export function passes(stackBottomToTop: readonly number[], flags: readonly numb
     if (id === 0) continue;
     const flag = flags[id] ?? 0;
     if ((flag & RM_FLAG.STAR) !== 0) continue;
-    return (flag & bit) === 0;
+    const masked = flag & bit;
+    if (masked === 0) return true;
+    if (masked === bit) return false;
   }
   return false;
 }

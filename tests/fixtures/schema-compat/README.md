@@ -6,8 +6,8 @@ the RPG Kit revision of that generation; `maps/` holds the map entries, which
 are byte-identical in every generation. `tests/schema-compat.test.ts` opens
 each shell and restores each save with the current runtime.
 
-The current `614dfaaa` generation directly supersedes the published
-`9435a3b7` generation. The `ff111378`, `ad6d3cd1` and `39d5c151` identities
+The current `6c9b447c` generation directly supersedes the published
+`614dfaaa` generation. The `ff111378`, `ad6d3cd1` and `39d5c151` identities
 existed only while additive schema work was in progress, so they are
 deliberately absent from both the compatibility list and these fixtures.
 
@@ -77,6 +77,7 @@ continuation must match.
 
 | Directory | Written by | Loads | Counterexample |
 | --- | --- | --- | --- |
+| `gen-614dfaaa` | `56996733` | yes | |
 | `gen-9435a3b7` | `6a8688e7` | yes | |
 | `gen-138048a5` | `d24f8cb8` | yes | |
 | `gen-5eecc57a` | `0fcb5f01` | yes | |

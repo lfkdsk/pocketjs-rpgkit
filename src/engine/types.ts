@@ -34,6 +34,43 @@ export type TransferMap = string | VariableRef;
 export type TransferCoordinate = number | VariableRef;
 export type TransferDirection = Dir | "keep" | VariableRef;
 
+/** Built-in traversal classes modelled after RPG Maker's three vehicles. */
+export type VehicleKind = "boat" | "ship" | "airship";
+
+/** One character behind the leader. `activeSwitch` makes party membership
+ * data-driven without imposing an actor/party subsystem on the runtime. */
+export interface FollowerDef {
+  id: string;
+  sprite: string;
+  activeSwitch?: string;
+  /** Value required from activeSwitch; defaults to true. */
+  activeValue?: boolean;
+}
+
+/** Optional project-wide follower chain. Omission retains the original
+ * single-player reducer shape and hot path. */
+export interface FollowersDef {
+  enabled: boolean;
+  members: FollowerDef[];
+}
+
+/** Initial position and art for one persistent vehicle. */
+export interface VehicleDef {
+  id: string;
+  kind: VehicleKind;
+  sprite: string;
+  start: { map: string; x: number; y: number; dir: Dir };
+}
+
+/** Map-local vehicle passage projected to row-major cell indices. Boat and
+ * ship lists are cells those vehicles may enter; airshipLand is where an
+ * airborne vehicle may land. Airships may fly over every in-bounds cell. */
+export interface VehiclePassageDef {
+  boat?: number[];
+  ship?: number[];
+  airshipLand?: number[];
+}
+
 /** Integer RGBA colour used by deterministic full-screen effects. Alpha is
  * the layer opacity: 0 is transparent and 255 is opaque. Keeping channels
  * numeric avoids host-specific CSS colour parsing in reducer state. */
@@ -256,6 +293,8 @@ export type Condition =
   /** RPG Maker's timer branch. A stopped timer never matches; a running
    * timer compares its whole remaining seconds (floor(referenceTicks / 60)). */
   | { kind: "timer"; op: ">=" | "<="; seconds: number }
+  /** True while the player rides the named vehicle. */
+  | { kind: "vehicle"; id: string; negate?: boolean }
   /** Game-owned pure condition handler, registered on createSession(). */
   | { kind: "ext"; call: string; args: JsonValue };
 
@@ -397,6 +436,18 @@ export type Command =
     }
   | { op: "moveRoute"; target: RouteTarget; wait?: boolean; route: MoveRoute }
   | { op: "moveControl"; target: RouteTarget; control: MoveControl }
+  /** Show or hide the configured follower chain without discarding its
+   * saved trail. RPG Maker command 216 maps directly to this command. */
+  | { op: "followers"; visible: boolean }
+  /** Bring every active follower to the leader and reset its trail. */
+  | { op: "gatherFollowers" }
+  /** Board a reachable vehicle, or leave the currently ridden one. */
+  | { op: "vehicle"; action: "toggle" }
+  /** Move a persistent vehicle. Operands may read live variables, matching
+   * RPG Maker's Set Vehicle Location command. */
+  | { op: "setVehicleLocation"; id: string; map: TransferMap; x: TransferCoordinate; y: TransferCoordinate }
+  /** Replace a vehicle's walking sprite for the remainder of the save. */
+  | { op: "setVehicleImage"; id: string; sprite: string }
   /** Change a walking character's image/opacity/visibility. null resets one
    *  field. Event changes last until that event changes page; player changes
    *  cross maps. `saveDefault` makes a player sprite the reset baseline. */
@@ -812,6 +863,9 @@ export interface MapDef {
   upper?: [number, TileId][];
   /** Per-cell passage overrides: [index, "pass"|"block"]. */
   passage?: [number, "pass" | "block"][];
+  /** Optional per-vehicle passage cells. Omission leaves boat/ship unable
+   * to move on this map and lets airships land on ordinary walkable cells. */
+  vehiclePassage?: VehiclePassageDef;
   /** Optional map backdrop and its reference-tick scroll configuration. */
   parallax?: ParallaxDef;
   /** Sparse RPG Maker region ids: [row-major index, region id]. Only cells
@@ -1203,6 +1257,11 @@ export interface Project {
   start: { map: string; x: number; y: number; dir: Dir };
   /** Runtime options; see ProjectSystem. */
   system?: ProjectSystem;
+  /** Optional party/member trail. A project without it pays no reducer or
+   * rendering cost and keeps the historical single-player behavior. */
+  followers?: FollowersDef;
+  /** Persistent vehicle catalog. Empty/absent keeps the original mover. */
+  vehicles?: VehicleDef[];
   /** Map-transfer timeline identity. Missing means legacy-transfer. */
   worldTraversal?: WorldTraversalMode;
   initialGold?: number;

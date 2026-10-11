@@ -62,6 +62,11 @@ function projectWith(commands: Command[], page: Partial<Page> = {}): Project {
 
 const NEWER_COMMAND_FIELDS = [
   ["moveControl", ["target", "control.kind"]],
+  ["followers", ["visible"]],
+  ["gatherFollowers", []],
+  ["vehicle", ["action"]],
+  ["setVehicleLocation", ["id", "map", "x", "y"]],
+  ["setVehicleImage", ["id", "sprite"]],
   ["appearance", ["target", "sprite", "opacity", "visible", "saveDefault"]],
   ["layer", ["layer", "visible", "variant"]],
   ["tileProperty", ["x", "y", "passage", "enter", "exit"]],
@@ -114,8 +119,8 @@ const NEWER_COMMAND_FIELDS = [
 ] as const;
 
 describe("event inspector command fields", () => {
-  test("describes every owned command, including all 50 newer operations", () => {
-    expect(NEWER_COMMAND_FIELDS).toHaveLength(50);
+  test("describes every owned command, including all 55 newer operations", () => {
+    expect(NEWER_COMMAND_FIELDS).toHaveLength(55);
     for (const [op, keys] of NEWER_COMMAND_FIELDS) {
       const command = defaultCommand(op);
       expect(commandFields(command).map((entry) => entry.key), op).toEqual([...keys]);
@@ -212,6 +217,10 @@ describe("event inspector command fields", () => {
       expected: Record<string, unknown>;
     }> = [
       { op: "moveControl", field: "control.kind", raw: "speed", expected: { control: { kind: "speed", value: 4 } } },
+      { op: "followers", field: "visible", raw: "false", expected: { visible: false } },
+      { op: "vehicle", field: "action", raw: "toggle", expected: { action: "toggle" } },
+      { op: "setVehicleLocation", field: "x", raw: "$vehicle-x", expected: { x: { variable: "vehicle-x" } } },
+      { op: "setVehicleImage", field: "sprite", raw: "hero", expected: { sprite: "hero" } },
       { op: "appearance", field: "opacity", raw: "128", expected: { opacity: 128 } },
       { op: "layer", field: "variant", raw: "mist", expected: { variant: "mist" } },
       { op: "tileProperty", field: "enter", raw: "left,up", expected: { enter: ["left", "up"] } },
@@ -628,6 +637,7 @@ describe("event inspector page and condition fields", () => {
       ["tileProperty", ["x", "y", "passage", "enter", "exit"]],
       ["worldIdle", ["negate"]],
       ["timer", ["op", "seconds"]],
+      ["vehicle", ["id", "negate"]],
       ["ext", ["call", "args"]],
       ["region", ["x", "y", "id"]],
     ] as const;
@@ -648,8 +658,9 @@ describe("event inspector page and condition fields", () => {
       [2, "enter", "left,up"],
       [3, "negate", "true"],
       [4, "op", "<="],
-      [5, "args", '{"chapter":2}'],
-      [6, "id", "42"],
+      [5, "id", "skiff"],
+      [6, "args", '{"chapter":2}'],
+      [7, "id", "42"],
     ] as const;
     for (const [index, fieldName, raw] of edits) {
       const result = editPageConditionField(page, { kind: "all", index }, fieldName, raw);
@@ -662,6 +673,7 @@ describe("event inspector page and condition fields", () => {
       { kind: "tileProperty", x: 0, y: 0, passage: null, enter: ["left", "up"] },
       { kind: "worldIdle", negate: true },
       { kind: "timer", op: "<=", seconds: 0 },
+      { kind: "vehicle", id: "skiff", negate: false },
       { kind: "ext", call: "game.condition", args: { chapter: 2 } },
       { kind: "region", x: 0, y: 0, id: 42 },
     ]);
@@ -705,6 +717,7 @@ describe("event inspector page and condition fields", () => {
       { name: "world boolean", condition: defaultCondition("worldIdle"), field: "negate", raw: "maybe" },
       { name: "timer operator", condition: defaultCondition("timer"), field: "op", raw: "==" },
       { name: "timer seconds", condition: defaultCondition("timer"), field: "seconds", raw: "-1" },
+      { name: "vehicle id", condition: defaultCondition("vehicle"), field: "id", raw: "bad.id" },
       { name: "extension call", condition: defaultCondition("ext"), field: "call", raw: "unnamespaced" },
       { name: "extension JSON", condition: defaultCondition("ext"), field: "args", raw: "{" },
     ];
@@ -767,6 +780,7 @@ describe("event editor resource catalogs", () => {
       { op: "screenBackdrop", layer: "cutscene", variant: "night" },
       { op: "showPicture", id: 1, layer: "pictures", variant: "portrait", x: 0, y: 0 },
       { op: "mapAnim", id: "spark-instance", anim: "spark", x: 0, y: 0 },
+      { op: "setVehicleImage", id: "skiff", sprite: "hero" },
       { op: "ext", call: "quest.run", args: null },
       { op: "extChoice", call: "party.pick", args: null, prompt: "Choose" },
       { op: "if", if: { kind: "ext", call: "quest.ready", args: null }, then: [] },
@@ -777,6 +791,7 @@ describe("event editor resource catalogs", () => {
       condition: { all: [{ kind: "ext", call: "page.ready", args: null }] },
     });
     project.commonEvents![0]!.commands = [{ op: "ext", call: "common.tick", args: null }];
+    project.vehicles = [{ id: "skiff", kind: "boat", sprite: "npc", start: { map: "map", x: 0, y: 0, dir: "down" } }];
     project.maps[0]!.events!.push({ id: "guard", x: 1, y: 1, pages: [{ trigger: "action", commands: [] }] });
     project.maps.push({
       id: "z-map", name: "Other", width: 1, height: 1, sheets: ["town"], ground: ["town.0"],
@@ -789,6 +804,7 @@ describe("event editor resource catalogs", () => {
       maps: ["map", "z-map"],
       items: ["item", "potion"],
       sprites: ["hero", "npc"],
+      vehicles: ["skiff"],
       animations: ["animation", "spark"],
       parallaxes: [],
       audio: ["audio", "door", "field", "rain", "sound", "victory"],
@@ -805,6 +821,8 @@ describe("event editor resource catalogs", () => {
       { command: defaultCommand("transfer"), key: "map", options: resources.maps },
       { command: defaultCommand("item"), key: "item", options: resources.items },
       { command: defaultCommand("appearance"), key: "sprite", options: resources.sprites },
+      { command: { op: "setVehicleImage", id: "skiff", sprite: "hero" }, key: "id", options: resources.vehicles },
+      { command: { op: "setVehicleImage", id: "skiff", sprite: "hero" }, key: "sprite", options: resources.sprites },
       { command: { op: "layer", layer: "weather", variant: "rain" }, key: "layer", options: resources.layers },
       { command: { op: "layer", layer: "weather", variant: "rain" }, key: "variant", options: ["rain"] },
       { command: defaultCommand("screenTint"), key: "layer", options: resources.layers },
@@ -821,6 +839,7 @@ describe("event editor resource catalogs", () => {
       expect(descriptor?.options, `${entry.command.op}.${entry.key}`).toEqual(entry.options);
       expect(descriptor?.hint?.length, `${entry.command.op}.${entry.key}`).toBeGreaterThan(0);
     }
+    expect(conditionFields({ kind: "vehicle", id: "skiff" }, "", resources)[0]!.options).toEqual(["skiff"]);
 
     const conditionCases: Array<{ condition: Condition; key: string; options: readonly string[] }> = [
       { condition: defaultCondition("item"), key: "id", options: resources.items },

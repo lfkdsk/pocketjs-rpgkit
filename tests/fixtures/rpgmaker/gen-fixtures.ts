@@ -39,6 +39,7 @@ import type {
   RmSystem,
   RmTileset,
   RmTroop,
+  RmVehicle,
 } from "../../../tools/rpgmaker-import/rm-types.ts";
 import {
   Canvas,
@@ -411,7 +412,16 @@ const mapFile = (id: number): string => `Map${String(id).padStart(3, "0")}.json`
  *  down 0x01, left 0x02, right 0x04, up 0x08; 0x10 star (drawn above
  *  characters, no effect on passage); 0x20 ladder; 0x40 bush; 0x80 counter
  *  (and the table look on A2); terrain tag in bits 12..15. */
-const F = { block: 0x0f, down: 0x01, star: 0x10, bush: 0x40, counter: 0x80 } as const;
+const F = {
+  block: 0x0f,
+  down: 0x01,
+  star: 0x10,
+  bush: 0x40,
+  counter: 0x80,
+  boat: 0x200,
+  ship: 0x400,
+  airship: 0x800,
+} as const;
 
 interface FlagSpec {
   /** By autotile kind (all 48 shape ids get the flag). */
@@ -423,15 +433,20 @@ interface FlagSpec {
 /** The editor's flag table: A1, A3, A4 default to impassable, A2, A5 and
  *  B..E to passable, B id 0 (the empty tile) to star. */
 function tilesetFlags(spec: FlagSpec): number[] {
-  const flags = new Array<number>(8192).fill(0);
+  // Ordinary ground blocks water vehicles but permits airship landing.
+  // A1 water blocks walking while leaving boat/ship bits clear. Roof/wall
+  // autotiles block all three vehicle kinds as well as ordinary walking.
+  const flags = new Array<number>(8192).fill(F.boat | F.ship);
   flags[0] = F.star;
   for (let kind = 0; kind < 128; kind++) {
+    const isA1 = kind < 16;
     const isA2 = kind >= 16 && kind < 48;
-    const value = spec.kinds?.[kind] ?? (isA2 ? 0 : F.block);
+    const vehicle = isA1 ? 0 : isA2 ? F.boat | F.ship : F.boat | F.ship | F.airship;
+    const value = vehicle | (spec.kinds?.[kind] ?? (isA2 ? 0 : F.block));
     for (let shape = 0; shape < 48; shape++) flags[makeAutotileId(kind, shape)] = value;
   }
-  for (const [i, v] of Object.entries(spec.a5 ?? {})) flags[a5(Number(i))] = v;
-  for (const [n, v] of Object.entries(spec.b ?? {})) flags[Number(n)] = v;
+  for (const [i, v] of Object.entries(spec.a5 ?? {})) flags[a5(Number(i))] = F.boat | F.ship | v;
+  for (const [n, v] of Object.entries(spec.b ?? {})) flags[Number(n)] = F.boat | F.ship | v;
   return flags;
 }
 
@@ -636,7 +651,7 @@ const TERMS = {
   params: ["Max HP", "Max MP", "Attack", "Defense", "M.Attack", "M.Defense", "Agility", "Luck", "Hit", "Evasion"],
 };
 
-const vehicle = { bgm: SILENT, characterIndex: 0, characterName: "", startMapId: 0, startX: 0, startY: 0 };
+const vehicle: RmVehicle = { bgm: SILENT, characterIndex: 0, characterName: "", startMapId: 0, startX: 0, startY: 0 };
 
 const names = (size: number, named: Record<number, string>): string[] =>
   Array.from({ length: size + 1 }, (_, i) => named[i] ?? "");
@@ -649,11 +664,13 @@ interface SystemSpec {
   variables: Record<number, string>;
   versionId: number;
   partyMembers: number[];
+  followers?: boolean;
+  vehicles?: Partial<Record<"boat" | "ship" | "airship", RmVehicle>>;
 }
 
 function system(s: SystemSpec): RmSystem {
   const common: Record<string, unknown> = {
-    airship: vehicle,
+    airship: s.vehicles?.airship ?? vehicle,
     armorTypes: ["", "Clothing"],
     attackMotions: [
       { type: 0, weaponImageId: 0 },
@@ -665,7 +682,7 @@ function system(s: SystemSpec): RmSystem {
     battleback2Name: "",
     battlerHue: 0,
     battlerName: "",
-    boat: vehicle,
+    boat: s.vehicles?.boat ?? vehicle,
     currencyUnit: "G",
     defeatMe: SILENT,
     editMapId: s.start[0],
@@ -680,12 +697,12 @@ function system(s: SystemSpec): RmSystem {
     optDrawTitle: true,
     optExtraExp: false,
     optFloorDeath: false,
-    optFollowers: true,
+    optFollowers: s.followers ?? true,
     optSideView: false,
     optSlipDeath: false,
     optTransparent: false,
     partyMembers: s.partyMembers,
-    ship: vehicle,
+    ship: s.vehicles?.ship ?? vehicle,
     skillTypes: ["", "Craft"],
     sounds: Array.from({ length: 24 }, () => SILENT),
     startMapId: s.start[0],
@@ -1435,6 +1452,10 @@ function hollowData(files: Files): void {
         },
         versionId: 41522093,
         partyMembers: [1],
+        vehicles: {
+          boat: { ...vehicle, characterName: "People", characterIndex: 2, startMapId: 1, startX: 3, startY: 11 },
+          airship: { ...vehicle, characterName: "People", characterIndex: 6, startMapId: 1, startX: 7, startY: 9 },
+        },
       }),
     ),
   );

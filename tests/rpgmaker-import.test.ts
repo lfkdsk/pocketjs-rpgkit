@@ -104,6 +104,35 @@ describe("rpgmaker-import: output", () => {
     }
   });
 
+  test("followers and placed vehicles project from System.json", async () => {
+    const source = loadRmProject(HOLLOW);
+    source.system.optFollowers = false;
+    source.system.boat = {
+      ...source.system.boat!, characterName: "People", characterIndex: 2,
+      startMapId: 1, startX: 3, startY: 11,
+    };
+    source.system.airship = {
+      ...source.system.airship!, characterName: "People", characterIndex: 6,
+      startMapId: 0, startX: 7, startY: 9,
+    };
+    const imported = await importRmProject(source);
+    expect(imported.project.followers).toEqual({
+      enabled: false,
+      members: [{ id: "actor002", sprite: "chr-people-4", activeSwitch: "party-actor002" }],
+    });
+    expect(imported.project.vehicles).toEqual([{
+      id: "boat", kind: "boat", sprite: "chr-people-2",
+      start: { map: "map001", x: 3, y: 11, dir: "left" },
+    }]);
+
+    source.system.partyMembers = [1, 2];
+    const withStartingFollower = await importRmProject(source);
+    expect(withStartingFollower.project.followers?.members[0]).toEqual({
+      id: "actor002", sprite: "chr-people-4",
+      activeSwitch: "party-out-actor002", activeValue: false,
+    });
+  });
+
   test("the RPG Maker region plane is copied into each map as sparse row-major cells", () => {
     expect(hollow.project.maps[0]!.regions).toEqual([
       [243, 1], [244, 1], [245, 1], [266, 1], [267, 1], [268, 1], [269, 1],
@@ -350,6 +379,36 @@ describe("rpgmaker-import: output", () => {
     expect(cave).toMatchObject({ trigger: "eventTouch", blocks: false });
   });
 
+  test("vehicle passage uses the boat, ship and airship landing bits", async () => {
+    const source = loadRmProject(HOLLOW);
+    const rmMap = source.maps.get(1)!;
+    const tileset = source.tilesets[rmMap.tilesetId]!;
+    for (let id = 0; id < tileset.flags.length; id++) tileset.flags[id] = (tileset.flags[id] ?? 0) | 0x600;
+    const pond = 11 * rmMap.width + 3;
+    const grass = 9 * rmMap.width + 7;
+    const fence = 6 * rmMap.width + 16;
+    const pondTile = rmMap.data[pond]!;
+    tileset.flags[pondTile] = (tileset.flags[pondTile] ?? 0) & ~0x600;
+
+    const imported = await importRmProject(source);
+    const passage = imported.project.maps[0]!.vehiclePassage!;
+    expect(passage.boat).toContain(pond);
+    expect(passage.ship).toContain(pond);
+    expect(passage.boat).not.toContain(grass);
+    expect(passage.ship).not.toContain(grass);
+    expect(passage.airshipLand).not.toContain(pond);
+    expect(passage.airshipLand).toContain(grass);
+    // A one-direction fence flag is not a complete 0x0f rejection; MV's
+    // check falls through to the walkable ground below it.
+    expect(passage.airshipLand).toContain(fence);
+
+    // Bit 0x800 separately forbids an otherwise walkable landing tile.
+    const grassTile = rmMap.data[grass]!;
+    tileset.flags[grassTile] = (tileset.flags[grassTile] ?? 0) | 0x800;
+    const noLand = await importRmProject(source);
+    expect(noLand.project.maps[0]!.vehiclePassage!.airshipLand).not.toContain(grass);
+  });
+
   test("the starting party member's switch is stored inverted", async () => {
     const r = await importRmProject(loadRmProject(HOLLOW));
     const ids = new Set<string>();
@@ -402,13 +461,14 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(101)!.disposition).toBe("Native");
     expect(by.get(112)!.disposition).toBe("Native");
     expect(by.get(113)!.disposition).toBe("Native");
-    for (const code of [103, 104, 124, 134, 135, 204, 212, 231, 232, 233, 234, 235, 251, 281, 284, 285, 351, 352, 353, 354]) {
+    for (const code of [103, 104, 124, 134, 135, 202, 204, 206, 212, 216, 217, 231, 232, 233, 234, 235, 251, 281, 284, 285, 323, 351, 352, 353, 354]) {
       expect(by.get(code)!.disposition).toBe("Native");
       expect(by.get(code)!.needsKit).toBe("");
     }
     expect(by.get(320)!.disposition).toBe("Native");
     expect(by.get(320)!.needsKit).toContain("actors other than actor 1");
     expect(by.get(111)!.needsKit).not.toContain("timer");
+    expect(by.get(111)!.needsKit).not.toContain("vehicles");
     expect(by.get(122)!.needsKit).not.toContain("timer");
     expect(by.get(118)!.disposition).toBe("Native");
     expect(by.get(119)!.disposition).toBe("Native");

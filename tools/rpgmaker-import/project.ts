@@ -28,6 +28,7 @@ import type {
   Sheet,
   SpriteDef,
   TileId,
+  VehicleDef,
 } from "../../src/engine/types.ts";
 import { cookMvAnimation, MV_ANIMATION_RATE, MvAnimationCookError } from "./animation.ts";
 import { Coverage } from "./coverage.ts";
@@ -35,8 +36,9 @@ import { TileAtlas, composeMap } from "./compose.ts";
 import { convertCommonEvent, convertPage, type EventContext } from "./events.ts";
 import { actorId, animationId, commonId, eventId, itemId, mapId, partySwitchId, slug } from "./ids.ts";
 import { rmParallaxSpeed, rmTileSize } from "./load.ts";
+import { passes, RM_FLAG } from "./passage.ts";
 import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
-import type { RmPageImage, RmProject } from "./rm-types.ts";
+import type { RmPageImage, RmProject, RmVehicle } from "./rm-types.ts";
 import { downscale, drawTile, loadTilesetImages, type TilesetImages } from "./tile-render.ts";
 
 export interface ImportOptions {
@@ -115,6 +117,31 @@ function sparseTileLayers(data: readonly number[], width: number, height: number
     }
   }
   return out;
+}
+
+/** Project MV/MZ's three vehicle passage checks onto row-major kit cells. */
+function vehiclePassage(
+  data: readonly number[],
+  width: number,
+  height: number,
+  flags: readonly number[],
+): NonNullable<MapDef["vehiclePassage"]> {
+  const plane = width * height;
+  const boat: number[] = [];
+  const ship: number[] = [];
+  const airshipLand: number[] = [];
+  for (let i = 0; i < plane; i++) {
+    const stack = [
+      data[0 * plane + i] ?? 0,
+      data[1 * plane + i] ?? 0,
+      data[2 * plane + i] ?? 0,
+      data[3 * plane + i] ?? 0,
+    ];
+    if (passes(stack, flags, RM_FLAG.BOAT)) boat.push(i);
+    if (passes(stack, flags, RM_FLAG.SHIP)) ship.push(i);
+    if (passes(stack, flags, RM_FLAG.AIRSHIP) && passes(stack, flags, 0x0f)) airshipLand.push(i);
+  }
+  return { boat, ship, airshipLand };
 }
 
 /** MV itypeId (1 regular, 2 key, 3 hidden A, 4 hidden B). Absent/other
@@ -359,6 +386,52 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     if (key) assets.player = key;
   }
 
+  const initialParty = new Set(rm.system.partyMembers ?? []);
+  const followerActors = [
+    ...(rm.system.partyMembers ?? []).slice(1).map((actor) => rm.actors[actor]),
+    ...rm.actors.filter((actor) => actor && !initialParty.has(actor.id)),
+  ].filter((actor, index, all) =>
+    !!actor?.characterName && all.findIndex((candidate) => candidate?.id === actor.id) === index
+  );
+  const followerMembers: NonNullable<Project["followers"]>["members"] = [];
+  for (const actor of followerActors.slice(0, 32)) {
+    if (!actor) continue;
+    const sprite = spriteFor({ characterName: actor.characterName, characterIndex: actor.characterIndex, tileId: 0 });
+    if (!sprite) continue;
+    const starting = initialParty.has(actor.id);
+    followerMembers.push({
+      id: `actor${String(actor.id).padStart(3, "0")}`,
+      sprite,
+      activeSwitch: starting
+        ? partySwitchId(actor.id).replace(/^party-/, "party-out-")
+        : partySwitchId(actor.id),
+      ...(starting ? { activeValue: false } : {}),
+    });
+  }
+  if (followerActors.length > 32) warnings.push(`followers: ${followerActors.length} actors have walking art; only the first 32 were imported`);
+
+  const vehicles: VehicleDef[] = [];
+  for (const [id, vehicle] of [
+    ["boat", rm.system.boat],
+    ["ship", rm.system.ship],
+    ["airship", rm.system.airship],
+  ] as const satisfies readonly (readonly [VehicleDef["kind"], RmVehicle | undefined])[]) {
+    if (!vehicle?.characterName || vehicle.startMapId === 0) continue;
+    const map = kitMaps.get(vehicle.startMapId);
+    if (!map) {
+      warnings.push(`${id}: start map ${vehicle.startMapId} was not imported; vehicle omitted`);
+      continue;
+    }
+    const sprite = spriteFor({ characterName: vehicle.characterName, characterIndex: vehicle.characterIndex, tileId: 0 });
+    if (!sprite) continue;
+    vehicles.push({
+      id,
+      kind: id,
+      sprite,
+      start: { map, x: Math.max(0, vehicle.startX), y: Math.max(0, vehicle.startY), dir: "left" },
+    });
+  }
+
   // --- maps ---------------------------------------------------------------
   const maps: MapDef[] = [];
   const mapIds = [...rm.maps.keys()].sort((a, b) => a - b);
@@ -370,8 +443,9 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       throw new Error(`rpgmaker-import: map ${rmId} is ${rmMap.width}x${rmMap.height}; the kit caps maps at 256x256`);
     }
     currentTilesetId = rmMap.tilesetId;
+    const tileset = rm.tilesets[rmMap.tilesetId]!;
     const { atlas, images: tsImages } = await atlasFor(rmMap.tilesetId);
-    const composed = composeMap(rmMap, rm.tilesets[rmMap.tilesetId]!, tsImages, atlas, cov);
+    const composed = composeMap(rmMap, tileset, tsImages, atlas, cov);
     const cellId = (cell: number | null): TileId => (cell === null ? null : `${atlas.sheetId}.${cell}`);
 
     const eventIds = new Map<number, string>();
@@ -430,6 +504,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       ...(regions.length > 0 ? { regions } : {}),
       ...(terrain.length > 0 ? { terrain } : {}),
       ...(tiles.length > 0 ? { tiles } : {}),
+      vehiclePassage: vehiclePassage(rmMap.data, rmMap.width, rmMap.height, tileset.flags),
       events,
     });
     const opened = [...bumpCells].sort((a, b) => a - b).filter((i) => {
@@ -635,6 +710,8 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       ...(containsStepRead({ events: maps.map((map) => map.events), commonEvents }) ? { stepCounter: true } : {}),
     },
     ...(leader?.name ? { playerName: leader.name } : {}),
+    ...(followerMembers.length > 0 ? { followers: { enabled: rm.system.optFollowers !== false, members: followerMembers } } : {}),
+    ...(vehicles.length > 0 ? { vehicles } : {}),
     sheets,
     items,
     ...(actors.length > 0 ? { actors } : {}),

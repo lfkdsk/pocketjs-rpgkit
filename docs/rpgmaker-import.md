@@ -131,9 +131,9 @@ In short:
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 60 of the 107 commands map natively, 3 run degraded, 4 become
+use of it: 65 of the 107 commands map natively, 3 run degraded, 4 become
 placeholders (Battle Processing, Script and the two plugin commands) and
-47 are dropped, many of them actor, enemy and battle-only commands. "Needs
+35 are dropped, many of them actor, enemy and battle-only commands. "Needs
 kit" names the runtime capability a native mapping would take; it is the
 list of what the kit would need to import an RPG Maker game completely.
 `tests/rpgmaker-import.test.ts` keeps this table in step with the
@@ -150,7 +150,7 @@ for that project, to `coverage.md`.
 | 105 | Show Scrolling Text | MV/MZ | Degraded | scrolling text shown as message pages | a scrolling credits-style text box |
 | 108 | Comment | MV/MZ | Native |  |  |
 | 109 | Skip | MZ | Native |  |  |
-| 111 | Conditional Branch | MV/MZ | Native |  | conditions over actor stats, enemies, event facing, buttons, vehicles |
+| 111 | Conditional Branch | MV/MZ | Native |  | conditions over actor stats, enemies, event facing and buttons |
 | 112 | Loop | MV/MZ | Native |  |  |
 | 113 | Break Loop | MV/MZ | Native |  |  |
 | 115 | Exit Event Processing | MV/MZ | Native |  | a return-from-common-event command (exit ends the calling fiber) |
@@ -176,17 +176,17 @@ for that project, to `coverage.md`.
 | 139 | Change Defeat ME | MV/MZ | Dropped |  | battle audio settings in the battle setup |
 | 140 | Change Vehicle BGM | MV/MZ | Dropped |  | vehicles |
 | 201 | Transfer Player | MV/MZ | Native |  | a white transfer fade colour |
-| 202 | Set Vehicle Location | MV/MZ | Dropped |  | vehicles |
+| 202 | Set Vehicle Location | MV/MZ | Native |  |  |
 | 203 | Set Event Location | MV/MZ | Native |  | place by variable coordinates and character exchange |
 | 204 | Scroll Map | MV/MZ | Native |  |  |
 | 205 | Set Movement Route | MV/MZ | Native |  | diagonal, jump, backward/away moves, relative turns, in-route switches/SE/image |
-| 206 | Get on/off Vehicle | MV/MZ | Dropped |  | vehicles |
+| 206 | Get on/off Vehicle | MV/MZ | Native |  |  |
 | 211 | Change Transparency | MV/MZ | Native |  |  |
 | 212 | Show Animation | MV/MZ | Native |  |  |
 | 213 | Show Balloon Icon | MV/MZ | Native |  |  |
 | 214 | Erase Event | MV/MZ | Native |  |  |
-| 216 | Change Player Followers | MV/MZ | Dropped |  | party followers on the map |
-| 217 | Gather Followers | MV/MZ | Dropped |  | party followers on the map |
+| 216 | Change Player Followers | MV/MZ | Native |  |  |
+| 217 | Gather Followers | MV/MZ | Native |  |  |
 | 221 | Fadeout Screen | MV/MZ | Native |  |  |
 | 222 | Fadein Screen | MV/MZ | Native |  |  |
 | 223 | Tint Screen | MV/MZ | Degraded | colour tone approximated as an overlay colour | an additive colour-tone (and greyscale) screen filter |
@@ -230,7 +230,7 @@ for that project, to `coverage.md`.
 | 320 | Change Name | MV/MZ | Native |  | runtime names for actors other than actor 1 |
 | 321 | Change Class | MV/MZ | Dropped |  | actor classes |
 | 322 | Change Actor Images | MV/MZ | Dropped |  | per-actor walking/face/battler images (the player sprite can change via appearance) |
-| 323 | Change Vehicle Image | MV/MZ | Dropped |  | vehicles |
+| 323 | Change Vehicle Image | MV/MZ | Native |  |  |
 | 324 | Change Nickname | MV/MZ | Dropped |  | actor profiles |
 | 325 | Change Profile | MV/MZ | Dropped |  | actor profiles |
 | 331 | Change Enemy HP | MV/MZ | Dropped |  | an RPG Maker battle system |

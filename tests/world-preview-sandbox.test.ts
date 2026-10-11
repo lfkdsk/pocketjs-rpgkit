@@ -366,6 +366,36 @@ describe("sandboxed entry preview", () => {
     };
     const branch = setup([timed, still]);
     expect(preview(branch.session, branch.state).rejected).toEqual([{ eventId: "b", reason: "entry-runtime-branch" }]);
+
+    const vehiclePage: GameEvent = {
+      id: "vehicle-page",
+      x: 2,
+      y: 2,
+      pages: [{
+        trigger: "action",
+        commands: [],
+        sprite: "aboard",
+        condition: { all: [{ kind: "vehicle", id: "boat" }] },
+      }],
+    };
+    const vehicleGated = setup([vehiclePage]);
+    expect(preview(vehicleGated.session, vehicleGated.state).rejected).toEqual([
+      { eventId: "vehicle-page", reason: "runtime-condition" },
+    ]);
+
+    const vehicleBranch: GameEvent = {
+      id: "vehicle-branch",
+      x: 6,
+      y: 6,
+      pages: [{
+        trigger: "parallel",
+        commands: [{ op: "if", if: { kind: "vehicle", id: "boat" }, then: [] }],
+      }],
+    };
+    const branchedOnVehicle = setup([vehicleBranch, still]);
+    expect(preview(branchedOnVehicle.session, branchedOnVehicle.state).rejected).toEqual([
+      { eventId: "b", reason: "entry-runtime-branch" },
+    ]);
   });
 
   test("a sandbox rejection the static preview can prove falls back to it", () => {

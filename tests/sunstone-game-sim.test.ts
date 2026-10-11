@@ -520,9 +520,14 @@ simDescribe("sunstone — render budget", () => {
     // 1,002,250 B. The optional world-overlay slot then measured 1,003,435 B;
     // RPG Maker text colours/escapes plus Steps and region crossings add
     // 19,044 shared runtime bytes, measuring 1,022,479 B. The unused-feature
-    // hot-path guards add 93 B, measuring 1,022,572 B. Keep a narrow
-    // 428-byte margin above that value.
-    expect(jsBytes).toBeLessThan(1_023_000);
+    // hot-path guards add 93 B, measuring 1,022,572 B. Optional follower
+    // chains and boat/ship/airship support add 48,016 B of shared schema,
+    // reducer, save, session and render code to this non-travel game,
+    // measuring 1,070,588 B. Runtime travel state and actor nodes stay absent;
+    // 322 B of that delta is the tick-local no-travel fast path that keeps the
+    // QuickJS regression below 3%.
+    // Keep a narrow margin above that value.
+    expect(jsBytes).toBeLessThan(1_071_000);
   });
 });
 

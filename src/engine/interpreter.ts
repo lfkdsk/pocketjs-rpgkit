@@ -425,6 +425,9 @@ function tileOverrideFieldMatches(
  * and deliberately never serialized. */
 export interface ConditionContext {
   worldIdle: boolean;
+  /** Stable id of the vehicle the player currently rides. Omitted by
+   * sessions without the optional travel subsystem. */
+  vehicle?: string | null;
   /** Whether a player step was already interpolating at this reference
    *  tick's start. Omitted by callers without a live movement context. */
   playerMoving?: boolean;
@@ -534,6 +537,10 @@ export function evalCondition(
       if (!s.timer?.running) return false;
       const seconds = timerSeconds(s.timer);
       return c.op === ">=" ? seconds >= c.seconds : seconds <= c.seconds;
+    }
+    case "vehicle": {
+      const riding = context?.vehicle === c.id;
+      return c.negate === true ? !riding : riding;
     }
     case "ext": {
       // Map acquisition validates registration. Missing handlers and
@@ -765,6 +772,11 @@ export type Instr =
     }
   | { op: "moveRoute"; target: RouteTarget; wait: boolean; route: MoveRoute }
   | { op: "moveControl"; target: RouteTarget; control: MoveControl }
+  | { op: "followers"; visible: boolean }
+  | { op: "gatherFollowers" }
+  | { op: "vehicle"; action: "toggle" }
+  | { op: "setVehicleLocation"; id: string; map: TransferMap; x: TransferCoordinate; y: TransferCoordinate }
+  | { op: "setVehicleImage"; id: string; sprite: string }
   | {
       op: "appearance";
       target: RouteTarget;
@@ -1108,6 +1120,21 @@ function compileScoped(
           break;
         case "moveControl":
           emit({ op: "moveControl", target: c.target, control: c.control });
+          break;
+        case "followers":
+          emit({ op: "followers", visible: c.visible });
+          break;
+        case "gatherFollowers":
+          emit({ op: "gatherFollowers" });
+          break;
+        case "vehicle":
+          emit({ op: "vehicle", action: c.action });
+          break;
+        case "setVehicleLocation":
+          emit({ op: "setVehicleLocation", id: c.id, map: c.map, x: c.x, y: c.y });
+          break;
+        case "setVehicleImage":
+          emit({ op: "setVehicleImage", id: c.id, sprite: c.sprite });
           break;
         case "appearance":
           emit({
@@ -1631,6 +1658,8 @@ export interface InterpInput {
    *  velocity before world physics advances. Omitted when the World has no
    *  playerMoving condition. */
   playerMoving?: boolean;
+  /** Current ridden vehicle id supplied by an opted-in Session. */
+  vehicle?: string | null;
   /** Live cells of map characters this frame (P1④ NPC motion); event id ->
    *  cell. Events absent from the record stand on their authored x/y. */
   eventCells?: Record<string, Cell>;
@@ -1956,6 +1985,16 @@ export interface PendingMoveControl {
 }
 
 export type PendingMoveOperation = PendingMoveRoute | PendingMoveControl;
+
+/** Travel commands are published by the interpreter and consumed by the
+ * Session after the fold. The optional queue is absent until content uses
+ * this additive subsystem. Gather alone parks its issuing fiber. */
+export type PendingTravelRequest =
+  | { op: "followers"; visible: boolean }
+  | { op: "gatherFollowers"; fiber: string }
+  | { op: "vehicle"; action: "toggle" }
+  | { op: "setVehicleLocation"; id: string; map: string; x: number; y: number }
+  | { op: "setVehicleImage"; id: string; sprite: string };
 
 /** Battle Processing request published on the tick that parks its fiber. */
 export interface PendingBattle {
@@ -2456,6 +2495,8 @@ export interface InterpState {
    *  publish more than one before it parks (a fire-and-forget player turn
    *  immediately followed by a waited self-route); the session drains all. */
   pendingMoveRoutes: PendingMoveOperation[];
+  /** Follower/vehicle requests published on THIS step. */
+  pendingTravel?: PendingTravelRequest[];
   /** Battle requests waiting for the scene host, in deterministic fiber
    *  order. Unlike the other pending fields this queue survives interpreter
    *  steps until the session consumes each request. */
@@ -2568,9 +2609,11 @@ function liveConditionContext(
   blockers: Readonly<WorldIdleBlockers> | undefined,
   eventPages?: Readonly<Record<string, EventPageAppearance>>,
   playerMoving?: boolean,
+  vehicle?: string | null,
 ): ConditionContext {
   const context: ConditionContext = { worldIdle: isWorldIdle(s, blockers) };
   if (playerMoving !== undefined) context.playerMoving = playerMoving;
+  if (vehicle !== undefined) context.vehicle = vehicle;
   if (s.audio) context.audio = s.audio;
   if (eventPages) {
     context.eventPages = eventPages;
@@ -3155,6 +3198,9 @@ function copyInterp(
     pendingMoveRoutes: s0.pendingMoveRoutes.map((r) => "control" in r
       ? { ...r, control: deepClone(r.control) as MoveControl }
       : { ...r, route: cloneMoveRoute(r.route) }),
+    ...(s0.pendingTravel ? {
+      pendingTravel: s0.pendingTravel.map((request) => ({ ...request })),
+    } : {}),
     pendingBattles: s0.pendingBattles.map((request) => ({
       fiber: request.fiber,
       setup: deepClone(request.setup),
@@ -3365,7 +3411,7 @@ function publishedPage(
     eventId,
     input.facing,
     extension,
-    liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
+    liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving, input.vehicle),
   );
   return page === (input.liveChars[eventId]?.pageIndex ?? -1) ? undefined : { page };
 }
@@ -3481,7 +3527,7 @@ function cancelStaleParallels(
     const ev = worldEventById(w, key.slice(w.map.id.length + 1));
     const active = ev && !s.erased[key]
       ? activePage(ev, s.sw, w.map.id, facing, extension,
-          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving))
+          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving, input.vehicle))
       : null;
     // Same page still active: keep running. A page change (index differs)
     // cancels; scanTriggers restarts a fiber for the new page on this step.
@@ -3641,6 +3687,7 @@ function scanTriggers(
     input.worldIdleBlockers,
     input.eventPages,
     input.playerMoving,
+    input.vehicle,
   );
   // Ascending event-id order so parallel starts and the blocking-fiber
   // choice are deterministic across frames. The order is explicit UTF-16
@@ -3839,6 +3886,7 @@ function guardMask(c: Condition, runtime: ExtensionRuntime): number {
     case "bgmPlaying":
     case "timer":
     case "region":
+    case "vehicle":
       return -1;
   }
 }
@@ -4454,7 +4502,7 @@ function shopRows(
         eventKey,
         undefined,
         extension,
-        liveConditionContext(state, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
+        liveConditionContext(state, w, input.worldIdleBlockers, input.eventPages, input.playerMoving, input.vehicle),
       )) continue;
       const price = resolveGoodsPrice(g, w.items);
       const owned = keyedValue(sw.items, g.item) ?? 0;
@@ -4850,6 +4898,32 @@ function resolveTransfer(
     fadeFrames: ins.fadeFrames,
     ...(ins.handoff ? { handoff: { ...ins.handoff } } : {}),
   };
+}
+
+function resolveVehicleLocation(
+  s: InterpState,
+  ins: Extract<Instr, { op: "setVehicleLocation" }>,
+  fiber: string,
+): { map: string; x: number; y: number } | null {
+  const map = variableRef(ins.map) ? s.sw.variables[ins.map.variable] : ins.map;
+  const x = variableRef(ins.x) ? s.sw.variables[ins.x.variable] : ins.x;
+  const y = variableRef(ins.y) ? s.sw.variables[ins.y.variable] : ins.y;
+  if (typeof map !== "string" || map.length === 0) {
+    s.error = {
+      kind: "content",
+      message: `vehicle location in ${fiber}: map variable must hold a non-empty string`,
+    };
+    return null;
+  }
+  if (typeof x !== "number" || !Number.isInteger(x) || x < 0 ||
+      typeof y !== "number" || !Number.isInteger(y) || y < 0) {
+    s.error = {
+      kind: "content",
+      message: `vehicle location in ${fiber}: coordinate variables must hold non-negative integers`,
+    };
+    return null;
+  }
+  return { map, x, y };
 }
 
 function emptyRecord(record: object): boolean {
@@ -5544,7 +5618,7 @@ function runFiber(
           f.key,
           input.facing,
           extension,
-          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
+          liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving, input.vehicle),
         ) ? top.pc + 1 : ins.onFalse;
         break;
       case "jmp":
@@ -6185,6 +6259,33 @@ function runFiber(
         top.pc++;
         break;
       }
+      case "followers":
+        (s.pendingTravel ??= []).push({ op: "followers", visible: ins.visible });
+        top.pc++;
+        break;
+      case "gatherFollowers":
+        f.mode = "external";
+        (s.pendingTravel ??= []).push({ op: "gatherFollowers", fiber: f.key });
+        return;
+      case "vehicle":
+        (s.pendingTravel ??= []).push({ op: "vehicle", action: ins.action });
+        top.pc++;
+        break;
+      case "setVehicleLocation": {
+        const location = resolveVehicleLocation(s, ins, f.key);
+        if (location === null) return;
+        (s.pendingTravel ??= []).push({
+          op: "setVehicleLocation",
+          id: ins.id,
+          ...location,
+        });
+        top.pc++;
+        break;
+      }
+      case "setVehicleImage":
+        (s.pendingTravel ??= []).push({ op: "setVehicleImage", id: ins.id, sprite: ins.sprite });
+        top.pc++;
+        break;
       case "common": {
         const prog = w.commonPrograms.get(ins.id);
         if (!prog) {
@@ -6281,6 +6382,7 @@ export function stepInterpWithExtensionsInPlace(
   // host can consume them without overwriting another parked fiber.
   s.pendingTransfer = null;
   s.pendingMoveRoutes = [];
+  delete s.pendingTravel;
   s.pendingPlacements = [];
   s.abortedRoutes = [];
   // Step-local scratch: a `place` run this step must beat the tick-start
@@ -6380,7 +6482,7 @@ export function stepInterpWithExtensionsInPlace(
               key,
               input.facing,
               extension,
-              liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving),
+              liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving, input.vehicle),
             )
             ? pc + 1
             : ins.onFalse;

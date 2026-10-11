@@ -8,6 +8,10 @@ const WALKER = {
   h: 32 as const,
 };
 
+const TRAVEL_FOLLOWER_CORAL = { idle: ["assets/travel-follower-coral.png", "assets/travel-follower-coral.png", "assets/travel-follower-coral.png", "assets/travel-follower-coral.png"] as const, walkL: ["assets/travel-follower-coral.png", "assets/travel-follower-coral.png", "assets/travel-follower-coral.png", "assets/travel-follower-coral.png"] as const, walkR: ["assets/travel-follower-coral.png", "assets/travel-follower-coral.png", "assets/travel-follower-coral.png", "assets/travel-follower-coral.png"] as const, h: 32 as const };
+const TRAVEL_FOLLOWER_MINT = { idle: ["assets/travel-follower-mint.png", "assets/travel-follower-mint.png", "assets/travel-follower-mint.png", "assets/travel-follower-mint.png"] as const, walkL: ["assets/travel-follower-mint.png", "assets/travel-follower-mint.png", "assets/travel-follower-mint.png", "assets/travel-follower-mint.png"] as const, walkR: ["assets/travel-follower-mint.png", "assets/travel-follower-mint.png", "assets/travel-follower-mint.png", "assets/travel-follower-mint.png"] as const, h: 32 as const };
+const TRAVEL_AIRSHIP = { idle: ["assets/travel-airship.png", "assets/travel-airship.png", "assets/travel-airship.png", "assets/travel-airship.png"] as const, walkL: ["assets/travel-airship.png", "assets/travel-airship.png", "assets/travel-airship.png", "assets/travel-airship.png"] as const, walkR: ["assets/travel-airship.png", "assets/travel-airship.png", "assets/travel-airship.png", "assets/travel-airship.png"] as const, h: 32 as const };
+
 export const GAME_ASSETS: GameAssets = {
   ground: { "r2-ui-field": ["assets/map-r2-ui-field-ground-0.png", "assets/map-r2-ui-field-ground-1.png", "assets/map-r2-ui-field-ground-2.png", "assets/map-r2-ui-field-ground-3.png"], "r2-ui-second": ["assets/map-r2-ui-field-ground-0.png", "assets/map-r2-ui-field-ground-1.png", "assets/map-r2-ui-field-ground-2.png", "assets/map-r2-ui-field-ground-3.png"] },
   upper: { "r2-ui-field": ["assets/map-r2-ui-field-upper-0.png", "assets/map-r2-ui-field-upper-1.png", "assets/map-r2-ui-field-upper-2.png", "assets/map-r2-ui-field-upper-3.png"], "r2-ui-second": ["assets/map-r2-ui-second-upper-0.png", "assets/map-r2-ui-second-upper-1.png", "assets/map-r2-ui-second-upper-2.png", "assets/map-r2-ui-second-upper-3.png"] },
@@ -15,7 +19,7 @@ export const GAME_ASSETS: GameAssets = {
   maxChunks: 4,
   world: { "r2-ui-field": { w: 1024, h: 640 }, "r2-ui-second": { w: 1024, h: 640 } },
   order: ["r2-ui-field", "r2-ui-second"],
-  npcSrc: { walker: WALKER, alt: "assets/walker-idle-3.png" },
+  npcSrc: { walker: WALKER, alt: "assets/walker-idle-3.png", travelBoat: "assets/travel-boat.png", travelAirship: TRAVEL_AIRSHIP, travelFollowerCoral: TRAVEL_FOLLOWER_CORAL, travelFollowerMint: TRAVEL_FOLLOWER_MINT },
   player: WALKER,
   playerHeight: 32,
   animated: {

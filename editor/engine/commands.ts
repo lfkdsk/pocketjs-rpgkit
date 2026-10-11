@@ -101,6 +101,11 @@ export const EDITABLE_COMMAND_OPS = [
   "transfer",
   "moveRoute",
   "moveControl",
+  "followers",
+  "gatherFollowers",
+  "vehicle",
+  "setVehicleLocation",
+  "setVehicleImage",
   "appearance",
   "layer",
   "changeParallax",
@@ -221,6 +226,21 @@ export function defaultCommand<Op extends EditableCommandOp>(op: Op): CommandOf<
       break;
     case "moveControl":
       command = { op, target: "this", control: { kind: "stop" } };
+      break;
+    case "followers":
+      command = { op, visible: true };
+      break;
+    case "gatherFollowers":
+      command = { op };
+      break;
+    case "vehicle":
+      command = { op, action: "toggle" };
+      break;
+    case "setVehicleLocation":
+      command = { op, id: "vehicle", map: "map", x: 0, y: 0 };
+      break;
+    case "setVehicleImage":
+      command = { op, id: "vehicle", sprite: "sprite" };
       break;
     case "appearance":
       command = { op, target: "this", sprite: null };
@@ -537,6 +557,16 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
         : ` @ ${numberText(control.tilesPerSecond)} tiles/s`;
       return `Move control ${targetSummary(command.target)}: ${text(control.kind)}${control.value === undefined ? "" : ` ${jsonPreview(control.value, 48, full)}`}${exact}`;
     }
+    case "followers":
+      return `${command.visible === true ? "Show" : "Hide"} followers`;
+    case "gatherFollowers":
+      return "Gather followers";
+    case "vehicle":
+      return "Toggle vehicle";
+    case "setVehicleLocation":
+      return `Move vehicle ${text(command.id)} to ${operandSummary(command.map)} (${operandSummary(command.x)}, ${operandSummary(command.y)})`;
+    case "setVehicleImage":
+      return `Vehicle ${text(command.id)} image = ${text(command.sprite)}`;
     case "shop":
       return `Shop ${text(command.id)} (${Array.isArray(command.goods) ? command.goods.length : 0} goods)`;
     case "ext":
@@ -1028,6 +1058,7 @@ export const CONDITION_KINDS = [
   "worldIdle",
   "bgmPlaying",
   "timer",
+  "vehicle",
   "region",
   "steps",
   "ext",
@@ -1079,6 +1110,9 @@ export function defaultCondition<Kind extends ConditionKind>(kind: Kind): Condit
       break;
     case "timer":
       condition = { kind, op: ">=", seconds: 0 };
+      break;
+    case "vehicle":
+      condition = { kind, id: "vehicle", negate: false };
       break;
     case "region":
       condition = { kind, x: 0, y: 0, id: 0 };
@@ -1135,6 +1169,10 @@ export function conditionSummary(condition: unknown, opts: { full?: boolean } = 
     }
     case "timer":
       return `Timer ${text(condition.op)} ${numberText(condition.seconds)}s`;
+    case "vehicle":
+      return condition.negate === true
+        ? `Not riding vehicle ${text(condition.id)}`
+        : `Riding vehicle ${text(condition.id)}`;
     case "ext":
       return `Extension ${text(condition.call)} ${jsonPreview(condition.args, 48, full)}`;
     default:

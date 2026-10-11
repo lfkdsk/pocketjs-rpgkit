@@ -299,6 +299,28 @@ const switchChanges = {
   },
 };
 
+const vehicleValue = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "kind", "sprite", "start"],
+  properties: {
+    id: { type: "string", pattern: "^[A-Za-z0-9_-]+$" },
+    kind: { enum: ["boat", "ship", "airship"] },
+    sprite: { type: "string", minLength: 1, description: "Key in project.sprites." },
+    start: {
+      type: "object",
+      additionalProperties: false,
+      required: ["map", "x", "y", "dir"],
+      properties: {
+        map: { type: "string", minLength: 1 },
+        x: { type: "integer", minimum: 0 },
+        y: { type: "integer", minimum: 0 },
+        dir: { enum: ["down", "left", "right", "up"] },
+      },
+    },
+  },
+};
+
 const patchSide = {
   oneOf: [
     { type: "object", additionalProperties: false, required: ["exists"], properties: { exists: { const: false } } },
@@ -427,6 +449,10 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_variable_add", "Add variable", "add-variable", "Add an optional named variable declaration; runtime variable ids remain sparse.", { variable: catalogNameValue }, ["variable"], true),
   tool("rpgkit_variable_update", "Update variable", "update-variable", "Update the name of a declared variable without renaming its id. null removes the name.", { variable, changes: catalogNameChanges }, ["variable", "changes"], true),
   tool("rpgkit_variable_remove", "Remove variable", "remove-variable", "Remove an unreferenced variable declaration. RESOURCE_IN_USE returns every known reference without changing the project.", { variable }, ["variable"], true),
+  tool("rpgkit_mobility_update", "Update followers and vehicles", "update-mobility", "Set initial follower visibility and replace the persistent boat, ship, and airship placements. Existing follower member definitions are preserved.", {
+    followersEnabled: { type: "boolean" },
+    vehicles: { type: "array", maxItems: 3, items: vehicleValue },
+  }, ["followersEnabled", "vehicles"], true),
   tool("rpgkit_map_update", "Update map properties", "update-map", "Rename a map or update its display name, size and sheet list through the editor model. For a shell, ordinary changes load one shard; an id rename scans all shards to rewrite literal transfers but writes only changed shards.", { map, changes: mapChanges }, ["map", "changes"], true),
   tool("rpgkit_map_add", "Add map", "add-map", "Create an empty map through the editor model, inserted after `after` (default: the last map). `map` is a preferred id; a taken or unsafe id is made unique, so read the created MapDef from the result. Sheets default to the anchor map's sheets; fill defaults to void. Inline projects only.", { map: { type: "string", minLength: 1, description: "Preferred new map id; the model makes it schema-safe and unique." }, name: { type: "string", maxLength: 40 }, width: { type: "integer", minimum: 1, maximum: 256, default: 20 }, height: { type: "integer", minimum: 1, maximum: 256, default: 14 }, sheets: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } }, fill: { type: ["string", "null"], description: "Ground tile for every cell, such as town.0, or null for void." }, after: { type: "string", minLength: 1, description: "Existing map id to insert after." } }, [], true),
   tool("rpgkit_map_duplicate", "Duplicate map", "duplicate-map", "Copy a map (events keep their map-local ids) directly after it under a unique <id>-copy id. Inline projects only.", { map }, ["map"], true),

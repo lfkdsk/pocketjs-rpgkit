@@ -96,7 +96,7 @@ of already-published shards if a later rename fails; this is **not**
 crash-atomic. See `editor/api/file.ts` and
 [`edit-api.md`](edit-api.md#response-envelope) (the atomicity paragraph).
 
-- **Operations** (58): `open`, `list-maps`, `list-events`, `list-pages`,
+- **Operations** (59): `open`, `list-maps`, `list-events`, `list-pages`,
   `list-commands`, `validate`, `update-map`, `add-map`, `duplicate-map`,
   `delete-map`, `move-map`, `paint-tile`, `paint-rect`, `fill-region`,
   `paint-passage`, `paint-cells`, `paint-edges`, `add-event` (optional
@@ -110,7 +110,9 @@ crash-atomic. See `editor/api/file.ts` and
   `remove-audio`, `list-sheets`, `get-sheet`, `add-sheet`, `update-sheet`,
   `remove-sheet`, `list-switches`, `get-switch`, `add-switch`,
   `update-switch`, `remove-switch`, `list-variables`, `get-variable`,
-  `add-variable`, `update-variable`, and `remove-variable`.
+  `add-variable`, `update-variable`, `remove-variable`, and
+  `update-mobility` (follower visibility plus boat, ship, and airship
+  placement).
 - **Addresses** are stable text paths: `map:<id>`,
   `map:<id>/event:<eid>/page:<i>/command:<key>`, with recursive command keys
   such as `i2:then#0` (if), `c2:option:1#0` (choices), `b2:win#0`

@@ -242,10 +242,18 @@ const maybeTest = preflight.ok ? test : test.skip;
 // the text-needle assertions below.
 // Skipping the sparse Steps-bank read and region-trigger string comparisons
 // on projects that do not opt in adds 93 shared bytes to each graph.
+// Optional follower/vehicle schema, reducer/save/interpreter/session hooks
+// and the conditional GameView travel layer add measured shared-code costs.
+// Consolidating absent-travel lookups into one tick-local snapshot adds 322 B
+// to each graph while taking the QuickJS no-travel paths back below the 3%
+// gate, for final deltas of 31,976 B to Meadow, 48,016 B to Sunstone and
+// 38,885 B to the WAV fixture. None of these fixtures declares travel, so no
+// travel state or nodes are created at runtime; the differing deltas follow
+// each graph's existing tree-shaken imports.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 643_543;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_022_572;
-const EXPECTED_WAV_FIXTURE_BYTES = 811_971;
+const EXPECTED_MEADOW_BYTES = 675_519;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_070_588;
+const EXPECTED_WAV_FIXTURE_BYTES = 850_856;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

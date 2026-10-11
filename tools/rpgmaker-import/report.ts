@@ -74,7 +74,9 @@ function sampleContext(cov: Coverage): EventContext {
     placeholders: "visible",
     maps: new Map([[1, "map001"], [2, "map002"]]),
     owner: { kind: "page", mapId: "map001", eventId: "ev001", page: 0, trigger: "action", eventIds: new Map([[1, "ev001"]]) },
-    sprite: () => null,
+    sprite: (image) => image.characterName || image.tileId > 0
+      ? `sample-sprite-${image.characterIndex}`
+      : null,
     picture: (name) => name.toLowerCase(),
     parallax: (name) => name ? { image: name.toLowerCase(), zero: name.startsWith("!") } : null,
     animation: (n) => ({ id: `anim${n}`, disposition: "Native" }),

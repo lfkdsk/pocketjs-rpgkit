@@ -47,6 +47,7 @@ import type { MapContentIdentity } from "./map-repository.ts";
 import { MAP_SCHEMA_HASH, describeMapSchemaRefusal, isCompatibleMapSchemaHash } from "./schema-identity.ts";
 import type { JsonValue } from "./types.ts";
 import type { FadeState, LeftMapSnapshot, PlayerRoute, Session, SessionState } from "./session.ts";
+import { cloneTravelState, type TravelState } from "./travel.ts";
 
 export const SAVE_FORMAT = "rpgkit-save/v1" as const;
 export const SAVE_VERSION = 1 as const;
@@ -76,6 +77,8 @@ export interface SaveSnapshot {
    *  written before it was recorded (and in snapshots built without a
    *  session); restoring those rebuilds the characters from the map. */
   mapRuntime?: SaveMapRuntime;
+  /** Project-wide follower positions and persistent vehicle locations. */
+  travel?: TravelState;
 }
 
 /** Map-visit state the session keeps beside the interpreter. Everything in
@@ -113,6 +116,7 @@ export function canSave(
     interp.modal === null &&
     interp.pendingTransfer === null &&
     interp.pendingMoveRoutes.length === 0 &&
+    (interp.pendingTravel?.length ?? 0) === 0 &&
     interp.pendingPlacements.length === 0 &&
     interp.abortedRoutes.length === 0 &&
     interp.pendingBattles.length === 0 &&
@@ -135,6 +139,7 @@ export function cloneSnapshot(snap: SaveSnapshot): SaveSnapshot {
     ext: deepClone((snap as SaveSnapshot & { ext?: JsonValue }).ext ?? null),
   };
   if (snap.mapRuntime !== undefined) out.mapRuntime = cloneMapRuntime(snap.mapRuntime);
+  if (snap.travel !== undefined) out.travel = cloneTravelState(snap.travel);
   return out;
 }
 
@@ -211,12 +216,21 @@ export function createSnapshot(
   scene: unknown = null,
   mapRuntime?: SaveMapRuntime,
   handoff: unknown = null,
+  travel?: TravelState,
 ): SaveSnapshot {
   if (!canSave(player, interp, scene, handoff)) {
     throw new Error("save: snapshot is only valid at a tile boundary with no modal or scene open and no external work pending");
   }
   assertJsonValue(ext, "save extension state");
-  return normalizeInterp(cloneSnapshot({ map, player, held, interp, ext, ...(mapRuntime ? { mapRuntime } : {}) }));
+  return normalizeInterp(cloneSnapshot({
+    map,
+    player,
+    held,
+    interp,
+    ext,
+    ...(mapRuntime ? { mapRuntime } : {}),
+    ...(travel ? { travel } : {}),
+  }));
 }
 
 /** Session-aware save entry point. It applies the registered extension
@@ -243,6 +257,7 @@ export function createSessionSnapshot(
       ...(state.leftMap ? { leftMap: state.leftMap } : {}),
     },
     state.handoff,
+    state.travel,
   );
 }
 
@@ -291,6 +306,7 @@ export function createAutosaveSessionSnapshot(
         fade: state.fade,
         ...(state.leftMap ? { leftMap: state.leftMap } : {}),
       },
+      ...(state.travel ? { travel: state.travel } : {}),
     }));
     // Autosave is a reducer effect and must never throw through stepSession.
     // The state was produced by the reducer rather than decoded from an
@@ -330,6 +346,7 @@ function normalizeInterpInPlace(interp: InterpState): void {
   delete interp.hostActions;
   interp.pendingTransfer = null;
   interp.pendingMoveRoutes = [];
+  delete interp.pendingTravel;
   interp.pendingBattles = [];
   // The scene queue is runtime-only: it must be empty at a save point, so
   // the field is dropped from the snapshot rather than serialized.
@@ -438,6 +455,7 @@ export function sessionStateFingerprint(state: SessionState): string {
     player: tileLevelMovement(state.move),
     interp,
     ext: state.ext,
+    ...(state.travel ? { travel: state.travel } : {}),
     ...(state.handoff ? { handoff: state.handoff } : {}),
   }));
 }

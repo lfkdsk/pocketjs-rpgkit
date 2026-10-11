@@ -219,9 +219,9 @@ export function clearLocalBank(sw: SwitchState): void {
 export const pageConditions = flattenPageCondition;
 
 /** A stable fingerprint of the world-level state, for freeze/progress
- *  detection: where the player is and every saved bank. Audio is deliberately
- *  excluded: a BGM cursor advances every tick and must not disguise a frozen
- *  gameplay fiber as world progress. */
+ *  detection: where the player is, every saved bank, and optional travel
+ *  state. Audio is deliberately excluded: a BGM cursor advances every tick
+ *  and must not disguise a frozen gameplay fiber as world progress. */
 export function worldFingerprint(state: SessionState): string {
   const entries = (record: Readonly<Record<string, unknown>>) =>
     Object.entries(record).sort(([a], [b]) => a.localeCompare(b));
@@ -234,6 +234,7 @@ export function worldFingerprint(state: SessionState): string {
     entries(state.sw.self),
     entries(state.sw.items),
     state.sw.gold,
+    state.travel ?? null,
     state.sw.steps ?? 0,
   ]);
 }
@@ -261,11 +262,11 @@ export { createSwitchState };
 
 /** The ConditionContext the engine itself would derive for this state, so a
  *  check tool's activePage/evalCondition calls see the same facts the runtime
- *  does: worldIdle, each live event's active page/sprite (for appearance
- *  conditions), persistent audio intent (for bgmPlaying), and the per-visit
- *  tileProperty overrides (for tileProperty conditions). Without it, runtime
- *  conditions can conservatively evaluate false and pages the engine really
- *  activates look dead to the checks. */
+ *  does: worldIdle, current ridden vehicle, each live event's active
+ *  page/sprite (for appearance conditions), persistent audio intent (for
+ *  bgmPlaying), and the per-visit tileProperty overrides (for tileProperty
+ *  conditions). Without it, runtime conditions can conservatively evaluate
+ *  false and pages the engine really activates look dead to the checks. */
 export function checkConditionContext(state: SessionState, map: MapDef): ConditionContext {
   const eventPages: Record<string, EventPageAppearance> = {};
   for (const ev of map.events ?? []) {
@@ -276,6 +277,7 @@ export function checkConditionContext(state: SessionState, map: MapDef): Conditi
   }
   const context: ConditionContext = {
     worldIdle: isSessionWorldIdle(state),
+    vehicle: state.travel?.vehicles?.riding ?? null,
     audio: state.interp.audio,
     eventPages,
     eventAppearances: state.interp.eventAppearances,

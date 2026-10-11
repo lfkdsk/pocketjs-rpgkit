@@ -263,6 +263,7 @@ describe("selectWorldMapPreview: undecidable conditions", () => {
       gated("idle", clause({ kind: "worldIdle" })),
       gated("bgm", clause({ kind: "bgmPlaying" })),
       gated("timer", clause({ kind: "timer", op: ">=", seconds: 1 })),
+      gated("vehicle", clause({ kind: "vehicle", id: "boat" })),
       gated("ext", clause({ kind: "ext", call: "game.flag", args: null })),
       gated("tile", clause({ kind: "tileProperty", x: 0, y: 0, passage: "block" })),
       gated("region", clause({ kind: "region", x: 0, y: 0, id: 1 })),
@@ -275,6 +276,7 @@ describe("selectWorldMapPreview: undecidable conditions", () => {
       idle: "runtime-condition",
       bgm: "runtime-condition",
       timer: "runtime-condition",
+      vehicle: "runtime-condition",
       ext: "extension-condition",
       tile: "visit-condition",
       region: "visit-condition",
@@ -466,6 +468,23 @@ describe("selectWorldMapPreview: entry-time writers", () => {
       npc("a", 1, 1, [page({ sprite: "a" })]),
     ]);
     expect(actorOf(gatedOff, "a")).toBeDefined();
+  });
+
+  test("travel commands are preserved without making unrelated NPCs opaque", () => {
+    for (const command of [
+      { op: "followers", visible: false },
+      { op: "gatherFollowers" },
+      { op: "vehicle", action: "toggle" },
+      { op: "setVehicleLocation", id: "boat", map: "west", x: 0, y: 0 },
+      { op: "setVehicleImage", id: "boat", sprite: "boat-alt" },
+    ] as Command[]) {
+      const result = preview([
+        autorunEvent("travel", [command]),
+        npc("bystander", 1, 1, [page({ sprite: "bystander" })]),
+      ]);
+      expect(actorOf(result, "bystander"), command.op).toBeDefined();
+      expect(result.rejected, command.op).toEqual([]);
+    }
   });
 
   test("common calls are followed, including recursive ones", () => {
