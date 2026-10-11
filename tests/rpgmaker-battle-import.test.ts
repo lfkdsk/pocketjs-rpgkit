@@ -29,6 +29,14 @@ describe("RPG Maker battle database import", () => {
         { id: 1, name: "Wren", classId: 1, initialLevel: 1 },
         { id: 2, name: "Moss", classId: 1, initialLevel: 1 },
       ]);
+    expect(battle.actors[0]!.equipment).toMatchObject({
+      params: [0, 0, 8, 5, 0, 0, 0, 0],
+      skills: [],
+      traits: [
+        { code: 31, dataId: 1, value: 0 },
+        { code: 22, dataId: 0, value: 0 },
+      ],
+    });
     expect(battle.classes[0]).toMatchObject({
       id: 1,
       expParams: [30, 20, 30, 30],

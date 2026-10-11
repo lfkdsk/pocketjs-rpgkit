@@ -55,6 +55,8 @@ const clamp = (value: number, lo: number, hi: number): number => Math.max(lo, Ma
 
 const itemKey = (id: number): string => `item${String(id).padStart(3, "0")}`;
 const switchKey = (id: number): string => `s${String(id).padStart(3, "0")}`;
+const partySwitchKey = (id: number): string => `party-actor${String(id).padStart(3, "0")}`;
+const partyOutSwitchKey = (id: number): string => `party-out-actor${String(id).padStart(3, "0")}`;
 
 function jsonState(state: RpgMakerBattleState): JsonValue {
   return state as unknown as JsonValue;
@@ -96,6 +98,19 @@ export function rpgMakerExpForLevel(
   return Math.max(0, Math.round(value));
 }
 
+function actorBaseParams(
+  db: RpgMakerBattleDatabase,
+  actorId: number,
+  classId: number,
+  level: number,
+): [number, number, number, number, number, number, number, number] {
+  const actor = findById(db.actors, actorId);
+  const klass = findById(db.classes, classId);
+  return Array.from({ length: 8 }, (_, id) => Math.max(0,
+    integer(klass?.params[id]?.[level]) + integer(actor?.equipment.params[id]))) as
+    [number, number, number, number, number, number, number, number];
+}
+
 function stateDef(db: RpgMakerBattleDatabase, id: number): RpgMakerBattleStateDef | undefined {
   return findById(db.states, id);
 }
@@ -104,6 +119,7 @@ function combatantTraits(db: RpgMakerBattleDatabase, battler: RpgMakerBattleComb
   const base = battler.side === "actor"
     ? [
         ...(findById(db.actors, battler.databaseId)?.traits ?? []),
+        ...(findById(db.actors, battler.databaseId)?.equipment.traits ?? []),
         ...(findById(db.classes, battler.actor?.classId ?? 0)?.traits ?? []),
       ]
     : [...(findById(db.enemies, battler.databaseId)?.traits ?? [])];
@@ -183,11 +199,50 @@ function restriction(db: RpgMakerBattleDatabase, battler: RpgMakerBattleCombatan
 
 const alive = (battler: RpgMakerBattleCombatant): boolean => battler.hp > 0 && !battler.hidden;
 
-function setHp(db: RpgMakerBattleDatabase, battler: RpgMakerBattleCombatant, value: number): void {
-  battler.hp = clamp(Math.round(value), 0, rpgMakerCombatantParam(db, battler, 0));
-  const knockout = battler.states.findIndex((state) => state.id === 1);
-  if (battler.hp === 0 && knockout < 0 && stateDef(db, 1)) battler.states.push({ id: 1, turns: 1 });
-  if (battler.hp > 0 && knockout >= 0) battler.states.splice(knockout, 1);
+function resetStateTurns(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, id: number): number {
+  const definition = stateDef(db, id);
+  if (!definition) return 0;
+  const min = Math.max(0, definition.minTurns);
+  const span = Math.max(1, definition.maxTurns - min + 1);
+  // Game_BattlerBase.resetStateCounts calls randomInt even for a fixed
+  // one-value range; preserving that draw keeps later outcomes aligned.
+  return min + drawInt(state, span);
+}
+
+function clearBuffs(battler: RpgMakerBattleCombatant): void {
+  for (const buff of battler.buffs) {
+    buff.level = 0;
+    buff.turns = 0;
+  }
+}
+
+function die(
+  db: RpgMakerBattleDatabase,
+  state: RpgMakerBattleState,
+  battler: RpgMakerBattleCombatant,
+  knockoutTurns = resetStateTurns(db, state, 1),
+): void {
+  battler.hp = 0;
+  battler.states = [];
+  clearBuffs(battler);
+  if (stateDef(db, 1)) battler.states.push({ id: 1, turns: knockoutTurns });
+}
+
+function setHp(
+  db: RpgMakerBattleDatabase,
+  state: RpgMakerBattleState,
+  battler: RpgMakerBattleCombatant,
+  value: number,
+): void {
+  const next = clamp(Math.round(value), 0, rpgMakerCombatantParam(db, battler, 0));
+  if (next === 0) {
+    if (battler.hp > 0 || !battler.states.some((active) => active.id === 1)) die(db, state, battler);
+    else battler.hp = 0;
+    return;
+  }
+  battler.hp = next;
+  const knockout = battler.states.findIndex((active) => active.id === 1);
+  if (knockout >= 0) battler.states.splice(knockout, 1);
 }
 
 function initialActorRuntime(db: RpgMakerBattleDatabase, actorId: number): RpgMakerActorRuntime | null {
@@ -195,7 +250,13 @@ function initialActorRuntime(db: RpgMakerBattleDatabase, actorId: number): RpgMa
   const klass = actor ? findById(db.classes, actor.classId) : undefined;
   if (!actor || !klass) return null;
   const level = clamp(actor.initialLevel, 1, actor.maxLevel);
-  const skills = klass.learnings.filter((learning) => learning.level <= level).map((learning) => learning.skillId);
+  const skills = [
+    ...klass.learnings.filter((learning) => learning.level <= level).map((learning) => learning.skillId),
+    ...actor.equipment.skills,
+    ...[...actor.traits, ...klass.traits]
+      .filter((trait) => trait.code === 43)
+      .map((trait) => trait.dataId),
+  ];
   return {
     actorId,
     classId: actor.classId,
@@ -297,8 +358,7 @@ function actorCombatant(
   const klass = actor ? findById(db.classes, runtime.classId) : undefined;
   if (!actor || !klass) return null;
   const level = clamp(runtime.level, 1, actor.maxLevel);
-  const params = Array.from({ length: 8 }, (_, id) => Math.max(0, integer(klass.params[id]?.[level]))) as
-    [number, number, number, number, number, number, number, number];
+  const params = actorBaseParams(db, actor.id, runtime.classId, level);
   const combatant: RpgMakerBattleCombatant = {
     key: `actor${String(runtime.actorId).padStart(3, "0")}`,
     side: "actor",
@@ -430,7 +490,7 @@ function pageConditionHolds(
   if (condition.turnEnding && !turnEnding) return false;
   if (condition.turn) {
     const { a, b } = condition.turn;
-    if (b === 0 ? state.turn !== a : state.turn < a || state.turn % b !== a % b) return false;
+    if (b === 0 ? state.turn !== a : state.turn < 1 || state.turn < a || state.turn % b !== a % b) return false;
   }
   if (condition.enemyHp) {
     const enemy = state.enemies[condition.enemyHp.index];
@@ -463,19 +523,20 @@ function runTroopPages(
 ): string[] {
   const troop = findById(db.troops, state.troopId);
   if (!troop) return [];
-  const messages: string[] = [];
-  troop.pages.forEach((page, index) => {
+  for (let index = 0; index < troop.pages.length; index++) {
+    const page = troop.pages[index]!;
     const run = state.pageRuns[index] ??= { battle: false, lastTurn: -1, active: false };
     const holds = pageConditionHolds(db, state, page, turnEnding);
     const eligible = holds && (
       page.span === 0 ? !run.battle :
       page.span === 1 ? run.lastTurn !== state.turn :
-      !run.active
+      true
     );
     run.active = holds;
-    if (!eligible) return;
+    if (!eligible) continue;
     if (page.span === 0) run.battle = true;
     if (page.span === 1) run.lastTurn = state.turn;
+    const messages: string[] = [];
     for (const effect of page.effects) {
       if (effect.kind === "message") messages.push(effect.lines.join("\n"));
       else if (effect.kind === "switch") state.switches[effect.id] = effect.value;
@@ -485,8 +546,12 @@ function runTroopPages(
         state.variables[effect.id] = Number.isFinite(next) ? Math.trunc(next) : 0;
       }
     }
-  });
-  return messages;
+    // Game_Troop.setupBattleEvent starts the first eligible page only. A
+    // moment page stays eligible after its interpreter becomes idle; battle
+    // and turn pages are gated by their persistent/per-turn flags above.
+    return messages;
+  }
+  return [];
 }
 
 function usableForAction(
@@ -506,7 +571,11 @@ export function rpgMakerSkillChoices(
 ): RpgMakerBattleSkill[] {
   const actor = state.actors[state.actorIndex];
   if (!actor?.actor) return [];
-  return actor.actor.skills.flatMap((id) => {
+  const ids = new Set([
+    ...actor.actor.skills,
+    ...combatantTraits(db, actor).filter((trait) => trait.code === 43).map((trait) => trait.dataId),
+  ]);
+  return [...ids].sort((a, b) => a - b).flatMap((id) => {
     const skill = findById(db.skills, id);
     return skill && skill.occasion !== 2 && skill.occasion !== 3 ? [skill] : [];
   });
@@ -569,7 +638,9 @@ function enemyActionValid(
   const p2 = action.conditionParam2;
   switch (action.conditionType) {
     case 0: return true;
-    case 1: return p2 === 0 ? state.turn === p1 : state.turn >= p1 && state.turn % p2 === p1 % p2;
+    case 1: return p2 === 0
+      ? state.turn === p1
+      : state.turn > 0 && state.turn >= p1 && state.turn % p2 === p1 % p2;
     case 2: {
       const rate = enemy.hp / Math.max(1, rpgMakerCombatantParam(db, enemy, 0));
       return rate >= p1 && rate <= p2;
@@ -591,7 +662,11 @@ function chooseEnemyAction(
   enemy: RpgMakerBattleCombatant,
   index: number,
 ): RpgMakerBattleAction | null {
-  if (!alive(enemy) || restriction(db, enemy) === 4) return null;
+  const enemyRestriction = restriction(db, enemy);
+  if (!alive(enemy) || enemyRestriction === 4) return null;
+  if (enemyRestriction > 0) {
+    return { side: "enemy", user: index, kind: "skill", id: attackSkillId(db, enemy), target: -1, speed: 0 };
+  }
   const definition = findById(db.enemies, enemy.databaseId);
   const valid = (definition?.actions ?? []).filter((action) =>
     !!findById(db.skills, action.skillId) && enemyActionValid(db, state, enemy, action));
@@ -611,9 +686,21 @@ function chooseEnemyAction(
   return { side: "enemy", user: index, kind: "skill", id: selected.skillId, target: -1, speed: 0 };
 }
 
-function beginResolution(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
+function attackSkillId(db: RpgMakerBattleDatabase, battler: RpgMakerBattleCombatant): number {
+  let id = 1;
+  for (const trait of combatantTraits(db, battler)) {
+    if (trait.code === 35) id = Math.max(id, trait.dataId);
+  }
+  return findById(db.skills, id) ? id : 1;
+}
+
+function prepareResolution(
+  db: RpgMakerBattleDatabase,
+  state: RpgMakerBattleState,
+  includeActors: boolean,
+): void {
   state.turn++;
-  const queue = [...state.actorActions];
+  const queue = includeActors ? [...state.actorActions] : [];
   state.enemies.forEach((enemy, index) => {
     const action = chooseEnemyAction(db, state, enemy, index);
     if (action) queue.push(action);
@@ -623,7 +710,17 @@ function beginResolution(db: RpgMakerBattleDatabase, state: RpgMakerBattleState)
   state.queue = queue;
   state.queueIndex = 0;
   state.actorActions = [];
-  resolveNextAction(db, state);
+}
+
+function startPreparedResolution(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
+  const pages = runTroopPages(db, state, false);
+  if (pages.length > 0) showMessage(state, pages.join("\n"), "nextAction");
+  else resolveNextAction(db, state);
+}
+
+function beginResolution(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
+  prepareResolution(db, state, true);
+  startPreparedResolution(db, state);
 }
 
 function chooseActorInput(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, start: number): void {
@@ -638,7 +735,14 @@ function chooseActorInput(db: RpgMakerBattleDatabase, state: RpgMakerBattleState
       return;
     }
     if (actorRestriction < 4) {
-      state.actorActions.push({ side: "actor", user: index, kind: "skill", id: 1, target: -1, speed: 0 });
+      state.actorActions.push({
+        side: "actor",
+        user: index,
+        kind: "skill",
+        id: attackSkillId(db, actor),
+        target: -1,
+        speed: 0,
+      });
     }
   }
   beginResolution(db, state);
@@ -661,6 +765,7 @@ function beginUsableAction(
   const usable = kind === "skill" ? findById(db.skills, id) : findById(db.items, id);
   if (!usable) return;
   const targets = selectableTargets(state, usable);
+  if (targetSide(usable.scope) !== null && targets.length === 0) return;
   if (scopeNeedsSelection(usable.scope) && targets.length > 1) {
     state.selected = { kind, id };
     state.targetIndex = targets[0]!;
@@ -678,26 +783,58 @@ function beginUsableAction(
 }
 
 function actionTargets(
+  db: RpgMakerBattleDatabase,
   state: RpgMakerBattleState,
   action: RpgMakerBattleAction,
   usable: RpgMakerUsableItem,
+  user: RpgMakerBattleCombatant,
 ): { side: "actor" | "enemy"; index: number }[] {
-  const side = targetSide(usable.scope);
-  if (side === "user") return [{ side: action.side, index: action.user }];
-  const targetSideName = action.side === "actor"
-    ? (side ?? "enemy")
-    : side === "actor" ? "enemy" : "actor";
+  const scopeSide = targetSide(usable.scope);
+  if (scopeSide === "user") return [{ side: action.side, index: action.user }];
+  const userRestriction = restriction(db, user);
+  let targetSideName: "actor" | "enemy";
+  if (userRestriction >= 1 && userRestriction <= 3) {
+    const opponents = action.side === "actor" ? "enemy" : "actor";
+    const friends = action.side;
+    targetSideName = userRestriction === 1
+      ? opponents
+      : userRestriction === 2
+        ? (draw(state) < 0.5 ? opponents : friends)
+        : friends;
+  } else {
+    targetSideName = action.side === "actor"
+      ? (scopeSide ?? "enemy")
+      : scopeSide === "actor" ? "enemy" : "actor";
+  }
   const list = targetSideName === "actor" ? state.actors : state.enemies;
-  const dead = isDeadScope(usable.scope);
+  const dead = userRestriction === 0 && isDeadScope(usable.scope);
   const eligible = list.flatMap((target, index) => target.hidden || (dead ? target.hp > 0 : target.hp <= 0) ? [] : [index]);
   if (eligible.length === 0) return [];
   if (action.target >= 0 && eligible.includes(action.target)) return [{ side: targetSideName, index: action.target }];
-  if (usable.scope === 2 || usable.scope === 8 || usable.scope === 10) {
+  if (action.target >= 0) return [{ side: targetSideName, index: eligible[0]! }];
+  if (userRestriction === 0 && (usable.scope === 2 || usable.scope === 8 || usable.scope === 10)) {
     return eligible.map((index) => ({ side: targetSideName, index }));
   }
-  const randomCount = usable.scope >= 3 && usable.scope <= 6 ? usable.scope - 2 : 1;
+  const randomCount = userRestriction === 0 && usable.scope >= 3 && usable.scope <= 6 ? usable.scope - 2 : 1;
   const targets: { side: "actor" | "enemy"; index: number }[] = [];
-  for (let i = 0; i < randomCount; i++) targets.push({ side: targetSideName, index: eligible[drawInt(state, eligible.length)]! });
+  for (let i = 0; i < randomCount; i++) {
+    let index: number;
+    if (dead) {
+      index = eligible[drawInt(state, eligible.length)]!;
+    } else {
+      const total = eligible.reduce((sum, candidate) => sum + Math.max(0, traitProduct(db, list[candidate]!, 23, 0)), 0);
+      let cursor = draw(state) * total;
+      index = eligible[0]!;
+      for (const candidate of eligible) {
+        cursor -= Math.max(0, traitProduct(db, list[candidate]!, 23, 0));
+        if (cursor <= 0) {
+          index = candidate;
+          break;
+        }
+      }
+    }
+    targets.push({ side: targetSideName, index });
+  }
   return targets;
 }
 
@@ -708,20 +845,34 @@ function applyState(
   id: number,
 ): boolean {
   const definition = stateDef(db, id);
-  if (!definition || target.states.some((entry) => entry.id === id)) return false;
-  const turns = definition.maxTurns <= definition.minTurns
-    ? definition.minTurns
-    : definition.minTurns + drawInt(state, definition.maxTurns - definition.minTurns + 1);
-  target.states.push({ id, turns });
-  if (id === 1) target.hp = 0;
+  if (!definition || !alive(target) || combatantTraits(db, target).some((trait) => trait.code === 14 && trait.dataId === id)) {
+    return false;
+  }
+  const turns = resetStateTurns(db, state, id);
+  if (id === 1) {
+    die(db, state, target, turns);
+    return true;
+  }
+  const active = target.states.find((entry) => entry.id === id);
+  if (active) active.turns = turns;
+  else target.states.push({ id, turns });
   return true;
 }
 
-function removeState(target: RpgMakerBattleCombatant, id: number): boolean {
+function removeState(db: RpgMakerBattleDatabase, target: RpgMakerBattleCombatant, id: number): boolean {
   const index = target.states.findIndex((entry) => entry.id === id);
   if (index < 0) return false;
   target.states.splice(index, 1);
+  if (id === 1 && target.hp === 0) target.hp = Math.min(1, rpgMakerCombatantParam(db, target, 0));
   return true;
+}
+
+function luckEffectRate(
+  db: RpgMakerBattleDatabase,
+  user: RpgMakerBattleCombatant,
+  target: RpgMakerBattleCombatant,
+): number {
+  return Math.max(0, 1 + (rpgMakerCombatantParam(db, user, 7) - rpgMakerCombatantParam(db, target, 7)) * 0.001);
 }
 
 function applyEffect(
@@ -729,6 +880,7 @@ function applyEffect(
   state: RpgMakerBattleState,
   user: RpgMakerBattleCombatant,
   target: RpgMakerBattleCombatant,
+  usable: RpgMakerUsableItem,
   effect: RpgMakerEffect,
 ): string | null {
   switch (effect.code) {
@@ -737,7 +889,7 @@ function applyEffect(
       const base = rpgMakerCombatantParam(db, target, 0) * effect.value1 + effect.value2;
       const recoveryRate = traitProduct(db, target, 23, 2);
       const pharmacology = user.side === "actor" ? traitProduct(db, user, 23, 3) : 1;
-      setHp(db, target, target.hp + Math.floor(base * recoveryRate * pharmacology));
+      setHp(db, state, target, target.hp + Math.floor(base * recoveryRate * pharmacology));
       return target.hp !== before ? `${target.name} recovered ${target.hp - before} HP.` : null;
     }
     case 12: {
@@ -752,21 +904,28 @@ function applyEffect(
       return null;
     case 21: {
       if (effect.dataId === 0) {
-        for (const attackState of combatantTraits(db, user).filter((trait) => trait.code === 32)) {
-          const chance = effect.value1 * attackState.value * traitProduct(db, target, 13, attackState.dataId);
-          if (draw(state) < chance && applyState(db, state, target, attackState.dataId)) {
-            return `${target.name} gained ${stateDef(db, attackState.dataId)?.name ?? "a state"}.`;
+        const added: string[] = [];
+        const attackStateIds = combatantTraits(db, user)
+          .filter((trait) => trait.code === 32)
+          .map((trait) => trait.dataId);
+        for (const id of attackStateIds) {
+          const rate = traitSum(db, user, 32, id);
+          const chance = effect.value1 * rate * traitProduct(db, target, 13, id) * luckEffectRate(db, user, target);
+          if (draw(state) < chance && applyState(db, state, target, id)) {
+            added.push(`${target.name} gained ${stateDef(db, id)?.name ?? "a state"}.`);
           }
         }
-        return null;
+        return added.length > 0 ? added.join("\n") : null;
       }
-      const chance = effect.value1 * traitProduct(db, target, 13, effect.dataId);
+      const chance = effect.value1 * (usable.hitType === 0
+        ? 1
+        : traitProduct(db, target, 13, effect.dataId) * luckEffectRate(db, user, target));
       return draw(state) < chance && applyState(db, state, target, effect.dataId)
         ? `${target.name} gained ${stateDef(db, effect.dataId)?.name ?? "a state"}.`
         : null;
     }
     case 22:
-      return draw(state) < effect.value1 && removeState(target, effect.dataId)
+      return draw(state) < effect.value1 && removeState(db, target, effect.dataId)
         ? `${target.name} recovered from ${stateDef(db, effect.dataId)?.name ?? "a state"}.`
         : null;
     case 31:
@@ -806,7 +965,6 @@ function elementRate(
 
 function applyVariance(state: RpgMakerBattleState, value: number, variance: number): number {
   const amplitude = Math.floor(Math.max(Math.abs(value) * variance / 100, 0));
-  if (amplitude === 0) return value;
   const spread = drawInt(state, amplitude + 1) + drawInt(state, amplitude + 1) - amplitude;
   return value >= 0 ? value + spread : value - spread;
 }
@@ -818,7 +976,7 @@ function removeStatesByDamage(
 ): void {
   for (const active of [...target.states]) {
     const definition = stateDef(db, active.id);
-    if (definition?.removeByDamage && drawInt(state, 100) < definition.chanceByDamage) removeState(target, active.id);
+    if (definition?.removeByDamage && drawInt(state, 100) < definition.chanceByDamage) removeState(db, target, active.id);
   }
 }
 
@@ -854,7 +1012,7 @@ function applyDamage(
   let effect: RpgMakerBattleState["effect"] = null;
   if (usable.damage.type === 1 || usable.damage.type === 3 || usable.damage.type === 5) {
     const before = target.hp;
-    setHp(db, target, target.hp - value);
+    setHp(db, state, target, target.hp - value);
     const changed = before - target.hp;
     text += changed >= 0 ? `\n${target.name} took ${changed} damage.` : `\n${target.name} recovered ${-changed} HP.`;
     effect = {
@@ -867,7 +1025,7 @@ function applyDamage(
       kind: target.hp === 0 ? "faint" : changed >= 0 ? "hit" : "heal",
     };
     if (changed > 0) removeStatesByDamage(db, state, target);
-    if (usable.damage.type === 5 && changed > 0) setHp(db, user, user.hp + Math.min(changed, before));
+    if (usable.damage.type === 5 && changed > 0) setHp(db, state, user, user.hp + Math.min(changed, before));
   } else if (usable.damage.type === 2 || usable.damage.type === 4 || usable.damage.type === 6) {
     const before = target.mp;
     target.mp = clamp(target.mp - value, 0, rpgMakerCombatantParam(db, target, 1));
@@ -877,7 +1035,7 @@ function applyDamage(
   }
   const effectMessages: string[] = [];
   for (const effectEntry of usable.effects) {
-    const message = applyEffect(db, state, user, target, effectEntry);
+    const message = applyEffect(db, state, user, target, usable, effectEntry);
     if (message) effectMessages.push(message);
   }
   if (critical) text += "\nCritical hit!";
@@ -890,7 +1048,7 @@ function updateActionEndStates(db: RpgMakerBattleDatabase, battler: RpgMakerBatt
     const definition = stateDef(db, active.id);
     if (definition?.autoRemovalTiming !== 1) continue;
     active.turns--;
-    if (active.turns <= 0) removeState(battler, active.id);
+    if (active.turns <= 0) removeState(db, battler, active.id);
   }
 }
 
@@ -903,6 +1061,8 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
   }
   const usable = usableForAction(db, action);
   if (!usable) return "";
+  const targets = actionTargets(db, state, action, usable, user);
+  if (targets.length === 0) return `${user.name} used ${usable.name}, but there was no target.`;
   if (action.kind === "skill") {
     const skill = usable as RpgMakerBattleSkill;
     if (!skillAffordable(user, skill)) return `${user.name} cannot use ${skill.name}.`;
@@ -913,8 +1073,6 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
     if ((state.items[key] ?? 0) <= 0) return `${usable.name} is no longer available.`;
     if ((usable as RpgMakerBattleItem).consumable) state.items[key] = Math.max(0, state.items[key]! - 1);
   }
-  const targets = actionTargets(state, action, usable);
-  if (targets.length === 0) return `${user.name} used ${usable.name}, but there was no target.`;
   const messages: string[] = [];
   state.effect = null;
   for (let repeat = 0; repeat < usable.repeats; repeat++) {
@@ -953,7 +1111,7 @@ function levelActor(
   while (battler.actor.level < actor.maxLevel &&
       battler.actor.exp >= rpgMakerExpForLevel(db, battler.actor.classId, battler.actor.level + 1)) {
     battler.actor.level++;
-    for (let id = 0; id < 8; id++) battler.params[id] = Math.max(0, integer(klass.params[id]?.[battler.actor.level]));
+    battler.params = actorBaseParams(db, battler.databaseId, battler.actor.classId, battler.actor.level);
     for (const learning of klass.learnings) {
       if (learning.level === battler.actor.level && !battler.actor.skills.includes(learning.skillId)) {
         battler.actor.skills.push(learning.skillId);
@@ -1002,12 +1160,18 @@ function beginDefeat(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): vo
   showMessage(state, formatTerm(db.terms.defeat, state.actors[0]?.name ?? "Party"), "lose");
 }
 
+function reviveBattleMembers(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
+  for (const actor of state.actors) {
+    if (actor.hp <= 0) setHp(db, state, actor, 1);
+  }
+}
+
 function updateTurnEndStates(db: RpgMakerBattleDatabase, battler: RpgMakerBattleCombatant): void {
   for (const active of [...battler.states]) {
     const definition = stateDef(db, active.id);
     if (definition?.autoRemovalTiming === 2) {
       active.turns--;
-      if (active.turns <= 0) removeState(battler, active.id);
+      if (active.turns <= 0) removeState(db, battler, active.id);
     }
   }
   for (const buff of battler.buffs) {
@@ -1060,18 +1224,8 @@ function tryEscape(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void
   const ratio = clamp(0.5 * actorAgi / Math.max(1, enemyAgi) + 0.1 * (state.escapeAttempts - 1), 0, 1);
   if (draw(state) < ratio) showMessage(state, "Got away safely!", "escape");
   else {
-    state.actorActions = [];
-    state.actors.forEach((actor, index) => {
-      if (alive(actor)) state.actorActions.push({ side: "actor", user: index, kind: "guard", id: 0, target: index, speed: 0 });
-    });
-    showMessage(state, "Couldn't escape!", "nextAction");
-    state.queue = state.enemies.flatMap((enemy, index) => {
-      const action = chooseEnemyAction(db, state, enemy, index);
-      return action ? [action] : [];
-    });
-    for (const action of state.queue) action.speed = actionSpeed(db, state, action);
-    state.queue.sort((a, b) => b.speed - a.speed);
-    state.queueIndex = 0;
+    prepareResolution(db, state, false);
+    showMessage(state, "Couldn't escape!", "turnStart");
   }
 }
 
@@ -1131,13 +1285,21 @@ function createInitialState(
 
   const { runtime } = runtimeRoot(ext);
   runtime.battleCount++;
-  for (const actorId of db.party) {
+  const initialParty = new Set(db.party);
+  const party = [
+    ...db.party.filter((actorId) => context.switches[partyOutSwitchKey(actorId)] !== true),
+    ...db.actors
+      .map((actor) => actor.id)
+      .filter((actorId) => !initialParty.has(actorId) && context.switches[partySwitchKey(actorId)] === true)
+      .sort((a, b) => a - b),
+  ].slice(0, 4);
+  for (const actorId of party) {
     if (!runtime.actors[String(actorId)]) {
       const initial = initialActorRuntime(db, actorId);
       if (initial) runtime.actors[String(actorId)] = initial;
     }
   }
-  const actors = db.party.flatMap((id, index) => {
+  const actors = party.flatMap((id, index) => {
     const actor = runtime.actors[String(id)];
     const combatant = actor ? actorCombatant(db, actor, index) : null;
     return combatant ? [combatant] : [];
@@ -1213,9 +1375,12 @@ function stepState(
     if (state.afterMessage === "party") {
       state.phase = "party";
       state.menuIndex = 0;
+    } else if (state.afterMessage === "turnStart") {
+      startPreparedResolution(db, state);
     } else if (state.afterMessage === "nextAction") {
       resolveNextAction(db, state);
     } else {
+      if (state.afterMessage === "lose" && state.canLose) reviveBattleMembers(db, state);
       state.result = state.afterMessage;
       state.phase = "done";
     }

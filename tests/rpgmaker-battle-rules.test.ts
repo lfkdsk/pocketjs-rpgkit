@@ -10,6 +10,7 @@ import {
   RPGMAKER_ENCOUNTER_DUE_VARIABLE,
   RPGMAKER_ENCOUNTER_STEP_CALL,
   rpgMakerBattleState,
+  rpgMakerCombatantParam,
   rpgMakerExpForLevel,
 } from "../src/rpgmaker-battle/rules.ts";
 import type { RpgMakerBattleDatabase, RpgMakerBattleState } from "../src/rpgmaker-battle/types.ts";
@@ -67,6 +68,28 @@ function state(value: JsonValue): Readonly<RpgMakerBattleState> {
   return rpgMakerBattleState(value);
 }
 
+function mutable(value: JsonValue): RpgMakerBattleState {
+  return structuredClone(state(value)) as RpgMakerBattleState;
+}
+
+function json(value: RpgMakerBattleState): JsonValue {
+  return value as unknown as JsonValue;
+}
+
+function forceAction(
+  rules: BattleRules,
+  value: JsonValue,
+  action: RpgMakerBattleState["queue"][number],
+): JsonValue {
+  const next = mutable(value);
+  next.phase = "message";
+  next.afterMessage = "nextAction";
+  next.queue = [action];
+  next.queueIndex = 0;
+  next.message = "";
+  return confirm(rules, json(next));
+}
+
 describe("RPG Maker battle rules", () => {
   test("wins a front-view battle, awards drops/gold/EXP, levels up, and persists namespaced state", () => {
     const db = cloneDb();
@@ -102,7 +125,7 @@ describe("RPG Maker battle rules", () => {
     expect(root.rpgmakerBattle.actors["1"].level).toBeGreaterThan(1);
   });
 
-  test("an allowed defeat returns lose and preserves zero HP", () => {
+  test("an allowed defeat returns lose and revives battle members to one HP", () => {
     const db = cloneDb();
     db.enemies[0]!.params = [999, 0, 999, 12, 8, 8, 1, 6];
     const ext = {
@@ -128,8 +151,193 @@ describe("RPG Maker battle rules", () => {
     const completion = rules.done(current)!;
 
     expect(completion.result).toBe("lose");
-    expect((completion.ext as Record<string, any>).rpgmakerBattle.actors["1"].hp).toBe(0);
+    expect((completion.ext as Record<string, any>).rpgmakerBattle.actors["1"].hp).toBe(1);
+    expect((completion.ext as Record<string, any>).rpgmakerBattle.actors["1"].states).toEqual([]);
     expect((completion.ext as Record<string, any>).rpgmakerBattle.winCount).toBe(0);
+  });
+
+  test("uses current party switches and projects initial equipment into battlers", () => {
+    const db = cloneDb();
+    const initial = state(start(db).state);
+    expect(initial.actors.map((actor) => actor.name)).toEqual(["Wren"]);
+    expect(rpgMakerCombatantParam(db, initial.actors[0]!, 2)).toBe(26);
+    expect(rpgMakerCombatantParam(db, initial.actors[0]!, 3)).toBe(21);
+
+    const swapped = state(start(db, 1, {}, {
+      ...CONTEXT,
+      switches: { "party-out-actor001": true, "party-actor002": true },
+    }).state);
+    expect(swapped.actors.map((actor) => actor.name)).toEqual(["Moss"]);
+    expect(rpgMakerCombatantParam(db, swapped.actors[0]!, 2)).toBe(32);
+  });
+
+  test("confusion restrictions target opponents, either side, and friends for actors and enemies", () => {
+    const db = cloneDb();
+    db.states.push({
+      id: 2, name: "Confusion", restriction: 3, priority: 50,
+      minTurns: 2, maxTurns: 2, autoRemovalTiming: 0,
+      removeAtBattleEnd: true, removeByDamage: false, chanceByDamage: 0, traits: [],
+    });
+    const rules = createRpgMakerBattleRules(db);
+
+    const actorCase = rules.start({}, setup(db), 11, CONTEXT)!.state;
+    const actorState = mutable(actorCase);
+    actorState.phase = "party";
+    actorState.actors[0]!.states = [{ id: 2, turns: 2 }];
+    actorState.actors[0]!.params[6] = 999;
+    actorState.enemies[0]!.params[6] = 1;
+    const actorHp = actorState.actors[0]!.hp;
+    const enemyHp = actorState.enemies[0]!.hp;
+    const afterActor = state(confirm(rules, json(actorState)));
+    expect(afterActor.actors[0]!.hp).toBeLessThan(actorHp);
+    expect(afterActor.enemies[0]!.hp).toBe(enemyHp);
+
+    const enemyCase = mutable(rules.start({}, setup(db), 12, CONTEXT)!.state);
+    enemyCase.phase = "party";
+    enemyCase.enemies[0]!.states = [{ id: 2, turns: 2 }];
+    enemyCase.enemies[0]!.params[6] = 999;
+    enemyCase.actors[0]!.params[6] = 1;
+    const enemySelfHp = enemyCase.enemies[0]!.hp;
+    const actorBefore = enemyCase.actors[0]!.hp;
+    let afterEnemy: JsonValue = confirm(rules, json(enemyCase)); // Fight
+    afterEnemy = fold(rules, afterEnemy, { downEdge: true }); // Guard
+    afterEnemy = confirm(rules, afterEnemy);
+    expect(state(afterEnemy).enemies[0]!.hp).toBeLessThan(enemySelfHp);
+    expect(state(afterEnemy).actors[0]!.hp).toBe(actorBefore);
+
+    db.states[1]!.restriction = 2;
+    const either = mutable(rules.start({}, setup(db), 13, CONTEXT)!.state);
+    either.phase = "party";
+    either.actors[0]!.states = [{ id: 2, turns: 2 }];
+    either.actors[0]!.params[6] = 999;
+    const eitherAfter = state(confirm(rules, json(either)));
+    expect(eitherAfter.actors[0]!.hp < either.actors[0]!.hp || eitherAfter.enemies[0]!.hp < either.enemies[0]!.hp).toBe(true);
+  });
+
+  test("refreshes states, clears death state siblings and buffs, and revives on death-state removal", () => {
+    const db = cloneDb();
+    db.states.push({
+      id: 2, name: "Poison", restriction: 0, priority: 50,
+      minTurns: 3, maxTurns: 3, autoRemovalTiming: 0,
+      removeAtBattleEnd: false, removeByDamage: false, chanceByDamage: 0, traits: [],
+    });
+    const blank = structuredClone(db.items[0]!.damage);
+    db.skills.push(
+      {
+        ...structuredClone(db.skills[0]!), id: 2, name: "Poison",
+        hitType: 0, damage: { ...blank, variance: 0 },
+        effects: [{ code: 21, dataId: 2, value1: 1, value2: 0 }],
+      },
+      {
+        ...structuredClone(db.skills[0]!), id: 3, name: "Knockout",
+        hitType: 0, damage: { ...blank, variance: 0 },
+        effects: [{ code: 21, dataId: 1, value1: 1, value2: 0 }],
+      },
+      {
+        ...structuredClone(db.skills[0]!), id: 4, name: "Revive",
+        scope: 9, hitType: 0, damage: { ...blank, variance: 0 },
+        effects: [{ code: 22, dataId: 1, value1: 1, value2: 0 }],
+      },
+    );
+    db.troops[0]!.members.push({ ...db.troops[0]!.members[0]!, x: 320 });
+    const rules = createRpgMakerBattleRules(db);
+    const begun = mutable(rules.start({}, setup(db), 21, CONTEXT)!.state);
+    begun.enemies[0]!.states = [{ id: 2, turns: 1 }];
+    begun.enemies[0]!.buffs[2] = { level: 2, turns: 5 };
+
+    let current = forceAction(rules, json(begun), {
+      side: "actor", user: 0, kind: "skill", id: 2, target: 0, speed: 0,
+    });
+    expect(state(current).enemies[0]!.states).toContainEqual({ id: 2, turns: 3 });
+
+    current = forceAction(rules, current, {
+      side: "actor", user: 0, kind: "skill", id: 3, target: 0, speed: 0,
+    });
+    expect(state(current).enemies[0]!).toMatchObject({ hp: 0, states: [{ id: 1, turns: 1 }] });
+    expect(state(current).enemies[0]!.buffs.every((buff) => buff.level === 0 && buff.turns === 0)).toBe(true);
+
+    current = forceAction(rules, current, {
+      side: "enemy", user: 1, kind: "skill", id: 4, target: 0, speed: 0,
+    });
+    expect(state(current).enemies[0]!).toMatchObject({ hp: 1, states: [] });
+
+    db.enemies[0]!.traits.push({ code: 14, dataId: 2, value: 0 });
+    const resisted = forceAction(rules, rules.start({}, setup(db), 22, CONTEXT)!.state, {
+      side: "actor", user: 0, kind: "skill", id: 2, target: 0, speed: 0,
+    });
+    expect(state(resisted).enemies[0]!.states.some((active) => active.id === 2)).toBe(false);
+  });
+
+  test("troop pages start only the first eligible page, repeat moment spans, and skip periodic turn zero", () => {
+    const db = cloneDb();
+    db.troops[0]!.pages = [
+      {
+        span: 0,
+        condition: { enemyHp: { index: 0, percent: 100 } },
+        effects: [{ kind: "variable", id: "v001", op: "add", value: 1 }],
+        unsupported: 0,
+      },
+      {
+        span: 0,
+        condition: { enemyHp: { index: 0, percent: 100 } },
+        effects: [{ kind: "variable", id: "v002", op: "add", value: 1 }],
+        unsupported: 0,
+      },
+    ];
+    let rules = createRpgMakerBattleRules(db);
+    let current = rules.start({}, setup(db), 31, CONTEXT)!.state;
+    expect(state(current).variables).toMatchObject({ v001: 1 });
+    expect(state(current).variables.v002).toBeUndefined();
+    current = confirm(rules, current); // intro -> party
+    current = confirm(rules, current); // Fight -> command
+    current = confirm(rules, current); // Attack -> next first eligible page
+    expect(state(current).variables.v002).toBe(1);
+
+    db.troops[0]!.pages = [{
+      span: 2,
+      condition: { enemyHp: { index: 0, percent: 100 } },
+      effects: [{ kind: "variable", id: "v003", op: "add", value: 1 }],
+      unsupported: 0,
+    }];
+    rules = createRpgMakerBattleRules(db);
+    current = rules.start({}, setup(db), 32, CONTEXT)!.state;
+    expect(state(current).variables.v003).toBe(1);
+    current = confirm(rules, current);
+    current = confirm(rules, current);
+    current = confirm(rules, current);
+    expect(state(current).variables.v003).toBe(3);
+
+    db.troops[0]!.pages = [{
+      span: 0,
+      condition: { turn: { a: 0, b: 1 } },
+      effects: [{ kind: "switch", id: "s099", value: true }],
+      unsupported: 0,
+    }];
+    rules = createRpgMakerBattleRules(db);
+    current = rules.start({}, setup(db), 33, CONTEXT)!.state;
+    expect(state(current).switches.s099).toBeUndefined();
+    current = confirm(rules, current);
+    current = confirm(rules, current);
+    current = confirm(rules, current);
+    expect(state(current).switches.s099).toBe(true);
+  });
+
+  test("a failed escape advances the troop turn before enemy actions", () => {
+    const db = cloneDb();
+    db.classes[0]!.params[6]![1] = 1;
+    db.enemies[0]!.params[6] = 999;
+    const rules = createRpgMakerBattleRules(db);
+    let current = rules.start({}, setup(db), 41, CONTEXT)!.state;
+    current = confirm(rules, current);
+    current = fold(rules, current, { downEdge: true });
+    current = confirm(rules, current);
+    expect(state(current)).toMatchObject({
+      phase: "message",
+      afterMessage: "turnStart",
+      turn: 1,
+      message: "Couldn't escape!",
+    });
+    expect(state(current).queue.some((action) => action.side === "enemy")).toBe(true);
   });
 
   test("escape is deterministic, gated by canEscape, and increments its counter", () => {
@@ -223,9 +431,10 @@ describe("RPG Maker battle rules", () => {
     current = confirm(rules, current);
 
     // Enemy action choice, actor speed, enemy speed, hit, evade, critical,
-    // two variance rolls, and the guaranteed drop each consume one draw.
+    // two variance rolls, death-state duration, and the guaranteed drop each
+    // consume one draw.
     let expected = seed >>> 0;
-    for (let i = 0; i < 9; i++) expected = rngNext(expected).next;
+    for (let i = 0; i < 10; i++) expected = rngNext(expected).next;
     expect(state(current).rng).toBe(expected);
   });
 

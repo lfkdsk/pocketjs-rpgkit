@@ -145,7 +145,8 @@ describe("imported RPG Maker Battle Processing end to end", () => {
 
     expect(state.sw.variables.v007).toBe(1);
     expect(state.sw.switches.s010).not.toBe(true);
-    expect((state.ext as Record<string, any>).rpgmakerBattle.actors["1"].hp).toBe(0);
+    expect((state.ext as Record<string, any>).rpgmakerBattle.actors["1"].hp).toBe(1);
+    expect((state.ext as Record<string, any>).rpgmakerBattle.actors["1"].states).toEqual([]);
   });
 
   test("a completed player step raises and consumes a region-filtered random encounter", async () => {

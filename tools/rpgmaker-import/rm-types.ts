@@ -217,6 +217,8 @@ export interface RmItem {
   wtypeId?: number;
   /** Permitted-armor type checked by trait code 52 (armors only). */
   atypeId?: number;
+  /** Additive MHP..LUK parameters (weapons and armors). */
+  params?: number[];
   traits?: RmTrait[];
   scope?: number;
   occasion?: number;

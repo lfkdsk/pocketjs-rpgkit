@@ -24,6 +24,7 @@ import type { Coverage } from "./coverage.ts";
 import { itemId, mapId, switchId, variableId } from "./ids.ts";
 import type {
   RmCommand,
+  RmActor,
   RmDamage,
   RmEffect,
   RmItem,
@@ -39,6 +40,79 @@ const integer = (value: unknown, fallback = 0): number => Math.trunc(finite(valu
 const nonNegative = (value: unknown, fallback = 0): number => Math.max(0, integer(value, fallback));
 const clamp = (value: unknown, lo: number, hi: number, fallback = lo): number =>
   Math.max(lo, Math.min(hi, integer(value, fallback)));
+
+const TRAIT_SKILL_ADD = 43;
+const TRAIT_EQUIP_WTYPE = 51;
+const TRAIT_EQUIP_ATYPE = 52;
+const TRAIT_EQUIP_SEAL = 54;
+const TRAIT_SLOT_TYPE = 55;
+
+interface InitialEquip {
+  kind: "weapon" | "armor";
+  item: RmItem;
+}
+
+function traitDataIds(source: readonly RmTrait[] | undefined, code: number): number[] {
+  return (source ?? []).flatMap((trait) =>
+    trait.code === code && Number.isInteger(trait.dataId) && trait.dataId > 0 ? [trait.dataId] : []);
+}
+
+function equipSlots(rm: RmProject, source: readonly RmTrait[]): number[] {
+  const slots = Array.from({ length: Math.max(0, (rm.system.equipTypes?.length ?? 0) - 1) }, (_, index) => index + 1);
+  if (slots.length >= 2 && source.some((trait) => trait.code === TRAIT_SLOT_TYPE && trait.dataId === 1)) slots[1] = 1;
+  return slots;
+}
+
+function initialEquipment(
+  rm: RmProject,
+  actor: RmActor,
+): RpgMakerBattleDatabase["actors"][number]["equipment"] {
+  const klass = rm.classes[actor.classId] ?? null;
+  const baseTraits = [...(actor.traits ?? []), ...(klass?.traits ?? [])];
+  const slots = equipSlots(rm, baseTraits);
+  const equipped: (InitialEquip | null)[] = slots.map((slotType, slot) => {
+    const id = actor.equips?.[slot] ?? 0;
+    if (!Number.isInteger(id) || id <= 0) return null;
+    const kind = slotType === 1 ? "weapon" : "armor";
+    const item = kind === "weapon" ? rm.weapons[id] : rm.armors[id];
+    return item ? { kind, item } : null;
+  });
+
+  // Match releaseUnequippableItems: equipment traits can change slots and
+  // permissions, so repeat validation until a pass removes nothing.
+  for (;;) {
+    const allTraits = [...baseTraits, ...equipped.flatMap((entry) => entry?.item.traits ?? [])];
+    const currentSlots = equipSlots(rm, allTraits);
+    const weaponTypes = new Set(traitDataIds(allTraits, TRAIT_EQUIP_WTYPE));
+    const armorTypes = new Set(traitDataIds(allTraits, TRAIT_EQUIP_ATYPE));
+    const sealed = new Set(traitDataIds(allTraits, TRAIT_EQUIP_SEAL));
+    let changed = false;
+    for (let slot = 0; slot < equipped.length; slot++) {
+      const entry = equipped[slot];
+      if (!entry) continue;
+      const permitted = entry.kind === "weapon"
+        ? weaponTypes.has(entry.item.wtypeId ?? 0)
+        : armorTypes.has(entry.item.atypeId ?? 0);
+      if (!permitted || sealed.has(entry.item.etypeId ?? 0) || entry.item.etypeId !== currentSlots[slot]) {
+        equipped[slot] = null;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  const surviving = equipped.flatMap((entry) => entry ? [entry.item] : []);
+  const equipTraits = surviving.flatMap((entry) => entry.traits ?? []);
+  return {
+    params: Array.from({ length: 8 }, (_, id) =>
+      surviving.reduce((sum, entry) => sum + integer(entry.params?.[id]), 0)) as
+      [number, number, number, number, number, number, number, number],
+    traits: traits(equipTraits),
+    skills: [...new Set(traitDataIds(equipTraits, TRAIT_SKILL_ADD))]
+      .filter((id) => !!rm.skills[id])
+      .sort((a, b) => a - b),
+  };
+}
 
 function traits(source: readonly RmTrait[] | undefined): RpgMakerTrait[] {
   return (source ?? []).map((trait) => ({
@@ -199,6 +273,7 @@ export function importBattleDatabase(
       initialLevel: Math.max(1, nonNegative(actor.initialLevel, 1)),
       maxLevel: Math.max(1, nonNegative(actor.maxLevel, 99)),
       traits: traits(actor.traits),
+      equipment: initialEquipment(rm, actor),
     }];
   });
   const classes = rm.classes.flatMap((entry) => {

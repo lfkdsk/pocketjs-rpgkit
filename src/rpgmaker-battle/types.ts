@@ -20,6 +20,13 @@ export interface RpgMakerBattleActor {
   initialLevel: number;
   maxLevel: number;
   traits: RpgMakerTrait[];
+  /** Immutable projection of Game_Actor.setup's surviving initial equips.
+   * Runtime equipment-changing commands remain an importer degradation. */
+  equipment: {
+    params: [number, number, number, number, number, number, number, number];
+    traits: RpgMakerTrait[];
+    skills: number[];
+  };
 }
 
 export interface RpgMakerBattleClass {
@@ -260,6 +267,7 @@ export interface RpgMakerBattleAction {
 
 export type RpgMakerBattleAfterMessage =
   | "party"
+  | "turnStart"
   | "nextAction"
   | "win"
   | "lose"
