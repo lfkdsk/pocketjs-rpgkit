@@ -26,9 +26,10 @@ const SECTION_TITLES: Record<CoverageSection, string> = {
   escape: "Message escape codes",
   tile: "Tiles and map attributes",
   audio: "Audio media",
+  battle: "Battle database and formulas",
 };
 
-const SECTION_ORDER: CoverageSection[] = ["command", "condition", "pageCondition", "trigger", "route", "escape", "tile", "audio"];
+const SECTION_ORDER: CoverageSection[] = ["command", "condition", "pageCondition", "trigger", "route", "escape", "tile", "audio", "battle"];
 
 export interface StaticCommandRow {
   code: number;
@@ -68,6 +69,7 @@ function sampleContext(cov: Coverage): EventContext {
     classes: [null, { id: 1, name: "Hero", learnings: [{ level: 1, skillId: 1 }], traits: [], note: "" }],
     skills: [null, { id: 1, name: "Attack", note: "" }],
     states: [null, { id: 1, name: "Knockout", note: "" }],
+    enemies: [null],
     troops: [null, { id: 1, name: "Slime", members: [], pages: [] }],
     animations: [null],
   };
@@ -75,6 +77,7 @@ function sampleContext(cov: Coverage): EventContext {
   let animation = 0;
   return {
     rm,
+    battleDatabaseHash: "0".repeat(64),
     cov,
     placeholders: "visible",
     maps: new Map([[1, "map001"], [2, "map002"]]),
@@ -143,7 +146,7 @@ export function coverageMarkdown(
     "  (importer lowerings that keep the behavior count here).",
     "- **Degraded**: runs with a documented limitation (the reason column).",
     "- **Placeholder**: a deliberate visible stand-in (plugin and script",
-    "  commands, battles).",
+    "  commands).",
     "- **Dropped**: no output.",
     "",
     "## Summary",

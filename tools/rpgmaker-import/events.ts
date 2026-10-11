@@ -69,6 +69,9 @@ import { convertMessage } from "./text.ts";
 
 export interface EventContext {
   rm: RmProject;
+  /** Hash of the separately packaged battle database. Included in every
+   * battle setup so map/project identity also covers battle content. */
+  battleDatabaseHash: string;
   cov: Coverage;
   placeholders: "visible" | "silent";
   /** kit map ids of all imported maps, by RM map id */
@@ -2011,13 +2014,19 @@ function emitAudio(code: number, a: RmAudio | undefined, st: State): Command[] {
 
 // --- battle, shop, name input --------------------------------------------------------
 
-/** Battle Processing. The kit has no RPG Maker battle system: the setup
- *  JSON names the troop for a game-registered (placeholder) battle, and the
- *  If Win / If Escape / If Lose branches map to onWin / onEscape / onLose. */
+/** Battle Processing. The optional RPG Maker battle module resolves the
+ * troop source; If Win / If Escape / If Lose map to generic battle result
+ * branches. A database hash binds this map command to battle.json. */
 function emitBattle(nd: RmNode, p: readonly unknown[], st: State, scope: Scope): Command[] {
   const desig = int(p[0]);
   const troopN = int(p[1]);
-  const setup: { [key: string]: JsonValue } = { system: "rpgmaker", canEscape: !!p[2], canLose: !!p[3] };
+  const canLose = !!p[3];
+  const setup: { [key: string]: JsonValue } = {
+    system: "rpgmaker",
+    databaseHash: st.ctx.battleDatabaseHash,
+    canEscape: !!p[2],
+    canLose,
+  };
   if (desig === 0) {
     setup.troop = troopN;
     setup.name = st.ctx.rm.troops[troopN]?.name ?? "";
@@ -2033,7 +2042,15 @@ function emitBattle(nd: RmNode, p: readonly unknown[], st: State, scope: Scope):
     else if (br.marker.code === 602) cmd.onEscape = cmds;
     else cmd.onLose = cmds;
   }
-  rec(st, 301, "Placeholder", "no RPG Maker battle system; the game runs a placeholder battle");
+  if (!canLose && !cmd.onLose) cmd.onLose = [{ op: "gameOver" }, { op: "exit" }];
+  rec(
+    st,
+    301,
+    st.ctx.rm.system.optSideView === true ? "Degraded" : "Native",
+    st.ctx.rm.system.optSideView === true
+      ? "side-view battle presentation is rendered in deterministic front view"
+      : undefined,
+  );
   return [cmd];
 }
 

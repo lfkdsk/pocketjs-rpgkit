@@ -92,6 +92,7 @@ function rmProject(): RmProject {
     classes: [null, { id: 1, name: "Adventurer", learnings: [{ level: 1, skillId: 1 }], traits: [], note: "" }],
     skills: [null, { id: 1, name: "Attack", note: "" }],
     states: [null, { id: 1, name: "Knockout", note: "" }],
+    enemies: [null],
     troops: [null, { id: 1, name: "Bats", members: [], pages: [] }],
     animations: [null],
   };
@@ -112,15 +113,24 @@ function makeCtx(opts: {
   balloon?: boolean;
   flavor?: "MV" | "MZ";
   party?: number[];
+  sideView?: boolean;
 } = {}): EventContext {
   let shop = 0;
   let animation = 0;
   const flavored = opts.flavor ? { ...RM, flavor: opts.flavor } : RM;
-  const rm = opts.party
-    ? { ...flavored, system: { ...flavored.system, partyMembers: opts.party } }
+  const rm = opts.party || opts.sideView !== undefined
+    ? {
+        ...flavored,
+        system: {
+          ...flavored.system,
+          ...(opts.party ? { partyMembers: opts.party } : {}),
+          ...(opts.sideView !== undefined ? { optSideView: opts.sideView } : {}),
+        },
+      }
     : flavored;
   return {
     rm,
+    battleDatabaseHash: "a".repeat(64),
     cov: new Coverage(),
     placeholders: opts.placeholders ?? "visible",
     maps: MAPS,
@@ -1191,15 +1201,28 @@ describe("battle, shop, name input", () => {
     ]);
     expect(cmds).toEqual([{
       op: "battle",
-      setup: { system: "rpgmaker", canEscape: true, canLose: false, troop: 1, name: "Bats" },
+      setup: { system: "rpgmaker", databaseHash: "a".repeat(64), canEscape: true, canLose: false, troop: 1, name: "Bats" },
       onWin: [{ op: "switch", id: "s001", value: true }],
       onEscape: [{ op: "switch", id: "s002", value: true }],
+      onLose: [{ op: "gameOver" }, { op: "exit" }],
     }]);
-    expect(only(cov, 301)).toBe("Placeholder");
+    expect(only(cov, 301)).toBe("Native");
     const lose = conv([C(301, 0, [1, 4, false, true]), C(603, 0), C(115, 1), END(1), C(604, 0)]);
     expect(lose.cmds).toEqual([{
-      op: "battle", setup: { system: "rpgmaker", canEscape: false, canLose: true, troopVariable: "v004" }, onLose: [{ op: "exit" }],
+      op: "battle", setup: { system: "rpgmaker", databaseHash: "a".repeat(64), canEscape: false, canLose: true, troopVariable: "v004" }, onLose: [{ op: "exit" }],
     }]);
+  });
+
+  test("side-view Battle Processing is reported as front-view degradation", () => {
+    const { cmds, cov } = conv([C(301, 0, [2, 0, true, false])], { sideView: true });
+    expect(cmds).toEqual([{
+      op: "battle",
+      setup: {
+        system: "rpgmaker", databaseHash: "a".repeat(64), canEscape: true, canLose: false, encounter: true,
+      },
+      onLose: [{ op: "gameOver" }, { op: "exit" }],
+    }]);
+    expect(only(cov, 301)).toBe("Degraded");
   });
 
   test("shop goods", () => {

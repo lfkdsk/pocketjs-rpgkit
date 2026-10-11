@@ -251,7 +251,7 @@ for that project, to `coverage.md`.
 | 283 | Change Battle Background | MV/MZ | Dropped |  | battle backgrounds in the battle setup |
 | 284 | Change Parallax | MV/MZ | Native |  |  |
 | 285 | Get Location Info | MV/MZ | Native |  |  |
-| 301 | Battle Processing | MV/MZ | Placeholder | no RPG Maker battle system; the game runs a placeholder battle | an RPG Maker battle system (troops, actors, skills) behind the battle op |
+| 301 | Battle Processing | MV/MZ | Native |  | an RPG Maker battle system (troops, actors, skills) behind the battle op |
 | 302 | Shop Processing | MV/MZ | Native |  |  |
 | 303 | Name Input Processing | MV/MZ | Native |  |  |
 | 311 | Change HP | MV/MZ | Dropped |  | actor stats |

@@ -218,7 +218,34 @@ export interface RmItem {
   /** Permitted-armor type checked by trait code 52 (armors only). */
   atypeId?: number;
   traits?: RmTrait[];
+  scope?: number;
+  occasion?: number;
+  repeats?: number;
+  speed?: number;
+  successRate?: number;
+  /** 0 certain, 1 physical, 2 magical. */
+  hitType?: number;
+  tpGain?: number;
+  damage?: RmDamage;
+  effects?: RmEffect[];
   note: string;
+}
+
+export interface RmDamage {
+  critical: boolean;
+  elementId: number;
+  formula: string;
+  /** 0 none, 1 HP damage, 2 MP damage, 3 HP recovery, 4 MP recovery,
+   * 5 HP drain, 6 MP drain. */
+  type: number;
+  variance: number;
+}
+
+export interface RmEffect {
+  code: number;
+  dataId: number;
+  value1: number;
+  value2: number;
 }
 
 export interface RmActor {
@@ -231,6 +258,8 @@ export interface RmActor {
   faceIndex: number;
   classId: number;
   initialLevel: number;
+  maxLevel?: number;
+  battlerName?: string;
   /** Database ids aligned with the actor's equip slots. */
   equips: number[];
   traits: RmTrait[];
@@ -247,29 +276,96 @@ export interface RmClass {
   id: number;
   name: string;
   learnings: RmLearning[];
+  params?: number[][];
+  expParams?: number[];
   traits: RmTrait[];
   note: string;
 }
 
-/** Skills and states only need stable ids for conditional-branch
- * validation. Their remaining database fields are deliberately ignored. */
 export interface RmSkill {
   id: number;
   name: string;
+  description?: string;
+  iconIndex?: number;
+  scope?: number;
+  occasion?: number;
+  repeats?: number;
+  speed?: number;
+  successRate?: number;
+  hitType?: number;
+  tpGain?: number;
+  mpCost?: number;
+  tpCost?: number;
+  stypeId?: number;
+  damage?: RmDamage;
+  effects?: RmEffect[];
   note: string;
 }
 
 export interface RmState {
   id: number;
   name: string;
+  restriction?: number;
+  priority?: number;
+  minTurns?: number;
+  maxTurns?: number;
+  autoRemovalTiming?: number;
+  removeAtBattleEnd?: boolean;
+  removeByDamage?: boolean;
+  chanceByDamage?: number;
+  traits?: RmTrait[];
   note: string;
+}
+
+export interface RmEnemyAction {
+  conditionParam1: number;
+  conditionParam2: number;
+  conditionType: number;
+  rating: number;
+  skillId: number;
+}
+
+export interface RmEnemy {
+  id: number;
+  name: string;
+  battlerName: string;
+  battlerHue: number;
+  params: number[];
+  exp: number;
+  gold: number;
+  actions: RmEnemyAction[];
+  dropItems: { kind: number; dataId: number; denominator: number }[];
+  traits: RmTrait[];
+  note: string;
+}
+
+export interface RmTroopPageCondition {
+  actorHp: number;
+  actorId: number;
+  actorValid: boolean;
+  enemyHp: number;
+  enemyIndex: number;
+  enemyValid: boolean;
+  switchId: number;
+  switchValid: boolean;
+  turnA: number;
+  turnB: number;
+  turnEnding: boolean;
+  turnValid: boolean;
+}
+
+export interface RmTroopPage {
+  conditions: RmTroopPageCondition;
+  list: RmCommand[];
+  /** 0 battle, 1 turn, 2 moment. */
+  span: number;
 }
 
 export interface RmTroop {
   id: number;
   name: string;
   members: { enemyId: number; x: number; y: number; hidden: boolean }[];
-  pages: unknown[];
+  pages: RmTroopPage[];
 }
 
 /** One of System.json's built-in boat, ship or airship records. */
@@ -286,6 +382,13 @@ export interface RmSystem {
   gameTitle: string;
   currencyUnit: string;
   partyMembers: number[];
+  optSideView?: boolean;
+  optExtraExp?: boolean;
+  elements?: string[];
+  terms?: {
+    commands?: (string | null)[];
+    messages?: Record<string, string>;
+  };
   /** Index 0 is blank; indices 1..n define the actor's equipment slots. */
   equipTypes?: string[];
   /** Initial visibility of the party trail and player, respectively. */
@@ -329,6 +432,7 @@ export interface RmProject {
   classes: (RmClass | null)[];
   skills: (RmSkill | null)[];
   states: (RmState | null)[];
+  enemies: (RmEnemy | null)[];
   troops: (RmTroop | null)[];
   animations: (RmAnimation | null)[];
 }

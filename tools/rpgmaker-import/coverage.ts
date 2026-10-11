@@ -27,7 +27,8 @@ export type CoverageSection =
   | "route"
   | "escape"
   | "tile"
-  | "audio";
+  | "audio"
+  | "battle";
 
 export interface CoverageRow {
   section: CoverageSection;

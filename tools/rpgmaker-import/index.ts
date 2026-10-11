@@ -12,6 +12,7 @@
 //   audio/*.qoa         referenced BGM/BGS/ME/SE converted from Ogg/M4A
 //   system/balloon.png  the balloon sheet, when Show Balloon Icon is used
 //   assets.json         the render manifest a cooker bakes (ImportAssets)
+//   battle.json         normalized data for the opt-in RPG Maker battle module
 //   coverage.md/.json   per-construct dispositions and the full MV/MZ
 //                       command table
 //
@@ -49,6 +50,7 @@ export async function importToDirectory(projectDir: string, outDir: string, opti
   } else {
     write("project.json", JSON.stringify(result.project, null, 2) + "\n");
   }
+  write("battle.json", JSON.stringify(result.battle, null, 2) + "\n");
   for (const [rel, img] of [...result.images.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     write(rel, writePngBytes(img));
   }

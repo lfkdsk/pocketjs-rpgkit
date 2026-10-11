@@ -31,6 +31,7 @@ import type {
   TileId,
   VehicleDef,
 } from "../../src/engine/types.ts";
+import type { RpgMakerBattleDatabase } from "../../src/rpgmaker-battle/types.ts";
 import { cookMvAnimation, MV_ANIMATION_RATE, MvAnimationCookError } from "./animation.ts";
 import {
   audioMediaKey,
@@ -40,6 +41,7 @@ import {
   type RpgMakerAudioKind,
 } from "./audio-media.ts";
 import { Coverage } from "./coverage.ts";
+import { importBattleDatabase } from "./battle-data.ts";
 import { TileAtlas, composeMap } from "./compose.ts";
 import { convertCommonEvent, convertPage, type EventContext } from "./events.ts";
 import {
@@ -84,6 +86,8 @@ export interface ImportAssets {
   animated: Record<string, { x: number; y: number; above: boolean; frames: TileId[]; frameSeconds: number }[]>;
   /** Logical audio id -> converted output-relative QOA path. */
   audio: Record<string, string>;
+  /** Enemy database id -> imported front-view battler PNG. */
+  battlers: Record<string, { png: string; w: number; h: number }>;
   /** The balloon sheet (8 columns x 15 rows of 16 px frames), when used. */
   balloon?: string;
   /** Sprite key of the starting party leader's walking character. */
@@ -92,6 +96,8 @@ export interface ImportAssets {
 
 export interface ImportResult {
   project: Project;
+  /** Optional runtime module data written separately as battle.json. */
+  battle: RpgMakerBattleDatabase;
   /** Generated images keyed by their output-relative path. */
   images: Map<string, RgbaImage>;
   /** Converted QOA files keyed by their output-relative path. */
@@ -377,7 +383,28 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     animations: {},
     animated: {},
     audio: {},
+    battlers: {},
   };
+
+  // --- front-view battlers and normalized battle database -----------------
+  const enemyImages = new Map<number, string>();
+  for (const enemy of rm.enemies) {
+    if (!enemy?.battlerName) continue;
+    const front = findNamedPng(join(rm.root, "img", "enemies"), enemy.battlerName);
+    const side = findNamedPng(join(rm.root, "img", "sv_enemies"), enemy.battlerName);
+    const path = front ?? side;
+    if (!path) continue;
+    const id = `enemy${String(enemy.id).padStart(3, "0")}`;
+    const png = `battlers/${id}.png`;
+    const image = await readPng(path);
+    images.set(png, image);
+    assets.battlers[id] = { png, w: image.width, h: image.height };
+    enemyImages.set(enemy.id, id);
+    if (!front && side) {
+      warnings.push(`enemy ${enemy.id}: side-view battler ${enemy.battlerName} is shown in the front-view renderer`);
+    }
+  }
+  const battle = importBattleDatabase(rm, cov, { enemyImage: (id) => enemyImages.get(id) });
 
   // --- tilesets -----------------------------------------------------------
   const atlases = new Map<number, TileAtlas>();
@@ -567,6 +594,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
 
   const baseContext = {
     rm,
+    battleDatabaseHash: battle.databaseHash,
     cov,
     placeholders: options.placeholders ?? "visible",
     maps: kitMaps,
@@ -734,7 +762,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     }
     if (rmMap.parallaxName) cov.record("tile", "parallax", "Native");
     if (rmMap.autoplayBgm && rmMap.bgm?.name) cov.record("tile", "map autoplay BGM", "Degraded", "autoplay BGM is not started on map entry");
-    if (rmMap.encounterList?.length) cov.record("tile", "map encounters", "Dropped", "random encounters need a battle system");
+    if (rmMap.encounterList?.length) cov.record("tile", "map encounters", "Native");
   }
 
   // --- common events ------------------------------------------------------
@@ -952,7 +980,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     }
   }
   applyImportedMeDurations(project, successfulById);
-  return { project, images, audioFiles, audioMedia, assets, cov, warnings };
+  return { project, battle, images, audioFiles, audioMedia, assets, cov, warnings };
 }
 
 /** Read the 8 x 4 text-colour grid from the bottom-right of MV/MZ's standard

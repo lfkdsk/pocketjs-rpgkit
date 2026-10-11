@@ -58,6 +58,7 @@ const C = (code: number, parameters: unknown[]): RmCommand => ({ code, indent: 0
 function importerContext(placeholders: "visible" | "silent" = "visible"): EventContext {
   return {
     rm: { flavor: "MV" } as RmProject,
+    battleDatabaseHash: "0".repeat(64),
     cov: new Coverage(),
     placeholders,
     maps: new Map([[1, "map001"]]),
