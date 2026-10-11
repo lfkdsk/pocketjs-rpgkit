@@ -159,7 +159,39 @@ export interface RpgMakerBattleStateDef {
   removeAtBattleEnd: boolean;
   removeByDamage: boolean;
   chanceByDamage: number;
+  /** RPG Maker's actor/enemy/additional/removal state messages. */
+  messages: [string, string, string, string];
   traits: RpgMakerTrait[];
+}
+
+export interface RpgMakerBattleMessages {
+  actionFailure: string;
+  actorDamage: string;
+  enemyDamage: string;
+  actorRecovery: string;
+  enemyRecovery: string;
+  actorLoss: string;
+  enemyLoss: string;
+  actorNoDamage: string;
+  enemyNoDamage: string;
+  actorNoHit: string;
+  enemyNoHit: string;
+  actorEvasion: string;
+  enemyEvasion: string;
+  actorMagicEvasion: string;
+  enemyMagicEvasion: string;
+  criticalToActor: string;
+  criticalToEnemy: string;
+  useItem: string;
+  emerge: string;
+  escapeStart: string;
+  escapeFailure: string;
+  victory: string;
+  defeat: string;
+  obtainExp: string;
+  obtainGold: string;
+  obtainItem: string;
+  levelUp: string;
 }
 
 export interface RpgMakerMapEncounter {
@@ -176,6 +208,7 @@ export interface RpgMakerBattleDatabase {
   flavor: RpgMakerFlavor;
   /** True means authored side-view data is intentionally rendered front-view. */
   sideView: boolean;
+  displayTp: boolean;
   /** Authored battle canvas used to scale troop member coordinates. */
   screen: { width: number; height: number };
   party: number[];
@@ -196,8 +229,20 @@ export interface RpgMakerBattleDatabase {
     guard: string;
     item: string;
     skill: string;
-    victory: string;
-    defeat: string;
+    basic: {
+      level: string;
+      levelAbbr: string;
+      hp: string;
+      hpAbbr: string;
+      mp: string;
+      mpAbbr: string;
+      tp: string;
+      tpAbbr: string;
+      exp: string;
+      expAbbr: string;
+    };
+    params: string[];
+    messages: RpgMakerBattleMessages;
   };
 }
 

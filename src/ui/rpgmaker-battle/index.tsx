@@ -5,6 +5,9 @@
 import { For, Show } from "solid-js";
 import { Text, View } from "@pocketjs/framework/components";
 import type { BattleSceneComponent, BattleSceneViewProps } from "../GameView.tsx";
+import { BoundedLine } from "../BoundedLine.tsx";
+import { fitBounded } from "../list-window.ts";
+import { slotMeasure } from "../text-measure.ts";
 import {
   CommandGrid,
   createBattleImageCache,
@@ -34,7 +37,21 @@ export interface RpgMakerBattleSceneOptions {
   /** Normalized enemy image id -> baked image source. */
   enemyImages?: Readonly<Record<string, RpgImageSource>>;
   background?: string;
+  /** Words absent from RPG Maker's own System.terms table. */
+  text?: Partial<RpgMakerBattleUiText>;
 }
+
+export interface RpgMakerBattleUiText {
+  ok: string;
+  target: string;
+  party: string;
+}
+
+export const RPGMAKER_BATTLE_UI_TEXT: Readonly<RpgMakerBattleUiText> = {
+  ok: "OK",
+  target: "Target",
+  party: "Party",
+};
 
 const NONE: SpriteEffect = { kind: "none", startTick: 0, duration: 0 };
 
@@ -86,6 +103,7 @@ function FrontViewScene(
   props: BattleSceneViewProps,
 ) {
   const imageCache = createBattleImageCache(() => props.active, { maxEntries: 12 });
+  const text = { ...RPGMAKER_BATTLE_UI_TEXT, ...options.text };
   const state = () => rpgMakerBattleState(props.state);
   const troop = () => db.troops.find((entry) => entry.id === state().troopId);
   const commandCells = (): readonly [CommandCell, CommandCell, CommandCell, CommandCell] => [
@@ -98,6 +116,7 @@ function FrontViewScene(
   const items = () => rpgMakerItemChoices(db, state());
   const targets = () => targetRows(db, state());
   const menuWidth = () => Math.min(232, Math.max(160, props.width - 16));
+  const actorWidth = () => Math.min(210, Math.max(120, props.width * 0.42));
 
   return (
     <View
@@ -139,13 +158,18 @@ function FrontViewScene(
           return (
             <Show when={!enemy.hidden}>
               <View
-                class="absolute"
+                class="absolute flex-col"
                 style={{ posType: 1, insetL: x(), insetT: Math.max(4, y() - 16), width: size() }}
                 debugName={`rpgmaker-enemy-hud-${index()}`}
               >
-                <Text class="text-xs" style={{ textColor: "#ffffff", height: 12, lineHeight: 12 }}>
-                  {enemy.name}
-                </Text>
+                <BoundedLine
+                  cell={fitBounded(enemy.name, size(), 1, slotMeasure())}
+                  tick={() => state().nowTick}
+                  textColor="#ffffff"
+                  rowH={12}
+                  width={size()}
+                  debugName={`rpgmaker-enemy-name-${index()}`}
+                />
                 <StatBar
                   current={shownHp(state(), "enemy", index())}
                   max={rpgMakerCombatantParam(db, enemy, 0)}
@@ -186,19 +210,29 @@ function FrontViewScene(
 
       <View
         class="absolute flex-col"
-        style={{ posType: 1, insetL: 8, insetB: 8, width: Math.min(210, Math.max(120, props.width * 0.42)) }}
+        style={{ posType: 1, insetL: 8, insetB: 8, width: actorWidth() }}
         debugName="rpgmaker-party-hud"
       >
         <For each={state().actors}>
           {(actor, index) => (
             <View class="flex-col" style={{ height: 30 }} debugName={`rpgmaker-actor-hud-${index()}`}>
-              <Text class="text-xs" style={{ textColor: "#ffffff", height: 14, lineHeight: 14 }}>
-                {`${actor.name}  Lv ${actor.actor?.level ?? 1}  MP ${actor.mp}`}
-              </Text>
+              <BoundedLine
+                cell={fitBounded([
+                  actor.name,
+                  `${db.terms.basic.levelAbbr} ${actor.actor?.level ?? 1}`,
+                  `${db.terms.basic.mpAbbr} ${actor.mp}`,
+                  ...(db.displayTp ? [`${db.terms.basic.tpAbbr} ${actor.tp}`] : []),
+                ].join("  "), actorWidth(), 1, slotMeasure())}
+                tick={() => state().nowTick}
+                textColor="#ffffff"
+                rowH={14}
+                width={actorWidth()}
+                debugName={`rpgmaker-actor-name-${index()}`}
+              />
               <StatBar
                 current={shownHp(state(), "actor", index())}
                 max={rpgMakerCombatantParam(db, actor, 0)}
-                width={Math.min(210, Math.max(120, props.width * 0.42))}
+                width={actorWidth()}
                 showNumbers
                 uiText={props.uiText}
                 debugName={`rpgmaker-actor-hp-${index()}`}
@@ -212,7 +246,7 @@ function FrontViewScene(
         <MessageBand
           lines={state().message.split("\n")}
           revealed={rpgMakerMessageRevealed(state())}
-          legend="OK"
+          legend={text.ok}
           width={props.width - 16}
           style={{ insetL: 8, insetB: 8 }}
           debugName="rpgmaker-battle-message"
@@ -220,7 +254,7 @@ function FrontViewScene(
       </Show>
       <Show when={state().phase === "party"}>
         <ListMenu
-          title={state().actors[0]?.name ?? "Party"}
+          title={state().actors[0]?.name ?? text.party}
           rows={[
             { label: db.terms.fight },
             { label: db.terms.escape, disabled: !state().canEscape },
@@ -245,7 +279,9 @@ function FrontViewScene(
           title={db.terms.skill}
           rows={skills().map((skill) => ({
             label: skill.name,
-            detail: skill.mpCost > 0 ? `MP ${skill.mpCost}` : skill.tpCost > 0 ? `TP ${skill.tpCost}` : "",
+            detail: skill.mpCost > 0
+              ? `${db.terms.basic.mpAbbr} ${skill.mpCost}`
+              : skill.tpCost > 0 ? `${db.terms.basic.tpAbbr} ${skill.tpCost}` : "",
             disabled: state().actors[state().actorIndex]!.mp < skill.mpCost ||
               state().actors[state().actorIndex]!.tp < skill.tpCost,
           }))}
@@ -269,7 +305,7 @@ function FrontViewScene(
       </Show>
       <Show when={state().phase === "target"}>
         <ListMenu
-          title="Target"
+          title={text.target}
           rows={targets().indices.map((index) => ({ label: targets().battlers[index]!.name }))}
           index={Math.max(0, targets().indices.indexOf(state().targetIndex))}
           width={menuWidth()}

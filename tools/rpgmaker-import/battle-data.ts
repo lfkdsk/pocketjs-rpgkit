@@ -330,6 +330,12 @@ export function importBattleDatabase(
       removeAtBattleEnd: entry.removeAtBattleEnd === true,
       removeByDamage: entry.removeByDamage === true,
       chanceByDamage: clamp(entry.chanceByDamage, 0, 100, 0),
+      messages: [
+        String(entry.message1 ?? ""),
+        String(entry.message2 ?? ""),
+        String(entry.message3 ?? ""),
+        String(entry.message4 ?? ""),
+      ] as [string, string, string, string],
       traits: traits(entry.traits),
     }];
   });
@@ -400,11 +406,15 @@ export function importBattleDatabase(
     cov.record("battle", "presentation", "Native");
   }
   const commands = rm.system.terms?.commands ?? [];
+  const basic = rm.system.terms?.basic ?? [];
   const messages = rm.system.terms?.messages ?? {};
+  const params = rm.system.terms?.params ?? [];
+  const message = (key: string, fallback: string): string => String(messages[key] ?? fallback);
   const database: Omit<RpgMakerBattleDatabase, "databaseHash"> = {
     format: "rpgmaker-battle/v1",
     flavor: rm.flavor,
     sideView: rm.system.optSideView === true,
+    displayTp: rm.system.optDisplayTp === true,
     screen: {
       width: Math.max(1, nonNegative(rm.system.advanced?.screenWidth, 816)),
       height: Math.max(1, nonNegative(rm.system.advanced?.screenHeight, 624)),
@@ -427,8 +437,50 @@ export function importBattleDatabase(
       guard: String(commands[3] ?? "Guard"),
       item: String(commands[4] ?? "Item"),
       skill: String(commands[5] ?? "Skill"),
-      victory: String(messages.victory ?? "%1 was victorious!"),
-      defeat: String(messages.defeat ?? "%1 was defeated."),
+      basic: {
+        level: String(basic[0] ?? "Level"),
+        levelAbbr: String(basic[1] ?? "Lv"),
+        hp: String(basic[2] ?? "HP"),
+        hpAbbr: String(basic[3] ?? "HP"),
+        mp: String(basic[4] ?? "MP"),
+        mpAbbr: String(basic[5] ?? "MP"),
+        tp: String(basic[6] ?? "TP"),
+        tpAbbr: String(basic[7] ?? "TP"),
+        exp: String(basic[8] ?? "EXP"),
+        expAbbr: String(basic[9] ?? "EXP"),
+      },
+      params: Array.from({ length: 8 }, (_, index) => String(params[index] ?? [
+        "Max HP", "Max MP", "Attack", "Defense", "M.Attack", "M.Defense", "Agility", "Luck",
+      ][index]!)),
+      messages: {
+        actionFailure: message("actionFailure", "There was no effect on %1!"),
+        actorDamage: message("actorDamage", "%1 took %2 damage!"),
+        enemyDamage: message("enemyDamage", "%1 took %2 damage!"),
+        actorRecovery: message("actorRecovery", "%1 recovered %2 %3!"),
+        enemyRecovery: message("enemyRecovery", "%1 recovered %2 %3!"),
+        actorLoss: message("actorLoss", "%1 lost %2 %3!"),
+        enemyLoss: message("enemyLoss", "%1 lost %2 %3!"),
+        actorNoDamage: message("actorNoDamage", "%1 took no damage!"),
+        enemyNoDamage: message("enemyNoDamage", "%1 took no damage!"),
+        actorNoHit: message("actorNoHit", "Miss! %1 took no damage!"),
+        enemyNoHit: message("enemyNoHit", "Miss! %1 took no damage!"),
+        actorEvasion: message("actorEvasion", "%1 evaded the attack!"),
+        enemyEvasion: message("enemyEvasion", "%1 evaded the attack!"),
+        actorMagicEvasion: message("actorMagicEvasion", "%1 nullified the magic!"),
+        enemyMagicEvasion: message("enemyMagicEvasion", "%1 nullified the magic!"),
+        criticalToActor: message("criticalToActor", "A painful blow!!"),
+        criticalToEnemy: message("criticalToEnemy", "An excellent hit!!"),
+        useItem: message("useItem", "%1 uses %2!"),
+        emerge: message("emerge", "%1 emerged!"),
+        escapeStart: message("escapeStart", "%1 has started to escape!"),
+        escapeFailure: message("escapeFailure", "However, it was unable to escape!"),
+        victory: message("victory", "%1 was victorious!"),
+        defeat: message("defeat", "%1 was defeated."),
+        obtainExp: message("obtainExp", "%1 %2 received!"),
+        obtainGold: message("obtainGold", "%1\\G found!"),
+        obtainItem: message("obtainItem", "%1 found!"),
+        levelUp: message("levelUp", "%1 is now %2 %3!"),
+      },
     },
   };
   return { ...database, databaseHash: sha256Text(canonicalJson(database)) };

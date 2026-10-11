@@ -1,5 +1,9 @@
 [
   {
+    "key": "license:NotoSansCJK.txt",
+    "file": "fonts/LICENSE-NotoSansCJK.txt"
+  },
+  {
     "key": "audio:qoa.bgm-stage-overture",
     "file": "assets/stage/audio/bgm-stage-overture.qoa"
   },

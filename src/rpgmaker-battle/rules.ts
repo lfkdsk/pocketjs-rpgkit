@@ -960,6 +960,49 @@ function luckEffectRate(
   return Math.max(0, 1 + (rpgMakerCombatantParam(db, user, 7) - rpgMakerCombatantParam(db, target, 7)) * 0.001);
 }
 
+/** RPG Maker database terms use %1, %2... and \\G for the currency unit. */
+function formatTerm(db: RpgMakerBattleDatabase, source: string, ...values: (string | number)[]): string {
+  return source
+    .replace(/%([1-9][0-9]*)/g, (whole, index: string) => values[Number(index) - 1] === undefined
+      ? whole
+      : String(values[Number(index) - 1]))
+    .replace(/\\G/g, db.currencyUnit);
+}
+
+function sideMessage(
+  db: RpgMakerBattleDatabase,
+  target: RpgMakerBattleCombatant,
+  actor: keyof RpgMakerBattleDatabase["terms"]["messages"],
+  enemy: keyof RpgMakerBattleDatabase["terms"]["messages"],
+  ...values: (string | number)[]
+): string {
+  return formatTerm(db, db.terms.messages[target.side === "actor" ? actor : enemy], ...values);
+}
+
+function stateAppliedMessage(
+  db: RpgMakerBattleDatabase,
+  target: RpgMakerBattleCombatant,
+  id: number,
+): string {
+  const definition = stateDef(db, id);
+  const source = definition?.messages[target.side === "actor" ? 0 : 1] ?? "";
+  return source.length > 0
+    ? source.includes("%1") ? formatTerm(db, source, target.name) : target.name + source
+    : `${target.name}: ${definition?.name ?? String(id)}`;
+}
+
+function stateRemovedMessage(
+  db: RpgMakerBattleDatabase,
+  target: RpgMakerBattleCombatant,
+  id: number,
+): string {
+  const definition = stateDef(db, id);
+  const source = definition?.messages[3] ?? "";
+  return source.length > 0
+    ? source.includes("%1") ? formatTerm(db, source, target.name) : target.name + source
+    : `${target.name}: -${definition?.name ?? String(id)}`;
+}
+
 function applyEffect(
   db: RpgMakerBattleDatabase,
   state: RpgMakerBattleState,
@@ -975,14 +1018,18 @@ function applyEffect(
       const recoveryRate = traitProduct(db, target, 23, 2);
       const pharmacology = user.side === "actor" ? traitProduct(db, user, 23, 3) : 1;
       setHp(db, state, target, target.hp + Math.floor(base * recoveryRate * pharmacology));
-      return target.hp !== before ? `${target.name} recovered ${target.hp - before} HP.` : null;
+      return target.hp !== before
+        ? sideMessage(db, target, "actorRecovery", "enemyRecovery", target.name, target.hp - before, db.terms.basic.hpAbbr)
+        : null;
     }
     case 12: {
       const before = target.mp;
       const amount = Math.floor((rpgMakerCombatantParam(db, target, 1) * effect.value1 + effect.value2) *
         traitProduct(db, target, 23, 2));
       target.mp = clamp(target.mp + amount, 0, rpgMakerCombatantParam(db, target, 1));
-      return target.mp !== before ? `${target.name} recovered ${target.mp - before} MP.` : null;
+      return target.mp !== before
+        ? sideMessage(db, target, "actorRecovery", "enemyRecovery", target.name, target.mp - before, db.terms.basic.mpAbbr)
+        : null;
     }
     case 13:
       target.tp = clamp(target.tp + Math.floor(effect.value1), 0, 100);
@@ -997,7 +1044,7 @@ function applyEffect(
           const rate = traitSum(db, user, 32, id);
           const chance = effect.value1 * rate * traitProduct(db, target, 13, id) * luckEffectRate(db, user, target);
           if (draw(state) < chance && applyState(db, state, target, id)) {
-            added.push(`${target.name} gained ${stateDef(db, id)?.name ?? "a state"}.`);
+            added.push(stateAppliedMessage(db, target, id));
           }
         }
         return added.length > 0 ? added.join("\n") : null;
@@ -1006,12 +1053,12 @@ function applyEffect(
         ? 1
         : traitProduct(db, target, 13, effect.dataId) * luckEffectRate(db, user, target));
       return draw(state) < chance && applyState(db, state, target, effect.dataId)
-        ? `${target.name} gained ${stateDef(db, effect.dataId)?.name ?? "a state"}.`
+        ? stateAppliedMessage(db, target, effect.dataId)
         : null;
     }
     case 22:
       return draw(state) < effect.value1 && removeState(db, target, effect.dataId)
-        ? `${target.name} recovered from ${stateDef(db, effect.dataId)?.name ?? "a state"}.`
+        ? stateRemovedMessage(db, target, effect.dataId)
         : null;
     case 31:
     case 32: {
@@ -1072,11 +1119,20 @@ function applyDamage(
   target: RpgMakerBattleCombatant,
   usable: RpgMakerUsableItem,
 ): { text: string; effect: RpgMakerBattleState["effect"] } {
+  const used = formatTerm(db, db.terms.messages.useItem, user.name, usable.name);
   const success = usable.successRate / 100 * (usable.hitType === 1 ? traitSum(db, user, 22, 0) : 1);
-  if (draw(state) >= success) return { text: `${user.name}'s ${usable.name} missed ${target.name}.`, effect: null };
+  if (draw(state) >= success) return {
+    text: `${used}\n${sideMessage(db, target, "actorNoHit", "enemyNoHit", target.name)}`,
+    effect: null,
+  };
   const evasion = usable.hitType === 1 ? traitSum(db, target, 22, 1)
     : usable.hitType === 2 ? traitSum(db, target, 22, 4) : 0;
-  if (draw(state) < evasion) return { text: `${target.name} evaded ${usable.name}.`, effect: null };
+  if (draw(state) < evasion) return {
+    text: `${used}\n${usable.hitType === 2
+      ? sideMessage(db, target, "actorMagicEvasion", "enemyMagicEvasion", target.name)
+      : sideMessage(db, target, "actorEvasion", "enemyEvasion", target.name)}`,
+    effect: null,
+  };
 
   const critical = usable.damage.critical && draw(state) <
     traitSum(db, user, 22, 2) * (1 - traitSum(db, target, 22, 3));
@@ -1093,13 +1149,17 @@ function applyDamage(
   if (value > 0 && target.guarding) value /= Math.max(1, 2 * traitProduct(db, target, 23, 1));
   value = Math.round(value);
 
-  let text = `${user.name} used ${usable.name}.`;
+  let text = used;
   let effect: RpgMakerBattleState["effect"] = null;
   if (usable.damage.type === 1 || usable.damage.type === 3 || usable.damage.type === 5) {
     const before = target.hp;
     setHp(db, state, target, target.hp - value);
     const changed = before - target.hp;
-    text += changed >= 0 ? `\n${target.name} took ${changed} damage.` : `\n${target.name} recovered ${-changed} HP.`;
+    text += changed > 0
+      ? `\n${sideMessage(db, target, "actorDamage", "enemyDamage", target.name, changed)}`
+      : changed < 0
+        ? `\n${sideMessage(db, target, "actorRecovery", "enemyRecovery", target.name, -changed, db.terms.basic.hpAbbr)}`
+        : `\n${sideMessage(db, target, "actorNoDamage", "enemyNoDamage", target.name)}`;
     effect = {
       side: target.side,
       index: target.side === "actor" ? state.actors.indexOf(target) : state.enemies.indexOf(target),
@@ -1119,7 +1179,11 @@ function applyDamage(
     const before = target.mp;
     target.mp = clamp(target.mp - value, 0, rpgMakerCombatantParam(db, target, 1));
     const changed = before - target.mp;
-    text += changed >= 0 ? `\n${target.name} lost ${changed} MP.` : `\n${target.name} recovered ${-changed} MP.`;
+    text += changed > 0
+      ? `\n${sideMessage(db, target, "actorLoss", "enemyLoss", target.name, changed, db.terms.basic.mpAbbr)}`
+      : changed < 0
+        ? `\n${sideMessage(db, target, "actorRecovery", "enemyRecovery", target.name, -changed, db.terms.basic.mpAbbr)}`
+        : `\n${formatTerm(db, db.terms.messages.actionFailure, target.name)}`;
     if (usable.damage.type === 6 && changed > 0) user.mp = clamp(user.mp + changed, 0, rpgMakerCombatantParam(db, user, 1));
   }
   const effectMessages: string[] = [];
@@ -1127,7 +1191,7 @@ function applyDamage(
     const message = applyEffect(db, state, user, target, usable, effectEntry);
     if (message) effectMessages.push(message);
   }
-  if (critical) text += "\nCritical hit!";
+  if (critical) text += `\n${target.side === "actor" ? db.terms.messages.criticalToActor : db.terms.messages.criticalToEnemy}`;
   if (effectMessages.length > 0) text += `\n${effectMessages.join("\n")}`;
   return { text, effect };
 }
@@ -1146,20 +1210,23 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
   if (!user || !alive(user) || restriction(db, user) === 4) return "";
   if (action.kind === "guard") {
     user.guarding = true;
-    return `${user.name} guards.`;
+    return formatTerm(db, db.terms.messages.useItem, user.name, db.terms.guard);
   }
   const usable = usableForAction(db, action);
   if (!usable) return "";
   const targets = actionTargets(db, state, action, usable, user);
-  if (targets.length === 0) return `${user.name} used ${usable.name}, but there was no target.`;
+  if (targets.length === 0) return [
+    formatTerm(db, db.terms.messages.useItem, user.name, usable.name),
+    formatTerm(db, db.terms.messages.actionFailure, user.name),
+  ].join("\n");
   if (action.kind === "skill") {
     const skill = usable as RpgMakerBattleSkill;
-    if (!skillAffordable(user, skill)) return `${user.name} cannot use ${skill.name}.`;
+    if (!skillAffordable(user, skill)) return formatTerm(db, db.terms.messages.actionFailure, user.name);
     user.mp -= skill.mpCost;
     user.tp = clamp(user.tp - skill.tpCost, 0, 100);
   } else {
     const key = itemKey(action.id);
-    if ((state.items[key] ?? 0) <= 0) return `${usable.name} is no longer available.`;
+    if ((state.items[key] ?? 0) <= 0) return formatTerm(db, db.terms.messages.actionFailure, user.name);
     if ((usable as RpgMakerBattleItem).consumable) state.items[key] = Math.max(0, state.items[key]! - 1);
   }
   const messages: string[] = [];
@@ -1207,15 +1274,17 @@ function levelActor(
       }
     }
     battler.actor.skills.sort((a, b) => a - b);
-    messages.push(`${battler.name} reached level ${battler.actor.level}!`);
+    messages.push(formatTerm(
+      db,
+      db.terms.messages.levelUp,
+      battler.name,
+      db.terms.basic.level,
+      battler.actor.level,
+    ));
   }
   battler.hp = clamp(battler.hp, 0, rpgMakerCombatantParam(db, battler, 0));
   battler.mp = clamp(battler.mp, 0, rpgMakerCombatantParam(db, battler, 1));
   return messages;
-}
-
-function formatTerm(source: string, partyName: string): string {
-  return source.replace(/%1/g, partyName);
 }
 
 function beginVictory(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
@@ -1241,15 +1310,25 @@ function beginVictory(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): v
   const levels = state.actors.flatMap((actor) =>
     levelActor(db, actor, Math.round(exp * traitProduct(db, actor, 23, 9))));
   state.reward = { exp, gold, items: drops, levels };
-  const partyName = state.actors[0]?.name ?? "Party";
-  const rows = [formatTerm(db.terms.victory, partyName), `${exp} EXP   ${gold} ${db.currencyUnit}`];
-  for (const [id, count] of Object.entries(drops)) rows.push(`${id} x${count}`);
+  const partyName = state.actors[0]?.name ?? "";
+  const rows = [
+    formatTerm(db, db.terms.messages.victory, partyName),
+    formatTerm(db, db.terms.messages.obtainExp, exp, db.terms.basic.expAbbr),
+    formatTerm(db, db.terms.messages.obtainGold, gold),
+  ];
+  for (const [id, count] of Object.entries(drops)) {
+    const item = /^item0*([1-9][0-9]*)$/.exec(id);
+    const name = item ? findById(db.items, Number(item[1]))?.name ?? id : id;
+    for (let index = 0; index < count; index++) {
+      rows.push(formatTerm(db, db.terms.messages.obtainItem, name));
+    }
+  }
   rows.push(...levels);
   showMessage(state, rows.join("\n"), "win");
 }
 
 function beginDefeat(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
-  showMessage(state, formatTerm(db.terms.defeat, state.actors[0]?.name ?? "Party"), "lose");
+  showMessage(state, formatTerm(db, db.terms.messages.defeat, state.actors[0]?.name ?? ""), "lose");
 }
 
 function reviveBattleMembers(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
@@ -1327,10 +1406,11 @@ function tryEscape(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void
   const actorAgi = state.actors.filter(alive).reduce((sum, actor) => sum + rpgMakerCombatantParam(db, actor, 6), 0);
   const enemyAgi = state.enemies.filter(alive).reduce((sum, enemy) => sum + rpgMakerCombatantParam(db, enemy, 6), 0);
   const ratio = clamp(0.5 * actorAgi / Math.max(1, enemyAgi) + 0.1 * (state.escapeAttempts - 1), 0, 1);
-  if (draw(state) < ratio) showMessage(state, "Got away safely!", "escape");
+  const start = formatTerm(db, db.terms.messages.escapeStart, state.actors[0]?.name ?? "");
+  if (draw(state) < ratio) showMessage(state, start, "escape");
   else {
     prepareResolution(db, state, false);
-    showMessage(state, "Couldn't escape!", "turnStart");
+    showMessage(state, `${start}\n${db.terms.messages.escapeFailure}`, "turnStart");
   }
 }
 
@@ -1467,7 +1547,7 @@ function createInitialState(
   }
   const pages = runTroopPages(db, state, false);
   const enemyNames = enemies.filter((enemy) => !enemy.hidden).map((enemy) => enemy.name).join(", ");
-  showMessage(state, [`${enemyNames} appeared!`, ...pages].join("\n"), "party");
+  showMessage(state, [formatTerm(db, db.terms.messages.emerge, enemyNames), ...pages].join("\n"), "party");
   return { state, ext: startedExt };
 }
 

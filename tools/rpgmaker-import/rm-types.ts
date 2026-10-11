@@ -315,6 +315,10 @@ export interface RmState {
   removeAtBattleEnd?: boolean;
   removeByDamage?: boolean;
   chanceByDamage?: number;
+  message1?: string;
+  message2?: string;
+  message3?: string;
+  message4?: string;
   traits?: RmTrait[];
   note: string;
 }
@@ -385,11 +389,14 @@ export interface RmSystem {
   currencyUnit: string;
   partyMembers: number[];
   optSideView?: boolean;
+  optDisplayTp?: boolean;
   optExtraExp?: boolean;
   elements?: string[];
   terms?: {
+    basic?: (string | null)[];
     commands?: (string | null)[];
     messages?: Record<string, string>;
+    params?: (string | null)[];
   };
   /** Index 0 is blank; indices 1..n define the actor's equipment slots. */
   equipTypes?: string[];

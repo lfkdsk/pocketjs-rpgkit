@@ -22,7 +22,10 @@ describe("RPG Maker battle database import", () => {
     expect(battle.format).toBe("rpgmaker-battle/v1");
     expect(battle.flavor).toBe("MZ");
     expect(battle.sideView).toBe(false);
+    expect(battle.displayTp).toBe(true);
     expect(battle.screen).toEqual({ width: 480, height: 272 });
+    expect(battle.terms.basic).toMatchObject({ levelAbbr: "Lv", hpAbbr: "HP", mpAbbr: "MP", tpAbbr: "TP" });
+    expect(battle.terms.messages).toMatchObject({ emerge: "%1 emerged!", useItem: "%1 uses %2!" });
     expect(battle.party).toEqual([1]);
     expect(battle.actors.map(({ id, name, classId, initialLevel }) => ({ id, name, classId, initialLevel })))
       .toEqual([
@@ -73,7 +76,12 @@ describe("RPG Maker battle database import", () => {
       consumable: true,
       effects: [{ code: 11, dataId: 0, value1: 0, value2: 30 }],
     });
-    expect(battle.states[0]).toMatchObject({ id: 1, restriction: 4, priority: 100 });
+    expect(battle.states[0]).toMatchObject({
+      id: 1,
+      restriction: 4,
+      priority: 100,
+      messages: [" has fallen!", " is slain!", "", " revives!"],
+    });
     expect(result.assets.battlers).toEqual({
       enemy001: { png: "battlers/enemy001.png", w: 64, h: 64 },
     });

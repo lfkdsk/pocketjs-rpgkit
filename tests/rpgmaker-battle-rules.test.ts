@@ -92,6 +92,34 @@ function forceAction(
 }
 
 describe("RPG Maker battle rules", () => {
+  test("renders combat narration entirely from imported localized terms", () => {
+    const db = cloneDb();
+    db.actors[0]!.name = "守护者";
+    db.enemies[0]!.name = "石像";
+    db.skills[0]!.name = "重击";
+    db.skills[0]!.damage.critical = false;
+    db.skills[0]!.damage.variance = 0;
+    Object.assign(db.terms.messages, {
+      emerge: "%1现身！",
+      useItem: "%1施放%2！",
+      enemyDamage: "%1受到%2点伤害！",
+      enemyNoDamage: "%1没有受到伤害！",
+      actionFailure: "%1没有受到影响！",
+    });
+    const { rules } = start(db, 7);
+    let current = rules.start({}, setup(db), 7, CONTEXT)!.state;
+    expect(state(current).message).toBe("石像现身！");
+    current = confirm(rules, current); // party
+    current = confirm(rules, current); // command
+    current = confirm(rules, current); // attack / prepared turn
+    for (let guard = 0; guard < 8 && !state(current).message.includes("施放"); guard++) {
+      current = confirm(rules, current);
+    }
+    expect(state(current).message).toContain("守护者施放重击！");
+    expect(state(current).message).toMatch(/石像(受到[0-9]+点伤害|没有受到伤害)！/);
+    expect(state(current).message).not.toMatch(/used|took|appeared|Critical/i);
+  });
+
   test("wins a front-view battle, awards drops/gold/EXP, levels up, and persists namespaced state", () => {
     const db = cloneDb();
     db.enemies[0]!.params[0] = 1;
@@ -177,7 +205,8 @@ describe("RPG Maker battle rules", () => {
     db.states.push({
       id: 2, name: "Confusion", restriction: 3, priority: 50,
       minTurns: 2, maxTurns: 2, autoRemovalTiming: 0,
-      removeAtBattleEnd: true, removeByDamage: false, chanceByDamage: 0, traits: [],
+      removeAtBattleEnd: true, removeByDamage: false, chanceByDamage: 0,
+      messages: ["", "", "", ""], traits: [],
     });
     const rules = createRpgMakerBattleRules(db);
 
@@ -220,7 +249,8 @@ describe("RPG Maker battle rules", () => {
     db.states.push({
       id: 2, name: "Poison", restriction: 0, priority: 50,
       minTurns: 3, maxTurns: 3, autoRemovalTiming: 0,
-      removeAtBattleEnd: false, removeByDamage: false, chanceByDamage: 0, traits: [],
+      removeAtBattleEnd: false, removeByDamage: false, chanceByDamage: 0,
+      messages: ["", "", "", ""], traits: [],
     });
     const blank = structuredClone(db.items[0]!.damage);
     db.skills.push(
@@ -336,7 +366,7 @@ describe("RPG Maker battle rules", () => {
       phase: "message",
       afterMessage: "turnStart",
       turn: 1,
-      message: "Couldn't escape!",
+      message: "Wren has started to escape!\nHowever, it was unable to escape!",
     });
     expect(state(current).queue.some((action) => action.side === "enemy")).toBe(true);
   });

@@ -288,7 +288,10 @@ const animatedSources = RMI_SOURCES.map((source) => {
 writeFileSync(join(HERE, "images.json"), JSON.stringify(imageMeta, null, 2) + "\n");
 writeFileSync(
   join(HERE, "pak.json"),
-  JSON.stringify([...pakAudio].sort(([a], [b]) => a.localeCompare(b)).map(([key, file]) => ({ key, file })), null, 2) + "\n",
+  JSON.stringify([
+    { key: "license:NotoSansCJK.txt", file: "fonts/LICENSE-NotoSansCJK.txt" },
+    ...[...pakAudio].sort(([a], [b]) => a.localeCompare(b)).map(([key, file]) => ({ key, file })),
+  ], null, 2) + "\n",
 );
 writeFileSync(
   join(HERE, "games.ts"),
