@@ -237,8 +237,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Scrolling-text presentation plus actor-condition and sparse audio/pan/ME
 // runtime support add 19,597 B of shared code. Audio panning stays within the
 // already-reachable host-audio path, and the battle needles remain absent.
+// Generic battle completion and active-battle save/restore integration add
+// 3,783 B to battle-using Sunstone. The concrete RPG Maker reducer and UI
+// still remain absent, as the source-graph and identifier checks below prove.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_112_187;
+const EXPECTED_BYTES = 1_115_970;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
