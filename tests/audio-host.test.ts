@@ -674,9 +674,13 @@ describe("opt-in audio host", () => {
     });
 
     driver.sync(frame(1, { bgm: bgm("map", 7) }));
+    const mapWritesBeforeBattle = ops.writes.filter(({ handle }) => handle === 1).length;
+    ops.credit(1, audioFramesForTick(11_025, 0));
     driver.sync(frame(2, { bgm: bgm("battle", 0) }));
+    expect(ops.writes.filter(({ handle }) => handle === 1)).toHaveLength(mapWritesBeforeBattle);
     driver.sync(frame(3, { bgm: bgm("victory", 0) }));
     const mapWritesBeforeRestore = ops.writes.filter(({ handle }) => handle === 1).length;
+    expect(mapWritesBeforeRestore).toBeGreaterThan(mapWritesBeforeBattle);
     // The map stream played for the frame before scene ownership changed,
     // matching the reducer's returnAudio capture at the next reference tick.
     driver.sync(frame(4, { bgm: bgm("map", 8) }));

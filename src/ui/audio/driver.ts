@@ -135,6 +135,9 @@ export class AudioDriver {
    * position; retaining its already-filled native ring keeps that restore off
    * the frame's QOA decode path. */
   private suspendedBgm: Voice | undefined;
+  /** Host frame where the return candidate was parked. Its already-consumed
+   * ring credit is refilled on a later frame, never on the scene transition. */
+  private suspendedBgmFrame: number | undefined;
   private readonly assetCache = new Map<string, AudioAsset | null>();
   private lastState: AudioDriverState | undefined;
   private lastFrame: number | undefined;
@@ -184,7 +187,7 @@ export class AudioDriver {
       this.lastFrame = state.frame;
     }
 
-    this.pumpAll();
+    this.pumpAll(state.frame);
   }
 
   dispose(): void {
@@ -452,10 +455,21 @@ export class AudioDriver {
     return true;
   }
 
-  private pumpAll(): void {
+  private pumpAll(gameFrame: number): void {
     // Map insertion order makes write/play/end ordering deterministic.
     for (const voice of [...this.voices.values()]) {
-      if (voice !== this.suspendedBgm) this.pumpVoice(voice);
+      if (voice === this.suspendedBgm) {
+        // The native ring normally reports the just-consumed map tick before
+        // it is paused. Refill that small gap on a later battle frame so both
+        // scene entry and scene return remain free of synchronous QOA work.
+        // Keep checking free space because a host may deliver that final
+        // credit event one poll after pause.
+        if (gameFrame > (this.suspendedBgmFrame ?? gameFrame) && voice.free > 0) {
+          this.pumpVoice(voice);
+        }
+      } else {
+        this.pumpVoice(voice);
+      }
     }
   }
 
@@ -541,7 +555,10 @@ export class AudioDriver {
 
   private destroyVoice(voice: Voice): void {
     if (!this.voices.delete(voice.handle)) return;
-    if (this.suspendedBgm === voice) this.suspendedBgm = undefined;
+    if (this.suspendedBgm === voice) {
+      this.suspendedBgm = undefined;
+      this.suspendedBgmFrame = undefined;
+    }
     if (voice.kind !== "se" && this.persistent[voice.kind] === voice) {
       delete this.persistent[voice.kind];
     }
@@ -578,6 +595,7 @@ export class AudioDriver {
       voice.hostPlaying = false;
     }
     this.suspendedBgm = voice;
+    this.suspendedBgmFrame = gameFrame;
   }
 
   /** Reattach an exact-position return candidate. A same-track request at a
@@ -598,6 +616,7 @@ export class AudioDriver {
       return undefined;
     }
     this.suspendedBgm = undefined;
+    this.suspendedBgmFrame = undefined;
     this.persistent.bgm = voice;
     // The reducer clock advanced while the scene owned BGM. Rebase the
     // presentation comparison at the restore boundary; the queued PCM and
