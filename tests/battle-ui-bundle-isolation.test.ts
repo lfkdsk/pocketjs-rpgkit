@@ -230,8 +230,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // and mounts no travel nodes. The final tick-local absent-travel fast path
 // trades 322 B for a QuickJS no-travel result below the 3% gate, so the shared
 // bundle grows by a measured 48,016 B to 1,070,588 B.
+// Choice colour runs (including the two bounded-rendering modules), same-phase
+// followers, parked-vehicle bodies, the airship shadow/gather gate and sparse
+// vehicle-BGM state add another measured 22,002 B. The battle needles below
+// remain absent, so this shared-path growth is not battle UI leakage.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_070_588;
+const EXPECTED_BYTES = 1_092_590;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

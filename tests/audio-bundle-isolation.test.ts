@@ -250,10 +250,15 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 38,885 B to the WAV fixture. None of these fixtures declares travel, so no
 // travel state or nodes are created at runtime; the differing deltas follow
 // each graph's existing tree-shaken imports.
+// Choice colour runs (including the two bounded-rendering modules), follower
+// phase/collision/airship polish and sparse vehicle-BGM state add a measured
+// 16,202 B to Meadow, 22,002 B to Sunstone and 18,476 B to the WAV fixture.
+// This is shared RPG runtime/UI code; the decoder needle checks below still
+// prove that it does not pull either concrete audio decoder into Meadow.
 // Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 675_519;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_070_588;
-const EXPECTED_WAV_FIXTURE_BYTES = 850_856;
+const EXPECTED_MEADOW_BYTES = 691_721;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_092_590;
+const EXPECTED_WAV_FIXTURE_BYTES = 869_332;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
