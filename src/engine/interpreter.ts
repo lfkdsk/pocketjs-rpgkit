@@ -118,6 +118,7 @@ import type {
   TransferMap,
   VariableRef,
   VariableValue,
+  VehicleBgm,
 } from "./types.ts";
 
 export type { TextTokenResolver, TextTokenView } from "./player-name.ts";
@@ -777,6 +778,7 @@ export type Instr =
   | { op: "vehicle"; action: "toggle" }
   | { op: "setVehicleLocation"; id: string; map: TransferMap; x: TransferCoordinate; y: TransferCoordinate }
   | { op: "setVehicleImage"; id: string; sprite: string }
+  | { op: "setVehicleBgm"; id: string; bgm: VehicleBgm | null }
   | {
       op: "appearance";
       target: RouteTarget;
@@ -1135,6 +1137,13 @@ function compileScoped(
           break;
         case "setVehicleImage":
           emit({ op: "setVehicleImage", id: c.id, sprite: c.sprite });
+          break;
+        case "setVehicleBgm":
+          emit({
+            op: "setVehicleBgm",
+            id: c.id,
+            bgm: c.bgm === null ? null : { ...c.bgm },
+          });
           break;
         case "appearance":
           emit({
@@ -2006,7 +2015,8 @@ export type PendingTravelRequest =
   | { op: "gatherFollowers"; fiber: string }
   | { op: "vehicle"; action: "toggle" }
   | { op: "setVehicleLocation"; id: string; map: string; x: number; y: number }
-  | { op: "setVehicleImage"; id: string; sprite: string };
+  | { op: "setVehicleImage"; id: string; sprite: string }
+  | { op: "setVehicleBgm"; id: string; bgm: VehicleBgm | null };
 
 /** Battle Processing request published on the tick that parks its fiber. */
 export interface PendingBattle {
@@ -3215,7 +3225,11 @@ function copyInterp(
       ? { ...r, control: deepClone(r.control) as MoveControl }
       : { ...r, route: cloneMoveRoute(r.route) }),
     ...(s0.pendingTravel ? {
-      pendingTravel: s0.pendingTravel.map((request) => ({ ...request })),
+      pendingTravel: s0.pendingTravel.map((request) =>
+        request.op === "setVehicleBgm" && request.bgm !== null
+          ? { ...request, bgm: { ...request.bgm } }
+          : { ...request }
+      ),
     } : {}),
     pendingBattles: s0.pendingBattles.map((request) => ({
       fiber: request.fiber,
@@ -6338,6 +6352,14 @@ function runFiber(
       }
       case "setVehicleImage":
         (s.pendingTravel ??= []).push({ op: "setVehicleImage", id: ins.id, sprite: ins.sprite });
+        top.pc++;
+        break;
+      case "setVehicleBgm":
+        (s.pendingTravel ??= []).push({
+          op: "setVehicleBgm",
+          id: ins.id,
+          bgm: ins.bgm === null ? null : { ...ins.bgm },
+        });
         top.pc++;
         break;
       case "common": {

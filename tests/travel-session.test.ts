@@ -60,8 +60,9 @@ function vehicle(
   x: number,
   y: number,
   mapId = "harbor",
+  extra: Partial<VehicleDef> = {},
 ): VehicleDef {
-  return { id, kind, sprite: `${id}-sprite`, start: { map: mapId, x, y, dir: "down" } };
+  return { id, kind, sprite: `${id}-sprite`, start: { map: mapId, x, y, dir: "down" }, ...extra };
 }
 
 function project(
@@ -227,6 +228,106 @@ describe("session travel opt-in", () => {
 });
 
 describe("session boat and ship traversal", () => {
+  test("vehicle music starts after boarding, survives command 140, and restores walking BGM", () => {
+    const music = event("music", 0, 0, [
+      page("autorun", [
+        { op: "playBgm", id: "field", volume: 72, pitch: 95 },
+        { op: "saveBgm" },
+        { op: "selfSwitch", key: "A", value: true },
+      ]),
+      page("parallel", [], { condition: { selfSwitch: "A" } }),
+    ]);
+    const changer = event("changer", 0, 0, [
+      page("parallel", []),
+      page("parallel", [
+        { op: "setVehicleBgm", id: "boat", bgm: { id: "boat-next", volume: 55, pitch: 110 } },
+        { op: "selfSwitch", key: "A", value: true },
+      ], { condition: { all: [{ kind: "vehicle", id: "boat" }] } }),
+      page("parallel", [], { condition: { selfSwitch: "A" } }),
+    ]);
+    const water = [1 * 8 + 2];
+    const harbor = map("harbor", {
+      passage: water.map((index) => [index, "block"]),
+      vehiclePassage: { boat: water },
+      events: [music, changer],
+    });
+    const p = project([harbor], {
+      vehicles: [vehicle("boat", "boat", 2, 1, "harbor", {
+        bgm: { id: "boat-first", volume: 80, pitch: 105 },
+      })],
+    });
+    const session = createSession(p, 60);
+    let state = idle(session, startSession(p, session), 4);
+    expect(state.interp.audio?.bgm).toMatchObject({ id: "field", volume: 72, pitch: 95 });
+    expect(state.interp.audio?.savedBgm?.id).toBe("field");
+
+    state = confirm(session, state);
+    expect(state.travel?.vehicles?.boarding).toBe("boat");
+    expect(state.interp.audio?.bgm?.id).toBe("field");
+    state = settle(session, state);
+    expect(state.travel?.vehicles?.riding).toBe("boat");
+    expect(state.interp.audio?.bgm).toMatchObject({ id: "boat-first", volume: 80, pitch: 105 });
+    expect(state.interp.audio?.savedBgm?.id).toBe("field");
+    const captured = state.interp.audio?.walkingBgm;
+    expect(captured).toMatchObject({ id: "field", volume: 72, pitch: 95 });
+
+    // The parallel mirrors RPG Maker command 140: it changes only the next
+    // boarding track and leaves this ride uninterrupted.
+    state = idle(session, state, 3);
+    expect(vehicleState(state, "boat")?.bgm).toEqual({ id: "boat-next", volume: 55, pitch: 110 });
+    expect(state.interp.audio?.bgm?.id).toBe("boat-first");
+
+    state = restoreSessionEnvelope(
+      session,
+      encodeEnvelope(createSessionSnapshot(session, state, 0), session.content),
+    );
+    expect(state.interp.audio?.walkingBgm).toEqual(captured);
+    expect(vehicleState(state, "boat")?.bgm?.id).toBe("boat-next");
+
+    state = confirm(session, state);
+    expect(state.travel?.vehicles?.riding).toBeNull();
+    expect(state.interp.audio?.bgm).toMatchObject({ id: "field", volume: 72, pitch: 95 });
+    expect(state.interp.audio!.bgm!.positionTicks).toBe((captured?.positionTicks ?? -1) + 1);
+    expect(state.interp.audio?.walkingBgm).toBeUndefined();
+    expect(state.interp.audio?.savedBgm?.id).toBe("field");
+
+    state = settle(session, state);
+    state = stepCell(session, state, BTN.LEFT);
+    state = settle(session, confirm(session, state));
+    expect(state.travel?.vehicles?.riding).toBe("boat");
+    expect(state.interp.audio?.bgm).toMatchObject({ id: "boat-next", volume: 55, pitch: 110 });
+  });
+
+  test("legacy, silent-ride and silent-walking vehicle BGM states stay distinct", () => {
+    const water = [1 * 8 + 2];
+    const harbor = map("harbor", {
+      passage: water.map((index) => [index, "block"]),
+      vehiclePassage: { boat: water },
+    });
+    const run = (definition: VehicleDef, walking = true): SessionState => {
+      const p = project([harbor], { vehicles: [definition] });
+      const session = createSession(p);
+      let state = startSession(p, session);
+      if (walking) {
+        state.interp.audio = { bgm: { id: "field", volume: 100, pitch: 100, positionTicks: 7 } };
+      }
+      return settle(session, confirm(session, state));
+    };
+
+    const legacy = run(vehicle("boat", "boat", 2, 1));
+    expect(legacy.interp.audio?.bgm?.id).toBe("field");
+    expect(Object.prototype.hasOwnProperty.call(legacy.interp.audio ?? {}, "walkingBgm")).toBe(false);
+
+    const silentRide = run(vehicle("boat", "boat", 2, 1, "harbor", { bgm: null }));
+    expect(silentRide.interp.audio?.bgm).toBeUndefined();
+    expect(silentRide.interp.audio?.walkingBgm).toMatchObject({ id: "field" });
+    expect(silentRide.interp.audio?.walkingBgm && silentRide.interp.audio.walkingBgm.positionTicks).toBeGreaterThan(7);
+
+    const silentWalking = run(vehicle("boat", "boat", 2, 1, "harbor", { bgm: { id: "boat" } }), false);
+    expect(silentWalking.interp.audio?.bgm).toMatchObject({ id: "boat", volume: 100, pitch: 100 });
+    expect(silentWalking.interp.audio?.walkingBgm).toBeNull();
+  });
+
   test("parked boats and ships block movement while a parked airship remains enterable", () => {
     const run = (kind: VehicleDef["kind"]): SessionState => {
       const p = project([map("harbor")], { vehicles: [vehicle(kind, kind, 2, 1)] });
@@ -331,6 +432,26 @@ describe("session boat and ship traversal", () => {
 });
 
 describe("session airship lifecycle", () => {
+  test("restores walking BGM as soon as an airship descent is accepted", () => {
+    const p = project([map("harbor")], {
+      vehicles: [vehicle("airship", "airship", 1, 1, "harbor", { bgm: { id: "airship" } })],
+    });
+    const session = createSession(p);
+    let state = startSession(p, session);
+    state.interp.audio = { bgm: { id: "field", volume: 70, pitch: 90, positionTicks: 12 } };
+    state = confirm(session, state);
+    expect(state.interp.audio?.bgm?.id).toBe("airship");
+    const walking = state.interp.audio?.walkingBgm;
+    expect(walking).toMatchObject({ id: "field" });
+    state = idle(session, state, AIRSHIP_TRANSITION_TICKS);
+    expect(state.travel?.vehicles?.airshipPhase).toBe("cruising");
+    state = confirm(session, state);
+    expect(state.travel?.vehicles).toMatchObject({ riding: "airship", airshipPhase: "descending" });
+    expect(state.interp.audio?.bgm).toMatchObject({ id: "field", volume: 70, pitch: 90 });
+    expect(state.interp.audio!.bgm!.positionTicks).toBe((walking?.positionTicks ?? -1) + 1);
+    expect(state.interp.audio?.walkingBgm).toBeUndefined();
+  });
+
   test("keeps an airship grounded and followers visible until gathering completes", () => {
     const p = project([map("harbor")], {
       followers: {

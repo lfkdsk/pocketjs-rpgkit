@@ -955,6 +955,22 @@ describe("session state fingerprint", () => {
     expect(sessionStateFingerprint(a)).toBe(sessionStateFingerprint(b));
   });
 
+  test("vehicle walking-BGM positions are clocks but track identity remains durable", () => {
+    const state = (): SessionState => {
+      const value = fingerprintState();
+      value.interp.audio = {
+        walkingBgm: { id: "field", volume: 80, pitch: 100, positionTicks: 10 },
+      };
+      return value;
+    };
+    const sameTrackLater = state();
+    sameTrackLater.interp.audio!.walkingBgm!.positionTicks = 999;
+    expect(sessionStateFingerprint(state())).toBe(sessionStateFingerprint(sameTrackLater));
+    const otherTrack = state();
+    otherTrack.interp.audio!.walkingBgm!.id = "town";
+    expect(sessionStateFingerprint(state())).not.toBe(sessionStateFingerprint(otherTrack));
+  });
+
   test("states differing only in the frame clock hash equal", () => {
     // The absolute frame counter advances every tick; with no fiber parked
     // on a time anchor, zeroing it loses no future. Parked fibers and

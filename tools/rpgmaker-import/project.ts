@@ -425,11 +425,23 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     }
     const sprite = spriteFor({ characterName: vehicle.characterName, characterIndex: vehicle.characterIndex, tileId: 0 });
     if (!sprite) continue;
+    const sourceBgm = vehicle.bgm;
+    const bgmName = typeof sourceBgm?.name === "string" ? sourceBgm.name : "";
+    if (clampNumber(sourceBgm?.pan, -100, 100, 0) !== 0) {
+      warnings.push(`${id}: vehicle BGM pan is not supported and was ignored`);
+    }
     vehicles.push({
       id,
       kind: id,
       sprite,
       start: { map, x: Math.max(0, vehicle.startX), y: Math.max(0, vehicle.startY), dir: "left" },
+      bgm: bgmName === ""
+        ? null
+        : {
+            id: audioFor("bgm", bgmName),
+            volume: Math.round(clampNumber(sourceBgm?.volume, 0, 100, 90)),
+            pitch: Math.round(clampNumber(sourceBgm?.pitch, 50, 150, 100)),
+          },
     });
   }
 

@@ -34,6 +34,12 @@ const VALID_AUDIO: AudioState = {
     pitch: 100,
     positionTicks: 90,
   },
+  walkingBgm: {
+    id: "walking-theme",
+    volume: 65,
+    pitch: 105,
+    positionTicks: 45,
+  },
 };
 
 function baseSnapshot(): SaveSnapshot {
@@ -72,6 +78,9 @@ describe("audio save validation", () => {
     const empty = baseSnapshot();
     empty.interp.audio = {};
     expect(validateSnapshot(empty)).toBeNull();
+    const silentWalking = baseSnapshot();
+    silentWalking.interp.audio = { walkingBgm: null };
+    expect(validateSnapshot(silentWalking)).toBeNull();
   });
 
   test("rejects malformed tracks, fades, ME counters, and saved BGM", () => {
@@ -99,6 +108,8 @@ describe("audio save validation", () => {
       ["saved BGM fade", (s) => {
         s.interp.audio.savedBgm.fade = { totalTicks: 1, leftTicks: 1 };
       }, "savedBgm.fade"],
+      ["walking BGM paused", (s) => { s.interp.audio.walkingBgm.paused = true; }, "walkingBgm.paused"],
+      ["walking BGM position", (s) => { s.interp.audio.walkingBgm.positionTicks = -1; }, "walkingBgm.positionTicks"],
     ];
 
     for (const [label, mutate, expectedPath] of cases) {
@@ -121,6 +132,7 @@ describe("audio save validation", () => {
       { op: "playSe", id: "click", volume: 80, pitch: 100 },
       { op: "saveBgm" },
       { op: "replayBgm" },
+      { op: "setVehicleBgm", id: "boat", bgm: { id: "boat-theme", volume: 70, pitch: 110 } },
       { op: "if", cond: { kind: "bgmPlaying", id: "theme", negate: true }, onFalse: 13 },
       { op: "exit" },
     ];
@@ -147,6 +159,9 @@ describe("audio save validation", () => {
       ["condition negate", {
         op: "if", cond: { kind: "bgmPlaying", negate: "no" }, onFalse: 1,
       }, ".cond.negate"],
+      ["vehicle BGM id", { op: "setVehicleBgm", id: "boat", bgm: { id: "" } }, ".bgm.id"],
+      ["vehicle BGM volume", { op: "setVehicleBgm", id: "boat", bgm: { id: "boat", volume: 101 } }, ".bgm.volume"],
+      ["vehicle BGM pitch", { op: "setVehicleBgm", id: "boat", bgm: { id: "boat", pitch: 49 } }, ".bgm.pitch"],
     ];
 
     for (const [label, instruction, expectedPath] of cases) {

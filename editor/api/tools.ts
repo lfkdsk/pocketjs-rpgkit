@@ -307,6 +307,20 @@ const vehicleValue = {
     id: { type: "string", pattern: "^[A-Za-z0-9_-]+$" },
     kind: { enum: ["boat", "ship", "airship"] },
     sprite: { type: "string", minLength: 1, description: "Key in project.sprites." },
+    bgm: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object", additionalProperties: false, required: ["id"],
+          properties: {
+            id: { type: "string", minLength: 1 },
+            volume: { type: "integer", minimum: 0, maximum: 100 },
+            pitch: { type: "integer", minimum: 50, maximum: 150 },
+          },
+        },
+      ],
+      description: "Optional next-boarding track; null means a silent ride and omission keeps legacy audio unchanged.",
+    },
     start: {
       type: "object",
       additionalProperties: false,

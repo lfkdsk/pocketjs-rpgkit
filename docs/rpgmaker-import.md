@@ -131,9 +131,9 @@ In short:
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 65 of the 107 commands map natively, 3 run degraded, 4 become
+use of it: 66 of the 107 commands map natively, 3 run degraded, 4 become
 placeholders (Battle Processing, Script and the two plugin commands) and
-35 are dropped, many of them actor, enemy and battle-only commands. "Needs
+34 are dropped, many of them actor, enemy and battle-only commands. "Needs
 kit" names the runtime capability a native mapping would take; it is the
 list of what the kit would need to import an RPG Maker game completely.
 `tests/rpgmaker-import.test.ts` keeps this table in step with the
@@ -174,7 +174,7 @@ for that project, to `coverage.md`.
 | 137 | Change Formation Access | MV/MZ | Dropped |  | a party formation menu |
 | 138 | Change Window Color | MV/MZ | Dropped |  | a runtime UI theme command |
 | 139 | Change Defeat ME | MV/MZ | Dropped |  | battle audio settings in the battle setup |
-| 140 | Change Vehicle BGM | MV/MZ | Dropped |  | vehicles |
+| 140 | Change Vehicle BGM | MV/MZ | Native |  | audio pan |
 | 201 | Transfer Player | MV/MZ | Native |  | a white transfer fade colour |
 | 202 | Set Vehicle Location | MV/MZ | Native |  |  |
 | 203 | Set Event Location | MV/MZ | Native |  | place by variable coordinates and character exchange |

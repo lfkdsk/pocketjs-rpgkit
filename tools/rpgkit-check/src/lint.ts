@@ -603,6 +603,10 @@ function walkCommandTree(
           ));
         }
         break;
+      case "setVehicleBgm":
+        missingVehicle(ctx, command.id, cloc, "command");
+        if (command.bgm) missingAudio(ctx, command.bgm.id, cloc);
+        break;
       case "place": {
         if (map) {
           if (typeof command.target === "object") {
@@ -1055,6 +1059,7 @@ export function lintGlobal(ctx: LintContext, project: Project): void {
     }
     checkVehicleLocation(ctx, project, `vehicle ${JSON.stringify(vehicle.id)} start`,
       vehicle.start.map, vehicle.start.x, vehicle.start.y, loc);
+    if (vehicle.bgm) missingAudio(ctx, vehicle.bgm.id, { pointer: `${loc.pointer}/bgm/id` });
   }
 
   // ---- usage findings -----------------------------------------------------

@@ -39,7 +39,7 @@ import {
 } from "./save.ts";
 import { beginStateMetadata, endStateMetadata, RecentStateMetadata } from "./state-metadata.ts";
 import { startupProfileMark } from "../startup-profile.ts";
-import { cloneAudioState, type AudioState } from "./audio.ts";
+import { audioStateEmpty, cloneAudioState, type AudioState } from "./audio.ts";
 
 import {
   activeIndexAt,
@@ -110,6 +110,7 @@ import {
   relocateVehicle,
   ridingVehicle,
   setFollowersVisible,
+  setVehicleBgm,
   setVehicleImage,
   stepAirshipAltitude,
   stepFollowers,
@@ -239,6 +240,7 @@ import type {
   Condition,
   JsonValue,
   Sheet,
+  VehicleBgm,
   WorldTraversalMode,
 } from "./types.ts";
 
@@ -3052,7 +3054,7 @@ function stepReferenceTick(
       );
     }
     if (travel.vehicles?.boarding && !travel.followers?.gathering && !s.move.moving) {
-      travel = completeVehicleBoarding(travel)!;
+      travel = finishVehicleBoarding(s, travel);
     }
     if (travel.vehicles?.riding) {
       travel = stepAirshipAltitude(travel, sess.cfg.tile)!;
@@ -3470,7 +3472,7 @@ function stepReferenceTick(
       startedStep ? { x: playerCellBeforeMovementX, y: playerCellBeforeMovementY } : undefined,
     )!;
     if (travel.vehicles?.boarding && !travel.followers?.gathering && !s.move.moving) {
-      travel = completeVehicleBoarding(travel)!;
+      travel = finishVehicleBoarding(s, travel);
     }
     travel = syncRiddenVehicle(travel, s.mapId, s.move)!;
     const drained = drainCompletedGatherWaiters(travel);
@@ -3813,6 +3815,58 @@ function beginTravelStep(s: SessionState, dir: Facing, cfg: MovementConfig): voi
   };
 }
 
+/** Start an authored vehicle track only once get-on has completely finished.
+ * Omitted BGM keeps the legacy no-audio-change behavior; explicit null saves
+ * the walking track and makes the ride silent. */
+function startVehicleBgm(s: SessionState, bgm: Readonly<VehicleBgm> | null | undefined): void {
+  if (bgm === undefined) return;
+  const audio = (s.interp.audio ??= {});
+  audio.walkingBgm = audio.bgm
+    ? {
+        id: audio.bgm.id,
+        volume: audio.bgm.volume,
+        pitch: audio.bgm.pitch,
+        positionTicks: audio.bgm.positionTicks,
+      }
+    : null;
+  if (bgm === null) {
+    delete audio.bgm;
+  } else {
+    audio.bgm = {
+      id: bgm.id,
+      volume: bgm.volume ?? 100,
+      pitch: bgm.pitch ?? 100,
+      positionTicks: 0,
+    };
+  }
+}
+
+function finishVehicleBoarding(s: SessionState, travel: Readonly<TravelState>): TravelState {
+  const id = travel.vehicles?.boarding;
+  const vehicle = id === undefined || id === null
+    ? undefined
+    : travel.vehicles?.entries.find((entry) => entry.id === id);
+  const next = completeVehicleBoarding(travel)!;
+  if (id != null && next.vehicles?.riding === id && next.vehicles.boarding == null) {
+    startVehicleBgm(s, vehicle?.bgm);
+  }
+  return next;
+}
+
+/** Restore the exact BGM position (or silence) captured at get-on. The slot
+ * is separate from event commands' saveBgm/replayBgm state. */
+function restoreWalkingBgm(s: SessionState): void {
+  const audio = s.interp.audio;
+  if (!audio || !Object.prototype.hasOwnProperty.call(audio, "walkingBgm")) return;
+  if (audio.walkingBgm === null) {
+    delete audio.bgm;
+  } else if (audio.walkingBgm !== undefined) {
+    audio.bgm = { ...audio.walkingBgm };
+  }
+  delete audio.walkingBgm;
+  if (audioStateEmpty(audio)) delete s.interp.audio;
+}
+
 /** RPG Maker action priority: an airship on the current cell, then a ship or
  * boat on the faced cell. A refused landing returns false so ordinary action
  * event lookup may still consume the button. */
@@ -3850,6 +3904,7 @@ function tryToggleVehicle(
   // Park the vehicle on the source/current cell before the player walks off.
   s.travel = syncRiddenVehicle(s.travel, map.id, s.move)!;
   s.travel = leaveVehicle(s.travel)!;
+  restoreWalkingBgm(s);
   if (ridden.kind !== "airship") beginTravelStep(s, s.move.facing, sess.cfg);
   return true;
 }
@@ -3891,6 +3946,9 @@ function consumeTravelRequests(
       }
       case "setVehicleImage":
         s.travel = setVehicleImage(s.travel, request.id, request.sprite);
+        break;
+      case "setVehicleBgm":
+        s.travel = setVehicleBgm(s.travel, request.id, request.bgm);
         break;
     }
   }

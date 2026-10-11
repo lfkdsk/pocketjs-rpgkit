@@ -5,7 +5,7 @@ built on [PocketJS](https://github.com/pocket-nexus/pocketjs). It contains
 the parts an RPG-Maker-style game needs without any specific game:
 
 - **pure-TS engine** (`src/engine/`) — tile movement and collision, the
-  event interpreter (pages, triggers, 72 commands), map-character motion,
+  event interpreter (pages, triggers, 78 commands), map-character motion,
   multi-map sessions, deterministic extension state and battle scenes,
   deterministic save snapshots. No host imports, no
   wall clock, no `Math.random`: a session is one pure fold per virtual
@@ -1135,7 +1135,7 @@ are translated by the shared `worldNode`. Both sit inside the renderer's
 band adds the origin itself. The coordinate spaces and the single
 conversion point are documented in `src/ui/world-contract.ts`.
 
-### The 72 commands
+### The 78 commands
 
 | op | purpose |
 | --- | --- |
@@ -1148,6 +1148,12 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `transfer` | swap maps at x/y/dir, with an optional fade; map/x/y/dir may be `{ "variable": "id" }`; a direct `playerTouch` transfer may carry a `seamless-v1` opening marker when the project opts into [world-layout handoff](#world-layout-data) |
 | `moveRoute` | route the player, this event, or a named event through moves, turns, waits, deterministic `pathTo`, and `approach` |
 | `moveControl` | change a target's autonomous mode, stop it, start bounded wandering, or override speed/run/frequency/collision/facing settings |
+| `followers` | show or hide the active follower chain without discarding its trail |
+| `gatherFollowers` | wait until every visible follower reaches the player |
+| `vehicle` | board or leave the reachable RPG Maker-style vehicle |
+| `setVehicleLocation` | move a persistent vehicle to a literal or variable-selected map cell |
+| `setVehicleImage` | replace a persistent vehicle's saved sprite |
+| `setVehicleBgm` | replace the BGM (or explicit silence) used on that vehicle's next boarding |
 | `appearance` | change a player's/event's walking sprite, opacity, or visibility; optionally save a new player reset baseline |
 | `layer` | show/hide a named visual layer or select one of its prepackaged variants for this map visit |
 | `changeParallax` | replace or clear the current map's parallax image, loop axes, signed scroll speeds and RPG Maker `!`/zero-camera mode |

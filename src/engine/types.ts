@@ -54,12 +54,22 @@ export interface FollowersDef {
   members: FollowerDef[];
 }
 
+/** Music selected while riding one vehicle. A null vehicle value means an
+ * explicitly silent ride; omission preserves the legacy no-audio-change
+ * behavior for projects authored before vehicle music existed. */
+export interface VehicleBgm {
+  id: string;
+  volume?: number;
+  pitch?: number;
+}
+
 /** Initial position and art for one persistent vehicle. */
 export interface VehicleDef {
   id: string;
   kind: VehicleKind;
   sprite: string;
   start: { map: string; x: number; y: number; dir: Dir };
+  bgm?: VehicleBgm | null;
 }
 
 /** Map-local vehicle passage projected to row-major cell indices. Boat and
@@ -448,6 +458,9 @@ export type Command =
   | { op: "setVehicleLocation"; id: string; map: TransferMap; x: TransferCoordinate; y: TransferCoordinate }
   /** Replace a vehicle's walking sprite for the remainder of the save. */
   | { op: "setVehicleImage"; id: string; sprite: string }
+  /** Replace the music used on the next boarding. This never interrupts a
+   * current ride, matching RPG Maker's Change Vehicle BGM command. */
+  | { op: "setVehicleBgm"; id: string; bgm: VehicleBgm | null }
   /** Change a walking character's image/opacity/visibility. null resets one
    *  field. Event changes last until that event changes page; player changes
    *  cross maps. `saveDefault` makes a player sprite the reset baseline. */

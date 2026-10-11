@@ -68,10 +68,14 @@ export function eventEditorResources(project: Project, map?: MapDef): EventEdito
   const animationInstances = new Set<string>();
   const extensionCalls = new Set<string>();
   const parallaxes = new Set<string>();
+  const audio = new Set(Object.keys(project.audio ?? {}));
   const sprites = new Set(Object.keys(project.sprites ?? {}));
 
   for (const follower of project.followers?.members ?? []) sprites.add(follower.sprite);
-  for (const vehicle of project.vehicles ?? []) sprites.add(vehicle.sprite);
+  for (const vehicle of project.vehicles ?? []) {
+    sprites.add(vehicle.sprite);
+    if (vehicle.bgm) audio.add(vehicle.bgm.id);
+  }
 
   for (const projectMap of project.maps) {
     if (projectMap.parallax?.image) parallaxes.add(projectMap.parallax.image);
@@ -107,6 +111,9 @@ export function eventEditorResources(project: Project, map?: MapDef): EventEdito
       case "setVehicleImage":
         sprites.add(command.sprite);
         break;
+      case "setVehicleBgm":
+        if (command.bgm) audio.add(command.bgm.id);
+        break;
       case "ext":
       case "extChoice":
         extensionCalls.add(command.call);
@@ -135,7 +142,7 @@ export function eventEditorResources(project: Project, map?: MapDef): EventEdito
     vehicles: sorted((project.vehicles ?? []).map((entry) => entry.id)),
     animations: sorted((project.animations ?? []).map((entry) => entry.id)),
     parallaxes: sorted(parallaxes),
-    audio: sorted(Object.keys(project.audio ?? {})),
+    audio: sorted(audio),
     commonEvents: sorted((project.commonEvents ?? []).map((entry) => entry.id)),
     events: sorted((map?.events ?? project.maps.flatMap((entry) => entry.events ?? [])).map((entry) => entry.id)),
     layers: sorted(layers),

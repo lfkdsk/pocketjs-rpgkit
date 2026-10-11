@@ -45,6 +45,9 @@ export interface AudioState {
   bgs?: AudioTrackState;
   me?: AudioMeState;
   savedBgm?: SavedBgmState;
+  /** BGM (or explicit silence) captured when a vehicle ride begins. This is
+   * independent of event commands' saveBgm slot. */
+  walkingBgm?: SavedBgmState | null;
 }
 
 export function cloneAudioTrack<T extends AudioTrackState>(track: Readonly<T>): T {
@@ -60,6 +63,9 @@ export function cloneAudioState(audio: Readonly<AudioState>): AudioState {
     ...(audio.bgs ? { bgs: cloneAudioTrack(audio.bgs) } : {}),
     ...(audio.me ? { me: cloneAudioTrack(audio.me) } : {}),
     ...(audio.savedBgm ? { savedBgm: { ...audio.savedBgm } } : {}),
+    ...(Object.prototype.hasOwnProperty.call(audio, "walkingBgm")
+      ? { walkingBgm: audio.walkingBgm ? { ...audio.walkingBgm } : null }
+      : {}),
   };
 }
 
@@ -72,7 +78,8 @@ export function audioTrackVolume(track: Readonly<AudioTrackState>): number {
 
 /** True when no durable audio fact remains. */
 export function audioStateEmpty(audio: Readonly<AudioState>): boolean {
-  return !audio.bgm && !audio.bgs && !audio.me && !audio.savedBgm;
+  return !audio.bgm && !audio.bgs && !audio.me && !audio.savedBgm &&
+    !Object.prototype.hasOwnProperty.call(audio, "walkingBgm");
 }
 
 function advanceFade(track: AudioTrackState): boolean {

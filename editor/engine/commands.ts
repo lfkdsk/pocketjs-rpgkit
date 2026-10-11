@@ -106,6 +106,7 @@ export const EDITABLE_COMMAND_OPS = [
   "vehicle",
   "setVehicleLocation",
   "setVehicleImage",
+  "setVehicleBgm",
   "appearance",
   "layer",
   "changeParallax",
@@ -241,6 +242,9 @@ export function defaultCommand<Op extends EditableCommandOp>(op: Op): CommandOf<
       break;
     case "setVehicleImage":
       command = { op, id: "vehicle", sprite: "sprite" };
+      break;
+    case "setVehicleBgm":
+      command = { op, id: "vehicle", bgm: null };
       break;
     case "appearance":
       command = { op, target: "this", sprite: null };
@@ -567,6 +571,8 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
       return `Move vehicle ${text(command.id)} to ${operandSummary(command.map)} (${operandSummary(command.x)}, ${operandSummary(command.y)})`;
     case "setVehicleImage":
       return `Vehicle ${text(command.id)} image = ${text(command.sprite)}`;
+    case "setVehicleBgm":
+      return `Vehicle ${text(command.id)} BGM = ${command.bgm === null ? "silence" : isRecord(command.bgm) ? text(command.bgm.id) : "invalid"}`;
     case "shop":
       return `Shop ${text(command.id)} (${Array.isArray(command.goods) ? command.goods.length : 0} goods)`;
     case "ext":

@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "6c9b447c5ded9beabeaf9a6814edf76ed3c9d742c1d21cc7f3cd267b67fd3010";
+export const MAP_SCHEMA_HASH = "4f6e1e734edff23e4fbf0fb1bd18708fb56c7ce4d8fca99c01773b65d60efab8";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -62,6 +62,9 @@ export const MAP_SCHEMA_HASH = "6c9b447c5ded9beabeaf9a6814edf76ed3c9d742c1d21cc7
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: optional vehicle BGM data and the setVehicleBgm command;
+  // documents that omit them retain the previous no-audio-change travel path
+  "6c9b447c5ded9beabeaf9a6814edf76ed3c9d742c1d21cc7f3cd267b67fd3010",
   // superseded by: optional follower-chain and persistent vehicle data,
   // vehicle passage flags, travel commands and the vehicle condition;
   // documents that omit them retain the single-player movement/save shape

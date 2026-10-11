@@ -118,6 +118,7 @@ describe("rpgmaker-import: output", () => {
     source.system.boat = {
       ...source.system.boat!, characterName: "People", characterIndex: 2,
       startMapId: 1, startX: 3, startY: 11,
+      bgm: { name: "Ship Theme", volume: 109, pitch: 40, pan: 5 },
     };
     source.system.airship = {
       ...source.system.airship!, characterName: "People", characterIndex: 6,
@@ -131,7 +132,9 @@ describe("rpgmaker-import: output", () => {
     expect(imported.project.vehicles).toEqual([{
       id: "boat", kind: "boat", sprite: "chr-people-2",
       start: { map: "map001", x: 3, y: 11, dir: "left" },
+      bgm: { id: "bgm-ship-theme", volume: 100, pitch: 50 },
     }]);
+    expect(imported.warnings).toContain("boat: vehicle BGM pan is not supported and was ignored");
 
     source.system.partyMembers = [1, 2];
     const withStartingFollower = await importRmProject(source);
@@ -521,6 +524,8 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(320)!.needsKit).toContain("actors other than actor 1");
     expect(by.get(111)!.needsKit).not.toContain("timer");
     expect(by.get(111)!.needsKit).not.toContain("vehicles");
+    expect(by.get(140)!.disposition).toBe("Native");
+    expect(by.get(140)!.needsKit).toContain("audio pan");
     expect(by.get(122)!.needsKit).not.toContain("timer");
     expect(by.get(118)!.disposition).toBe("Native");
     expect(by.get(119)!.disposition).toBe("Native");

@@ -404,6 +404,9 @@ export function stripPlaybackClocksInPlace(interp: InterpState): void {
     ...(audio.bgs ? { bgs: { ...audio.bgs, positionTicks: 0 } } : {}),
     ...(audio.me ? { me: { ...audio.me, positionTicks: 0 } } : {}),
     ...(audio.savedBgm ? { savedBgm: { ...audio.savedBgm, positionTicks: 0 } } : {}),
+    ...(Object.prototype.hasOwnProperty.call(audio, "walkingBgm")
+      ? { walkingBgm: audio.walkingBgm ? { ...audio.walkingBgm, positionTicks: 0 } : null }
+      : {}),
   };
 }
 

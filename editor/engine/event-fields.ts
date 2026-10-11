@@ -20,6 +20,7 @@ import type {
   TransferCoordinate,
   TransferDirection,
   TransferMap,
+  VehicleBgm,
 } from "../../src/engine/types.ts";
 import { validateSchema, type Schema } from "../../src/engine/schema-validate.ts";
 import {
@@ -518,6 +519,11 @@ export function commandFields(
       return [
         resourceField("id", "VEHICLE", command.id, resources.vehicles, "Project vehicles"),
         resourceField("sprite", "SPRITE", command.sprite, resources.sprites, "Project sprites"),
+      ];
+    case "setVehicleBgm":
+      return [
+        resourceField("id", "VEHICLE", command.id, resources.vehicles, "Project vehicles"),
+        field("bgm", "BGM JSON", JSON.stringify(command.bgm)),
       ];
     case "moveRoute":
       return [
@@ -1163,6 +1169,17 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       }
       if (key === "sprite") {
         return raw.length > 0 ? good({ ...command, sprite: raw }) : bad("sprite is required");
+      }
+      break;
+    }
+    case "setVehicleBgm": {
+      if (key === "id") {
+        const value = identifier(raw, "vehicle id", PROJECT_ID);
+        return value.ok ? good({ ...command, id: value.value }) : value;
+      }
+      if (key === "bgm") {
+        const value = jsonValue(raw, "vehicle BGM");
+        return value.ok ? good({ ...command, bgm: value.value as VehicleBgm | null }) : value;
       }
       break;
     }

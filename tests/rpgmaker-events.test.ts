@@ -892,19 +892,37 @@ describe("transfer", () => {
   test("vehicle location, boarding, followers and image commands are native", () => {
     const { cmds, cov } = conv([
       C(202, 0, [2, 0, 3, 4, 5]),
+      C(140, 0, [0, { name: "Ship Theme", volume: 77, pitch: 112, pan: 0 }]),
       C(206, 0),
       C(216, 0, [0]), C(216, 0, [1]), C(217, 0),
       C(323, 0, [1, "Vehicle", 2]),
     ]);
     expect(cmds).toEqual([
       { op: "setVehicleLocation", id: "airship", map: "map003", x: 4, y: 5 },
+      { op: "setVehicleBgm", id: "boat", bgm: { id: "bgm-ship-theme", volume: 77, pitch: 112 } },
       { op: "vehicle", action: "toggle" },
       { op: "followers", visible: true },
       { op: "followers", visible: false },
       { op: "gatherFollowers" },
       { op: "setVehicleImage", id: "ship", sprite: "rm-vehicle-2" },
     ]);
-    for (const code of [202, 206, 216, 217, 323]) expect(counts(cov, "command", String(code)).Native).toBeGreaterThan(0);
+    for (const code of [140, 202, 206, 216, 217, 323]) expect(counts(cov, "command", String(code)).Native).toBeGreaterThan(0);
+  });
+
+  test("vehicle BGM imports silence, clamps parameters, ignores pan and rejects unknown vehicles", () => {
+    let converted = conv([C(140, 0, [1, { name: "", volume: 90, pitch: 100, pan: 0 }])]);
+    expect(converted.cmds).toEqual([{ op: "setVehicleBgm", id: "ship", bgm: null }]);
+    expect(only(converted.cov, 140)).toBe("Native");
+
+    converted = conv([C(140, 0, [2, { name: "Sky", volume: 999, pitch: -10, pan: 25 }])]);
+    expect(converted.cmds).toEqual([{
+      op: "setVehicleBgm", id: "airship", bgm: { id: "bgm-sky", volume: 100, pitch: 50 },
+    }]);
+    expect(only(converted.cov, 140)).toBe("Degraded");
+
+    converted = conv([C(140, 0, [9, { name: "Bad", volume: 90, pitch: 100, pan: 0 }])]);
+    expect(converted.cmds).toEqual([]);
+    expect(only(converted.cov, 140)).toBe("Dropped");
   });
 
   test("vehicle location by variables translates numeric RM map ids", () => {

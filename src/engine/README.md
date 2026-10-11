@@ -697,15 +697,17 @@ no travel actor nodes:
       "id": "boat",
       "kind": "boat",
       "sprite": "boat",
-      "start": { "map": "harbour", "x": 12, "y": 8, "dir": "down" }
+      "start": { "map": "harbour", "x": 12, "y": 8, "dir": "down" },
+      "bgm": { "id": "boat-theme", "volume": 90, "pitch": 100 }
     }
   ]
 }
 ```
 
 The active follower chain replays the cells vacated by the player and then by
-each preceding member. It therefore keeps corners and spacing instead of
-pathfinding shortcuts. Followers are through characters: they neither block
+each preceding member. Every spaced member begins and lands in the leader's
+step phase, while still keeping corners and spacing instead of pathfinding
+shortcuts. Followers are through characters: they neither block
 the player/NPCs nor consult passage while replaying an already proven trail.
 `activeSwitch` (with optional `activeValue`, default `true`) lets a game express
 party membership or a Tuxemon-style lead monster without adding an actor
@@ -716,27 +718,38 @@ trail; a `seamless-v1` handoff rebases the live positions and trail into the
 neighbour map, so the chain continues across the seam.
 
 `boat`, `ship`, and `airship` positions are persistent reducer data. Confirm
-boards an airship on the player's cell, otherwise a ship and then a boat on the
-faced cell; `{op:"vehicle", action:"toggle"}` invokes the same rule. Boat and
-ship move at RPG Maker speed grades 4 and 5 over the destination cells listed
-in `MapDef.vehiclePassage.boat` / `.ship`. On disembark the vehicle stays on its
-water cell and the player steps forward onto ordinary standable ground.
+starts gathering followers for an airship on the player's cell, otherwise a
+ship and then a boat on the faced cell; boarding and airship lift begin only
+after that gather finishes. `{op:"vehicle", action:"toggle"}` invokes the same
+rule. Boat and ship move at RPG Maker speed grades 4 and 5 over the destination
+cells listed in `MapDef.vehiclePassage.boat` / `.ship`. On disembark the vehicle stays on its
+water cell and the player steps forward onto ordinary standable ground. A
+parked boat or ship blocks characters and other water vehicles; a parked
+airship does not, so the player can enter its cell to board it.
 Airships move at grade 6, ignore terrain and character bodies while cruising,
 and land in place on `.airshipLand`; when that list is omitted, ordinary
 standable ground is the landing rule. Their ascent and descent each take 48
-reference ticks and render up to 16 pixels above the map. A refused landing
-leaves the ride active and lets the confirm press fall through to an action
-event.
+reference ticks and render up to 16 pixels above the map, with a ground-fixed
+shadow whose opacity follows altitude. A refused landing leaves the ride
+active and lets the confirm press fall through to an action event.
 
 `setVehicleLocation` moves a parked vehicle (literal or variable map/x/y),
-`setVehicleImage` replaces its saved sprite, and the `vehicle` condition tests
-which id is currently ridden. Riding survives transfers and seamless handoffs;
+`setVehicleImage` replaces its saved sprite, `setVehicleBgm` replaces the music
+used the next time that vehicle is boarded, and the `vehicle` condition tests
+which id is currently ridden. A vehicle `bgm` object captures the current BGM
+(or silence), starts its track only after boarding completes, and restores the
+captured state when the ride ends; `bgm:null` requests a silent ride, while an
+omitted field retains the legacy no-audio-change behavior. Changing the saved
+vehicle BGM during a ride does not interrupt that ride. Riding survives
+transfers and seamless handoffs;
 parked vehicles stay on their authored maps. Follower/vehicle positions,
 facings, trails, gathering waiters, riding state, and airship phase are all in
 saves, autosaves, and rewind keyframes. The RPG Maker importer maps
-`System.json` follower/vehicle settings and event commands 202, 206, 216, 217,
-and 323 to these fields and commands. Studio's project mobility panel edits the
-initial follower switch and the three vehicle placements.
+`System.json` follower/vehicle settings and event commands 140, 202, 206, 216,
+217, and 323 to these fields and commands. RPG Maker audio pan is retained as
+an import limitation because the kit's BGM state has no pan control. Studio's
+project mobility panel edits the initial follower switch and the three vehicle
+placements while preserving their BGM settings.
 
 ## Host map source (on-demand maps)
 

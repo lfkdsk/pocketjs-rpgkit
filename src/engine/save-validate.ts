@@ -27,7 +27,7 @@ const INTEGER_OPS = new Set([
   "playBgs", "fadeoutBgs", "playMe", "playSe", "saveBgm", "replayBgm", "stopSe",
   "erase", "exit", "transfer",
   "moveRoute", "moveControl", "followers", "gatherFollowers", "vehicle",
-  "setVehicleLocation", "setVehicleImage", "common", "lockInput", "unlockInput", "place", "shop",
+  "setVehicleLocation", "setVehicleImage", "setVehicleBgm", "common", "lockInput", "unlockInput", "place", "shop",
   "mapAnim", "stopAnim", "appearance", "layer", "changeParallax", "tileProperty",
   "screenFade", "screenTint", "screenFlash", "screenShake", "camera", "scrollMap", "balloon", "screenBackdrop",
   "showPicture", "movePicture", "rotatePicture", "tintPicture", "erasePicture",
@@ -538,7 +538,7 @@ function validateAudioTrack(v: unknown, path: string, shape: AudioTrackShape): s
 
 function validateAudioState(v: unknown, path: string): string | null {
   if (!isRecord(v)) return fail(path, "audio state object required");
-  const allowed = new Set(["bgm", "bgs", "me", "savedBgm"]);
+  const allowed = new Set(["bgm", "bgs", "me", "savedBgm", "walkingBgm"]);
   for (const key of Object.keys(v)) {
     if (!allowed.has(key)) return fail(`${path}.${key}`, "unknown audio state field");
   }
@@ -557,6 +557,30 @@ function validateAudioState(v: unknown, path: string): string | null {
   if (v.savedBgm !== undefined) {
     const e = validateAudioTrack(v.savedBgm, `${path}.savedBgm`, "savedBgm");
     if (e) return e;
+  }
+  if (v.walkingBgm !== undefined && v.walkingBgm !== null) {
+    const e = validateAudioTrack(v.walkingBgm, `${path}.walkingBgm`, "savedBgm");
+    if (e) return e;
+  }
+  return null;
+}
+
+function validateVehicleBgm(v: unknown, path: string): string | null {
+  if (!isRecord(v)) return fail(path, "vehicle BGM object required");
+  for (const key of Object.keys(v)) {
+    if (key !== "id" && key !== "volume" && key !== "pitch") {
+      return fail(`${path}.${key}`, "unknown vehicle BGM field");
+    }
+  }
+  if (typeof v.id !== "string" || v.id.length === 0) {
+    return fail(`${path}.id`, "non-empty string required");
+  }
+  if (v.volume !== undefined && (!isNonNegInt(v.volume) || v.volume > 100)) {
+    return fail(`${path}.volume`, "integer 0..100 required");
+  }
+  if (v.pitch !== undefined &&
+      (!Number.isInteger(v.pitch) || (v.pitch as number) < 50 || (v.pitch as number) > 150)) {
+    return fail(`${path}.pitch`, "integer 50..150 required");
   }
   return null;
 }
@@ -882,6 +906,16 @@ function validateProg(prog: unknown, path: string): string | null {
           return fail(here, "non-empty id and sprite required");
         }
         break;
+      case "setVehicleBgm": {
+        if (typeof ins.id !== "string" || ins.id.length === 0) {
+          return fail(`${here}.id`, "non-empty string required");
+        }
+        if (ins.bgm !== null) {
+          const e = validateVehicleBgm(ins.bgm, `${here}.bgm`);
+          if (e) return e;
+        }
+        break;
+      }
       case "appearance": {
         const target = validateAppearanceTarget(ins.target ?? "player", `${here}.target`);
         if (target) return target;
@@ -2561,6 +2595,10 @@ function validateTravel(v: unknown, path: string): string | null {
       }
       if (ids.has(vehicle.id)) return fail(`${at}.id`, "unique vehicle id required");
       ids.add(vehicle.id);
+      if (vehicle.bgm !== undefined && vehicle.bgm !== null) {
+        const bgm = validateVehicleBgm(vehicle.bgm, `${at}.bgm`);
+        if (bgm) return bgm;
+      }
       const movement = validateTravelMovement(vehicle.move, `${at}.move`, false);
       if (movement) return movement;
     }

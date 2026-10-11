@@ -633,7 +633,21 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
         "kind": { "enum": ["boat", "ship", "airship"] },
         "sprite": { "type": "string", "minLength": 1, "description": "Key in project.sprites." },
-        "start": { "$ref": "#/$defs/transferTarget" }
+        "start": { "$ref": "#/$defs/transferTarget" },
+        "bgm": {
+          "oneOf": [{ "$ref": "#/$defs/vehicleBgm" }, { "type": "null" }],
+          "description": "Track played after boarding completes; null means a silent ride. Omit to preserve the legacy no-audio-change behavior."
+        }
+      }
+    },
+    "vehicleBgm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "volume": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "pitch": { "type": "integer", "minimum": 50, "maximum": 150 }
       }
     },
     "map": {
@@ -1042,6 +1056,17 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "sprite": { "type": "string", "minLength": 1 }
           },
           "description": "Replace a vehicle's walking sprite for the remainder of the save."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id", "bgm"],
+          "properties": {
+            "op": { "const": "setVehicleBgm" },
+            "id": { "type": "string", "minLength": 1 },
+            "bgm": { "oneOf": [{ "$ref": "#/$defs/vehicleBgm" }, { "type": "null" }] }
+          },
+          "description": "Replace a vehicle's next-boarding music without interrupting a current ride. null selects silence."
         },
         {
           "type": "object",

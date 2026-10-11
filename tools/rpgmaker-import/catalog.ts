@@ -70,7 +70,7 @@ export const RM_COMMANDS: readonly CommandInfo[] = [
   { code: 137, name: "Change Formation Access", flavor: "MV/MZ", needsKit: "a party formation menu" },
   { code: 138, name: "Change Window Color", flavor: "MV/MZ", needsKit: "a runtime UI theme command" },
   { code: 139, name: "Change Defeat ME", flavor: "MV/MZ", needsKit: "battle audio settings in the battle setup" },
-  { code: 140, name: "Change Vehicle BGM", flavor: "MV/MZ", needsKit: "vehicles" },
+  { code: 140, name: "Change Vehicle BGM", flavor: "MV/MZ", needsKit: "audio pan" },
   { code: 201, name: "Transfer Player", flavor: "MV/MZ", needsKit: "a white transfer fade colour" },
   { code: 202, name: "Set Vehicle Location", flavor: "MV/MZ" },
   { code: 203, name: "Set Event Location", flavor: "MV/MZ", needsKit: "place by variable coordinates and character exchange" },

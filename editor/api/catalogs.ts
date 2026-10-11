@@ -272,6 +272,9 @@ function addCommandReferences(
       case "setVehicleImage":
         addReference(index, "sprite", command.sprite, address, "sprite");
         break;
+      case "setVehicleBgm":
+        if (command.bgm) addReference(index, "audio", command.bgm.id, address, "bgm.id");
+        break;
       case "showPicture":
       case "movePicture":
         variableOperand(index, command.x, address, "x");
@@ -342,6 +345,9 @@ export function scanCatalogReferences(project: Project): ReferenceIndex {
   });
   (project.vehicles ?? []).forEach((vehicle, at) => {
     addReference(index, "sprite", vehicle.sprite, `vehicle:${encoded(vehicle.id)}`, `vehicles[${at}].sprite`);
+    if (vehicle.bgm) {
+      addReference(index, "audio", vehicle.bgm.id, `vehicle:${encoded(vehicle.id)}`, `vehicles[${at}].bgm.id`);
+    }
   });
   (project.actors ?? []).forEach((actor, at) => {
     if (actor.sprite !== undefined) addReference(index, "sprite", actor.sprite, `actor:${encoded(actor.id)}`, `actors[${at}].sprite`);

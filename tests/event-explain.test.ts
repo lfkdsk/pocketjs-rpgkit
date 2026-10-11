@@ -304,6 +304,7 @@ describe("event explanation", () => {
       vehicle: { command: { op: "vehicle", action: "toggle" }, expected: "none" },
       setVehicleLocation: { command: { op: "setVehicleLocation", id: "boat", map: "m", x: 0, y: 0 }, expected: "none" },
       setVehicleImage: { command: { op: "setVehicleImage", id: "boat", sprite: "boat" }, expected: "none" },
+      setVehicleBgm: { command: { op: "setVehicleBgm", id: "boat", bgm: { id: "bgm-boat" } }, expected: "none" },
       appearance: { command: { op: "appearance", target: "player" }, expected: "none" },
       layer: { command: { op: "layer", layer: "l" }, expected: "none" },
       changeParallax: { command: { op: "changeParallax", image: null, loopX: false, loopY: false, sx: 0, sy: 0 }, expected: "none" },

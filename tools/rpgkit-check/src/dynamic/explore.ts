@@ -95,6 +95,7 @@ const STATE_MUTATING_OPS: ReadonlySet<Command["op"]> = new Set<Command["op"]>([
   "vehicle",
   "setVehicleLocation",
   "setVehicleImage",
+  "setVehicleBgm",
   "place",
   "erase",
   "transfer",

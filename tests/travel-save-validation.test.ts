@@ -34,6 +34,27 @@ function snapshot(
 }
 
 describe("travel save validation", () => {
+  test("accepts sparse, silent and omitted vehicle BGM and rejects malformed values", () => {
+    const valid: any = snapshot("grounded", 0, 0, null);
+    valid.travel.vehicles.entries[0].bgm = { id: "airship", volume: 0, pitch: 150 };
+    expect(validateSnapshot(valid)).toBeNull();
+    valid.travel.vehicles.entries[0].bgm = null;
+    expect(validateSnapshot(valid)).toBeNull();
+    delete valid.travel.vehicles.entries[0].bgm;
+    expect(validateSnapshot(valid)).toBeNull();
+
+    for (const [label, bgm, path] of [
+      ["empty id", { id: "" }, ".bgm.id"],
+      ["volume", { id: "airship", volume: 101 }, ".bgm.volume"],
+      ["pitch", { id: "airship", pitch: 49 }, ".bgm.pitch"],
+      ["unknown field", { id: "airship", pan: 1 }, ".bgm.pan"],
+    ] as const) {
+      const state: any = snapshot("grounded", 0, 0, null);
+      state.travel.vehicles.entries[0].bgm = bgm;
+      expect(validateSnapshot(state), label).toContain(path);
+    }
+  });
+
   test("accepts only phase/tick-correlated airship transition heights", () => {
     for (const [phase, tick, altitude] of [
       ["ascending", 0, 0],

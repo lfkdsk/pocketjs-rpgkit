@@ -731,6 +731,9 @@ function openMobilitySettings(): void {
         kind: row.kind,
         sprite,
         start: { map: map.id, x, y, dir: row.dir.value as VehicleDef["start"]["dir"] },
+        ...(Object.prototype.hasOwnProperty.call(byKind.get(row.kind) ?? {}, "bgm")
+          ? { bgm: byKind.get(row.kind)!.bgm === null ? null : { ...byKind.get(row.kind)!.bgm! } }
+          : {}),
       });
     }
     const response = app.run("update-mobility", {

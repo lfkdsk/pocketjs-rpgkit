@@ -267,6 +267,7 @@ function collectWrites(
       case "vehicle":
       case "setVehicleLocation":
       case "setVehicleImage":
+      case "setVehicleBgm":
       case "layer":
       case "changeParallax":
       case "tileProperty":

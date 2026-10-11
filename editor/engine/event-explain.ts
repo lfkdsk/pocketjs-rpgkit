@@ -228,6 +228,7 @@ export function classifyCommand(command: Command): CommandWriteClass {
     case "vehicle":
     case "setVehicleLocation":
     case "setVehicleImage":
+    case "setVehicleBgm":
     case "appearance":
     case "layer":
     case "changeParallax":

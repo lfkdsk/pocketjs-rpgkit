@@ -627,6 +627,8 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       // actor-in-party conditions; no party UI is modelled.
       rec(st, 129, "Native");
       return [{ op: "switch", id: partySwitchId(int(p[0])), value: int(p[1]) === 0 }];
+    case 140:
+      return emitVehicleBgm(p, st);
     case 201:
       return emitTransfer(p, st);
     case 202:
@@ -1586,6 +1588,31 @@ function emitSetVehicleLocation(p: readonly unknown[], st: State): Command[] {
   };
   rec(st, 202, "Native");
   return build(0, entries.length - 1);
+}
+
+/** Change Vehicle BGM. RPG Maker stores an empty name as explicit silence;
+ * setBgm only updates the next get-on and never interrupts a current ride. */
+function emitVehicleBgm(p: readonly unknown[], st: State): Command[] {
+  const id = vehicleId(p[0]);
+  if (!id) {
+    rec(st, 140, "Dropped", "unknown vehicle");
+    return [];
+  }
+  const audio = p[1] as RmAudio | undefined;
+  const name = typeof audio?.name === "string" ? audio.name : "";
+  const panned = num(audio?.pan, 0) !== 0;
+  rec(st, 140, panned ? "Degraded" : "Native", panned ? "audio pan ignored" : undefined);
+  return [{
+    op: "setVehicleBgm",
+    id,
+    bgm: name === ""
+      ? null
+      : {
+          id: st.ctx.audio("bgm", name),
+          volume: clamp(Math.round(num(audio?.volume, 90)), 0, 100),
+          pitch: clamp(Math.round(num(audio?.pitch, 100)), 50, 150),
+        },
+  }];
 }
 
 /** Scroll Map stores a relative tile distance and the editor's exponential

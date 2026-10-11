@@ -1507,6 +1507,27 @@ function mobilityArgs(
     if (typeof sprite !== "string" || sprite.length === 0) {
       throw new EditApiError("INVALID_ARGUMENT", "vehicle sprite must be a non-empty string", `${path}.sprite`, "project sprite id", sprite);
     }
+    let bgm: VehicleDef["bgm"];
+    if (raw.bgm === null) {
+      bgm = null;
+    } else if (raw.bgm !== undefined) {
+      if (!isRecord(raw.bgm) || typeof raw.bgm.id !== "string" || raw.bgm.id.length === 0) {
+        throw new EditApiError("INVALID_ARGUMENT", "vehicle BGM must be null or an object with a non-empty id", `${path}.bgm`, "null or vehicle BGM object", raw.bgm);
+      }
+      const volume = raw.bgm.volume;
+      const pitch = raw.bgm.pitch;
+      if (volume !== undefined && (!Number.isInteger(volume) || (volume as number) < 0 || (volume as number) > 100)) {
+        throw new EditApiError("INVALID_ARGUMENT", "vehicle BGM volume must be an integer from 0 to 100", `${path}.bgm.volume`, "integer 0..100", volume);
+      }
+      if (pitch !== undefined && (!Number.isInteger(pitch) || (pitch as number) < 50 || (pitch as number) > 150)) {
+        throw new EditApiError("INVALID_ARGUMENT", "vehicle BGM pitch must be an integer from 50 to 150", `${path}.bgm.pitch`, "integer 50..150", pitch);
+      }
+      bgm = {
+        id: raw.bgm.id,
+        ...(volume === undefined ? {} : { volume: volume as number }),
+        ...(pitch === undefined ? {} : { pitch: pitch as number }),
+      };
+    }
     if (!isRecord(raw.start)) {
       throw new EditApiError("INVALID_ARGUMENT", "vehicle start must be an object", `${path}.start`, "map position", raw.start);
     }
@@ -1535,6 +1556,7 @@ function mobilityArgs(
       kind: kind as VehicleDef["kind"],
       sprite,
       start: { map: mapId, x: x as number, y: y as number, dir: dir as Dir },
+      ...(raw.bgm === undefined ? {} : { bgm }),
     };
   });
   return { followersEnabled: args.followersEnabled, vehicles };

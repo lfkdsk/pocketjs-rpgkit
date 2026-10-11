@@ -19,6 +19,7 @@ import {
   requestAirshipLanding,
   ridingVehicle,
   setFollowersVisible,
+  setVehicleBgm,
   setVehicleImage,
   stepAirshipAltitude,
   stepFollowers,
@@ -258,17 +259,28 @@ describe("persistent vehicle operations", () => {
     expect(leaveVehicle(boarded)?.vehicles?.riding).toBeNull();
   });
 
-  test("ride, synchronize, image and relocation are pure", () => {
+  test("ride, synchronize, image, BGM and relocation are pure", () => {
     const initial = createTravelState({ vehicles: VEHICLES }, mover(2, 2, 3), CFG)!;
     const before = structuredClone(initial);
+    const bgm = { id: "airship-theme", volume: 80, pitch: 95 };
     let state = boardVehicle(initial, "airship")!;
     expect(state.vehicles).toMatchObject({ boarding: "airship", riding: null, airshipPhase: "grounded" });
     state = completeVehicleBoarding(state)!;
     state = syncRiddenVehicle(state, "sky", mover(8, 4, 2))!;
     state = setVehicleImage(state, "airship", "air-b")!;
+    state = setVehicleBgm(state, "airship", bgm)!;
     state = relocateVehicle(state, "boat", "lake", 1, 2, CFG, 0)!;
     expect(initial).toEqual(before);
-    expect(ridingVehicle(state)).toMatchObject({ id: "airship", sprite: "air-b", mapId: "sky", move: { tx: 8, ty: 4 } });
+    expect(ridingVehicle(state)).toMatchObject({
+      id: "airship",
+      sprite: "air-b",
+      bgm,
+      mapId: "sky",
+      move: { tx: 8, ty: 4 },
+    });
+    expect(ridingVehicle(state)?.bgm).not.toBe(bgm);
+    bgm.volume = 1;
+    expect(ridingVehicle(state)?.bgm).toEqual({ id: "airship-theme", volume: 80, pitch: 95 });
     expect(state.vehicles).toMatchObject({ airshipAltitude: 0, airshipPhase: "ascending", airshipPhaseTick: 0 });
     expect(vehicleBy(state, "boat")).toMatchObject({ mapId: "lake", move: { tx: 1, ty: 2, facing: 0 } });
     expect(leaveVehicle(state)).toBe(state); // ascent cannot be interrupted

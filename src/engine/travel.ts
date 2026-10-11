@@ -19,6 +19,7 @@ import type {
   FollowersDef,
   MapDef,
   Project,
+  VehicleBgm,
   VehicleDef,
   VehicleKind,
 } from "./types.ts";
@@ -64,6 +65,7 @@ export interface VehicleTravelState {
   id: string;
   kind: VehicleKind;
   sprite: string;
+  bgm?: VehicleBgm | null;
   mapId: string;
   move: MovementState;
 }
@@ -155,7 +157,11 @@ function cloneFollower(member: Readonly<FollowerTravelState>): FollowerTravelSta
 }
 
 function cloneVehicle(vehicle: Readonly<VehicleTravelState>): VehicleTravelState {
-  return { ...vehicle, move: cloneMovement(vehicle.move) };
+  return {
+    ...vehicle,
+    ...(vehicle.bgm ? { bgm: { ...vehicle.bgm } } : {}),
+    move: cloneMovement(vehicle.move),
+  };
 }
 
 export function cloneTravelState(state: Readonly<TravelState>): TravelState {
@@ -224,6 +230,9 @@ function createVehicles(
       id: vehicle.id,
       kind: vehicle.kind,
       sprite: vehicle.sprite,
+      ...(vehicle.bgm === undefined
+        ? {}
+        : { bgm: vehicle.bgm === null ? null : { ...vehicle.bgm } }),
       mapId: vehicle.start.map,
       move: initialMovement(
         vehicle.start.x,
@@ -748,6 +757,20 @@ export function setVehicleImage(
   if (index < 0 || entries[index]!.sprite === sprite) return state as TravelState;
   const next = entries.slice();
   next[index] = { ...entries[index]!, sprite };
+  return { ...state, vehicles: { ...state.vehicles!, entries: next } };
+}
+
+export function setVehicleBgm(
+  state: Readonly<TravelState> | undefined,
+  id: string,
+  bgm: Readonly<VehicleBgm> | null,
+): TravelState | undefined {
+  const entries = state?.vehicles?.entries;
+  if (!entries) return state as TravelState | undefined;
+  const index = entries.findIndex((vehicle) => vehicle.id === id);
+  if (index < 0) return state as TravelState;
+  const next = entries.slice();
+  next[index] = { ...entries[index]!, bgm: bgm === null ? null : { ...bgm } };
   return { ...state, vehicles: { ...state.vehicles!, entries: next } };
 }
 
