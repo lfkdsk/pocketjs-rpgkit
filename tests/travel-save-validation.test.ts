@@ -36,7 +36,7 @@ function snapshot(
 describe("travel save validation", () => {
   test("accepts sparse, silent and omitted vehicle BGM and rejects malformed values", () => {
     const valid: any = snapshot("grounded", 0, 0, null);
-    valid.travel.vehicles.entries[0].bgm = { id: "airship", volume: 0, pitch: 150 };
+    valid.travel.vehicles.entries[0].bgm = { id: "airship", volume: 0, pitch: 150, pan: -100 };
     expect(validateSnapshot(valid)).toBeNull();
     valid.travel.vehicles.entries[0].bgm = null;
     expect(validateSnapshot(valid)).toBeNull();
@@ -47,7 +47,9 @@ describe("travel save validation", () => {
       ["empty id", { id: "" }, ".bgm.id"],
       ["volume", { id: "airship", volume: 101 }, ".bgm.volume"],
       ["pitch", { id: "airship", pitch: 49 }, ".bgm.pitch"],
-      ["unknown field", { id: "airship", pan: 1 }, ".bgm.pan"],
+      ["low pan", { id: "airship", pan: -101 }, ".bgm.pan"],
+      ["high pan", { id: "airship", pan: 101 }, ".bgm.pan"],
+      ["unknown field", { id: "airship", balance: 1 }, ".bgm.balance"],
     ] as const) {
       const state: any = snapshot("grounded", 0, 0, null);
       state.travel.vehicles.entries[0].bgm = bgm;

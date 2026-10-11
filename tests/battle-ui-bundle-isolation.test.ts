@@ -234,8 +234,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // followers, parked-vehicle bodies, the airship shadow/gather gate and sparse
 // vehicle-BGM state add another measured 22,002 B. The battle needles below
 // remain absent, so this shared-path growth is not battle UI leakage.
+// Scrolling-text presentation plus actor-condition and sparse audio/pan/ME
+// runtime support add 19,597 B of shared code. Audio panning stays within the
+// already-reachable host-audio path, and the battle needles remain absent.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_092_590;
+const EXPECTED_BYTES = 1_112_187;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
