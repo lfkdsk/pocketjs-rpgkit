@@ -407,7 +407,9 @@ class Inspector {
       }
     }
     const checkbox = spec.control === "checkbox";
-    const preview = typeof value === "string" ? rpgMakerTextPreview(value) : null;
+    const preview = typeof value === "string"
+      ? rpgMakerTextPreview(value, this.app.session?.globals().system?.rpgMakerText?.colours)
+      : null;
     return h(
       "div",
       { class: `ins-field${checkbox ? " ins-field-check" : ""}${spec.control === "textarea" ? " ins-field-wide" : ""}${stored ? " invalid" : ""}` },

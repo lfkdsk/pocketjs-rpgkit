@@ -268,6 +268,11 @@ describe("pure helpers", () => {
       { text: " white", colour: "#FFFFFF" },
     ]);
     expect(raw).toBe(String.raw`Plain \C[2]red\C[0] white`);
+    expect(rpgMakerTextPreview(raw, ["#010203", "#112233", "#abcdef"])).toEqual([
+      { text: "Plain " },
+      { text: "red", colour: "#ABCDEF" },
+      { text: " white", colour: "#010203" },
+    ]);
     expect(rpgMakerTextPreview("ordinary text")).toBeNull();
   });
 

@@ -178,6 +178,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     throw new Error(`rpgmaker-import: tile size ${tileSize} is not a multiple of ${KIT_TILE}`);
   }
   const scale = tileSize / KIT_TILE;
+  const rpgMakerTextColours = await readWindowColours(rm.root);
   const assets: ImportAssets = {
     format: "rpgkit-rpgmaker-assets/v1",
     sheets: {},
@@ -706,6 +707,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       rpgMakerText: {
         party: (rm.system.partyMembers ?? []).filter((id) => Number.isInteger(id) && id > 0),
         currencyUnit: String(rm.system.currencyUnit ?? "").slice(0, 24),
+        ...(rpgMakerTextColours ? { colours: rpgMakerTextColours } : {}),
       },
       ...(containsStepRead({ events: maps.map((map) => map.events), commonEvents }) ? { stepCounter: true } : {}),
     },
@@ -725,6 +727,36 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     warnings.push(`${audioUsed.size} audio ids are referenced; audio files are not converted (project.audio is left empty)`);
   }
   return { project, images, assets, cov, warnings };
+}
+
+/** Read the 8 x 4 text-colour grid from the bottom-right of MV/MZ's standard
+ *  192 px Window.png. Missing art deliberately leaves the runtime's stock
+ *  palette in effect; a present but unusable windowskin is an import error. */
+async function readWindowColours(root: string): Promise<string[] | undefined> {
+  const path = findNamedPng(join(root, "img", "system"), "Window");
+  if (!path) return undefined;
+
+  let image: RgbaImage;
+  try {
+    image = await readPng(path);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`rpgmaker-import: img/system/Window.png cannot be decoded: ${detail}`);
+  }
+  if (image.width !== 192 || image.height !== 192) {
+    throw new Error(`rpgmaker-import: img/system/Window.png must be 192x192 pixels (got ${image.width}x${image.height})`);
+  }
+  if (image.data.length !== image.width * image.height * 4) {
+    throw new Error("rpgmaker-import: img/system/Window.png decoded to malformed RGBA data");
+  }
+
+  const hex = (value: number): string => value.toString(16).padStart(2, "0").toUpperCase();
+  return Array.from({ length: 32 }, (_, index) => {
+    const x = 96 + (index % 8) * 12 + 6;
+    const y = 144 + Math.floor(index / 8) * 12 + 6;
+    const offset = (y * image.width + x) * 4;
+    return `#${hex(image.data[offset]!)}${hex(image.data[offset + 1]!)}${hex(image.data[offset + 2]!)}`;
+  });
 }
 
 /** Steps are an opt-in persistent counter. Search the converted event graph

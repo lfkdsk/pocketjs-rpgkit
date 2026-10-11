@@ -20,10 +20,15 @@ No data, names, images or audio from any RPG Maker runtime package (RTP) or
 from any third-party game are included. Only the public layout conventions are
 followed: the A1..A5 and B..E sheet geometry and block placement, the
 character sheet geometry (`$` single-character and `!` object prefixes), the
-Balloon.png grid, and the JSON field names.
+Balloon.png grid, Window.png text-colour grid, and the JSON field names.
 
 Audio is referenced by name only (`hollow-*`, `stage-*` BGM/BGS/ME/SE names).
 The `audio/` directories are intentionally absent.
+
+`hollow-mz/test-art/Window.png` is standalone generated test art with a
+deliberately non-stock 32-colour palette. Importer tests copy it into a project
+under mixed-case spelling to cover case-insensitive `img/system/Window.png`
+lookup without changing either playthrough fixture's stock-palette omission.
 
 ## Conventions
 

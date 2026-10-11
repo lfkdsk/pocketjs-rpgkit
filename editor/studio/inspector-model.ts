@@ -565,10 +565,11 @@ export interface RpgMakerTextPreviewSegment {
 /** A presentation-only preview of RPG Maker colour escapes. The editor keeps
  * the raw source spelling in its input; this helper only strips recognized
  * control codes from the adjacent preview and returns visible text spans. */
-export function rpgMakerTextPreview(raw: string): RpgMakerTextPreviewSegment[] | null {
+export function rpgMakerTextPreview(raw: string, colours?: readonly string[]): RpgMakerTextPreviewSegment[] | null {
   if (!/\\C\[[0-9]+\]/i.test(raw)) return null;
   const parsed = parseRpgMakerText(raw, {
     variables: {}, actors: [], partyActorIds: [], currencyUnit: "G",
+    ...(colours ? { colours } : {}),
   });
   const codePoints = Array.from(parsed.text);
   const segments: RpgMakerTextPreviewSegment[] = [];

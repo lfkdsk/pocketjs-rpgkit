@@ -65,6 +65,7 @@ import {
   sheetB,
   singleSheet,
   texel,
+  windowSkin,
   type Material,
   type TileDraw,
 } from "./art.ts";
@@ -2079,6 +2080,7 @@ export function buildFixtures(): Files {
   hollowArt(files);
   stageData(files);
   stageArt(files);
+  files.set(`${HOLLOW}/test-art/Window.png`, windowSkin().png());
   return files;
 }
 

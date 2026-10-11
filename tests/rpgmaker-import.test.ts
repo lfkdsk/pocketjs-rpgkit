@@ -6,7 +6,7 @@
 // The keyed playthroughs are in rpgmaker-import-journey.test.ts.
 
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import schema from "../src/data/schema.json";
@@ -27,6 +27,14 @@ import { RMI_GAMES } from "./fixtures/rmi-play/games.ts";
 const ROOT = join(import.meta.dir, "..");
 const HOLLOW = join(ROOT, "tests/fixtures/rpgmaker/hollow-mz");
 const STAGE = join(ROOT, "tests/fixtures/rpgmaker/stage-mv");
+const WINDOW_PALETTE = join(HOLLOW, "test-art/Window.png");
+
+const CUSTOM_WINDOW_COLOURS = [
+  "#102030", "#214365", "#32659A", "#4387CF", "#54A904", "#65CB39", "#76ED6E", "#870FA3",
+  "#9831D8", "#A9530D", "#BA7542", "#CB9777", "#DCB9AC", "#EDDBE1", "#FEFD16", "#0F1F4B",
+  "#204180", "#3163B5", "#4285EA", "#53A71F", "#64C954", "#75EB89", "#860DBE", "#972FF3",
+  "#A85128", "#B9735D", "#CA9592", "#DBB7C7", "#ECD9FC", "#FDFB31", "#0E1D66", "#1F3F9B",
+] as const;
 
 const hollow = await importRmProject(loadRmProject(HOLLOW));
 const stage = await importRmProject(loadRmProject(STAGE));
@@ -185,6 +193,50 @@ describe("rpgmaker-import: output", () => {
       mapNameDisplay: true,
       rpgMakerText: { party: [1], currencyUnit: "G" },
     });
+    expect(hollow.cov.list("escape").find((row) => row.key === "\\C")?.counts).toEqual({
+      Native: 8, Degraded: 0, Placeholder: 0, Dropped: 0,
+    });
+  });
+
+  test("Window.png supplies the exact 32-colour palette through case-insensitive lookup", async () => {
+    const base = mkdtempSync(join(tmpdir(), "rmi-window-"));
+    const root = join(base, "project");
+    try {
+      cpSync(HOLLOW, root, { recursive: true });
+      writeFileSync(join(root, "img/system/wInDoW.pNg"), readFileSync(WINDOW_PALETTE));
+      const imported = await importRmProject(loadRmProject(root));
+      expect(imported.project.system?.rpgMakerText?.colours).toEqual(CUSTOM_WINDOW_COLOURS);
+      expect(validateSchema(imported.project, schema as Record<string, unknown>)).toEqual([]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("missing Window.png keeps the stock palette implicit; malformed or wrong-sized files fail", async () => {
+    expect(hollow.project.system?.rpgMakerText?.colours).toBeUndefined();
+    expect(stage.project.system?.rpgMakerText?.colours).toBeUndefined();
+
+    const base = mkdtempSync(join(tmpdir(), "rmi-window-bad-"));
+    const root = join(base, "project");
+    const window = join(root, "img/system/Window.png");
+    try {
+      cpSync(HOLLOW, root, { recursive: true });
+      writeFileSync(window, "not a png");
+      await expect(importRmProject(loadRmProject(root))).rejects.toThrow(
+        "rpgmaker-import: img/system/Window.png cannot be decoded",
+      );
+
+      writeFileSync(window, writePngBytes({
+        width: 191,
+        height: 192,
+        data: new Uint8Array(191 * 192 * 4),
+      }));
+      await expect(importRmProject(loadRmProject(root))).rejects.toThrow(
+        "rpgmaker-import: img/system/Window.png must be 192x192 pixels (got 191x192)",
+      );
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   test("a native Steps read opts the imported project into persistent step counting", async () => {

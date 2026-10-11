@@ -14,6 +14,7 @@
 //   B   16x16 tiles  plain tiles, ids 0..127 in the left half
 //   characters       12x8 frames (eight characters), 3x4 for `$` sheets
 //   Balloon.png      8 frames x 15 balloon rows
+//   Window.png       192x192 windowskin with an 8x4 text-colour grid
 //
 // All art is drawn at 16 px per tile. Textures repeat every 8 px (one
 // autotile quarter), so any arrangement of quarters tiles seamlessly. MV
@@ -527,4 +528,25 @@ export function balloonSheet(): Canvas {
     }
   }
   return c;
+}
+
+/** Deliberately non-stock Window.png palette. Each 12 px cell has a decoy
+ * colour around one authored centre pixel, so tests pin RPG Maker's exact
+ * ColorManager.textColor sampling coordinates rather than merely the grid. */
+export function windowSkin(): Canvas {
+  const colours = [
+    "#102030", "#214365", "#32659a", "#4387cf", "#54a904", "#65cb39", "#76ed6e", "#870fa3",
+    "#9831d8", "#a9530d", "#ba7542", "#cb9777", "#dcb9ac", "#eddbe1", "#fefd16", "#0f1f4b",
+    "#204180", "#3163b5", "#4285ea", "#53a71f", "#64c954", "#75eb89", "#860dbe", "#972ff3",
+    "#a85128", "#b9735d", "#ca9592", "#dbb7c7", "#ecd9fc", "#fdfb31", "#0e1d66", "#1f3f9b",
+  ] as const;
+  const canvas = new Canvas(192, 192);
+  canvas.rect(0, 0, canvas.w, canvas.h, rgb("#17212b"));
+  for (let index = 0; index < colours.length; index++) {
+    const x = 96 + (index % 8) * 12;
+    const y = 144 + Math.floor(index / 8) * 12;
+    canvas.rect(x, y, 12, 12, rgb("#030507"));
+    canvas.set(x + 6, y + 6, rgb(colours[index]!));
+  }
+  return canvas;
 }
