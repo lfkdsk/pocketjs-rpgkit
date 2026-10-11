@@ -798,7 +798,14 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     }
     if (rmMap.parallaxName) cov.record("tile", "parallax", "Native");
     if (rmMap.autoplayBgm && rmMap.bgm?.name) cov.record("tile", "map autoplay BGM", "Degraded", "autoplay BGM is not started on map entry");
-    if (rmMap.encounterList?.length) cov.record("tile", "map encounters", "Native");
+    if (rmMap.encounterList?.length) {
+      cov.record(
+        "tile",
+        "map encounters",
+        "Degraded",
+        "walking countdown, weights and regions are native; encounter-disable, vehicles and Encounter Half are not modelled",
+      );
+    }
   }
 
   // --- common events ------------------------------------------------------

@@ -6,6 +6,7 @@ import { deepClone } from "../engine/clone.ts";
 import { rngNext } from "../engine/interpreter.ts";
 import type { BattleCompletion, BattleRules } from "../engine/battle.ts";
 import type { ExtensionOptions, ExtensionReadContext } from "../engine/extensions.ts";
+import type { ExtensionCommandContext, ExtensionCommandResult } from "../engine/extensions.ts";
 import type { JsonValue, VariableValue } from "../engine/types.ts";
 import { evaluateRpgMakerDamageBase, type RpgMakerFormulaBattler } from "./formula.ts";
 import type {
@@ -151,6 +152,19 @@ function traitSum(
     if (trait.code === code && trait.dataId === dataId) value += trait.value;
   }
   return value;
+}
+
+function hasTrait(
+  db: RpgMakerBattleDatabase,
+  battler: RpgMakerBattleCombatant,
+  code: number,
+  dataId: number,
+): boolean {
+  return combatantTraits(db, battler).some((trait) => trait.code === code && trait.dataId === dataId);
+}
+
+function partyAbility(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, dataId: number): boolean {
+  return state.actors.some((actor) => hasTrait(db, actor, 64, dataId));
 }
 
 export function rpgMakerCombatantParam(
@@ -313,36 +327,107 @@ function nextEncounterCount(step: number, random: () => number): number {
  * this player-step hook owns only the saved countdown and raises its private
  * variable when that event should run. Games without this registration pay
  * no step-hook cost and never import this module. */
-export function createRpgMakerBattleExtensions(db: RpgMakerBattleDatabase): ExtensionOptions {
-  return {
-    commands: {
-      [RPGMAKER_ENCOUNTER_STEP_CALL]: (context) => {
-        const { root, runtime } = runtimeRoot(context.ext);
-        const mapId = context.mapId;
-        const encounter = mapId ? db.encounters.find((entry) => entry.map === mapId) : undefined;
-        if (!encounter || encounter.entries.length === 0) {
-          runtime.encounter = null;
-          return {
-            ext: withRuntime(root, runtime),
-            writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 },
-          };
-        }
-        const previous = runtime.encounter;
-        let remaining = previous !== null && previous.map === mapId
-          ? previous.remaining
-          : nextEncounterCount(encounter.step, context.random);
-        remaining--;
-        const due = remaining <= 0;
-        if (due) remaining = nextEncounterCount(encounter.step, context.random);
-        runtime.encounter = { map: mapId!, remaining };
-        return {
-          ext: withRuntime(root, runtime),
-          writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: due ? 1 : 0 },
-        };
-      },
-    },
-    playerStep: { call: RPGMAKER_ENCOUNTER_STEP_CALL },
+function encounterStepHandler(db: RpgMakerBattleDatabase) {
+  return (context: ExtensionCommandContext): ExtensionCommandResult => {
+    const { root, runtime } = runtimeRoot(context.ext);
+    const mapId = context.mapId;
+    const encounter = mapId ? db.encounters.find((entry) => entry.map === mapId) : undefined;
+    if (!encounter || encounter.entries.length === 0) {
+      runtime.encounter = null;
+      return {
+        ext: withRuntime(root, runtime),
+        writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 },
+      };
+    }
+    const previous = runtime.encounter;
+    let remaining = previous !== null && previous.map === mapId
+      ? previous.remaining
+      : nextEncounterCount(encounter.step, context.random);
+    remaining--;
+    const due = remaining <= 0;
+    if (due) remaining = nextEncounterCount(encounter.step, context.random);
+    runtime.encounter = { map: mapId!, remaining };
+    return {
+      ext: withRuntime(root, runtime),
+      writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: due ? 1 : 0 },
+    };
   };
+}
+
+function contextAfterResult(
+  context: ExtensionCommandContext,
+  result: ExtensionCommandResult | void,
+): ExtensionCommandContext {
+  if (!result) return context;
+  return {
+    ...context,
+    ext: result.ext === undefined ? context.ext : result.ext,
+    variables: result.writes ? { ...context.variables, ...result.writes } : context.variables,
+    items: result.items ? { ...context.items, ...result.items } : context.items,
+    gold: result.gold ?? context.gold,
+  };
+}
+
+function mergeCommandResults(
+  first: ExtensionCommandResult | void,
+  second: ExtensionCommandResult | void,
+): ExtensionCommandResult | void {
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    ...(first.ext === undefined ? {} : { ext: first.ext }),
+    ...(first.writes ? { writes: first.writes } : {}),
+    ...(first.items ? { items: first.items } : {}),
+    ...(first.gold === undefined ? {} : { gold: first.gold }),
+    ...(second.ext === undefined ? {} : { ext: second.ext }),
+    ...((first.writes || second.writes) ? { writes: { ...first.writes, ...second.writes } } : {}),
+    ...((first.items || second.items) ? { items: { ...first.items, ...second.items } } : {}),
+    ...(second.gold === undefined ? {} : { gold: second.gold }),
+  };
+}
+
+/** Add walking encounters without replacing an existing extension registry.
+ * Command names are collision-checked. When another player-step hook exists,
+ * one deterministic wrapper runs it first and lets the encounter hook observe
+ * its returned ext/banks. Existing codecs and validators are preserved; as
+ * with every namespaced extension, they must retain/accept unknown siblings. */
+export function augmentRpgMakerBattleExtensions(
+  base: ExtensionOptions,
+  db: RpgMakerBattleDatabase,
+): ExtensionOptions {
+  const commands = { ...(base.commands ?? {}) };
+  if (commands[RPGMAKER_ENCOUNTER_STEP_CALL]) {
+    throw new Error(`RPG Maker encounter extension command collision: ${RPGMAKER_ENCOUNTER_STEP_CALL}`);
+  }
+  const encounter = encounterStepHandler(db);
+  commands[RPGMAKER_ENCOUNTER_STEP_CALL] = encounter;
+  if (!base.playerStep) {
+    return { ...base, commands, playerStep: { call: RPGMAKER_ENCOUNTER_STEP_CALL } };
+  }
+
+  const previous = commands[base.playerStep.call];
+  if (!previous) throw new Error(`RPG Maker encounter extension cannot find player-step command ${base.playerStep.call}`);
+  const composedCall = "rpgmaker.composedEncounterStep";
+  if (commands[composedCall]) throw new Error(`RPG Maker encounter extension command collision: ${composedCall}`);
+  const previousArgs = base.playerStep.args ?? null;
+  commands[composedCall] = (context) => {
+    const first = previous(context, previousArgs);
+    if (context.playerStep?.kind === "relocation") return first;
+    const second = encounter(contextAfterResult(context, first));
+    return mergeCommandResults(first, second);
+  };
+  return {
+    ...base,
+    commands,
+    playerStep: {
+      call: composedCall,
+      displacement: base.playerStep.displacement === true,
+    },
+  };
+}
+
+export function createRpgMakerBattleExtensions(db: RpgMakerBattleDatabase): ExtensionOptions {
+  return augmentRpgMakerBattleExtensions({}, db);
 }
 
 function withRuntime(ext: JsonValue, runtime: RpgMakerBattleRuntime): JsonValue {
@@ -1025,6 +1110,10 @@ function applyDamage(
       kind: target.hp === 0 ? "faint" : changed >= 0 ? "hit" : "heal",
     };
     if (changed > 0) removeStatesByDamage(db, state, target);
+    if (changed > 0) {
+      const damageRate = changed / Math.max(1, rpgMakerCombatantParam(db, target, 0));
+      target.tp = clamp(target.tp + Math.floor(50 * damageRate * traitProduct(db, target, 23, 5)), 0, 100);
+    }
     if (usable.damage.type === 5 && changed > 0) setHp(db, state, user, user.hp + Math.min(changed, before));
   } else if (usable.damage.type === 2 || usable.damage.type === 4 || usable.damage.type === 6) {
     const before = target.mp;
@@ -1133,6 +1222,7 @@ function beginVictory(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): v
   let exp = 0;
   let gold = 0;
   const drops: Record<string, number> = {};
+  const dropRate = partyAbility(db, state, 5) ? 2 : 1;
   for (const battler of state.enemies) {
     if (battler.hidden) continue;
     const enemy = findById(db.enemies, battler.databaseId);
@@ -1140,14 +1230,16 @@ function beginVictory(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): v
     exp += enemy.exp;
     gold += enemy.gold;
     for (const drop of enemy.drops) {
-      if (drop.item && drop.kind > 0 && drawInt(state, Math.max(1, drop.denominator)) === 0) {
+      if (drop.item && drop.kind > 0 && draw(state) * Math.max(1, drop.denominator) < dropRate) {
         drops[drop.item] = (drops[drop.item] ?? 0) + 1;
       }
     }
   }
+  if (partyAbility(db, state, 4)) gold *= 2;
   state.gold += gold;
   for (const [id, count] of Object.entries(drops)) state.items[id] = (state.items[id] ?? 0) + count;
-  const levels = state.actors.flatMap((actor) => levelActor(db, actor, exp));
+  const levels = state.actors.flatMap((actor) =>
+    levelActor(db, actor, Math.round(exp * traitProduct(db, actor, 23, 9))));
   state.reward = { exp, gold, items: drops, levels };
   const partyName = state.actors[0]?.name ?? "Party";
   const rows = [formatTerm(db.terms.victory, partyName), `${exp} EXP   ${gold} ${db.currencyUnit}`];
@@ -1166,7 +1258,20 @@ function reviveBattleMembers(db: RpgMakerBattleDatabase, state: RpgMakerBattleSt
   }
 }
 
-function updateTurnEndStates(db: RpgMakerBattleDatabase, battler: RpgMakerBattleCombatant): void {
+function updateTurnEndStates(
+  db: RpgMakerBattleDatabase,
+  state: RpgMakerBattleState,
+  battler: RpgMakerBattleCombatant,
+): void {
+  if (alive(battler)) {
+    const mhp = rpgMakerCombatantParam(db, battler, 0);
+    const hp = Math.floor(mhp * traitSum(db, battler, 22, 7));
+    if (hp !== 0) setHp(db, state, battler, Math.max(1, battler.hp + hp));
+    const mp = Math.floor(rpgMakerCombatantParam(db, battler, 1) * traitSum(db, battler, 22, 8));
+    battler.mp = clamp(battler.mp + mp, 0, rpgMakerCombatantParam(db, battler, 1));
+    const tp = Math.floor(100 * traitSum(db, battler, 22, 9));
+    battler.tp = clamp(battler.tp + tp, 0, 100);
+  }
   for (const active of [...battler.states]) {
     const definition = stateDef(db, active.id);
     if (definition?.autoRemovalTiming === 2) {
@@ -1181,8 +1286,8 @@ function updateTurnEndStates(db: RpgMakerBattleDatabase, battler: RpgMakerBattle
 }
 
 function finishTurn(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
-  state.actors.forEach((actor) => updateTurnEndStates(db, actor));
-  state.enemies.forEach((enemy) => updateTurnEndStates(db, enemy));
+  state.actors.forEach((actor) => updateTurnEndStates(db, state, actor));
+  state.enemies.forEach((enemy) => updateTurnEndStates(db, state, enemy));
   const pages = runTroopPages(db, state, true);
   if (allEnemiesDefeated(state)) beginVictory(db, state);
   else if (allActorsDefeated(state)) beginDefeat(db, state);
@@ -1243,7 +1348,7 @@ function completionRuntime(
       exp: battler.actor.exp,
       hp: battler.hp,
       mp: battler.mp,
-      tp: battler.tp,
+      tp: hasTrait(db, battler, 62, 3) ? battler.tp : 0,
       skills: [...battler.actor.skills],
       states: battler.states.filter((active) => stateDef(db, active.id)?.removeAtBattleEnd !== true)
         .map((active) => ({ ...active })),
@@ -1357,6 +1462,9 @@ function createInitialState(
     reward: { exp: 0, gold: 0, items: {}, levels: [] },
     ext: startedExt,
   };
+  for (const battler of [...state.actors, ...state.enemies]) {
+    if (!hasTrait(db, battler, 62, 3)) battler.tp = drawInt(state, 25);
+  }
   const pages = runTroopPages(db, state, false);
   const enemyNames = enemies.filter((enemy) => !enemy.hidden).map((enemy) => enemy.name).join(", ");
   showMessage(state, [`${enemyNames} appeared!`, ...pages].join("\n"), "party");

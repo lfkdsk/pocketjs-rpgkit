@@ -5,6 +5,7 @@ import type { BattleInput, BattleRules } from "../src/engine/battle.ts";
 import type { ExtensionReadContext } from "../src/engine/extensions.ts";
 import type { JsonValue } from "../src/engine/types.ts";
 import {
+  augmentRpgMakerBattleExtensions,
   createRpgMakerBattleExtensions,
   createRpgMakerBattleRules,
   RPGMAKER_ENCOUNTER_DUE_VARIABLE,
@@ -340,6 +341,84 @@ describe("RPG Maker battle rules", () => {
     expect(state(current).queue.some((action) => action.side === "enemy")).toBe(true);
   });
 
+  test("initializes, charges, regenerates, clears, and preserves TP deterministically", () => {
+    const db = cloneDb();
+    db.actors[0]!.traits.push(
+      { code: 22, dataId: 7, value: 0.1 },
+      { code: 22, dataId: 8, value: 0.1 },
+      { code: 22, dataId: 9, value: 0.1 },
+      { code: 23, dataId: 5, value: 2 },
+    );
+    const seed = 0xabcdef01;
+    let cursor = seed >>> 0;
+    const actorTp = rngNext(cursor);
+    cursor = actorTp.next;
+    const enemyTp = rngNext(cursor);
+    const rules = createRpgMakerBattleRules(db);
+    const begun = mutable(rules.start({}, setup(db), seed, CONTEXT)!.state);
+    expect(begun.actors[0]!.tp).toBe(Math.floor(actorTp.value * 25));
+    expect(begun.enemies[0]!.tp).toBe(Math.floor(enemyTp.value * 25));
+
+    begun.actors[0]!.hp = 100;
+    begun.actors[0]!.mp = 0;
+    begun.actors[0]!.tp = 0;
+    let current = forceAction(rules, json(begun), {
+      side: "enemy", user: 0, kind: "skill", id: 1, target: 0, speed: 0,
+    });
+    const damaged = state(current);
+    const lost = 100 - damaged.actors[0]!.hp;
+    expect(damaged.actors[0]!.tp).toBe(Math.floor(50 * lost /
+      rpgMakerCombatantParam(db, damaged.actors[0]!, 0) * 2));
+    current = confirm(rules, current); // empty queue -> turn-end regeneration
+    expect(state(current).actors[0]!.hp).toBe(damaged.actors[0]!.hp +
+      Math.floor(rpgMakerCombatantParam(db, damaged.actors[0]!, 0) * 0.1));
+    expect(state(current).actors[0]!.mp).toBe(Math.floor(
+      rpgMakerCombatantParam(db, damaged.actors[0]!, 1) * 0.1));
+    expect(state(current).actors[0]!.tp).toBe(damaged.actors[0]!.tp + 10);
+
+    const terminal = mutable(current);
+    terminal.phase = "done";
+    terminal.result = "escape";
+    expect((rules.done(json(terminal))!.ext as Record<string, any>).rpgmakerBattle.actors["1"].tp).toBe(0);
+
+    db.actors[0]!.traits.push({ code: 62, dataId: 3, value: 0 });
+    const savedTp = {
+      rpgmakerBattle: {
+        version: 1,
+        actors: {
+          "1": { actorId: 1, classId: 1, level: 1, exp: 0, hp: 100, mp: 10, tp: 77, skills: [1], states: [], buffs: [] },
+        },
+        battleCount: 0, winCount: 0, escapeCount: 0, encounter: null,
+      },
+    };
+    const preserveRules = createRpgMakerBattleRules(db);
+    const preserved = mutable(preserveRules.start(savedTp, setup(db), seed, CONTEXT)!.state);
+    expect(preserved.actors[0]!.tp).toBe(77);
+    preserved.phase = "done";
+    preserved.result = "escape";
+    expect((preserveRules.done(json(preserved))!.ext as Record<string, any>).rpgmakerBattle.actors["1"].tp).toBe(77);
+  });
+
+  test("applies Gold Double, Drop Item Double, and actor EXP rate to victory rewards", () => {
+    const db = cloneDb();
+    db.enemies[0]!.params[0] = 1;
+    db.enemies[0]!.exp = 100;
+    db.enemies[0]!.gold = 10;
+    db.enemies[0]!.drops = [{ kind: 1, dataId: 1, denominator: 2, item: "item001" }];
+    db.actors[0]!.traits.push(
+      { code: 64, dataId: 4, value: 0 },
+      { code: 64, dataId: 5, value: 0 },
+      { code: 23, dataId: 9, value: 1.5 },
+    );
+    const rules = createRpgMakerBattleRules(db);
+    let current = rules.start({}, setup(db), 51, CONTEXT)!.state;
+    current = confirm(rules, current);
+    current = confirm(rules, current);
+    current = confirm(rules, current);
+    expect(state(current).reward).toMatchObject({ exp: 100, gold: 20, items: { item001: 1 } });
+    expect(state(current).actors[0]!.actor!.exp).toBe(150);
+  });
+
   test("escape is deterministic, gated by canEscape, and increments its counter", () => {
     const db = cloneDb();
     db.enemies[0]!.params[6] = 1;
@@ -419,6 +498,45 @@ describe("RPG Maker battle rules", () => {
       .toEqual({ map: "map003", remaining: 1 });
   });
 
+  test("composes walking encounters with an existing player-step extension", () => {
+    const db = cloneDb();
+    db.encounters = [{ map: "map003", step: 1, entries: [{ troopId: 1, weight: 1, regions: [] }] }];
+    const validate = () => true;
+    const options = augmentRpgMakerBattleExtensions({
+      commands: {
+        "game.step": (context) => ({
+          ext: { ...(context.ext as Record<string, JsonValue>), baseSteps: 1 },
+          writes: { baseStep: 1 },
+        }),
+      },
+      playerStep: { call: "game.step", args: { source: "base" }, displacement: true },
+      validate,
+    }, db);
+    expect(options.validate).toBe(validate);
+    expect(options.playerStep).toEqual({ call: "rpgmaker.composedEncounterStep", displacement: true });
+    const hook = options.commands![options.playerStep!.call]!;
+    const stepped = hook({
+      ...CONTEXT,
+      random: () => 0,
+      playerStep: { dx: 1, dy: 0, kind: "step" },
+    }, null)!;
+    expect(stepped.ext).toMatchObject({
+      baseSteps: 1,
+      rpgmakerBattle: { encounter: { map: "map003", remaining: 1 } },
+    });
+    expect(stepped.writes).toEqual({ baseStep: 1, [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 1 });
+
+    const relocated = hook({
+      ...CONTEXT,
+      random: () => { throw new Error("relocation must not advance encounter RNG"); },
+      playerStep: { dx: 4, dy: 0, kind: "relocation" },
+    }, null)!;
+    expect(relocated).toEqual({ ext: { baseSteps: 1 }, writes: { baseStep: 1 } });
+    expect(() => augmentRpgMakerBattleExtensions({
+      commands: { [RPGMAKER_ENCOUNTER_STEP_CALL]: () => undefined },
+    }, db)).toThrow("command collision");
+  });
+
   test("hit/critical/variance/drop consume a pinned RNG cursor", () => {
     const db = cloneDb();
     db.enemies[0]!.params[0] = 1;
@@ -430,11 +548,11 @@ describe("RPG Maker battle rules", () => {
     current = confirm(rules, current);
     current = confirm(rules, current);
 
-    // Enemy action choice, actor speed, enemy speed, hit, evade, critical,
-    // two variance rolls, death-state duration, and the guaranteed drop each
-    // consume one draw.
+    // Actor/enemy initial TP, enemy action choice, actor/enemy speed, hit,
+    // evade, critical, two variance rolls, death-state duration, and the
+    // guaranteed drop each consume one draw.
     let expected = seed >>> 0;
-    for (let i = 0; i < 10; i++) expected = rngNext(expected).next;
+    for (let i = 0; i < 12; i++) expected = rngNext(expected).next;
     expect(state(current).rng).toBe(expected);
   });
 

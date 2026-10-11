@@ -180,6 +180,8 @@ describe("RPG Maker battle database import", () => {
         ],
       }],
     });
-    expect(result.cov.list("tile").find((row) => row.key === "map encounters")?.counts.Native).toBe(1);
+    const coverage = result.cov.list("tile").find((row) => row.key === "map encounters")!;
+    expect(coverage.counts.Degraded).toBe(1);
+    expect(coverage.reasons.join(" ")).toContain("Encounter Half");
   });
 });
