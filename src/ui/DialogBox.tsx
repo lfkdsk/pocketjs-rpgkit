@@ -60,6 +60,14 @@ import type { Modal, ShopRow } from "../engine/interpreter.ts";
 import { fitBounded, marqueeOffset, windowByRows, wrapLabel, type BoundedCell } from "./list-window.ts";
 import { useMarqueeTick } from "./use-marquee-tick.ts";
 import { BoundedLine } from "./BoundedLine.tsx";
+import { ColourBoundedLine } from "./ChoiceColourLine.tsx";
+import {
+  choiceColourCellsEqual,
+  choiceRunColour,
+  fitChoiceColourCell,
+  type ChoiceColourCell,
+  type ChoiceColourRun,
+} from "./choice-colour.ts";
 import { flowRows, revealColourRuns, revealRows, type TextColourRun } from "./text-flow.ts";
 import {
   DIALOG_PAGE_VIEWPORT,
@@ -202,6 +210,9 @@ interface ListRow {
 interface ChoiceListRow extends ListRow {
   /** Pixels the complete prefixed row must travel inside its clip. */
   leftMarquee: number;
+  /** Present only for an RPG Maker-coloured option. The cursor prefix is
+   * deliberately an uncoloured run and keeps the selected/disabled theme. */
+  colourRuns?: readonly ChoiceColourRun[];
 }
 
 interface ShopListRow extends ListRow {
@@ -346,9 +357,12 @@ export function DialogBox(props: DialogBoxProps) {
   // is capped to the viewport. The window is a pure function of the live
   // cursor index: never desyncs from the reducer.
   const choicePromptCell = createMemo(
-    () => fitBounded(textChoice()?.prompt ?? "", listBudget(), PROMPT_MAX_ROWS, measure),
-    { kind: "wrap", rows: [], overflow: 0 } as BoundedCell,
-    { equals: sameCell },
+    () => {
+      const m = textChoice();
+      return fitChoiceColourCell(m?.prompt ?? "", listBudget(), PROMPT_MAX_ROWS, measure, m?.promptColours);
+    },
+    { layout: { kind: "wrap", rows: [], overflow: 0 }, rows: [] } as ChoiceColourCell,
+    { equals: choiceColourCellsEqual },
   );
   const choiceOptions = createMemo(() => textChoice()?.options ?? EMPTY_LINES, EMPTY_LINES, { equals: sameLines });
   // The option labels' row capacity depends on the chrome the cap leaves;
@@ -357,26 +371,32 @@ export function DialogBox(props: DialogBoxProps) {
   const choiceLayout = createMemo(() => {
     const m = textChoice();
     if (!m) return { rows: [] as ChoiceListRow[], slots: [] as number[], boxH: LIST_BOX_H };
-    const promptRows = choicePromptCell().rows.length;
+    const promptRows = choicePromptCell().layout.rows.length;
     const legendBlock = BOX_GAP + LEGEND_ROW_H * legendCell().rows.length;
     const windowPx = BOX_CAP_H - BOX_FRAME - promptRows * LIST_ROW_H - BOX_GAP - legendBlock;
     const maxRows = Math.max(1, Math.floor(windowPx / LIST_ROW_H));
-    const labels = choiceOptions().map((option) => fitBounded(option, labelBudget(), maxRows, measure));
-    const rowCounts = labels.map((cell) => cell.rows.length);
+    const labels = choiceOptions().map((option, index) =>
+      fitChoiceColourCell(option, labelBudget(), maxRows, measure, m.optionColours?.[index]));
+    const rowCounts = labels.map((cell) => cell.layout.rows.length);
     const { start, end } = windowByRows(m.index, rowCounts, VISIBLE_ROWS, maxRows);
     const rows: ChoiceListRow[] = [];
     for (let item = start; item < end; item++) {
       const count = rowCounts[item]!;
       const labelCell = labels[item]!;
       for (let j = 0; j < count; j++) {
-        const left = `${j > 0 ? CURSOR_OFF : item === m.index ? CURSOR_ON : CURSOR_OFF}${labelCell.rows[j] ?? ""}`;
+        const prefix = j > 0 ? CURSOR_OFF : item === m.index ? CURSOR_ON : CURSOR_OFF;
+        const label = labelCell.layout.rows[j] ?? "";
+        const left = `${prefix}${label}`;
         rows.push({
           item,
           left,
           right: "",
+          ...(m.optionColours?.[item] ? {
+            colourRuns: [{ text: prefix }, ...labelCell.rows[j]!.runs],
+          } : {}),
           // A marquee is one row. Measure the actual prefixed string against
           // the clip, as the shop does, so its final glyph reaches the edge.
-          leftMarquee: j === 0 && labelCell.kind === "marquee" ? Math.max(0, measure(left) - listBudget()) : 0,
+          leftMarquee: j === 0 && labelCell.layout.kind === "marquee" ? Math.max(0, measure(left) - listBudget()) : 0,
         });
       }
     }
@@ -490,7 +510,7 @@ export function DialogBox(props: DialogBoxProps) {
   const shopBoxH = () => shopLayout().boxH;
   // One tick for every marquee cell in the boxes; it rests when none scroll.
   const marqueeTick = useMarqueeTick(createMemo(() => {
-    if (legendCell().kind === "marquee" || choicePromptCell().kind === "marquee") return true;
+    if (legendCell().kind === "marquee" || choicePromptCell().layout.kind === "marquee") return true;
     if (choiceLayout().rows.some((row) => row.leftMarquee > 0)) return true;
     const shop = shopLayout();
     return shop.stage.kind === "marquee" || shop.gold.kind === "marquee" ||
@@ -693,14 +713,25 @@ export function DialogBox(props: DialogBoxProps) {
         paperClass="flex-col p-[6]"
         debugName="rpgkit-choices-box"
       >
-        <BoundedLine
-          cell={choicePromptCell()}
-          tick={marqueeTick}
-          textColor={theme().dim}
-          rowH={LIST_ROW_H}
-          width={listBudget()}
-          debugName="rpgkit-choice-prompt"
-        />
+        <Show when={textChoice()?.promptColours} fallback={
+          <BoundedLine
+            cell={choicePromptCell().layout}
+            tick={marqueeTick}
+            textColor={theme().dim}
+            rowH={LIST_ROW_H}
+            width={listBudget()}
+            debugName="rpgkit-choice-prompt"
+          />
+        }>
+          <ColourBoundedLine
+            cell={choicePromptCell()}
+            tick={marqueeTick}
+            textColor={theme().dim}
+            rowH={LIST_ROW_H}
+            width={listBudget()}
+            debugName="rpgkit-choice-prompt"
+          />
+        </Show>
         <View class="flex-col" style={{ height: 4 }} />
         <For each={choiceLayout().slots}>
           {(slot) => {
@@ -711,27 +742,59 @@ export function DialogBox(props: DialogBoxProps) {
             const rowColor = () => disabled() ? theme().dim : selected() ? theme().accent : theme().ink;
             const left = () => row()?.left ?? "";
             return (
-              row()?.leftMarquee ? (
-                <View
-                  style={{ width: listBudget(), height: LIST_ROW_H, overflow: 1 }}
-                  debugName={`rpgkit-choice-${slot}`}
-                >
+              <Show when={row()?.colourRuns} fallback={
+                row()?.leftMarquee ? (
+                  <View
+                    style={{ width: listBudget(), height: LIST_ROW_H, overflow: 1 }}
+                    debugName={`rpgkit-choice-${slot}`}
+                  >
+                    <Text
+                      class="text-xs"
+                      style={{ textColor: rowColor(), lineHeight: LIST_ROW_H, height: LIST_ROW_H, shrink: 0, translateX: -marqueeOffset(row()!.leftMarquee, marqueeTick()) }}
+                    >
+                      {left()}
+                    </Text>
+                  </View>
+                ) : (
                   <Text
                     class="text-xs"
-                    style={{ textColor: rowColor(), lineHeight: LIST_ROW_H, height: LIST_ROW_H, shrink: 0, translateX: -marqueeOffset(row()!.leftMarquee, marqueeTick()) }}
+                    style={{ textColor: rowColor(), lineHeight: LIST_ROW_H, height: LIST_ROW_H }}
+                    debugName={`rpgkit-choice-${slot}`}
                   >
                     {left()}
                   </Text>
-                </View>
-              ) : (
-                <Text
-                  class="text-xs"
-                  style={{ textColor: rowColor(), lineHeight: LIST_ROW_H, height: LIST_ROW_H }}
+                )
+              }>
+                <View
+                  style={{ width: listBudget(), height: LIST_ROW_H, overflow: row()?.leftMarquee ? 1 : 0 }}
                   debugName={`rpgkit-choice-${slot}`}
                 >
-                  {left()}
-                </Text>
-              )
+                  <View
+                    class="flex-row"
+                    style={{
+                      height: LIST_ROW_H,
+                      shrink: 0,
+                      translateX: -marqueeOffset(row()?.leftMarquee ?? 0, marqueeTick()),
+                    }}
+                  >
+                    <For each={row()?.colourRuns ?? []}>
+                      {(run) => (
+                        <Text
+                          class="text-xs"
+                          style={{
+                            textColor: choiceRunColour(run, rowColor()),
+                            lineHeight: LIST_ROW_H,
+                            height: LIST_ROW_H,
+                            shrink: 0,
+                          }}
+                        >
+                          {run.text || " "}
+                        </Text>
+                      )}
+                    </For>
+                  </View>
+                </View>
+              </Show>
             );
           }}
         </For>

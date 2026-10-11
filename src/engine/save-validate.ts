@@ -17,6 +17,7 @@
 import { MAX_FIBER_STACK_DEPTH } from "./interpreter.ts";
 import { extensionCallNameValid, jsonValueProblem } from "./extensions.ts";
 import { MOTION_HZ } from "./motion-clock.ts";
+import { scalarLength } from "./text-break.ts";
 
 const INTEGER_OPS = new Set([
   "text", "choices", "switch", "variable", "selfSwitch", "if", "jmp", "repeat", "break",
@@ -88,6 +89,27 @@ function validateChoiceIcons(v: unknown, count: number, path: string): string | 
     if (icon.frame !== undefined && icon.frame !== 0 && icon.frame !== 1 && icon.frame !== 2) {
       return fail(`${at}.frame`, "0|1|2 required");
     }
+  }
+  return null;
+}
+
+function validateColourSpans(v: unknown, total: number, path: string): string | null {
+  if (!Array.isArray(v) || v.length === 0) {
+    return fail(path, "non-empty colour span array required when present");
+  }
+  let previousEnd = 0;
+  for (let index = 0; index < v.length; index++) {
+    const span = v[index];
+    const at = `${path}[${index}]`;
+    if (!isRecord(span) || !isNonNegInt(span.start) || !isNonNegInt(span.end) ||
+        span.start >= span.end || span.end > total) {
+      return fail(at, "ordered start/end offsets within total required");
+    }
+    if (span.start < previousEnd) return fail(at, "non-overlapping spans in source order required");
+    if (typeof span.colour !== "string" || !/^#[0-9A-F]{6}$/.test(span.colour)) {
+      return fail(`${at}.colour`, "uppercase six-digit hex colour required");
+    }
+    previousEnd = span.end;
   }
   return null;
 }
@@ -2021,23 +2043,8 @@ function validateModal(v: unknown, path: string, liveKeys: ReadonlySet<string>):
       }
     }
     if (v.colours !== undefined) {
-      if (!Array.isArray(v.colours) || v.colours.length === 0) {
-        return fail(`${path}.colours`, "non-empty colour span array required when present");
-      }
-      let previousEnd = 0;
-      for (let index = 0; index < v.colours.length; index++) {
-        const span = v.colours[index];
-        const at = `${path}.colours[${index}]`;
-        if (!isRecord(span) || !isNonNegInt(span.start) || !isNonNegInt(span.end) ||
-            span.start >= span.end || span.end > (v.total as number)) {
-          return fail(at, "ordered start/end offsets within total required");
-        }
-        if (span.start < previousEnd) return fail(at, "non-overlapping spans in source order required");
-        if (typeof span.colour !== "string" || !/^#[0-9A-F]{6}$/.test(span.colour)) {
-          return fail(`${at}.colour`, "uppercase six-digit hex colour required");
-        }
-        previousEnd = span.end;
-      }
+      const e = validateColourSpans(v.colours, v.total as number, `${path}.colours`);
+      if (e) return e;
     }
     if (v.box !== undefined) return validateTextBox(v.box, `${path}.box`);
     return null;
@@ -2047,8 +2054,25 @@ function validateModal(v: unknown, path: string, liveKeys: ReadonlySet<string>):
     if (!Array.isArray(v.options) || !v.options.every((o) => typeof o === "string")) {
       return fail(`${path}.options`, "string array required");
     }
+    if (v.promptColours !== undefined) {
+      const e = validateColourSpans(v.promptColours, scalarLength(v.prompt), `${path}.promptColours`);
+      if (e) return e;
+    }
     if (typeof v.cancellable !== "boolean") return fail(`${path}.cancellable`, "boolean required");
     const dynamic = v.keys !== undefined || v.enabled !== undefined;
+    if (v.optionColours !== undefined) {
+      if (dynamic) return fail(`${path}.optionColours`, "option colours are only valid on an authored choices modal");
+      if (!Array.isArray(v.optionColours) || v.optionColours.length !== v.options.length ||
+          !v.optionColours.some((spans) => spans !== null)) {
+        return fail(`${path}.optionColours`, "one span array or null per option, with at least one coloured option, required");
+      }
+      for (let index = 0; index < v.optionColours.length; index++) {
+        const spans = v.optionColours[index];
+        if (spans === null) continue;
+        const e = validateColourSpans(spans, scalarLength(v.options[index] as string), `${path}.optionColours[${index}]`);
+        if (e) return e;
+      }
+    }
     if (dynamic) {
       if (!Array.isArray(v.keys) || v.keys.length !== v.options.length ||
         !v.keys.every((key) => typeof key === "string" && key.length > 0)) {

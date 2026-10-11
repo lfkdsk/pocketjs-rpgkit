@@ -1783,7 +1783,13 @@ export interface ChoiceModal {
   kind: "choices";
   fiber: string;
   prompt: string;
+  /** RPG Maker colour runs in `prompt`, in Unicode-code-point offsets. */
+  promptColours?: readonly RpgMakerTextColourSpan[];
   options: string[];
+  /** RPG Maker colour runs aligned with `options` (null = no explicit
+   * colour on that option). Absent outside RPG Maker text mode, and when
+   * no option carries a colour escape. */
+  optionColours?: readonly (readonly RpgMakerTextColourSpan[] | null)[];
   /** Present only for extChoice. Stable logical ids preserve the cursor when
    * the extension reorders or replaces its live rows. */
   keys?: string[];
@@ -1845,11 +1851,11 @@ function textBoxEquals(a: TextBoxLayout | undefined, b: TextBoxLayout | undefine
 }
 
 function colourSpansEqual(
-  a: readonly RpgMakerTextColourSpan[] | undefined,
-  b: readonly RpgMakerTextColourSpan[] | undefined,
+  a: readonly RpgMakerTextColourSpan[] | null | undefined,
+  b: readonly RpgMakerTextColourSpan[] | null | undefined,
 ): boolean {
   if (a === b) return true;
-  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  if (a == null || b == null || a.length !== b.length) return false;
   return a.every((span, index) => {
     const other = b[index]!;
     return span.start === other.start && span.end === other.end && span.colour === other.colour;
@@ -1891,9 +1897,15 @@ export function modalChanged(a: Modal | null, b: Modal | null): boolean {
     return (
       a.index !== b.index ||
       a.prompt !== b.prompt ||
+      !colourSpansEqual(a.promptColours, b.promptColours) ||
       a.cancellable !== b.cancellable ||
       a.options.length !== b.options.length ||
       a.options.some((opt, i) => opt !== b.options[i]) ||
+      (a.optionColours === undefined) !== (b.optionColours === undefined) ||
+      (a.optionColours !== undefined && (
+        a.optionColours.length !== b.optionColours!.length ||
+        a.optionColours.some((spans, i) => !colourSpansEqual(spans, b.optionColours![i]))
+      )) ||
       (a.keys === undefined) !== (b.keys === undefined) ||
       (a.enabled === undefined) !== (b.enabled === undefined) ||
       (a.keys?.some((key, i) => key !== b.keys?.[i]) ?? false) ||
@@ -2974,6 +2986,10 @@ export function cloneModal(m: Modal | null): Modal | null {
   return {
     ...m,
     options: [...m.options],
+    ...(m.promptColours ? { promptColours: m.promptColours.map((span) => ({ ...span })) } : {}),
+    ...(m.optionColours ? {
+      optionColours: m.optionColours.map((spans) => spans?.map((span) => ({ ...span })) ?? null),
+    } : {}),
     ...(m.keys ? { keys: [...m.keys] } : {}),
     ...(m.enabled ? { enabled: [...m.enabled] } : {}),
     ...(m.icons ? { icons: [...m.icons] } : {}),
@@ -5237,14 +5253,25 @@ function rpgMakerBoxText(s: InterpState, w: World, text: string) {
   });
 }
 
-function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: string): string {
+interface ExpandedBoxText {
+  text: string;
+  colours?: readonly RpgMakerTextColourSpan[];
+}
+
+function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: string): ExpandedBoxText {
   // RPG Maker mode is its own one-pass grammar. It deliberately does not
   // run kit brace tokens before or after parsing: a replacement containing
   // another escape/token must print literally, matching MV/MZ.
-  if (w.rpgMakerText) return rpgMakerBoxText(s, w, text).text;
+  if (w.rpgMakerText) {
+    const parsed = rpgMakerBoxText(s, w, text);
+    return {
+      text: parsed.text,
+      ...(parsed.spans ? { colours: parsed.spans } : {}),
+    };
+  }
   const xEnabled = w.textTokensEnabled === true;
   const resolver = xEnabled ? (w.textTokens ?? null) : null;
-  return expandTextTokens(
+  return { text: expandTextTokens(
     text,
     s.sw.playerName ?? DEFAULT_PLAYER_NAME,
     w.textVariables ? s.sw.variables : null,
@@ -5253,7 +5280,26 @@ function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: 
     xEnabled,
     w.characterNames ? (target) => characterNameInFiber(s, w, fiber, target) : null,
     w.characterNames === true,
-  );
+  ) };
+}
+
+function expandedChoiceText(
+  s: InterpState,
+  w: World,
+  prompt: string,
+  options: readonly string[],
+  ext: JsonValue,
+  fiber: string,
+): Pick<ChoiceModal, "prompt" | "promptColours" | "options" | "optionColours"> {
+  const expandedPrompt = boxText(s, w, prompt, ext, fiber);
+  const expandedOptions = options.map((option) => boxText(s, w, option, ext, fiber));
+  const optionColours = expandedOptions.map((option) => option.colours ?? null);
+  return {
+    prompt: expandedPrompt.text,
+    ...(expandedPrompt.colours ? { promptColours: expandedPrompt.colours } : {}),
+    options: expandedOptions.map((option) => option.text),
+    ...(optionColours.some((spans) => spans !== null) ? { optionColours } : {}),
+  };
 }
 
 function boxLines(
@@ -5406,11 +5452,11 @@ function runFiber(
       // First frame after opening installs the modal; later frames keep the
       // player's cursor index.
       if (!s.modal || s.modal.kind !== "choices") {
+        const text = expandedChoiceText(s, w, ins.prompt, ins.texts, extension.ext, f.key);
         const opened: ChoiceModal = {
           kind: "choices",
           fiber: f.key,
-          prompt: boxText(s, w, ins.prompt, extension.ext, f.key),
-          options: ins.texts.map((text) => boxText(s, w, text, extension.ext, f.key)),
+          ...text,
           index: 0,
           cancellable: ins.cancel !== null,
         };
@@ -5470,16 +5516,21 @@ function runFiber(
         // up, so a resolver runs once per open, not per tick, and a state
         // change while the box is up does not retype it. Only the
         // extension's dynamic rows/keys/enabled refresh.
-        s.modal = {
+        const prompt: ExpandedBoxText = previous
+          ? { text: previous.prompt, ...(previous.promptColours ? { colours: previous.promptColours } : {}) }
+          : boxText(s, w, ins.prompt, extension.ext, f.key);
+        const next: ChoiceModal = {
           kind: "choices",
           fiber: f.key,
-          prompt: previous ? previous.prompt : boxText(s, w, ins.prompt, extension.ext, f.key),
+          prompt: prompt.text,
           options: options.map((option) => option.label),
           keys: options.map((option) => option.key),
           enabled: options.map((option) => option.enabled),
           index,
           cancellable: ins.cancel,
         };
+        if (prompt.colours) next.promptColours = prompt.colours;
+        s.modal = next;
         let result: ExtensionChoiceResult | null = null;
         if (input.confirmEdge && !displaced && options[index]?.enabled) {
           const option = options[index]!;
@@ -6150,11 +6201,11 @@ function runFiber(
         // Same single-slot rule for the choices box.
         if (s.modal) return;
         f.mode = "choices";
+        const text = expandedChoiceText(s, w, ins.prompt, ins.texts, extension.ext, f.key);
         const opened: ChoiceModal = {
           kind: "choices",
           fiber: f.key,
-          prompt: boxText(s, w, ins.prompt, extension.ext, f.key),
-          options: ins.texts.map((text) => boxText(s, w, text, extension.ext, f.key)),
+          ...text,
           index: 0,
           cancellable: ins.cancel !== null,
         };
@@ -6173,16 +6224,19 @@ function runFiber(
           break;
         }
         f.mode = "choices";
-        s.modal = {
+        const prompt = boxText(s, w, ins.prompt, extension.ext, f.key);
+        const opened: ChoiceModal = {
           kind: "choices",
           fiber: f.key,
-          prompt: boxText(s, w, ins.prompt, extension.ext, f.key),
+          prompt: prompt.text,
           options: options.map((option) => option.label),
           keys: options.map((option) => option.key),
           enabled: options.map((option) => option.enabled),
           index: 0,
           cancellable: ins.cancel,
         };
+        if (prompt.colours) opened.promptColours = prompt.colours;
+        s.modal = opened;
         return;
       }
       case "shop": {

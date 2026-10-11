@@ -33,10 +33,16 @@
 // for heads that overflow the tile above, and the Tuxemon characters (rows
 // 11..30 of the frame) come out centred in the cell, whole.
 
-import { createMemo, For, type Accessor } from "solid-js";
+import { createMemo, For, Show, type Accessor } from "solid-js";
 import { Image, Text, View } from "@pocketjs/framework/components";
 import type { ChoiceModal } from "../engine/interpreter.ts";
-import { windowByRows, wrapLabel } from "./list-window.ts";
+import { windowByRows } from "./list-window.ts";
+import {
+  choiceColourRowsEqual,
+  choiceRunColour,
+  wrapChoiceColourRows,
+  type ChoiceColourRow,
+} from "./choice-colour.ts";
 import { Panel } from "./Panel.tsx";
 import { slotMeasure } from "./text-measure.ts";
 import type { ChoiceIconArt, ChoiceIconResolver } from "./choice-icons.ts";
@@ -71,6 +77,15 @@ const SCREEN_H = 272;
 const NO_OPTIONS: readonly string[] = [];
 const sameLines = (a: readonly string[], b: readonly string[]): boolean =>
   a === b || (a.length === b.length && a.every((line, i) => line === b[i]));
+const sameColourColumns = (
+  a: ChoiceModal["optionColours"],
+  b: ChoiceModal["optionColours"],
+): boolean => a === b || (!!a && !!b && a.length === b.length && a.every((spans, index) => {
+  const other = b[index];
+  return spans === other || (!!spans && !!other && spans.length === other.length &&
+    spans.every((span, at) => span.start === other[at]!.start && span.end === other[at]!.end &&
+      span.colour === other[at]!.colour));
+}));
 /** Height of an option whose label takes `rows` rows. */
 const optionH = (rows: number): number => ROW_H + (rows - 1) * LINE_H;
 
@@ -130,11 +145,14 @@ export function ChoiceIconBox(props: ChoiceIconBoxProps) {
   const index = () => props.modal()?.index ?? 0;
   // Content-compared too: the labels wrap once per menu, not per step.
   const options = createMemo(() => props.modal()?.options ?? NO_OPTIONS, NO_OPTIONS, { equals: sameLines });
-  const labels = createMemo(() => options().map((label) => wrapLabel(label, LABEL_W, measure)));
+  const optionColours = createMemo(() => props.modal()?.optionColours, undefined, { equals: sameColourColumns });
+  const labels = createMemo(() => options().map((label, at) =>
+    wrapChoiceColourRows(label, LABEL_W, measure, optionColours()?.[at])));
   const counts = createMemo(() => labels().map((rows) => rows.length));
-  const promptRows = createMemo(() => wrapLabel(props.modal()?.prompt ?? "", CONTENT_W, measure), [""], {
-    equals: sameLines,
-  });
+  const promptRows = createMemo(() => {
+    const modal = props.modal();
+    return wrapChoiceColourRows(modal?.prompt ?? "", CONTENT_W, measure, modal?.promptColours);
+  }, [{ text: "", runs: [{ text: "" }] }], { equals: choiceColourRowsEqual });
   // Label rows the four-option window may hold: what the screen leaves
   // above the box's bottom margin for the options, less the 10 px each of
   // four options adds to its rows (optionH), in 14 px rows.
@@ -171,19 +189,48 @@ export function ChoiceIconBox(props: ChoiceIconBoxProps) {
     >
       {/* One Text per prompt row; the first always holds its 14 px. */}
       <For each={promptPool()}>
-        {(row) => (
-          <Text
-            class="text-xs"
-            style={{
-              textColor: theme().dim,
-              lineHeight: LINE_H,
-              height: LINE_H,
-              display: row === 0 || row < promptRows().length ? 0 : 1,
-            }}
-          >
-            {promptRows()[row] || " "}
-          </Text>
-        )}
+        {(row) => {
+          const prompt = () => promptRows()[row];
+          return (
+            <Show when={props.modal()?.promptColours} fallback={
+              <Text
+                class="text-xs"
+                style={{
+                  textColor: theme().dim,
+                  lineHeight: LINE_H,
+                  height: LINE_H,
+                  display: row === 0 || row < promptRows().length ? 0 : 1,
+                }}
+              >
+                {prompt()?.text || " "}
+              </Text>
+            }>
+              <View
+                class="flex-row"
+                style={{
+                  height: LINE_H,
+                  display: row === 0 || row < promptRows().length ? 0 : 1,
+                }}
+              >
+                <For each={prompt()?.runs ?? []}>
+                  {(run) => (
+                    <Text
+                      class="text-xs"
+                      style={{
+                        textColor: choiceRunColour(run, theme().dim),
+                        lineHeight: LINE_H,
+                        height: LINE_H,
+                        shrink: 0,
+                      }}
+                    >
+                      {run.text || " "}
+                    </Text>
+                  )}
+                </For>
+              </View>
+            </Show>
+          );
+        }}
       </For>
       <View style={{ height: areaH(), marginT: 4, flexDir: 1 }}>
         {/* The cursor bar under the rows, spanning icon and label: an
@@ -194,7 +241,11 @@ export function ChoiceIconBox(props: ChoiceIconBoxProps) {
           {(row) => {
             const at = () => win().start + row;
             const shown = () => at() < win().end;
-            const rows = createMemo(() => (shown() ? labels()[at()]! : NO_OPTIONS), NO_OPTIONS, { equals: sameLines });
+            const rows = createMemo(
+              () => (shown() ? labels()[at()]! : [] as ChoiceColourRow[]),
+              [] as ChoiceColourRow[],
+              { equals: choiceColourRowsEqual },
+            );
             return iconRow(at, shown, rows, props, arts, theme);
           }}
         </For>
@@ -211,7 +262,7 @@ export function ChoiceIconBox(props: ChoiceIconBoxProps) {
 function iconRow(
   at: () => number,
   shown: () => boolean,
-  rows: Accessor<readonly string[]>,
+  rows: Accessor<readonly ChoiceColourRow[]>,
   props: ChoiceIconBoxProps,
   arts: Accessor<RowArt[]>,
   theme: Accessor<UiTheme>,
@@ -219,6 +270,7 @@ function iconRow(
   const art = () => (shown() ? arts()[at()] ?? null : null);
   const image = () => art() || null;
   const disabled = () => props.modal()?.enabled?.[at()] === false;
+  const rowColor = () => disabled() ? theme().dim : props.modal()?.index === at() ? theme().accent : theme().ink;
   const pool = growingPool(() => rows().length);
   return (
     <View style={{ height: optionH(Math.max(1, rows().length)), flexDir: 0, align: 1, overflow: 1, display: shown() ? 0 : 1 }}>
@@ -253,22 +305,55 @@ function iconRow(
         ?
       </Text>
       <For each={pool()}>
-        {(line) => (
-          <Text
-            class="text-xs"
-            style={{
-              posType: 1,
-              insetL: 26,
-              insetT: LABEL_T + line * LINE_H,
-              textColor: disabled() ? theme().dim : props.modal()?.index === at() ? theme().accent : theme().ink,
-              lineHeight: LINE_H,
-              height: LINE_H,
-              display: line < rows().length ? 0 : 1,
-            }}
-          >
-            {rows()[line] || " "}
-          </Text>
-        )}
+        {(line) => {
+          const row = () => rows()[line];
+          return (
+            <Show when={props.modal()?.optionColours?.[at()]} fallback={
+              <Text
+                class="text-xs"
+                style={{
+                  posType: 1,
+                  insetL: 26,
+                  insetT: LABEL_T + line * LINE_H,
+                  textColor: rowColor(),
+                  lineHeight: LINE_H,
+                  height: LINE_H,
+                  display: line < rows().length ? 0 : 1,
+                }}
+              >
+                {row()?.text || " "}
+              </Text>
+            }>
+              <View
+                class="flex-row"
+                style={{
+                  posType: 1,
+                  insetL: 26,
+                  insetT: LABEL_T + line * LINE_H,
+                  width: LABEL_W,
+                  height: LINE_H,
+                  display: line < rows().length ? 0 : 1,
+                }}
+              >
+                <For each={row()?.runs ?? []}>
+                  {(run) => (
+                    <Text
+                      class="text-xs"
+                      style={{
+                        textColor: choiceRunColour(run, rowColor()),
+                        lineHeight: LINE_H,
+                        height: LINE_H,
+                        shrink: 0,
+                      }}
+                    >
+                      {run.text || " "}
+                    </Text>
+                  )}
+                </For>
+              </View>
+            </Show>
+          );
+        }}
       </For>
     </View>
   );

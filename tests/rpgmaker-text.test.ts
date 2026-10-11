@@ -87,6 +87,15 @@ describe("parseRpgMakerText", () => {
     });
   });
 
+  test("merges adjacent runs when repeated and zero-width colour changes select the same colour", () => {
+    expect(parseRpgMakerText(String.raw`\C[1]a\C[1]b`, context()).spans).toEqual([
+      { start: 0, end: 2, colour: "#20A0D6" },
+    ]);
+    expect(parseRpgMakerText(String.raw`\C[1]a\C[0]\C[1]` + "😀b", context()).spans).toEqual([
+      { start: 0, end: 3, colour: "#20A0D6" },
+    ]);
+  });
+
   test("uses RPG Maker's zero and empty fallbacks for missing data", () => {
     expect(parseRpgMakerText(
       String.raw`\V[404]|\N[404]|\P[0]|\P[404]`,
