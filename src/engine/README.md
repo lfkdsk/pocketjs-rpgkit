@@ -26,11 +26,9 @@ state.
   `approach` move steps (fixed neighbour order, respects all edge guards
   and bodies; the search is sliced across reference ticks to bound QuickJS
   frame cost).
-- `interpreter.ts` — event pages, triggers, the 46-command interpreter
-  (the v1 15 plus `lockInput` / `unlockInput` / `place` / `shop` / `ext` /
-  `extChoice` / `battle` / `moveControl` / `appearance` / `layer` /
-  `tileProperty` / `mapAnim` / `stopAnim` and seven screen-presentation
-  commands), the typewriter clock, the seeded RNG, saveable switch state.
+- `interpreter.ts` — event pages, triggers, the 87-command interpreter,
+  modal and external-request coordination, the typewriter clock, the seeded
+  RNG, and saveable switch state.
 - `extensions.ts` — namespaced pure command/condition/dynamic-choice handlers,
   the opaque JSON extension slot, validation and save codecs.
 - `battle.ts` — game-owned battle reducer and scene contracts.
@@ -182,6 +180,15 @@ Conventions:
   the facing the character shows when that page spawns it or on a page
   switch. Routes and turns published after a `place` on the same tick are
   kept (see the session fold's same-tick order below).
+- **Immediate scripted facing and route start:** `face` changes the player,
+  `"this"`, or `{event}` synchronously at the event instruction boundary.
+  Rendering, interaction targeting and a later facing condition in that same
+  reference tick observe the new direction. A `moveRoute` carrying
+  `start:"immediate"` consumes its first route command after publication in
+  that same tick; omitting `start` keeps the established next-reference-tick
+  start byte-for-byte. The resulting movement, follower breadcrumb and ridden
+  vehicle placement are ordinary reducer state, so save/load, rewind and
+  60/30/20 Hz playback agree.
 - **Movement controls:** page defaults are `moveSpeed:5` (MV grade 1-6),
   `moveFrequency:5` (MV grade 1-5 on the fixed reference-tick clock),
   `directionFix:false`, `through:false`, and
@@ -278,14 +285,21 @@ Conventions:
   the host has no portable per-image blend/colour-matrix primitive.
 - **Backdrop, layering, and lifetime:** `screenBackdrop` selects a
   `GameAssets.layers` entry with `placement:"screen"`; omitting/nulling its
-  variant closes it. A non-null selection replaces the current backdrop by
-  default, even below a modal. Set `whenModalOpen:"ignore"` to preserve an
-  existing backdrop while a text, choice, or shop modal is active above it;
-  without a modal it still replaces.
+  variant pops the visible top, exposing the nearest hidden frame or closing
+  the backdrop if none remains. A non-null selection replaces only the visible
+  top by default, even below a modal. Set `whenModalOpen:"ignore"` to preserve
+  an existing backdrop while a text, scrolling-text, choice, or shop modal is
+  active above it; without a modal it still replaces. Set
+  `whenModalOpen:"push"` to dismiss a covering modal, advance its owning fiber,
+  push the old visible top, and show the new variant. Without a covering modal,
+  `push` replaces. Visible plus hidden frames are bounded at eight; a ninth
+  modal-covered push raises a content error before mutating either the modal
+  or stack.
   Backdrop, tint, and flash render over the map but below
   dialogs; independent fade renders above dialogs. A backdrop prevents free
   movement/action and keeps `worldIdle` false, while autorun/parallel fibers
-  still run. Transfer always retains fade, tints and backdrop, and clears
+  still run. Transfer always retains fade, tints and the whole backdrop stack,
+  and clears
   transient flash/shake and event balloons. The optional
   `system.transferPresentation:"retain"` additionally keeps live map
   animations, scripted camera and the player's balloon; without it those use
@@ -316,7 +330,8 @@ Conventions:
   continue-through behavior.
 - **Persistence:** in-flight tween endpoints and remaining reference ticks,
   camera focus, balloon frame age, numbered pictures, map-name banner phase,
-  and persistent layers all round-trip in saves and attract rewind. Older
+  the ordered backdrop stack, and persistent layers all round-trip in saves
+  and attract rewind. Older
   saves omit `screen` and retain the zero-cost path: `session.ts` skips screen
   advancement entirely while it is absent.
 - **Global timer:** `timer start` installs one fixed-60-Hz countdown,
@@ -675,7 +690,7 @@ state = stepSession(session, state, {          // once per virtual frame
    and resumes its fiber when the route lands; `battle` derives one seed from
    `state.sw.rng` and parks its fiber in `state.scene`.
 
-Same-tick `place` / `moveRoute` / `moveControl` order:
+Same-tick `place` / `face` / `moveRoute` / `moveControl` order:
 
 - The requests a tick's fold published apply in command order, across
   fibers. A `place` stops (and resumes the waiter of) the route its target
@@ -683,6 +698,14 @@ Same-tick `place` / `moveRoute` / `moveControl` order:
   published *after* it is installed on the placed character and is kept.
   So `place` → `moveRoute` (waited or not) walks from the new cell, and
   `place` → face turns the placed character, for the player and for events.
+- `face` applies before the tick is rendered or saved, and later interpreter
+  conditions in the publishing fold read the new player facing. A route with
+  `start:"immediate"` consumes only its first route command after the normal
+  movement phase; a route without that marker still begins next tick. A turn
+  or first step created by these requests receives one restricted follow-up
+  `playerTouch`/`eventTouch` scan. It cannot rerun action, autorun, parallel or
+  region triggers, and a newly captured blocking fiber executes its first
+  instruction on the next reference tick.
 - A request aimed at an event whose page the same fold switched on (for
   example: set the variable that enables an NPC's page, `place` it, route
   it) is applied after moving the character onto that page, so the next

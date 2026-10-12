@@ -5,7 +5,7 @@ built on [PocketJS](https://github.com/pocket-nexus/pocketjs). It contains
 the parts an RPG-Maker-style game needs without any specific game:
 
 - **pure-TS engine** (`src/engine/`) — tile movement and collision, the
-  event interpreter (pages, triggers, 80 commands), map-character motion,
+  event interpreter (pages, triggers, 87 commands), map-character motion,
   multi-map sessions, deterministic extension state and battle scenes,
   deterministic save snapshots. No host imports, no
   wall clock, no `Math.random`: a session is one pure fold per virtual
@@ -1135,7 +1135,9 @@ are translated by the shared `worldNode`. Both sit inside the renderer's
 band adds the origin itself. The coordinate spaces and the single
 conversion point are documented in `src/ui/world-contract.ts`.
 
-### The 80 commands
+<a id="the-80-commands"></a>
+
+### The 87 commands
 
 | op | purpose |
 | --- | --- |
@@ -1147,7 +1149,8 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `selfSwitch` | set the event-local A/B/C/D flag |
 | `if` | condition over switch/variable/selfSwitch/item/gold/facing, an actor's live name or imported initial class/skill/equipment/state facts, effective appearance, explicit tile-property overrides, a cell's region id, derived `worldIdle` or live player movement, current `bgmPlaying`, the global timer, or a registered `ext` predicate, with `else` |
 | `transfer` | swap maps at x/y/dir, with an optional fade; map/x/y/dir may be `{ "variable": "id" }`; a direct `playerTouch` transfer may carry a `seamless-v1` opening marker when the project opts into [world-layout handoff](#world-layout-data) |
-| `moveRoute` | route the player, this event, or a named event through moves, turns, waits, deterministic `pathTo`, and `approach` |
+| `face` | synchronously turn the player, this event, or a named event; rendering and later facing conditions in the same reference tick see the new direction |
+| `moveRoute` | route the player, this event, or a named event through moves, turns, waits, deterministic `pathTo`, and `approach`; optional `start:"immediate"` consumes the first route command in the publishing tick, while omission keeps the legacy next-tick start |
 | `moveControl` | change a target's autonomous mode, stop it, start bounded wandering, or override speed/run/frequency/collision/facing settings |
 | `followers` | show or hide the active follower chain without discarding its trail |
 | `gatherFollowers` | wait until every visible follower reaches the player |
@@ -1166,7 +1169,7 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `camera` | scroll focus to an absolute tile, the player, this event, or a named event; targeting the player restores live follow |
 | `scrollMap` | move the current camera focus by a relative tile distance at an RPG Maker 1–6 speed grade; optionally wait for completion |
 | `balloon` | show a project animation above the player/event for a duration or until explicitly cleared |
-| `screenBackdrop` | show or close a named full-screen layer variant for cutscenes and menus |
+| `screenBackdrop` | replace, push, pop, or close a named full-screen layer variant for cutscenes and menus; the bounded stack retains at most eight visible-plus-hidden frames |
 | `showPicture` | show or replace a numbered viewport picture with origin, variable/literal position, scale, opacity and retained blend intent |
 | `movePicture` | tween a numbered picture's position, scale and opacity with optional wait and linear/ease-in/ease-out/ease-in-out interpolation |
 | `rotatePicture` | set a numbered picture's continuous deterministic rotation speed |
@@ -1283,6 +1286,8 @@ without a resolver keep the pre-`{x:}` path. `rpgkit-check` warns
 and (`lint/text-token-unknown`) on any `{x:}` key not listed once it is
 declared.
 
+#### Screen presentation
+
 Every timed screen command uses virtual seconds and has optional `wait`.
 Waiting parks only the issuing fiber while other event fibers and the map keep
 running. `screenFade` holds a completed fade-out until a later fade-in;
@@ -1295,13 +1300,26 @@ placement is `screen` and sits above the map but below dialogs. Tint and flash
 also sit below dialogs; the independent fade sits above them.
 
 Screen state is part of saves and attract rewind. Transfer always retains
-fade, named tints and backdrop, and always clears flash, shake and event
+fade, named tints and the complete backdrop stack, and always clears flash, shake and event
 balloons. `system.transferPresentation:"retain"` additionally keeps live map
 animations, scripted camera and the player's balloon; without it those keep
 their original per-map lifetime. A non-null `screenBackdrop` replaces the
-current backdrop by default, including below an active modal. Set
+visible top by default, including below an active modal; hidden predecessors
+remain available to a later pop. Set
 `whenModalOpen:"ignore"` to preserve an existing backdrop while a text,
-choice, or shop modal is active above it; with no modal it still replaces.
+scrolling-text, choice, or shop modal is active above it; with no modal it
+still replaces. Set `whenModalOpen:"push"` to dismiss such a covering modal,
+advance its owning event past the modal instruction, preserve the old visible
+top underneath, and show the new variant. With no covering modal, `push`
+retains replacement semantics. A command with an omitted or null `variant`
+pops the visible top, exposing the nearest hidden frame or closing the
+backdrop when no frame remains.
+
+The stack holds at most eight frames in total (the visible top plus hidden
+predecessors). A ninth modal-covered push raises a deterministic content error
+before changing the modal or any backdrop frame. Replacement and pop never
+increase its depth. The sparse stack, including its ordering, survives save,
+load, transfer and attract rewind.
 A backdrop blocks player movement/action and makes `worldIdle`
 false while autorun/parallel fibers can close it. A default-frozen
 battle pauses map presentation clocks and owns the visible scene; with
