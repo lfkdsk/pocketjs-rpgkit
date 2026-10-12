@@ -1471,6 +1471,20 @@ export function trimSandboxMaps(sandbox: Session, keep: ReadonlySet<string>): vo
  * typed arrays, while ordinary projects return the base table by identity. */
 export function sessionPassageTable(sess: Session, s: SessionState): PassageTable {
   const variantId = s.interp.tileset;
+  // Keep the ordinary-project path byte-for-byte equivalent to the legacy
+  // lookup. Change Tileset is sparse reducer state, so paying for map
+  // resolution and a variant cache on every collision query would tax every
+  // project that never authors the command.
+  if (variantId === undefined) {
+    const base = sess.tables.get(s.mapId)!;
+    const overrides = s.interp.tileProperties;
+    if (!overrides || Object.keys(overrides).length === 0) return base;
+    const cached = sess.runtimeTables.get(s.mapId);
+    if (cached?.base === base && cached.overrides === overrides) return cached.table;
+    const table = withTilePropertyOverrides(base, overrides);
+    sess.runtimeTables.set(s.mapId, { base, overrides, table });
+    return table;
+  }
   const map = sess.maps.get(s.mapId)!;
   const effective = mapForTileset(map, variantId);
   if (!effective) throw new Error(`map ${map.id} has no tileset ${JSON.stringify(variantId)}`);
