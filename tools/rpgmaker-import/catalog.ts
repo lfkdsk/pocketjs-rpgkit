@@ -284,7 +284,7 @@ function sampleBody(code: number): RmCommand[] {
     case 135: return [cmd(135, 0, [0])];
     case 136: return [cmd(136, 0, [0])];
     case 137: return [cmd(137, 0, [0])];
-    case 138: return [cmd(138, 0, [[0, 0, 0, 0]])];
+    case 138: return [cmd(138, 0, [[0, 0, 0]])];
     case 139: return [cmd(139, 0, [AUDIO])];
     case 140: return [cmd(140, 0, [0, AUDIO])];
     case 201: return [cmd(201, 0, [0, 1, 5, 5, 2, 0])];

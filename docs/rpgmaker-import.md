@@ -221,10 +221,12 @@ In short:
   cells together. The active visit is saved and rewound. Tile-image event
   sprites keep the art imported for their authored tileset, so the command is
   reported Degraded rather than Native.
-- **Change Window Color (138)** stores the exact four-channel source tone.
-  Like RPG Maker, presentation consumes RGB only; the kit projects those
-  channels onto its theme's message, choice, menu and battle-window chrome.
-  Gray remains serialized for lossless round-tripping. This palette projection
+- **Change Window Color (138)** accepts the editor's three-channel RGB tone
+  (and four-channel data from compatible tools), defaulting an omitted gray
+  channel to zero. Like RPG Maker, presentation consumes RGB only; the kit
+  projects those channels onto its theme's message, choice, menu and
+  battle-window chrome. A supplied gray channel remains serialized for
+  lossless round-tripping. This palette projection
   is reported Degraded because it is not a per-pixel windowskin tone.
 - **Change Formation Access (137)** gates the optional formation overlay.
   Its two-confirm flow swaps any pair, including index 0, and the order drives

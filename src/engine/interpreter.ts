@@ -4479,9 +4479,7 @@ function locationInfoValue(
   const variant = state.tileset ? w.map.tilesetVariants?.[state.tileset] : undefined;
   switch (ins.kind) {
     case "terrain":
-      return variant
-        ? variant.terrain?.find(([cell]) => cell === index)?.[1] ?? 0
-        : w.terrainCells?.get(index) ?? 0;
+      return (variant?.terrain ?? w.map.terrain)?.find(([cell]) => cell === index)?.[1] ?? 0;
     case "region":
       return w.regionCells?.get(index) ?? 0;
     case "event": {
@@ -5003,7 +5001,7 @@ export function runExtensionHookInPlace(
     dy: number;
     kind: "step" | "relocation";
   }>,
-  spatial?: Readonly<Pick<ExtensionReadContext, "mapId" | "playerCell">>,
+  spatial?: Readonly<Pick<ExtensionReadContext, "mapId" | "playerCell" | "vehicle">>,
 ): JsonValue {
   const extension: MutableExtensionScope = { runtime: w.extensions, ext: ext0 };
   const handler = extension.runtime.commands[call];

@@ -357,6 +357,19 @@ describe("KRM5 tileset variants", () => {
     expect(resolved.passage).toBe(source.passage);
     expect(resolved.vehiclePassage).toBe(source.vehiclePassage);
     expect(resolved.terrain).toBe(source.terrain);
+
+    const runtime = project([
+      { op: "changeTileset", id: "alternate" },
+      { op: "locationInfo", variable: "terrain", x: 6, y: 0, kind: "terrain" },
+    ], {
+      terrain: [[6, 9]],
+      tilesetVariants: {
+        alternate: { ground: Array(W * H).fill("plain.0") },
+      },
+    });
+    const session = createSession(runtime);
+    const state = run(session, startSession(runtime, session), 2);
+    expect(state.sw.variables.terrain).toBe(9);
   });
 
   test("changes terrain and collision in the command fold, switches back, and resets on transfer", () => {
