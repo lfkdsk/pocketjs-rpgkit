@@ -426,6 +426,23 @@ describe("KS1 deterministic screen presentation", () => {
     expect(state.interp.screen?.backdropStack).toBeUndefined();
   });
 
+  test("save and restore retain an already established hidden backdrop stack", () => {
+    const p = project([]);
+    const session = createSession(p, 60);
+    const state = startSession(p, session);
+    state.interp.screen = {
+      backdrop: { layer: "cutscene", variant: "second" },
+      backdropStack: [{ layer: "cutscene", variant: "first" }],
+    };
+
+    const encoded = encodeEnvelope(createSessionSnapshot(session, state, 0));
+    const restored = restoreSessionEnvelope(session, encoded);
+    expect(restored.interp.screen?.backdropStack).toEqual([
+      { layer: "cutscene", variant: "first" },
+    ]);
+    expect(restored.interp.screen?.backdropStack).not.toBe(state.interp.screen.backdropStack);
+  });
+
   test("backdrop stack is bounded at eight and overflow has no partial mutation", () => {
     const screen: ScreenEffectsState = {};
     for (let i = 0; i < SCREEN_BACKDROP_STACK_LIMIT; i++) {
