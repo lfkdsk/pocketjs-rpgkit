@@ -346,7 +346,7 @@ file, asset or dialogue from them is committed here.
 | 121 | Control Switches | MV/MZ | Native |  |  |
 | 122 | Control Variables | MV/MZ | Native |  | variable sources for actor, character, party and remaining game data |
 | 123 | Control Self Switch | MV/MZ | Native |  | four independent self switches per event (the kit keeps one slot) |
-| 124 | Control Timer | MV/MZ | Native |  |  |
+| 124 | Control Timer | MV/MZ | Native |  | the screenPresentation capability |
 | 125 | Change Gold | MV/MZ | Native |  | gold changes by variable and a 0 floor on losses |
 | 126 | Change Items | MV/MZ | Native |  | item changes by variable and a 0 floor on losses |
 | 127 | Change Weapons | MV/MZ | Native |  | equipment (equipped copies) and item changes by variable |
@@ -375,16 +375,16 @@ file, asset or dialogue from them is committed here.
 | 217 | Gather Followers | MV/MZ | Native |  |  |
 | 221 | Fadeout Screen | MV/MZ | Native |  |  |
 | 222 | Fadein Screen | MV/MZ | Native |  |  |
-| 223 | Tint Screen | MV/MZ | Degraded | signed tone is retained exactly; portable rendering approximates additive colour and desaturation |  |
+| 223 | Tint Screen | MV/MZ | Degraded | signed tone is retained exactly; portable rendering approximates additive colour and desaturation | the rpgMakerText runtime and screenPresentation capability |
 | 224 | Flash Screen | MV/MZ | Native |  |  |
 | 225 | Shake Screen | MV/MZ | Native |  |  |
 | 230 | Wait | MV/MZ | Native |  |  |
-| 231 | Show Picture | MV/MZ | Native |  |  |
-| 232 | Move Picture | MV/MZ | Native |  |  |
-| 233 | Rotate Picture | MV/MZ | Native |  |  |
-| 234 | Tint Picture | MV/MZ | Native |  |  |
-| 235 | Erase Picture | MV/MZ | Native |  |  |
-| 236 | Set Weather Effect | MV/MZ | Native |  |  |
+| 231 | Show Picture | MV/MZ | Native |  | the screenPresentation capability |
+| 232 | Move Picture | MV/MZ | Native |  | the screenPresentation capability |
+| 233 | Rotate Picture | MV/MZ | Native |  | the screenPresentation capability |
+| 234 | Tint Picture | MV/MZ | Native |  | the screenPresentation capability |
+| 235 | Erase Picture | MV/MZ | Native |  | the screenPresentation capability |
+| 236 | Set Weather Effect | MV/MZ | Native |  | the rpgMakerText runtime and screenPresentation capability |
 | 241 | Play BGM | MV/MZ | Native |  |  |
 | 242 | Fadeout BGM | MV/MZ | Native |  |  |
 | 243 | Save BGM | MV/MZ | Native |  |  |
@@ -395,7 +395,7 @@ file, asset or dialogue from them is committed here.
 | 250 | Play SE | MV/MZ | Native |  |  |
 | 251 | Stop SE | MV/MZ | Native |  |  |
 | 261 | Play Movie | MV/MZ | Dropped |  | video playback |
-| 281 | Change Map Name Display | MV/MZ | Native |  |  |
+| 281 | Change Map Name Display | MV/MZ | Native |  | the screenPresentation capability |
 | 282 | Change Tileset | MV/MZ | Native |  |  |
 | 283 | Change Battle Background | MV/MZ | Degraded | battle background names persist, but battle backgrounds are not presented | battle backgrounds in the battle setup |
 | 284 | Change Parallax | MV/MZ | Native |  |  |

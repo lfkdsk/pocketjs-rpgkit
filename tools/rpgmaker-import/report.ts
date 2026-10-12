@@ -17,6 +17,7 @@ import { convertRpgMakerTroopEffects } from "./battle-data.ts";
 import { RM_COMMANDS, sampleCommands } from "./catalog.ts";
 import { convertCommands, type EventContext } from "./events.ts";
 import type { RmProject } from "./rm-types.ts";
+import type { Project } from "../../src/engine/types.ts";
 
 const SECTION_TITLES: Record<CoverageSection, string> = {
   command: "Event commands",
@@ -131,6 +132,54 @@ export function staticCommandTable(): StaticCommandRow[] {
 
 const esc = (s: string): string => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
+export interface RpgMakerCapabilityRequirement {
+  capability: "rpgMakerText" | "screenPresentation";
+  requiredBy: string[];
+  registration: string;
+}
+
+const SCREEN_RUNTIME_CODES = new Set([223, 236]);
+const SCREEN_PRESENTATION_CODES = new Set([124, 223, 231, 232, 233, 234, 235, 236, 281]);
+
+function commandRequirementEvidence(cov: Coverage, codes: ReadonlySet<number>): string[] {
+  const names = new Map(RM_COMMANDS.map((command) => [command.code, command.name]));
+  return cov.list("command").flatMap((row) => {
+    const code = Number(row.key);
+    if (!codes.has(code)) return [];
+    const uses = DISPOSITIONS.reduce((sum, disposition) => sum + row.counts[disposition], 0);
+    return uses > 0 ? [`${code} ${names.get(code) ?? "command"} (${uses})`] : [];
+  });
+}
+
+/** Code-side registrations an imported document cannot carry in JSON. The
+ * coverage report surfaces them so a generated native command can never be
+ * mistaken for a complete, silently-degraded application integration. */
+export function rpgMakerCapabilityRequirements(
+  cov: Coverage,
+  project?: Pick<Project, "system">,
+): RpgMakerCapabilityRequirement[] {
+  const runtime = commandRequirementEvidence(cov, SCREEN_RUNTIME_CODES);
+  const presentation = commandRequirementEvidence(cov, SCREEN_PRESENTATION_CODES);
+  if (project?.system?.rpgMakerText) runtime.unshift("system.rpgMakerText");
+  if (project?.system?.mapNameDisplay === true) presentation.unshift("system.mapNameDisplay");
+  const rows: RpgMakerCapabilityRequirement[] = [];
+  if (runtime.length > 0) {
+    rows.push({
+      capability: "rpgMakerText",
+      requiredBy: [...new Set(runtime)],
+      registration: "createSession/GameView rpgMakerText",
+    });
+  }
+  if (presentation.length > 0) {
+    rows.push({
+      capability: "screenPresentation",
+      requiredBy: [...new Set(presentation)],
+      registration: "GameView screenPresentation (for example krm2ScreenPresentation)",
+    });
+  }
+  return rows;
+}
+
 function pct(n: number, total: number): string {
   return total === 0 ? "—" : `${((100 * n) / total).toFixed(1)}%`;
 }
@@ -138,7 +187,11 @@ function pct(n: number, total: number): string {
 export function coverageMarkdown(
   title: string,
   cov: Coverage,
-  opts: { staticTable?: boolean; audioMedia?: readonly AudioMediaRecord[] } = {},
+  opts: {
+    staticTable?: boolean;
+    audioMedia?: readonly AudioMediaRecord[];
+    project?: Pick<Project, "system">;
+  } = {},
 ): string {
   const out: string[] = [];
   out.push(`# ${title}`, "");
@@ -164,6 +217,29 @@ export function coverageMarkdown(
     out.push(`| ${SECTION_TITLES[section]} | ${t.total} | ${t.Native} | ${t.Degraded} | ${t.Placeholder} | ${t.Dropped} | ${pct(t.Native, t.total)} |`);
   }
   out.push("");
+  const capabilities = rpgMakerCapabilityRequirements(cov, opts.project);
+  out.push(
+    "## Required application capabilities",
+    "",
+    "Project JSON records data, not code-side registrations. A session or rendering",
+    "application that omits a required row below fails during loading instead of",
+    "waiting on an invisible effect.",
+    "",
+  );
+  if (capabilities.length === 0) {
+    out.push("This import uses no optional RPG Maker screen capability.", "");
+  } else {
+    out.push(
+      "| Capability | Required by this import | Register in |",
+      "|---|---|---|",
+    );
+    for (const requirement of capabilities) {
+      out.push(
+        `| \`${requirement.capability}\` | ${esc(requirement.requiredBy.join(", "))} | ${esc(requirement.registration)} |`,
+      );
+    }
+    out.push("");
+  }
   const names = new Map(RM_COMMANDS.map((c) => [String(c.code), c.name]));
   for (const section of SECTION_ORDER) {
     const rows = cov.list(section);

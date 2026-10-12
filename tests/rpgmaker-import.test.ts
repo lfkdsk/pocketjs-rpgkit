@@ -20,7 +20,12 @@ import { importToDirectory } from "../tools/rpgmaker-import/index.ts";
 import { loadRmProject, RmLoadError } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject, invertInitialParty, type ImportResult } from "../tools/rpgmaker-import/project.ts";
 import type { RmCommand, RmProject } from "../tools/rpgmaker-import/rm-types.ts";
-import { commandTableLines, staticCommandTable } from "../tools/rpgmaker-import/report.ts";
+import {
+  commandTableLines,
+  coverageMarkdown,
+  rpgMakerCapabilityRequirements,
+  staticCommandTable,
+} from "../tools/rpgmaker-import/report.ts";
 import { readPng, writePngBytes } from "../tools/rpgmaker-import/png.ts";
 import { lintProject } from "../tools/rpgkit-check/src/lint.ts";
 import { RMI_GAMES } from "./fixtures/rmi-play/games.ts";
@@ -828,14 +833,22 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(101)!.disposition).toBe("Native");
     expect(by.get(112)!.disposition).toBe("Native");
     expect(by.get(113)!.disposition).toBe("Native");
-    for (const code of [103, 104, 124, 134, 135, 202, 204, 206, 212, 216, 217, 231, 232, 233, 234, 235, 236, 251, 281, 282, 284, 285, 323, 351, 352, 353, 354]) {
+    for (const code of [103, 104, 134, 135, 202, 204, 206, 212, 216, 217, 251, 282, 284, 285, 323, 351, 352, 353, 354]) {
       expect(by.get(code)!.disposition).toBe("Native");
       expect(by.get(code)!.needsKit).toBe("");
     }
-    for (const code of [137, 138, 223]) {
+    for (const code of [124, 231, 232, 233, 234, 235, 236, 281]) {
+      expect(by.get(code)!.disposition).toBe("Native");
+      expect(by.get(code)!.needsKit).toContain("screenPresentation");
+    }
+    for (const code of [137, 138]) {
       expect(by.get(code)!.disposition).toBe("Degraded");
       expect(by.get(code)!.needsKit).toBe("");
     }
+    expect(by.get(223)!.disposition).toBe("Degraded");
+    expect(by.get(223)!.needsKit).toContain("rpgMakerText");
+    expect(by.get(223)!.needsKit).toContain("screenPresentation");
+    expect(by.get(236)!.needsKit).toContain("rpgMakerText");
     expect(by.get(320)!.disposition).toBe("Native");
     expect(by.get(320)!.needsKit).toContain("actors other than actor 1");
     expect(by.get(111)!.needsKit).not.toContain("timer");
@@ -850,6 +863,31 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(357)!.disposition).toBe("Placeholder");
     expect(by.get(301)!.disposition).toBe("Native");
     expect(by.get(301)!.needsKit).toBe("");
+  });
+
+  test("coverage reports list the application capabilities this import requires", () => {
+    expect(rpgMakerCapabilityRequirements(hollow.cov, hollow.project)).toEqual([
+      {
+        capability: "rpgMakerText",
+        requiredBy: ["system.rpgMakerText", "236 Set Weather Effect (4)"],
+        registration: "createSession/GameView rpgMakerText",
+      },
+      {
+        capability: "screenPresentation",
+        requiredBy: [
+          "system.mapNameDisplay",
+          "124 Control Timer (4)",
+          "236 Set Weather Effect (4)",
+        ],
+        registration: "GameView screenPresentation (for example krm2ScreenPresentation)",
+      },
+    ]);
+    const report = coverageMarkdown("fixture", stage.cov, { project: stage.project });
+    expect(report).toContain("## Required application capabilities");
+    expect(report).toContain("| `rpgMakerText` | system.rpgMakerText, 223 Tint Screen (2) |");
+    expect(report).toContain(
+      "| `screenPresentation` | system.mapNameDisplay, 223 Tint Screen (2), 231 Show Picture (1), 232 Move Picture (1), 235 Erase Picture (1) |",
+    );
   });
 
   test("an encrypted deployment requires a valid embedded key", () => {
@@ -920,6 +958,12 @@ describe("rpgmaker-import: files and determinism", () => {
       }
       const project = JSON.parse(a.get("project.json")!.toString("utf8")) as Project;
       expect(project).toEqual(JSON.parse(JSON.stringify(hollow.project)));
+      const coverage = a.get("coverage.md")!.toString("utf8");
+      expect(coverage).toContain("## Required application capabilities");
+      expect(coverage).toContain("| `rpgMakerText` | system.rpgMakerText, 236 Set Weather Effect (4) |");
+      expect(coverage).toContain(
+        "| `screenPresentation` | system.mapNameDisplay, 124 Control Timer (4), 236 Set Weather Effect (4) |",
+      );
       const sharded = run(join(base, "s"), "--shard");
       const shell = JSON.parse(sharded.get("project.json")!.toString("utf8"));
       expect(shell.mapIndex.map((e: { id: string }) => e.id)).toEqual(["map001", "map002", "map003"]);

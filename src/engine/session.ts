@@ -97,7 +97,7 @@ import {
   captureImmediateTouchTriggersInPlace,
   continueScene,
 } from "./interpreter.ts";
-import type { RpgMakerTextRuntime } from "./rpgmaker-text-contract.ts";
+import type { RpgMakerScreenRuntime, RpgMakerTextRuntime } from "./rpgmaker-text-contract.ts";
 import type { TravelState } from "./travel-types.ts";
 import type { TravelRuntime, TravelSessionRuntime } from "./travel-contract.ts";
 import { mapForTileset } from "./tiles.ts";
@@ -474,6 +474,9 @@ export interface Session {
   /** Optional follower/vehicle implementation. Null is the walking-only
    * bundle path; projects declaring travel must register this capability. */
   travelRuntime: TravelSessionRuntime | null;
+  /** null means a headless caller did not request presentation validation;
+   * otherwise each acquired map must match the rendering host capability. */
+  rpgMakerScreenPresentation: boolean | null;
 }
 
 export type HandoffCapabilityResolver = (
@@ -511,6 +514,10 @@ export interface SessionOptions {
    * `system.rpgMakerText` must supply it from `pocket-rpgkit/rpgmaker-text`;
    * ordinary projects then keep that parser outside their bundle. */
   rpgMakerText?: RpgMakerTextRuntime;
+  /** Rendering hosts set this validation bit from their screen-presentation
+   * registration. Headless sessions omit it and may inspect reducer state
+   * without importing a UI implementation. */
+  rpgMakerScreenPresentation?: boolean;
   /** Optional follower/vehicle reducer from `pocket-rpgkit/travel`.
    * Required only when the project declares followers or vehicles. */
   travel?: TravelRuntime;
@@ -589,6 +596,96 @@ function commandsUseBattle(commands: readonly Command[]): boolean {
     )) return true;
   }
   return false;
+}
+
+interface RpgMakerScreenCapabilityUse {
+  /** Commands whose reducer behavior is implemented by rpgMakerTextRuntime. */
+  runtime: Set<string>;
+  /** Commands whose visible result is painted by GameView.screenPresentation. */
+  presentation: Set<string>;
+}
+
+function emptyRpgMakerScreenCapabilityUse(): RpgMakerScreenCapabilityUse {
+  return { runtime: new Set(), presentation: new Set() };
+}
+
+/** Collect optional RPG Maker screen dependencies through every nested result
+ * branch. Fade/flash/shake are base-kit effects; tone/weather need the
+ * optional reducer, while tone/weather/pictures/timer/map-name need KRM2 (or
+ * an equivalent registered presentation) to be visible. */
+function collectRpgMakerScreenCapabilityUse(
+  commands: readonly Command[],
+  found: RpgMakerScreenCapabilityUse,
+): void {
+  for (const command of commands) {
+    switch (command.op) {
+      case "screenTone":
+      case "weather":
+        found.runtime.add(command.op);
+        found.presentation.add(command.op);
+        break;
+      case "showPicture":
+      case "movePicture":
+      case "rotatePicture":
+      case "tintPicture":
+      case "erasePicture":
+      case "timer":
+      case "mapNameDisplay":
+        found.presentation.add(command.op);
+        break;
+    }
+    if (command.op === "if") {
+      collectRpgMakerScreenCapabilityUse(command.then, found);
+      if (command.else) collectRpgMakerScreenCapabilityUse(command.else, found);
+    } else if (command.op === "loop") {
+      collectRpgMakerScreenCapabilityUse(command.commands, found);
+    } else if (command.op === "choices") {
+      for (const option of command.options) {
+        collectRpgMakerScreenCapabilityUse(option.commands, found);
+      }
+      if (command.cancel) collectRpgMakerScreenCapabilityUse(command.cancel.commands, found);
+    } else if (command.op === "battle") {
+      if (command.onWin) collectRpgMakerScreenCapabilityUse(command.onWin, found);
+      if (command.onLose) collectRpgMakerScreenCapabilityUse(command.onLose, found);
+      if (command.onEscape) collectRpgMakerScreenCapabilityUse(command.onEscape, found);
+    } else if (command.op === "scene") {
+      if (command.onDone) collectRpgMakerScreenCapabilityUse(command.onDone, found);
+      if (command.onCancel) collectRpgMakerScreenCapabilityUse(command.onCancel, found);
+    }
+  }
+}
+
+function mapRpgMakerScreenCapabilityUse(map: MapDef): RpgMakerScreenCapabilityUse {
+  const found = emptyRpgMakerScreenCapabilityUse();
+  for (const event of map.events ?? []) {
+    for (const page of event.pages) collectRpgMakerScreenCapabilityUse(page.commands, found);
+  }
+  return found;
+}
+
+function commonRpgMakerScreenCapabilityUse(
+  events: readonly CommonEvent[],
+): RpgMakerScreenCapabilityUse {
+  const found = emptyRpgMakerScreenCapabilityUse();
+  for (const event of events) collectRpgMakerScreenCapabilityUse(event.commands, found);
+  return found;
+}
+
+function assertRpgMakerScreenCapabilities(
+  runtime: RpgMakerScreenRuntime | null,
+  presentation: boolean | null,
+  found: Readonly<RpgMakerScreenCapabilityUse>,
+): void {
+  if (found.runtime.size > 0 && runtime === null) {
+    throw new Error(
+      `RPG Maker screen: commands ${[...found.runtime].sort().join(", ")} require the optional rpgMakerText runtime`,
+    );
+  }
+  if (found.presentation.size > 0 && presentation === false) {
+    throw new Error(
+      `RPG Maker screen: commands ${[...found.presentation].sort().join(", ")} require the optional screenPresentation capability`,
+    );
+  }
 }
 
 function mapUsesBattle(map: MapDef): boolean {
@@ -747,6 +844,11 @@ export function acquireSessionMap(sess: Session, id: string): MapDef {
   assertRegisteredExtensions(sess.extensions, mapExtensionCalls(map));
   assertBattleRegistered(sess.battle, mapUsesBattle(map));
   assertScenesRegistered(sess.scenes, mapSceneIds(map));
+  assertRpgMakerScreenCapabilities(
+    sess.worldOptions.rpgMakerScreen ?? null,
+    sess.rpgMakerScreenPresentation,
+    mapRpgMakerScreenCapabilityUse(map),
+  );
   startupProfileMark("map-acquire:validated");
   // Compile into locals first. A throw leaves the live cache and simulation
   // untouched, which is what an async caller needs before retrying a frame.
@@ -802,6 +904,11 @@ export function prepareSessionMapStep(sess: Session, id: string): boolean {
         assertRegisteredExtensions(sess.extensions, mapExtensionCalls(map));
         assertBattleRegistered(sess.battle, mapUsesBattle(map));
         assertScenesRegistered(sess.scenes, mapSceneIds(map));
+        assertRpgMakerScreenCapabilities(
+          sess.worldOptions.rpgMakerScreen ?? null,
+          sess.rpgMakerScreenPresentation,
+          mapRpgMakerScreenCapabilityUse(map),
+        );
         preparation.map = map;
       }
       return false;
@@ -927,6 +1034,7 @@ export function createSession(
   const preparedRpgMakerText = project.system?.rpgMakerText
     ? options.rpgMakerText!.prepare(project.actors ?? [], project.system.rpgMakerText)
     : undefined;
+  const rpgMakerScreenPresentation = options.rpgMakerScreenPresentation ?? null;
   const worldOptions: WorldOptions = {
     messageBlocksPlayer: project.system?.messageBlocksPlayer === true,
     textVariables: project.system?.textVariables === true,
@@ -935,6 +1043,7 @@ export function createSession(
     // Declaring system.textTokens (the key allowlist) is the explicit {x:}
     // opt-in: a document without it keeps the pre-{x:} literal behavior.
     textTokensEnabled: Array.isArray(project.system?.textTokens),
+    ...(options.rpgMakerText ? { rpgMakerScreen: options.rpgMakerText } : {}),
     extensions,
     items: project.items,
     inventory: project.system?.inventory,
@@ -959,6 +1068,15 @@ export function createSession(
     for (const event of commonEvents) sceneIdsInCommands(event.commands, found);
     return found;
   })());
+  const commonScreenUse = commonRpgMakerScreenCapabilityUse(commonEvents);
+  if (project.system?.mapNameDisplay === true) {
+    commonScreenUse.presentation.add("mapNameDisplay");
+  }
+  assertRpgMakerScreenCapabilities(
+    options.rpgMakerText ?? null,
+    rpgMakerScreenPresentation,
+    commonScreenUse,
+  );
   startupProfileMark("session-create:registrations");
   if (isProjectShell(project)) {
     if (!maps) throw new Error("map repository: ProjectShell requires a MapRepository");
@@ -1005,6 +1123,7 @@ export function createSession(
       handoffResolver,
       handoffCapability: options.handoffCapability ?? null,
       travelRuntime,
+      rpgMakerScreenPresentation,
     };
     acquireSessionMap(session, project.start.map);
     releaseSessionMapsExcept(session, [project.start.map]);
@@ -1015,6 +1134,11 @@ export function createSession(
     assertRegisteredExtensions(extensions, mapExtensionCalls(map));
     assertBattleRegistered(options.battle ?? null, mapUsesBattle(map));
     assertScenesRegistered(options.scenes ?? {}, mapSceneIds(map));
+    assertRpgMakerScreenCapabilities(
+      options.rpgMakerText ?? null,
+      rpgMakerScreenPresentation,
+      mapRpgMakerScreenCapabilityUse(map),
+    );
   }
   const inlineMaps = new Map<string, MapDef>(project.maps.map((m) => [m.id, m]));
   // Interpreter worlds compile at the FIXED motion reference: waits, text
@@ -1054,6 +1178,7 @@ export function createSession(
     handoffResolver,
     handoffCapability: options.handoffCapability ?? null,
     travelRuntime,
+    rpgMakerScreenPresentation,
   };
 }
 
@@ -1877,6 +2002,12 @@ function startBattleScene(sess: Session, s: SessionState, request: PendingBattle
     if (battleAudio === null) delete s.interp.audio;
     else s.interp.audio = battleAudio;
   }
+  const rpgMakerScreen = sess.worldOptions.rpgMakerScreen;
+  if (rpgMakerScreen && s.interp.screen) {
+    const cleared = rpgMakerScreen.onBattleStart(s.interp.screen);
+    if (cleared) s.interp.screen = cleared;
+    else delete s.interp.screen;
+  }
   s.scene = {
     kind: "battle",
     fiber: request.fiber,
@@ -1962,9 +2093,9 @@ function startNextGameScene(sess: Session, s: SessionState): void {
 function rpgMakerGameScreenRuntime(
   sess: Session,
   scene: Readonly<SceneSlot> | null,
-): RpgMakerTextRuntime | null {
+): RpgMakerScreenRuntime | null {
   if (scene?.kind !== "battle") return null;
-  return sess.worldOptions.rpgMakerText?.runtime ?? null;
+  return sess.worldOptions.rpgMakerScreen ?? null;
 }
 
 /** True when this parked screen wait belongs to a stock Game_Screen clock.
@@ -2138,7 +2269,7 @@ function advanceGameScene(
  * completion, leaving the fibers themselves byte-stable while frozen. */
 function advanceSessionScreenEffects(sess: Session, s: SessionState): void {
   if (!s.interp.screen) return;
-  const advanceOptional = sess.worlds.get(s.mapId)?.rpgMakerText?.runtime.advanceScreenEffects;
+  const advanceOptional = sess.worlds.get(s.mapId)?.rpgMakerScreen?.advanceScreenEffects;
   s.interp.screen = advanceScreenEffects(s.interp.screen, advanceOptional);
 }
 

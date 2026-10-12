@@ -187,6 +187,9 @@ export interface AttractOptions {
   scene?: SceneOptions;
   /** Optional capabilities required by imported RPG Maker text/travel. */
   rpgMakerText?: RpgMakerTextRuntime;
+  /** Rendering-host validation bit forwarded identically through live and
+   * refold sessions. Headless attract drivers omit it. */
+  rpgMakerScreenPresentation?: boolean;
   travel?: TravelRuntime;
   /** Message pagination, forwarded to createSession (pure, like the
    *  registrations above). */
@@ -445,6 +448,7 @@ export class AttractController {
       scenes: opts.scenes,
       scene: opts.scene,
       rpgMakerText: opts.rpgMakerText,
+      rpgMakerScreenPresentation: opts.rpgMakerScreenPresentation,
       travel: opts.travel,
       immutableState: opts.immutableState,
       paginateText: opts.paginateText,

@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { AttractController } from "../src/engine/attract.ts";
+import type { BattleRules } from "../src/engine/battle.ts";
 import {
   createSessionSnapshot,
   encodeEnvelope,
   canSave,
 } from "../src/engine/save.ts";
 import { restoreSessionEnvelope } from "../src/engine/save-restore.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
 import {
   advanceScreenEffects,
@@ -35,6 +37,18 @@ import {
 import type { AnimationDef, Command, MapDef, Project } from "../src/engine/types.ts";
 import schema from "../src/data/schema.json";
 import { toyBattleRules } from "./fixtures/toy-battle.ts";
+
+const instantBattleRules: BattleRules = {
+  start(ext) {
+    return { ext, state: null };
+  },
+  step(state) {
+    return state;
+  },
+  done() {
+    return { ext: null, result: "win" };
+  },
+};
 
 const PULSE: AnimationDef = {
   id: "pulse",
@@ -81,6 +95,184 @@ function run(session: Session, state: SessionState, frames: number): SessionStat
   for (let i = 0; i < frames; i++) next = stepSession(session, next, { buttons: 0 });
   return next;
 }
+
+describe("RPG Maker screen capability admission", () => {
+  test("tone and weather fail at load through nested map and common-event branches", () => {
+    const nested = project([{
+      op: "if",
+      if: { kind: "switch", id: "unused" },
+      then: [{
+        op: "choices",
+        prompt: "weather",
+        options: [{
+          text: "rain",
+          commands: [{ op: "weather", kind: "rain", power: 5, duration: 1, wait: true }],
+        }],
+      }],
+      else: [{
+        op: "screenTone",
+        tone: { r: -30, g: 20, b: 10, gray: 40 },
+        duration: 1,
+        wait: true,
+      }],
+    }]);
+    expect(() => createSession(nested, 60)).toThrow(
+      "RPG Maker screen: commands screenTone, weather require the optional rpgMakerText runtime",
+    );
+
+    const common = project([]);
+    common.commonEvents = [{
+      id: "storm",
+      trigger: "none",
+      commands: [{ op: "weather", kind: "storm", power: 9, duration: 1 }],
+    }];
+    expect(() => createSession(common, 60)).toThrow(
+      "RPG Maker screen: commands weather require the optional rpgMakerText runtime",
+    );
+  });
+
+  test("screen-only commands can register the runtime without RPG Maker message grammar", () => {
+    const p = project([
+      { op: "screenTone", tone: { r: -20, g: 10, b: 30, gray: 40 }, duration: 0 },
+      { op: "weather", kind: "snow", power: 4, duration: 0 },
+      { op: "switch", id: "done", value: true },
+    ]);
+    expect(p.system?.rpgMakerText).toBeUndefined();
+    const session = createSession(p, 60, { rpgMakerText: rpgMakerTextRuntime });
+    const state = run(session, startSession(p, session), 1);
+    expect(state.sw.switches.done).toBe(true);
+    expect(state.interp.screen).toMatchObject({
+      tone: { to: { r: -20, g: 10, b: 30, gray: 40 } },
+      weather: { kind: "snow", targetPower: 4 },
+    });
+  });
+
+  test("rendering hosts reject reducer state they cannot present", () => {
+    const p = project([
+      { op: "screenTone", tone: { r: 10, g: 20, b: 30, gray: 40 }, duration: 0 },
+      { op: "showPicture", id: 1, layer: "pictures", variant: "portrait", x: 0, y: 0 },
+      { op: "timer", action: "start", seconds: 3 },
+      { op: "mapNameDisplay", visible: true },
+    ]);
+    expect(() => createSession(p, 60, {
+      rpgMakerText: rpgMakerTextRuntime,
+      rpgMakerScreenPresentation: false,
+    })).toThrow(
+      "RPG Maker screen: commands mapNameDisplay, screenTone, showPicture, timer require the optional screenPresentation capability",
+    );
+
+    // Reducer-only tools remain valid when they intentionally omit a UI
+    // policy, while a GameView-style explicit false rejects the system flag.
+    expect(() => createSession(p, 60, { rpgMakerText: rpgMakerTextRuntime })).not.toThrow();
+    const mapBanner = project([]);
+    mapBanner.system = { mapNameDisplay: true };
+    expect(() => createSession(mapBanner, 60, {
+      rpgMakerScreenPresentation: false,
+    })).toThrow(
+      "RPG Maker screen: commands mapNameDisplay require the optional screenPresentation capability",
+    );
+  });
+});
+
+describe("RPG Maker battle-start screen cleanup", () => {
+  test("a real RPG Maker battle clears only fade, flash and shake", () => {
+    const p = project([
+      { op: "screenFade", direction: "out", duration: 10 },
+      { op: "screenFlash", color: { r: 255, g: 240, b: 220, a: 200 }, intensity: 180, duration: 10 },
+      { op: "screenShake", strength: 7, speed: 3, duration: 10 },
+      { op: "screenTint", layer: "daylight", color: { r: 20, g: 30, b: 40, a: 80 }, duration: 10 },
+      { op: "screenTone", tone: { r: -30, g: 20, b: 10, gray: 40 }, duration: 10 },
+      { op: "weather", kind: "rain", power: 6, duration: 10 },
+      { op: "showPicture", id: 1, layer: "pictures", variant: "portrait", x: 24, y: 40 },
+      { op: "camera", target: { x: 4, y: 4 }, duration: 10 },
+      { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
+      { op: "battle", setup: { enemyHp: 99 } },
+    ]);
+    const session = createSession(p, 60, {
+      battle: toyBattleRules,
+      rpgMakerText: rpgMakerTextRuntime,
+    });
+    const state = run(session, startSession(p, session), 1);
+    expect(state.scene?.kind).toBe("battle");
+    expect(state.interp.screen?.fade).toBeUndefined();
+    expect(state.interp.screen?.flash).toBeUndefined();
+    expect(state.interp.screen?.shake).toBeUndefined();
+    expect(state.interp.screen).toMatchObject({
+      tints: { daylight: {} },
+      tone: { to: { r: -30, g: 20, b: 10, gray: 40 } },
+      weather: { kind: "rain", targetPower: 6 },
+      pictures: { "1": { layer: "pictures", variant: "portrait" } },
+      camera: { mode: "fixed" },
+      backdrop: { layer: "cutscene", variant: "blue" },
+    });
+  });
+
+  test("ordinary battles retain native screen state byte-for-field", () => {
+    const p = project([
+      { op: "screenFade", direction: "out", duration: 10 },
+      { op: "screenFlash", color: { r: 255, g: 255, b: 255, a: 255 }, intensity: 255, duration: 10 },
+      { op: "screenShake", strength: 8, speed: 4, duration: 10 },
+      { op: "battle", setup: { enemyHp: 99 } },
+    ]);
+    const session = createSession(p, 60, { battle: toyBattleRules });
+    const state = run(session, startSession(p, session), 1);
+    expect(state.scene?.kind).toBe("battle");
+    expect(state.interp.screen).toMatchObject({
+      fade: { left: 600 },
+      flash: { left: 600 },
+      shake: { left: 600 },
+    });
+  });
+
+  test("a declined battle does not run battle-start cleanup", () => {
+    const p = project([
+      { op: "screenFade", direction: "out", duration: 10 },
+      { op: "screenFlash", color: { r: 255, g: 255, b: 255, a: 255 }, intensity: 255, duration: 10 },
+      { op: "battle", setup: { skip: true } },
+      { op: "switch", id: "continued", value: true },
+    ]);
+    const session = createSession(p, 60, {
+      battle: toyBattleRules,
+      rpgMakerText: rpgMakerTextRuntime,
+    });
+    const state = run(session, startSession(p, session), 2);
+    expect(state.scene).toBeNull();
+    expect(state.sw.switches.continued).toBe(true);
+    expect(state.interp.screen?.fade).toBeDefined();
+    expect(state.interp.screen?.flash).toBeDefined();
+  });
+
+  test("cleanup, surviving clocks and saves agree at 60/30/20/4 Hz", () => {
+    const commands: Command[] = [
+      { op: "screenFade", direction: "out", duration: 10 },
+      { op: "screenShake", strength: 8, speed: 4, duration: 10 },
+      { op: "screenTone", tone: { r: -30, g: 20, b: 10, gray: 40 }, duration: 10 },
+      { op: "weather", kind: "snow", power: 5, duration: 10 },
+      { op: "battle", setup: { enemyHp: 99 } },
+      { op: "switch", id: "done", value: true },
+    ];
+    const outcomes = ([60, 30, 20, 4] as const).map((hz) => {
+      const p = project(commands);
+      const session = createSession(p, hz, {
+        battle: instantBattleRules,
+        rpgMakerText: rpgMakerTextRuntime,
+      });
+      const state = run(session, startSession(p, session), hz);
+      expect(state.scene).toBeNull();
+      expect(state.interp.screen?.fade).toBeUndefined();
+      expect(state.interp.screen?.shake).toBeUndefined();
+      const restored = restoreSessionEnvelope(
+        session,
+        encodeEnvelope(createSessionSnapshot(session, state, 0)),
+      );
+      expect(restored.interp).toEqual(state.interp);
+      expect(restored.sw).toEqual(state.sw);
+      expect(restored.scene).toEqual(state.scene);
+      return state.interp.screen;
+    });
+    for (const outcome of outcomes) expect(outcome).toEqual(outcomes[0]);
+  });
+});
 
 describe("KS1 deterministic screen presentation", () => {
   test("the v1 schema accepts every screen command and rejects malformed payloads", () => {

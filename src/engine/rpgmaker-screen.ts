@@ -6,6 +6,7 @@ import type {
   ToneTweenState,
   WeatherEffectState,
 } from "./screen.ts";
+import { screenEffectsEmpty } from "./screen.ts";
 import type { ScreenTone, WeatherKind } from "./types.ts";
 
 const ZERO_SCREEN_TONE: Readonly<ScreenTone> = Object.freeze({ r: 0, g: 0, b: 0, gray: 0 });
@@ -101,4 +102,17 @@ export function advanceRpgMakerScreenEffects(screen: ScreenEffectsState): void {
       }
     }
   }
+}
+
+/** RPG Maker MV/MZ Game_Screen.onBattleStart clears fade/flash/shake/zoom and
+ * the stale battle-picture bank. Tone, weather and map pictures survive. The
+ * kit has no stock zoom bank (its camera is map-owned), and no separate stale
+ * battle-picture namespace to erase. */
+export function clearRpgMakerScreenForBattle(
+  screen: ScreenEffectsState,
+): ScreenEffectsState | undefined {
+  delete screen.fade;
+  delete screen.flash;
+  delete screen.shake;
+  return screenEffectsEmpty(screen) ? undefined : screen;
 }

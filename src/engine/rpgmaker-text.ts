@@ -16,6 +16,7 @@ import type {
 } from "./rpgmaker-text-contract.ts";
 import {
   advanceRpgMakerScreenEffects,
+  clearRpgMakerScreenForBattle,
   startScreenTone,
   startWeather,
 } from "./rpgmaker-screen.ts";
@@ -339,4 +340,5 @@ export const rpgMakerTextRuntime: RpgMakerTextRuntime = Object.freeze({
   startScreenTone,
   startWeather,
   advanceScreenEffects: advanceRpgMakerScreenEffects,
+  onBattleStart: clearRpgMakerScreenForBattle,
 });

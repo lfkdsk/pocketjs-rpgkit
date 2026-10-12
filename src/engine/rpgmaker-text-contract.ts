@@ -106,8 +106,29 @@ export interface PreparedRpgMakerText {
   readonly playerActor?: string;
 }
 
+/** Reducer half of RPG Maker's optional Game_Screen capability. It is kept
+ * separate from the text configuration because a project may author screen
+ * commands without opting its messages into RPG Maker's escape grammar. */
+export interface RpgMakerScreenRuntime {
+  startScreenTone(
+    screen: ScreenEffectsState,
+    target: Readonly<ScreenTone>,
+    frames: number,
+  ): void;
+  startWeather(
+    screen: ScreenEffectsState,
+    kind: WeatherKind,
+    power: number,
+    frames: number,
+    seed: number,
+  ): void;
+  advanceScreenEffects(screen: ScreenEffectsState): void;
+  /** Apply the stock Game_Screen.onBattleStart transient cleanup. */
+  onBattleStart(screen: ScreenEffectsState): ScreenEffectsState | undefined;
+}
+
 /** Parser supplied only by applications that enable `system.rpgMakerText`. */
-export interface RpgMakerTextRuntime {
+export interface RpgMakerTextRuntime extends RpgMakerScreenRuntime {
   prepare(
     actors: readonly RpgMakerTextSourceActor[],
     config: Readonly<RpgMakerTextProjectConfig>,
@@ -144,17 +165,4 @@ export interface RpgMakerTextRuntime {
     first: number,
     second: number,
   ): number[] | null;
-  startScreenTone(
-    screen: ScreenEffectsState,
-    target: Readonly<ScreenTone>,
-    frames: number,
-  ): void;
-  startWeather(
-    screen: ScreenEffectsState,
-    kind: WeatherKind,
-    power: number,
-    frames: number,
-    seed: number,
-  ): void;
-  advanceScreenEffects(screen: ScreenEffectsState): void;
 }

@@ -69,6 +69,7 @@ export async function importToDirectory(projectDir: string, outDir: string, opti
   write("coverage.md", coverageMarkdown(`${result.project.title}: RPG Maker import coverage`, result.cov, {
     staticTable: true,
     audioMedia: result.audioMedia,
+    project: result.project,
   }));
   return result;
 }

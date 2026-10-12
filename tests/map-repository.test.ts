@@ -33,6 +33,7 @@ import {
   utf8Encode,
 } from "../src/engine/save.ts";
 import { restoreSessionEnvelope } from "../src/engine/save-restore.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
 import { splitProjectMaps } from "../tools/lib/map-project.ts";
 import type { MapDef, Project, ProjectShell } from "../src/engine/types.ts";
@@ -978,6 +979,73 @@ describe("staged map loading keeps session registrations", () => {
     expect(() => {
       for (let i = 0; i < 40; i++) state = stepSession(session, state, { buttons: 0 });
     }).toThrow(/unregistered extension calls: command demo\.mark/);
+  });
+
+  test("a staged map cannot admit an unregistered RPG Maker screen command", () => {
+    const project = fixture();
+    (project.maps[0]!.events![0]!.pages[0]!.commands[0] as { fade?: number }).fade = 0.4;
+    project.maps[1]!.events!.push({
+      id: "storm",
+      x: 3,
+      y: 3,
+      pages: [{
+        trigger: "parallel",
+        commands: [{ op: "weather", kind: "storm", power: 9, duration: 1, wait: true }],
+      }],
+    });
+    const split = splitProjectMaps(project);
+    const files = new Map(split.entries.map((entry) => [entry.path, entry.bytes]));
+    const repository = createJsonMapRepository(split.shell.mapIndex, {
+      read: (entry) => files.get(entry),
+    });
+    const session = createSession(split.shell, 60, { maps: repository });
+    let state = startSession(split.shell, session);
+    state = stepSession(session, state, { buttons: 0, confirmEdge: true });
+    expect(() => {
+      for (let i = 0; i < 40; i++) state = stepSession(session, state, { buttons: 0 });
+    }).toThrow(
+      "RPG Maker screen: commands weather require the optional rpgMakerText runtime",
+    );
+  });
+});
+
+describe("sharded map screen capability admission", () => {
+  function screenProject(): Project {
+    const project = fixture();
+    project.maps[1]!.events!.push({
+      id: "tone",
+      x: 3,
+      y: 3,
+      pages: [{
+        trigger: "parallel",
+        commands: [{
+          op: "screenTone",
+          tone: { r: -30, g: 20, b: 10, gray: 40 },
+          duration: 1,
+        }],
+      }],
+    });
+    return project;
+  }
+
+  test("full lazy acquisition validates before compiling or caching the map", () => {
+    const split = splitProjectMaps(screenProject());
+    const files = new Map(split.entries.map((entry) => [entry.path, entry.bytes]));
+    const repository = () => createJsonMapRepository(split.shell.mapIndex, {
+      read: (entry) => files.get(entry),
+    });
+    const missing = createSession(split.shell, 60, { maps: repository() });
+    expect(() => acquireSessionMap(missing, "map_01")).toThrow(
+      "RPG Maker screen: commands screenTone require the optional rpgMakerText runtime",
+    );
+    expect(missing.maps.has("map_01")).toBe(false);
+    expect(missing.worlds.has("map_01")).toBe(false);
+
+    const registered = createSession(split.shell, 60, {
+      maps: repository(),
+      rpgMakerText: rpgMakerTextRuntime,
+    });
+    expect(acquireSessionMap(registered, "map_01").id).toBe("map_01");
   });
 });
 

@@ -63,6 +63,7 @@ import type {
   RpgMakerTextColourSpan,
   RpgMakerTextConfig,
   RpgMakerTextLayoutControl,
+  RpgMakerScreenRuntime,
   RpgMakerTextRuntime,
 } from "./rpgmaker-text-contract.ts";
 import type { PendingTravelRequest, TravelCommandRuntime } from "./travel-contract.ts";
@@ -2520,6 +2521,10 @@ export interface World {
   rpgMakerText?: RpgMakerTextConfig & {
     runtime: RpgMakerTextRuntime;
   };
+  /** Optional reducer half of RPG Maker Game_Screen. Kept independent from
+   * message grammar so screen commands cannot silently disappear in a project
+   * that has no `system.rpgMakerText` block. */
+  rpgMakerScreen?: RpgMakerScreenRuntime;
   /** Optional command publisher paired with a follower/vehicle Session. */
   travelRuntime?: TravelCommandRuntime;
   /** Actor database facts used by imported actor conditions. */
@@ -2560,6 +2565,7 @@ export interface WorldOptions {
   rpgMakerText?: RpgMakerTextConfig & {
     runtime: RpgMakerTextRuntime;
   };
+  rpgMakerScreen?: RpgMakerScreenRuntime;
   travelRuntime?: TravelCommandRuntime;
   actors?: readonly ActorDef[];
   playerActor?: string;
@@ -3143,6 +3149,7 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     textVariables: options.textVariables === true,
     characterNames: options.characterNames === true,
     ...(options.rpgMakerText ? { rpgMakerText: options.rpgMakerText } : {}),
+    ...(options.rpgMakerScreen ? { rpgMakerScreen: options.rpgMakerScreen } : {}),
     ...(options.travelRuntime ? { travelRuntime: options.travelRuntime } : {}),
     ...(actorsById ? { actors: actorsById } : {}),
     ...(options.playerActor !== undefined ? { playerActor: options.playerActor } : {}),
@@ -5498,10 +5505,10 @@ function startSimpleScreenEffect(s: InterpState, w: World, ins: SimpleScreenInst
   switch (ins.op) {
     case "screenFade": startScreenFade(screen, ins.direction, ins.color, ins.frames); break;
     case "screenTint": startScreenTint(screen, ins.layer, ins.color, ins.frames); break;
-    case "screenTone": w.rpgMakerText?.runtime.startScreenTone(screen, ins.tone, ins.frames); break;
+    case "screenTone": w.rpgMakerScreen?.startScreenTone(screen, ins.tone, ins.frames); break;
     case "weather": {
       const seed = (s.sw.rng ^ Math.imul(s.frame + 1, 0x9e3779b9)) >>> 0;
-      w.rpgMakerText?.runtime.startWeather(screen, ins.kind, ins.power, ins.frames, seed);
+      w.rpgMakerScreen?.startWeather(screen, ins.kind, ins.power, ins.frames, seed);
       break;
     }
     case "screenFlash": startScreenFlash(screen, ins.color, ins.intensity, ins.frames); break;

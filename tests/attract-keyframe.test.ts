@@ -302,7 +302,12 @@ describe("frozen-scene screen keyframes", () => {
 
   test("declared RPG Maker battles advance Game_Screen, preserve rewind bytes and keep live waits", () => {
     const project = frozenEffectProject(
-      { op: "screenFade", direction: "out", duration: 0.1, wait: true },
+      {
+        op: "screenTone",
+        tone: { r: -30, g: 20, b: 10, gray: 40 },
+        duration: 0.1,
+        wait: true,
+      },
       { op: "battle", setup: null },
     );
     project.system = { rpgMakerText: { party: [], currencyUnit: "G" } };
@@ -313,11 +318,11 @@ describe("frozen-scene screen keyframes", () => {
     enterScreenScene(controllers);
     expect(controllers.live.state.scene?.kind).toBe("battle");
     const waitSince = controllers.live.state.interp.main?.since;
-    expect(controllers.live.state.interp.screen?.fade?.left).toBe(6);
+    expect(controllers.live.state.interp.screen?.tone?.left).toBe(6);
 
     for (let frame = 0; frame < 8; frame++) stepScreenTimelines(controllers);
     expect(controllers.live.state.scene).not.toBeNull();
-    expect(controllers.live.state.interp.screen?.fade?.left).toBe(0);
+    expect(controllers.live.state.interp.screen?.tone?.left).toBe(0);
     const liveMidScene = canonicalJson(controllers.live.state as unknown as JsonValue);
     rewindAndReplayFrozenSuffix(controllers, liveMidScene, "RPG Maker battle");
 
@@ -395,8 +400,8 @@ describe("frozen-scene screen keyframes", () => {
     } as unknown as JsonValue);
     expect(opened.playerRoute).not.toBeNull();
     expect(opened.move.moving).toBe(true);
+    expect(opened.interp.screen?.fade).toBeUndefined();
     expect(opened.interp.screen).toMatchObject({
-      fade: { left: 5 },
       tints: { slow: { left: 5 } },
       backdrop: { layer: "cutscene", variant: "second" },
       backdropStack: [{ layer: "cutscene", variant: "first" }],
@@ -404,8 +409,8 @@ describe("frozen-scene screen keyframes", () => {
 
     for (let frame = 0; frame < 8; frame++) stepScreenTimelines(controllers);
     expect(controllers.live.state.scene).not.toBeNull();
+    expect(controllers.live.state.interp.screen?.fade).toBeUndefined();
     expect(controllers.live.state.interp.screen).toMatchObject({
-      fade: { left: 0 },
       tints: { slow: { left: 5 } },
       backdrop: { layer: "cutscene", variant: "second" },
       backdropStack: [{ layer: "cutscene", variant: "first" }],
