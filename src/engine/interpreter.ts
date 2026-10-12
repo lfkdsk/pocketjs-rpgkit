@@ -1058,12 +1058,7 @@ function compileScoped(
           break;
         }
         case "scrollText":
-          emit({
-            op: "scrollText",
-            lines: c.lines,
-            speed: c.speed,
-            noFastForward: c.noFastForward === true,
-          });
+          emit({ ...c, noFastForward: c.noFastForward === true });
           break;
         case "choices": {
           const ins: Extract<Instr, { op: "choices" }> = {
@@ -1187,26 +1182,16 @@ function compileScoped(
           emit({ op: "moveControl", target: c.target, control: c.control });
           break;
         case "followers":
-          emit({ op: "followers", visible: c.visible });
-          break;
         case "gatherFollowers":
-          emit({ op: "gatherFollowers" });
-          break;
         case "vehicle":
-          emit({ op: "vehicle", action: c.action });
-          break;
         case "setVehicleLocation":
-          emit({ op: "setVehicleLocation", id: c.id, map: c.map, x: c.x, y: c.y });
-          break;
         case "setVehicleImage":
-          emit({ op: "setVehicleImage", id: c.id, sprite: c.sprite });
-          break;
         case "setVehicleBgm":
-          emit({
-            op: "setVehicleBgm",
-            id: c.id,
-            bgm: c.bgm === null ? null : { ...c.bgm },
-          });
+          if (c.op === "setVehicleBgm") {
+            emit({ ...c, bgm: c.bgm === null ? null : { ...c.bgm } });
+          } else {
+            emit({ ...c });
+          }
           break;
         case "appearance":
           emit({
@@ -1267,21 +1252,11 @@ function compileScoped(
           });
           break;
         case "screenTone":
-          emit({
-            op: "screenTone",
-            tone: { ...c.tone },
-            frames: secondsToFrames(c.duration, hz),
-            wait: c.wait ?? false,
-          });
-          break;
         case "weather":
-          emit({
-            op: "weather",
-            kind: c.kind,
-            power: c.power,
-            frames: secondsToFrames(c.duration, hz),
-            wait: c.wait ?? false,
-          });
+          {
+            const { duration, ...instruction } = c;
+            emit({ ...instruction, frames: secondsToFrames(duration, hz), wait: c.wait ?? false });
+          }
           break;
         case "screenFlash":
           emit({
@@ -1440,16 +1415,11 @@ function compileScoped(
           emit({ op: "saveAccess", enabled: c.enabled });
           break;
         case "formationAccess":
-          emit({ op: "formationAccess", enabled: c.enabled });
-          break;
         case "formationSwap":
-          emit({ op: "formationSwap", first: c.first, second: c.second });
-          break;
         case "changeTileset":
-          emit({ op: "changeTileset", id: c.id });
-          break;
         case "windowTone":
-          emit({ op: "windowTone", tone: { ...c.tone } });
+          if (c.op === "windowTone") emit({ ...c, tone: { ...c.tone } });
+          else emit({ ...c });
           break;
         case "locationInfo":
           emit({
@@ -5433,6 +5403,27 @@ type TimedScreenInstr = Extract<Instr, {
     "scrollMap" | "movePicture" | "tintPicture" | "balloon";
 }>;
 
+type SimpleScreenInstr = Extract<TimedScreenInstr, {
+  op: "screenFade" | "screenTint" | "screenTone" | "weather" | "screenFlash" | "screenShake";
+}>;
+
+function startSimpleScreenEffect(s: InterpState, ins: SimpleScreenInstr): void {
+  const screen = ensureScreen(s);
+  switch (ins.op) {
+    case "screenFade": startScreenFade(screen, ins.direction, ins.color, ins.frames); break;
+    case "screenTint": startScreenTint(screen, ins.layer, ins.color, ins.frames); break;
+    case "screenTone": startScreenTone(screen, ins.tone, ins.frames); break;
+    case "weather": {
+      const seed = (s.sw.rng ^ Math.imul(s.frame + 1, 0x9e3779b9)) >>> 0;
+      startWeather(screen, ins.kind, ins.power, ins.frames, seed);
+      break;
+    }
+    case "screenFlash": startScreenFlash(screen, ins.color, ins.intensity, ins.frames); break;
+    case "screenShake": startScreenShake(screen, ins.strength, ins.speed, ins.frames); break;
+  }
+  if (screenEffectsEmpty(screen)) delete s.screen;
+}
+
 function screenInstructionFrames(ins: TimedScreenInstr): number {
   return ins.op === "balloon" ? ins.frames ?? 0 : ins.frames;
 }
@@ -6061,55 +6052,16 @@ function runFiber(
         if (s.error) return;
         top.pc++;
         break;
-      case "screenFade": {
-        const screen = ensureScreen(s);
-        startScreenFade(screen, ins.direction, ins.color, ins.frames);
-        if (screenEffectsEmpty(screen)) delete s.screen;
+      case "screenFade":
+      case "screenTint":
+      case "screenTone":
+      case "weather":
+      case "screenFlash":
+      case "screenShake":
+        startSimpleScreenEffect(s, ins);
         if (finishOrWaitScreen(s, f, ins)) return;
         top.pc++;
         break;
-      }
-      case "screenTint": {
-        const screen = ensureScreen(s);
-        startScreenTint(screen, ins.layer, ins.color, ins.frames);
-        if (screenEffectsEmpty(screen)) delete s.screen;
-        if (finishOrWaitScreen(s, f, ins)) return;
-        top.pc++;
-        break;
-      }
-      case "screenTone": {
-        const screen = ensureScreen(s);
-        startScreenTone(screen, ins.tone, ins.frames);
-        if (screenEffectsEmpty(screen)) delete s.screen;
-        if (finishOrWaitScreen(s, f, ins)) return;
-        top.pc++;
-        break;
-      }
-      case "weather": {
-        const screen = ensureScreen(s);
-        const seed = (s.sw.rng ^ Math.imul(s.frame + 1, 0x9e3779b9)) >>> 0;
-        startWeather(screen, ins.kind, ins.power, ins.frames, seed);
-        if (screenEffectsEmpty(screen)) delete s.screen;
-        if (finishOrWaitScreen(s, f, ins)) return;
-        top.pc++;
-        break;
-      }
-      case "screenFlash": {
-        const screen = ensureScreen(s);
-        startScreenFlash(screen, ins.color, ins.intensity, ins.frames);
-        if (screenEffectsEmpty(screen)) delete s.screen;
-        if (finishOrWaitScreen(s, f, ins)) return;
-        top.pc++;
-        break;
-      }
-      case "screenShake": {
-        const screen = ensureScreen(s);
-        startScreenShake(screen, ins.strength, ins.speed, ins.frames);
-        if (screenEffectsEmpty(screen)) delete s.screen;
-        if (finishOrWaitScreen(s, f, ins)) return;
-        top.pc++;
-        break;
-      }
       case "camera": {
         const player = {
           x: input.playerCell.x * TILE + TILE / 2,
@@ -6348,18 +6300,10 @@ function runFiber(
         top.pc++;
         break;
       case "menuAccess":
-        if (ins.enabled) delete s.sw.menuAccess;
-        else s.sw.menuAccess = false;
-        top.pc++;
-        break;
       case "saveAccess":
-        if (ins.enabled) delete s.sw.saveAccess;
-        else s.sw.saveAccess = false;
-        top.pc++;
-        break;
       case "formationAccess":
-        if (ins.enabled) delete s.sw.formationAccess;
-        else s.sw.formationAccess = false;
+        if (ins.enabled) delete s.sw[ins.op];
+        else s.sw[ins.op] = false;
         top.pc++;
         break;
       case "formationSwap": {

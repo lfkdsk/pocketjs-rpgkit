@@ -942,16 +942,6 @@ export function createSession(
     textVariables: project.system?.textVariables === true,
     characterNames: project.system?.characterNames === true,
     actors: project.actors,
-    ...(preparedRpgMakerText?.playerActor !== undefined
-      ? { playerActor: preparedRpgMakerText.playerActor }
-      : {}),
-    ...(preparedRpgMakerText ? {
-      rpgMakerText: {
-        runtime: options.rpgMakerText!,
-        ...preparedRpgMakerText.config,
-      },
-    } : {}),
-    ...(travelRuntime ? { travelRuntime } : {}),
     // Declaring system.textTokens (the key allowlist) is the explicit {x:}
     // opt-in: a document without it keeps the pre-{x:} literal behavior.
     textTokensEnabled: Array.isArray(project.system?.textTokens),
@@ -963,6 +953,13 @@ export function createSession(
     animations: project.animations,
     textTokens: options.textTokens,
   };
+  if (preparedRpgMakerText) {
+    if (preparedRpgMakerText.playerActor !== undefined) {
+      worldOptions.playerActor = preparedRpgMakerText.playerActor;
+    }
+    worldOptions.rpgMakerText = { runtime: options.rpgMakerText!, ...preparedRpgMakerText.config };
+  }
+  if (travelRuntime) worldOptions.travelRuntime = travelRuntime;
   if (options.paginateText) worldOptions.paginateText = options.paginateText;
   if (options.layoutScrollText) worldOptions.layoutScrollText = options.layoutScrollText;
   assertRegisteredExtensions(extensions, commonExtensionCalls(commonEvents));
