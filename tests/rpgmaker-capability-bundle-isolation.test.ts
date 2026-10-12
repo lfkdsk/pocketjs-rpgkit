@@ -43,9 +43,14 @@ const BUNDLE_NEEDLES = [
 ] as const;
 
 const EXPECTED_BYTES = {
-  meadow: 667_866,
-  sunstone: 1_101_055,
-  "rmi-play": 1_278_531,
+  // Immediate facing/routes and bounded backdrop history add 8,898 B to the
+  // plain control, 10,485 B where save/demo code is already reachable, and
+  // 10,901 B to the positive fixture that also reaches travel reconciliation.
+  // The implementation-graph and bundle needles below still prove that the
+  // optional RPG Maker and travel implementations stay out of both controls.
+  meadow: 676_764,
+  sunstone: 1_111_540,
+  "rmi-play": 1_289_432,
 } as const;
 
 function implementationModules(app: string): string[] {
