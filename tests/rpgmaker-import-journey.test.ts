@@ -153,7 +153,7 @@ describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", ()
     expect(s.sw.variables.v003).toBe(10 + luck);
     expect(s.sw.variables.v006 ?? 0).toBe(0);
     expect(s.sw.variables.v007 ?? 0).toBe(0);
-    expect(s.sw.items).toEqual({ item001: 2, item002: 1 });
+    expect(s.sw.items).toEqual({ item001: 2, item002: 1, weapon001: 1 });
     expect(s.sw.gold).toBe(150);
     expect(s.sw.self).toMatchObject({
       "map001/ev001": "A",
