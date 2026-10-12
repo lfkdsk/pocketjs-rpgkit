@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { AttractController } from "../src/engine/attract.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { createSession, startSession, stepSession, type Session, type SessionInput, type SessionState } from "../src/engine/session.ts";
 import type { ExtensionOptions } from "../src/engine/extensions.ts";
 import type { Project } from "../src/engine/types.ts";
@@ -17,6 +18,7 @@ import {
   rpgMakerBattleState,
 } from "../src/rpgmaker-battle/rules.ts";
 import type { RpgMakerBattleDatabase } from "../src/rpgmaker-battle/types.ts";
+import { travelRuntime } from "../src/travel.ts";
 import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject } from "../tools/rpgmaker-import/project.ts";
 
@@ -41,6 +43,8 @@ function options(
   initial?: ExtensionOptions["initial"],
 ): Parameters<typeof createSession>[2] {
   return {
+    rpgMakerText: rpgMakerTextRuntime,
+    travel: travelRuntime,
     extensions: { ...createRpgMakerBattleExtensions(db), ...(initial === undefined ? {} : { initial }) },
     battle: createRpgMakerBattleRules(db),
     scenes: { [NAME_INPUT_SCENE_ID]: nameInputRules },

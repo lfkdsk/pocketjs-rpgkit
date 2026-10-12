@@ -28,6 +28,10 @@ import { createWarpState, loadDemoChapter } from "../../src/ui/demo/runtime.ts";
 import type { DemoChapter } from "../../src/ui/demo/types.ts";
 import type { Dir, Project } from "../../src/engine/types.ts";
 import type { SessionState } from "../../src/engine/session.ts";
+import { rpgMakerTextRuntime } from "../../src/engine/rpgmaker-text.ts";
+import { travelRuntime } from "../../src/travel.ts";
+import { rpgMakerChoiceTextRuntime } from "../../src/ui/ChoiceColourLine.tsx";
+import { travelPresentation } from "../../src/ui/TravelActors.tsx";
 import { loadProject } from "../../editor/engine/document.ts";
 import { createPlaytestAssets, PLAYTEST_BATTLE_RULES } from "../../editor/engine/playtest-view.ts";
 import { buildPreviewArt, type PreviewTextureOps } from "./art.ts";
@@ -347,6 +351,10 @@ export function PreviewApp() {
             extensions={{ allowUnknown: true }}
             battle={PLAYTEST_BATTLE_RULES}
             battleScene={PreviewBattleScene}
+            rpgMakerText={rpgMakerTextRuntime}
+            choiceText={rpgMakerChoiceTextRuntime}
+            travel={travelRuntime}
+            travelPresentation={travelPresentation}
             choiceIcons={ChoiceIconBox}
             demo={{
               create(h) {

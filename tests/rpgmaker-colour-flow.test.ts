@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { flowRows, revealColourRuns } from "../src/ui/text-flow.ts";
+import { revealChoiceColourRuns as revealColourRuns } from "../src/ui/choice-colour.ts";
+import { flowRows } from "../src/ui/text-flow.ts";
 
 const measure = (text: string): number => Array.from(text).length;
 

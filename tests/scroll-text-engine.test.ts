@@ -12,6 +12,7 @@ import { AttractController } from "../src/engine/attract.ts";
 import { createAutosaveSessionSnapshot } from "../src/engine/save.ts";
 import { loadSession } from "../src/engine/save-restore.ts";
 import { validateSnapshot } from "../src/engine/save-validate.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { createSession, startSession, stepSession } from "../src/engine/session.ts";
 import type { Command, GameEvent, MapDef, Project } from "../src/engine/types.ts";
 
@@ -113,6 +114,7 @@ describe("continuous scrolling text reducer", () => {
     const world = createWorld(map([{ op: "scrollText", lines: ["Score {v:score} \\C[2]赤\\C[0]"], speed: 2 }]), [], 60, {
       textVariables: true,
       rpgMakerText: {
+        runtime: rpgMakerTextRuntime,
         actors: [],
         partyActorIds: [],
         currencyUnit: "G",

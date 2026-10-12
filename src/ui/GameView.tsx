@@ -25,7 +25,7 @@
 // the world camera commit through one precompiled jump batch; chunk images
 // stay mounted while the player walks.
 
-import { batch, createMemo, createSignal, Index, onCleanup, onMount, Show, type Accessor, type Component } from "solid-js";
+import { batch, createMemo, createSignal, onCleanup, onMount, Show, type Accessor, type Component } from "solid-js";
 import { Image, Text, View, type NodeMirror } from "@pocketjs/framework/components";
 import { createJumpBatch, type JumpBatch } from "@pocketjs/framework/animation";
 import { createElement, insertNode, setProp } from "@pocketjs/framework/renderer";
@@ -39,6 +39,8 @@ import { deepClone } from "../engine/clone.ts";
 import type { ExtensionOptions, ExtensionRuntime } from "../engine/extensions.ts";
 import type { BattleRules, SceneSlot } from "../engine/battle.ts";
 import type { SceneRules } from "../engine/scene.ts";
+import type { RpgMakerTextRuntime } from "../engine/rpgmaker-text-contract.ts";
+import type { TravelRuntime } from "../engine/travel-contract.ts";
 import { centerOffset } from "../engine/viewport.ts";
 import {
   createSession,
@@ -107,6 +109,11 @@ import { slotMeasure } from "./text-measure.ts";
 import { wrapLabel } from "./list-window.ts";
 import { formatUiText, KIT_UI_TEXT, mergeUiText, withUiText, type UiTextOverrides } from "../engine/ui-text.ts";
 import { resolveChoiceIcon, type ChoiceIconBoxComponent } from "./choice-icons.ts";
+import type { ChoiceTextRuntime } from "./choice-text-contract.ts";
+import type {
+  PlayerRenderFrame,
+  TravelPresentation,
+} from "./travel-presentation-contract.ts";
 import type { ItemIconRowComponent } from "./item-icon.ts";
 import { resolveUiTheme, windowToneTheme, type UiTheme } from "./theme.ts";
 import type {
@@ -140,14 +147,6 @@ import { ChunkLayer } from "./ChunkLayer.tsx";
 import { npcArt, npcArtHeight, npcArtKey, spritePaints } from "./npc-art.ts";
 import { StreamedChunkLayer, type StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
 import { actorDepth, OccludingUpperLayer } from "./OccludingUpperLayer.tsx";
-import {
-  airshipShadowFrame,
-  sameAirshipShadowFrame,
-  sameTravelActorFrames,
-  travelActorFrames,
-  type AirshipShadowFrame,
-  type TravelActorFrame,
-} from "./travel-actors.ts";
 import { startupProfileMark } from "../startup-profile.ts";
 import { frameProfileMark } from "../frame-profile.ts";
 import { attractRewindOptions, type GameViewDemoConfig, type GameViewOverlayConfig, type GameViewSessionHost } from "./demo-contract.ts";
@@ -324,13 +323,6 @@ export interface ActorRenderStats {
   updated: readonly string[];
 }
 
-interface PlayerRenderFrame {
-  src: string;
-  height: 16 | 32;
-  opacity: number;
-  visible: boolean;
-}
-
 function playerFrame(
   state: SessionState,
   sprites: Sprites,
@@ -360,117 +352,8 @@ function playerFrame(
   };
 }
 
-/** Vehicle-aware player paint. The ordinary player helper remains the chosen
- * hot path for projects without vehicles; opted-in projects replace the hero
- * art with the ridden vehicle while preserving player transparency. */
-function riddenPlayerFrame(
-  state: SessionState,
-  sprites: Sprites,
-  npcSrc: GameAssets["npcSrc"],
-  builtIn: GameAssets["player"],
-  builtInHeight: 16 | 32,
-): PlayerRenderFrame {
-  const id = state.travel?.vehicles?.riding;
-  const vehicle = id
-    ? state.travel!.vehicles!.entries.find((entry) => entry.id === id)
-    : undefined;
-  if (!vehicle) return playerFrame(state, sprites, npcSrc, builtIn, builtInHeight);
-  const appearance = effectivePlayerAppearance(state.sw);
-  const art = npcArt(vehicle.sprite, sprites, npcSrc);
-  return {
-    src: npcArtKey(art, walkPose(state.move.phase), state.move.facing),
-    height: npcArtHeight(art),
-    opacity: appearance.opacity / 255,
-    visible: appearance.visible && art !== "",
-  };
-}
-
 function ordinaryPlayerY(state: SessionState): number {
   return state.move.py;
-}
-
-function riddenPlayerY(state: SessionState): number {
-  return state.move.py - (state.travel?.vehicles?.airshipAltitude ?? 0);
-}
-
-function travelActorStyle(frame: TravelActorFrame) {
-  return {
-    ...npcStyle(frame.height, frame.depth, 1, frame.visible),
-    translateX: frame.px,
-    translateY: frame.py,
-  };
-}
-
-function airshipShadowStyle(frame: AirshipShadowFrame) {
-  return {
-    posType: 1,
-    insetL: 0,
-    insetT: 0,
-    width: 12,
-    height: 6,
-    zIndex: frame.depth,
-    opacity: frame.opacity,
-    display: frame.visible ? 0 : 1,
-    translateX: frame.px,
-    translateY: frame.py,
-  };
-}
-
-/** Optional actor nodes for party followers and parked vehicles. The parent
- * only constructs this component when TravelState exists, so legacy projects
- * install neither this frame hook nor these signals/nodes. */
-function TravelActors(props: {
-  initial: Readonly<SessionState>;
-  state: () => SessionState;
-  sprites: Sprites;
-  npcSrc: GameAssets["npcSrc"];
-  worldWidth: number;
-  active?: Accessor<boolean>;
-}) {
-  const initial = travelActorFrames(props.initial, props.sprites, props.npcSrc, props.worldWidth);
-  const initialShadow = airshipShadowFrame(props.initial, props.worldWidth);
-  const [followers, setFollowers] = createSignal<readonly TravelActorFrame[]>(initial.followers);
-  const [vehicles, setVehicles] = createSignal<readonly TravelActorFrame[]>(initial.vehicles);
-  const [shadow, setShadow] = createSignal<AirshipShadowFrame>(initialShadow);
-
-  onFrame(() => {
-    if (props.active && !props.active()) return;
-    const next = travelActorFrames(props.state(), props.sprites, props.npcSrc, props.worldWidth);
-    const nextShadow = airshipShadowFrame(props.state(), props.worldWidth);
-    setFollowers((current) => sameTravelActorFrames(current, next.followers) ? current : next.followers);
-    setVehicles((current) => sameTravelActorFrames(current, next.vehicles) ? current : next.vehicles);
-    setShadow((current) => sameAirshipShadowFrame(current, nextShadow) ? current : nextShadow);
-  });
-
-  return (
-    <>
-      <View
-        class="absolute"
-        style={airshipShadowStyle(shadow())}
-        debugName="rpgkit-airship-shadow"
-      >
-        <View style={{ posType: 1, insetL: 2, insetT: 0, width: 8, height: 2, bgColor: "#000000" }} />
-        <View style={{ posType: 1, insetL: 0, insetT: 2, width: 12, height: 2, bgColor: "#000000" }} />
-        <View style={{ posType: 1, insetL: 2, insetT: 4, width: 8, height: 2, bgColor: "#000000" }} />
-      </View>
-      <Index each={followers()}>{(frame) => (
-        <Image
-          class="absolute"
-          src={frame().src}
-          style={travelActorStyle(frame())}
-          debugName={`rpgkit-follower-${frame().id}`}
-        />
-      )}</Index>
-      <Index each={vehicles()}>{(frame) => (
-        <Image
-          class="absolute"
-          src={frame().src}
-          style={travelActorStyle(frame())}
-          debugName={`rpgkit-vehicle-${frame().id}`}
-        />
-      )}</Index>
-    </>
-  );
 }
 
 /** Per-map actor node pool statistics (GameView's onActorStats). */
@@ -507,6 +390,7 @@ function CurrentMapActors(props: {
   npcSrc: GameAssets["npcSrc"];
   tileEventVariants?: GameAssets["tileEventVariants"];
   extensions: ExtensionRuntime;
+  travelPresentation?: TravelPresentation;
   /** Commit-frame snapshots from the neighbour preview (world renderer). */
   handover?: WorldPreviewHandover;
   player: GameAssets["player"];
@@ -525,8 +409,25 @@ function CurrentMapActors(props: {
 }) {
   startupProfileMark("ui-actors:start");
   const initial = props.state();
-  const renderPlayer = initial.travel?.vehicles ? riddenPlayerFrame : playerFrame;
-  const renderPlayerY = initial.travel?.vehicles ? riddenPlayerY : ordinaryPlayerY;
+  const travelPresentation = initial.travel ? props.travelPresentation : undefined;
+  const renderPlayer = travelPresentation
+    ? (
+        state: SessionState,
+        sprites: Sprites,
+        npcSrc: GameAssets["npcSrc"],
+        builtIn: GameAssets["player"],
+        builtInHeight: 16 | 32,
+      ) => travelPresentation.playerFrame(
+        state,
+        sprites,
+        npcSrc,
+        builtIn,
+        builtInHeight,
+        playerFrame,
+      )
+    : playerFrame;
+  const renderPlayerY = travelPresentation?.playerY ?? ordinaryPlayerY;
+  const TravelActors = travelPresentation?.Actors;
   let slots = props.slots();
   const stride = props.worldWidth;
   let created = 0;
@@ -826,7 +727,7 @@ function CurrentMapActors(props: {
         }}
       />
       {npcs.map((npc) => npc.node as any)}
-      {initial.travel ? (
+      {initial.travel && TravelActors ? (
         <TravelActors
           initial={initial}
           state={props.state}
@@ -1115,6 +1016,12 @@ export interface GameViewProps {
   scenes?: Record<string, SceneRules>;
   /** Full-screen scenes freeze map simulation unless explicitly enabled. */
   scene?: SceneOptions;
+  /** Optional parser required by projects declaring `system.rpgMakerText`. */
+  rpgMakerText?: RpgMakerTextRuntime;
+  /** Optional follower/vehicle reducer required by travel projects. */
+  travel?: TravelRuntime;
+  /** Optional follower/vehicle presentation from `pocket-rpgkit/ui/travel`. */
+  travelPresentation?: TravelPresentation;
   /** Resolver for `{x:<key>}` text tokens, forwarded to createSession()
    *  for both live play and the attract/demo controller, so a demo, a
    *  rewind and a re-fold expand text identically. Called once per token
@@ -1171,6 +1078,8 @@ export interface GameViewProps {
    *  `pocket-rpgkit/ui/choice-icons`. Without it such a choice shows its
    *  labels in the text-only box. */
   choiceIcons?: ChoiceIconBoxComponent;
+  /** Optional styled-choice UI paired with `rpgMakerText`. */
+  choiceText?: ChoiceTextRuntime;
   /** Optional icon-bearing shop row. Import ItemIconRow from the dedicated
    * item-icons entry; without it itemSrc remains outside the presentation
    * path and shops retain their text-only layout. */
@@ -1370,6 +1279,8 @@ export function GameView(props: GameViewProps) {
         battle: props.battle,
         scenes: props.scenes,
         scene: props.scene,
+        rpgMakerText: props.rpgMakerText,
+        travel: props.travel,
         immutableState: props.immutableState,
         paginateText,
         layoutScrollText,
@@ -1391,6 +1302,8 @@ export function GameView(props: GameViewProps) {
         battle: props.battle,
         scenes: props.scenes,
         scene: props.scene,
+        rpgMakerText: props.rpgMakerText,
+        travel: props.travel,
         immutableState: props.immutableState,
         paginateText,
         layoutScrollText,
@@ -2275,6 +2188,7 @@ export function GameView(props: GameViewProps) {
                 npcSrc={assets.npcSrc}
                 tileEventVariants={assets.tileEventVariants}
                 extensions={session.extensions}
+                travelPresentation={props.travelPresentation}
                 handover={worldHandover}
                 player={assets.player}
                 playerHeight={assets.playerHeight ?? 16}
@@ -2539,6 +2453,7 @@ export function GameView(props: GameViewProps) {
           itemIconRow={props.itemIcons}
           choiceIconBox={props.choiceIcons}
           choiceIcon={props.choiceIcons && ((icon) => resolveChoiceIcon(icon, sprites, assets.npcSrc))}
+          choiceText={props.choiceText}
           viewportWidth={viewport().w}
           viewportHeight={viewport().h}
           uiText={uiTextOverrides()}
@@ -2547,6 +2462,7 @@ export function GameView(props: GameViewProps) {
       <ScrollTextLayer
         modal={() => sceneActive() ? null : modal()}
         theme={effectiveTheme()}
+        choiceText={props.choiceText}
       />
       <ScreenFadeLayer screen={presentedScreen} />
 

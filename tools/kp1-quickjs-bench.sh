@@ -35,6 +35,11 @@ CARGO_TARGET_DIR="$target" cargo test --no-default-features --manifest-path "$sc
 binary=$(find "$target/release/deps" -maxdepth 1 -type f -name 'pocket_desktop_host-*' -perm -111 -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
 test -n "$binary"
 
+if [[ ${KP1_COMPILE_ONLY:-0} == 1 ]]; then
+  printf 'KP1_COMPILE_OK binary=%s\n' "$binary"
+  exit 0
+fi
+
 for viewport in "480 272" "960 544"; do
   read -r width height <<<"$viewport"
   KP1_DIST="$dist" KP1_APP="$app" KP1_DATA_ROOT="$data" \

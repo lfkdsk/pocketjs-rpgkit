@@ -13,6 +13,7 @@ import {
 import { createAutosaveSessionSnapshot } from "../src/engine/save.ts";
 import { validateSnapshot } from "../src/engine/save-validate.ts";
 import { createSession, startSession, stepSession } from "../src/engine/session.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import type { Command, GameEvent, MapDef, Project } from "../src/engine/types.ts";
 
 const RAW = String.raw`\C[2]\N[1]` + "😀" + String.raw`/\N[2]/\P[1]/\P[2]/\V[3]\G\C[0]!`;
@@ -54,6 +55,7 @@ describe("RPG Maker text in the interpreter", () => {
   test("opens a visible-only typewriter modal with actor, party, variable and colour state", () => {
     const world = createWorld(map([{ op: "text", lines: [RAW] }]), [], 60, {
       rpgMakerText: {
+        runtime: rpgMakerTextRuntime,
         actors: [
           { databaseId: 1, name: "Hero" },
           { databaseId: 2, name: "Mage" },
@@ -76,7 +78,7 @@ describe("RPG Maker text in the interpreter", () => {
 
   test("freezes MZ PX/PY/FS controls in modal state and clones them for rewind snapshots", () => {
     const world = createWorld(map([{ op: "text", lines: [LAYOUT_RAW] }]), [], 60, {
-      rpgMakerText: { actors: [], partyActorIds: [], currencyUnit: "G" },
+      rpgMakerText: { runtime: rpgMakerTextRuntime, actors: [], partyActorIds: [], currencyUnit: "G" },
     });
     const state = stepInterp(world, createInterpState(bank()), input);
     const modal = state.modal as TextModal;
@@ -106,6 +108,7 @@ describe("RPG Maker text in the interpreter", () => {
 
     const rpg = createWorld(map([{ op: "text", lines: [raw] }]), [], 60, {
       rpgMakerText: {
+        runtime: rpgMakerTextRuntime,
         actors: [{ databaseId: 1, name: "Hero" }],
         partyActorIds: [1],
         currencyUnit: "G",
@@ -126,7 +129,7 @@ describe("RPG Maker text in the interpreter", () => {
         { text: "普通", commands: [] },
       ],
     }]), [], 60, {
-      rpgMakerText: { actors: [], partyActorIds: [], currencyUnit: "G" },
+      rpgMakerText: { runtime: rpgMakerTextRuntime, actors: [], partyActorIds: [], currencyUnit: "G" },
     });
     let state = stepInterp(world, createInterpState(bank()), input);
     const modal = state.modal as ChoiceModal;
@@ -186,7 +189,7 @@ describe("RPG Maker text in the interpreter", () => {
       prompt: String.raw`\C[1]Pick \V[3]`,
       cancel: true,
     }];
-    const session = createSession(source, 60, { extensions: {
+    const session = createSession(source, 60, { rpgMakerText: rpgMakerTextRuntime, extensions: {
       choices: {
         "test.live": { options: () => [{ key: "a", label: "A", enabled: true, data: null }] },
       },
@@ -226,11 +229,17 @@ function project(raw = RAW): Project {
 }
 
 describe("RPG Maker text session determinism", () => {
+  test("a declared grammar fails fast until its optional parser is registered", () => {
+    expect(() => createSession(project())).toThrow(
+      "system.rpgMakerText requires the optional rpgMakerText runtime",
+    );
+  });
+
   test("60/30/20 Hz expose identical modal content and reveal after the same virtual time", () => {
     const results: unknown[] = [];
     for (const hz of [60, 30, 20]) {
       const source = project();
-      const session = createSession(source, hz);
+      const session = createSession(source, hz, { rpgMakerText: rpgMakerTextRuntime });
       let state = startSession(source, session, bank());
       for (let frame = 0; frame < hz / 10; frame++) {
         state = stepSession(session, state, { buttons: 0 });
@@ -252,7 +261,7 @@ describe("RPG Maker text session determinism", () => {
     const results: unknown[] = [];
     for (const hz of [60, 30, 20]) {
       const source = project(LAYOUT_RAW);
-      const session = createSession(source, hz);
+      const session = createSession(source, hz, { rpgMakerText: rpgMakerTextRuntime });
       let state = startSession(source, session, bank());
       for (let frame = 0; frame < hz / 10; frame++) {
         state = stepSession(session, state, { buttons: 0 });
@@ -269,7 +278,7 @@ describe("RPG Maker text session determinism", () => {
 
   test("autosave validation accepts canonical spans and rejects malformed colour state", () => {
     const source = project();
-    const session = createSession(source);
+    const session = createSession(source, 60, { rpgMakerText: rpgMakerTextRuntime });
     const opened = stepSession(session, startSession(source, session, bank()), { buttons: 0 });
     const snapshot = createAutosaveSessionSnapshot(session, opened, 0)!;
     expect(validateSnapshot(snapshot)).toBeNull();
@@ -282,7 +291,7 @@ describe("RPG Maker text session determinism", () => {
 
   test("autosave validation accepts canonical MZ controls and rejects malformed assignments", () => {
     const source = project(LAYOUT_RAW);
-    const session = createSession(source);
+    const session = createSession(source, 60, { rpgMakerText: rpgMakerTextRuntime });
     const opened = stepSession(session, startSession(source, session, bank()), { buttons: 0 });
     const clean = createAutosaveSessionSnapshot(session, opened, 0)!;
     expect(validateSnapshot(clean)).toBeNull();
@@ -304,7 +313,7 @@ describe("RPG Maker text session determinism", () => {
         { text: "普通", commands: [] },
       ],
     }];
-    const session = createSession(source);
+    const session = createSession(source, 60, { rpgMakerText: rpgMakerTextRuntime });
     const opened = stepSession(session, startSession(source, session, bank()), { buttons: 0 });
     const clean = createAutosaveSessionSnapshot(session, opened, 0)!;
     expect(validateSnapshot(clean)).toBeNull();

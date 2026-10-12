@@ -15,6 +15,7 @@ import {
 } from "../src/engine/session.ts";
 import { createSwitchState } from "../src/engine/interpreter.ts";
 import { buildMiniProject } from "../examples/meadow/mini-project.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import type { Command, GameEvent, MapDef, MoveStep, PageCondition, Project, TileId } from "../src/engine/types.ts";
 
 const GRASS: TileId = "town.0";
@@ -286,7 +287,7 @@ describe("immutable session page cache", () => {
       } },
     ]);
     const p = actorProject([map("a", 8, 8, [leader, companion])]);
-    const sess = createSession(p, 60, { immutableState: true });
+    const sess = createSession(p, 60, { immutableState: true, rpgMakerText: rpgMakerTextRuntime });
     let state = stepSession(sess, startSession(p, sess), { buttons: 0 });
     expect(state.chars.chars.leader!.pageIndex).toBe(1);
     expect(state.chars.chars.companion!.pageIndex).toBe(1);
@@ -318,7 +319,7 @@ describe("immutable session page cache", () => {
       { op: "transfer", map: "a", x: 6, y: 6, dir: "up" },
     ]));
     const p = actorProject([map("a", 8, 8, [leader, companion, transfer])]);
-    const sess = createSession(p, 60, { immutableState: true });
+    const sess = createSession(p, 60, { immutableState: true, rpgMakerText: rpgMakerTextRuntime });
     let state = stepSession(sess, startSession(p, sess), { buttons: 0 });
     expect(state.chars.chars.leader!.pageIndex).toBe(0);
     expect(state.chars.chars.companion!.pageIndex).toBe(0);

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
 import { BTN } from "@pocketjs/framework/input";
 import { buildMiniProject } from "../examples/meadow/mini-project.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { createSession, startSession, type SessionState } from "../src/engine/session.ts";
+import { travelRuntime } from "../src/travel.ts";
 import type { Project } from "../src/engine/types.ts";
 import type {
   GameViewDemoRuntime,
@@ -65,7 +67,10 @@ function withRuntime<T>(
   return createRoot((dispose) => {
     try {
       const source = project();
-      const session = createSession(source);
+      const session = createSession(source, 60, {
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
+      });
       let state = startSession(source, session);
       options.state?.(state);
       let replacements = 0;

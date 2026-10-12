@@ -16,7 +16,7 @@ import {
   type Session,
   type SessionState,
 } from "../src/engine/session.ts";
-import { AIRSHIP_TRANSITION_TICKS } from "../src/engine/travel.ts";
+import { AIRSHIP_TRANSITION_TICKS, travelRuntime } from "../src/travel.ts";
 import type {
   Command,
   Dir,
@@ -134,6 +134,10 @@ function travelDigest(state: SessionState) {
   };
 }
 
+function createTravelSession(source: Project, hz = 60): Session {
+  return createSession(source, hz, { travel: travelRuntime });
+}
+
 describe("session travel opt-in", () => {
   test("a project without travel fields retains the legacy reducer shape", () => {
     const p = project([map("plain")]);
@@ -144,6 +148,15 @@ describe("session travel opt-in", () => {
     expect(session.travelProject).toBeNull();
     expect(session.vehiclePassages).toBeNull();
     expect("travel" in idle(session, start)).toBe(false);
+  });
+
+  test("a declared follower or vehicle fails fast until travel is registered", () => {
+    const p = project([map("field")], {
+      followers: { enabled: true, members: [{ id: "friend", sprite: "friend" }] },
+    });
+    expect(() => createSession(p)).toThrow(
+      "project followers/vehicles require the optional travel runtime",
+    );
   });
 
   test("followers replay corners, can hide, and a waited gather resumes only after convergence", () => {
@@ -168,7 +181,7 @@ describe("session travel opt-in", () => {
         ],
       },
     });
-    const session = createSession(p, 60);
+    const session = createTravelSession(p, 60);
     let state = idle(session, startSession(p, session), 8);
     expect(state.travel?.followers?.visible).toBe(false);
 
@@ -203,7 +216,7 @@ describe("session travel opt-in", () => {
         ],
       },
     });
-    const session = createSession(p, 60);
+    const session = createTravelSession(p, 60);
     let state = startSession(p, session);
     state = stepCell(session, state, BTN.RIGHT);
     state = stepCell(session, state, BTN.RIGHT);
@@ -256,7 +269,7 @@ describe("session boat and ship traversal", () => {
         bgm: { id: "boat-first", volume: 80, pitch: 105 },
       })],
     });
-    const session = createSession(p, 60);
+    const session = createTravelSession(p, 60);
     let state = idle(session, startSession(p, session), 4);
     expect(state.interp.audio?.bgm).toMatchObject({ id: "field", volume: 72, pitch: 95 });
     expect(state.interp.audio?.savedBgm?.id).toBe("field");
@@ -306,7 +319,7 @@ describe("session boat and ship traversal", () => {
     });
     const run = (definition: VehicleDef, walking = true): SessionState => {
       const p = project([harbor], { vehicles: [definition] });
-      const session = createSession(p);
+      const session = createTravelSession(p);
       let state = startSession(p, session);
       if (walking) {
         state.interp.audio = { bgm: { id: "field", volume: 100, pitch: 100, positionTicks: 7 } };
@@ -331,7 +344,7 @@ describe("session boat and ship traversal", () => {
   test("parked boats and ships block movement while a parked airship remains enterable", () => {
     const run = (kind: VehicleDef["kind"]): SessionState => {
       const p = project([map("harbor")], { vehicles: [vehicle(kind, kind, 2, 1)] });
-      const session = createSession(p);
+      const session = createTravelSession(p);
       return stepCell(session, startSession(p, session), BTN.RIGHT);
     };
     expect(run("boat").move.tx).toBe(1);
@@ -346,7 +359,7 @@ describe("session boat and ship traversal", () => {
     const p = project([harbor], {
       vehicles: [vehicle("boat", "boat", 2, 1), vehicle("ship", "ship", 3, 1)],
     });
-    const session = createSession(p);
+    const session = createTravelSession(p);
     let state = settle(session, confirm(session, startSession(p, session)));
     state = stepCell(session, state, BTN.RIGHT);
     expect(state.travel?.vehicles?.riding).toBe("boat");
@@ -369,7 +382,7 @@ describe("session boat and ship traversal", () => {
       events: [captain],
     });
     const p = project([harbor], { vehicles: [vehicle("boat", "boat", 2, 1)] });
-    const session = createSession(p);
+    const session = createTravelSession(p);
     let state = idle(session, startSession(p, session), 4);
     state = settle(session, state);
     expect(state.sw.switches["toggle-returned"]).toBe(true);
@@ -391,7 +404,7 @@ describe("session boat and ship traversal", () => {
       events: [watcher],
     });
     const p = project([harbor], { vehicles: [vehicle("boat", "boat", 2, 1)] });
-    const session = createSession(p, 60);
+    const session = createTravelSession(p, 60);
     let state = startSession(p, session);
 
     state = settle(session, confirm(session, state));
@@ -421,7 +434,7 @@ describe("session boat and ship traversal", () => {
     });
     const run = (kind: "boat" | "ship") => {
       const p = project([harbor], { vehicles: [vehicle(kind, kind, 2, 1)] });
-      const session = createSession(p);
+      const session = createTravelSession(p);
       let state = settle(session, confirm(session, startSession(p, session)));
       state = stepCell(session, state, BTN.RIGHT);
       return state;
@@ -436,7 +449,7 @@ describe("session airship lifecycle", () => {
     const p = project([map("harbor")], {
       vehicles: [vehicle("airship", "airship", 1, 1, "harbor", { bgm: { id: "airship" } })],
     });
-    const session = createSession(p);
+    const session = createTravelSession(p);
     let state = startSession(p, session);
     state.interp.audio = { bgm: { id: "field", volume: 70, pitch: 90, positionTicks: 12 } };
     state = confirm(session, state);
@@ -463,7 +476,7 @@ describe("session airship lifecycle", () => {
       },
       vehicles: [vehicle("airship", "airship", 3, 1)],
     });
-    const session = createSession(p, 60);
+    const session = createTravelSession(p, 60);
     let state = startSession(p, session);
     state = stepCell(session, state, BTN.RIGHT);
     state = stepCell(session, state, BTN.RIGHT);
@@ -500,7 +513,7 @@ describe("session airship lifecycle", () => {
       events: [body],
     });
     const p = project([harbor], { vehicles: [vehicle("airship", "airship", 1, 1)] });
-    const session = createSession(p, 60);
+    const session = createTravelSession(p, 60);
     let state = confirm(session, startSession(p, session));
     expect(state.travel?.vehicles).toMatchObject({
       riding: "airship",
@@ -547,7 +560,7 @@ describe("session airship lifecycle", () => {
     const sign = event("sign", 2, 1, [page("action", [{ op: "switch", id: "sign-used", value: true }])]);
     const harbor = map("harbor", { vehiclePassage: { airshipLand: [] }, events: [sign] });
     const p = project([harbor], { vehicles: [vehicle("airship", "airship", 1, 1)] });
-    const session = createSession(p);
+    const session = createTravelSession(p);
     let state = confirm(session, startSession(p, session));
     state = idle(session, state, AIRSHIP_TRANSITION_TICKS);
     state = confirm(session, state);
@@ -577,7 +590,7 @@ describe("session travel persistence and clocks", () => {
         vehicle("airship", "airship", 6, 4),
       ],
     });
-    const session = createSession(p);
+    const session = createTravelSession(p);
     let state = settle(session, confirm(session, startSession(p, session)));
     for (let i = 0; i < 10 && state.mapId !== "island"; i++) state = idle(session, state);
     expect(state.mapId).toBe("island");
@@ -607,7 +620,7 @@ describe("session travel persistence and clocks", () => {
     const harbor = map("harbor", { events: [director] });
     const island = map("island");
     const p = project([harbor, island], { vehicles: [vehicle("boat", "boat", 2, 1)] });
-    const session = createSession(p);
+    const session = createTravelSession(p);
     const state = idle(session, startSession(p, session, createSwitchState({
       variables: { "target-map": "island" },
     })), 10);
@@ -637,7 +650,7 @@ describe("session travel persistence and clocks", () => {
       vehicles: [vehicle("boat", "boat", 2, 1)],
     });
     const outcomes = ([60, 30, 20] as const).map((hz) => {
-      const session = createSession(p, hz);
+      const session = createTravelSession(p, hz);
       let state = settle(session, confirm(session, startSession(p, session)));
       state = stepCell(session, state, BTN.RIGHT);
       state = settle(session, confirm(session, state));
@@ -660,6 +673,7 @@ describe("session travel persistence and clocks", () => {
     });
     const controller = new AttractController(p, [], {
       hz: 60,
+      travel: travelRuntime,
       attractEnabled: false,
       idleFrames: 60_000,
       rewindSeconds: 1,

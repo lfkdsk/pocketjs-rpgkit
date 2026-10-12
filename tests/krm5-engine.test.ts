@@ -4,6 +4,7 @@ import { AttractController } from "../src/engine/attract.ts";
 import { mapForTileset } from "../src/engine/tiles.ts";
 import { createSwitchState } from "../src/engine/interpreter.ts";
 import { isStandable } from "../src/engine/passability.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { loadSession, restoreSessionEnvelope, saveSession } from "../src/engine/save-restore.ts";
 import { encodeEnvelope, encodeSaveCode } from "../src/engine/save.ts";
 import {
@@ -23,6 +24,7 @@ import {
   type SessionState,
 } from "../src/engine/session.ts";
 import type { Command, GameEvent, MapDef, Project } from "../src/engine/types.ts";
+import { travelRuntime } from "../src/travel.ts";
 
 const W = 8;
 const H = 8;
@@ -291,7 +293,10 @@ describe("KRM5 formation and window state", () => {
     };
 
     expect(createSwitchState({ formationAccess: true }).formationAccess).toBeUndefined();
-    const session = createSession(source);
+    const session = createSession(source, 60, {
+      rpgMakerText: rpgMakerTextRuntime,
+      travel: travelRuntime,
+    });
     const state = run(session, startSession(source, session), 3);
     // The swap attempted while disabled is ignored. Re-enabling permits the
     // following swap; the final disable is stored sparsely as false.
@@ -306,7 +311,10 @@ describe("KRM5 formation and window state", () => {
     const saved = saveSession(session, state, 0);
     expect(saved.ok).toBe(true);
     if (!saved.ok) throw new Error(saved.error.message);
-    const restored = restoreSessionEnvelope(createSession(source), encodeEnvelope(saved.snapshot));
+    const restored = restoreSessionEnvelope(createSession(source, 60, {
+      rpgMakerText: rpgMakerTextRuntime,
+      travel: travelRuntime,
+    }), encodeEnvelope(saved.snapshot));
     expect(restored.sw.partyOrder).toEqual([3, 1, 2]);
     expect(restored.sw.formationAccess).toBe(false);
     expect(restored.travel?.followers?.members.map((member) => member.id)).toEqual([

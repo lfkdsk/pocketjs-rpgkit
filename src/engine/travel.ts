@@ -23,6 +23,32 @@ import type {
   VehicleDef,
   VehicleKind,
 } from "./types.ts";
+import type {
+  FollowerTrailPoint,
+  FollowerTravelState,
+  FollowersTravelState,
+  GatherWaiterDrain,
+  SeamlessTravelRebase,
+  TravelState,
+  VehicleDisembarkTarget,
+  VehiclePassageTable,
+  VehiclesTravelState,
+  VehicleTravelState,
+} from "./travel-types.ts";
+
+export type {
+  AirshipPhase,
+  FollowerTrailPoint,
+  FollowerTravelState,
+  FollowersTravelState,
+  GatherWaiterDrain,
+  SeamlessTravelRebase,
+  TravelState,
+  VehicleDisembarkTarget,
+  VehiclePassageTable,
+  VehiclesTravelState,
+  VehicleTravelState,
+} from "./travel-types.ts";
 
 const DX: readonly number[] = [0, -1, 0, 1];
 const DY: readonly number[] = [1, 0, -1, 0];
@@ -33,103 +59,7 @@ const BOARDING_ORDER: readonly VehicleKind[] = ["airship", "ship", "boat"];
 /** A tile already occupied by the preceding party member.  Followers consume
  * these in order, so an L-shaped route keeps its corner instead of cutting it
  * diagonally. */
-export interface FollowerTrailPoint {
-  x: number;
-  y: number;
-}
-
-export interface FollowerTravelState {
-  id: string;
-  sprite: string;
-  move: MovementState;
-  /** Pending predecessor cells, oldest first.  There are no wait samples: a
-   * stationary leader therefore leaves the party spaced one tile apart. */
-  trail: FollowerTrailPoint[];
-}
-
-export interface FollowersTravelState {
-  visible: boolean;
-  /** Gather discards the ordinary trail and walks each member directly toward
-   * its predecessor.  It clears itself once the whole chain overlaps. */
-  gathering: boolean;
-  /** Interpreter fibers waiting for the current gather.  This queue lives in
-   * reducer state so parallel-event waiters survive save/restore and ticks. */
-  gatherWaiters: string[];
-  members: FollowerTravelState[];
-}
-
-export type AirshipPhase = "grounded" | "ascending" | "cruising" | "descending";
 export const AIRSHIP_TRANSITION_TICKS = 48;
-
-export interface VehicleTravelState {
-  id: string;
-  kind: VehicleKind;
-  sprite: string;
-  bgm?: VehicleBgm | null;
-  mapId: string;
-  move: MovementState;
-}
-
-export interface VehiclesTravelState {
-  /** Project order is retained for deterministic handling of malformed data
-   * containing more than one vehicle of a kind. */
-  entries: VehicleTravelState[];
-  /** Vehicle selected by the boarding action while the player and visible
-   * followers converge. It becomes `riding` only after both movement and
-   * gathering finish, matching RPG Maker's get-on transition. */
-  boarding?: string | null;
-  riding: string | null;
-  /** Pixel lift for the ridden airship.  Zero for every other state. */
-  airshipAltitude: number;
-  /** Explicit flight transition; movement is enabled only while cruising. */
-  airshipPhase: AirshipPhase;
-  /** Completed ticks in the 48-tick ascent/descent range. */
-  airshipPhaseTick: number;
-}
-
-export interface GatherWaiterDrain {
-  state: TravelState | undefined;
-  waiters: string[];
-}
-
-/** Optional project-wide reducer state.  All fields are plain JSON values;
- * projects with neither followers nor vehicles return undefined instead. */
-export interface TravelState {
-  followers?: FollowersTravelState;
-  vehicles?: VehiclesTravelState;
-}
-
-/** Derived, allocation-on-map-load lookup for RPG Maker's special tileset
- * flags.  It is intentionally not part of TravelState or save data. */
-export interface VehiclePassageTable {
-  width: number;
-  height: number;
-  boat?: Uint8Array;
-  ship?: Uint8Array;
-  /** undefined means the additive fallback: ordinary standable ground.  An
-   * explicitly empty array means the airship cannot land anywhere. */
-  airshipLand?: Uint8Array;
-}
-
-export interface SeamlessTravelRebase {
-  sourceMapId: string;
-  targetMapId: string;
-  /** Source-map origin expressed in target-map tile coordinates. */
-  originX: number;
-  originY: number;
-  sourcePlayerX: number;
-  sourcePlayerY: number;
-  tileSize: number;
-  /** Player state after atomic target entry. */
-  targetPlayer: Readonly<MovementState>;
-}
-
-export interface VehicleDisembarkTarget {
-  playerX: number;
-  playerY: number;
-  vehicleX: number;
-  vehicleY: number;
-}
 
 function cloneMovement(move: Readonly<MovementState>): MovementState {
   return { ...move };

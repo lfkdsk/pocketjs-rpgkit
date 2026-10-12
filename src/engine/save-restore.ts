@@ -44,7 +44,6 @@ import { cloneChars, createChars } from "./chars.ts";
 import { clonePathSearch } from "./pathfind.ts";
 import { assertImmutableJsonValue, assertJsonValue, decodeExtension } from "./extensions.ts";
 import { deepClone } from "./clone.ts";
-import { cloneTravelState, createTravelState } from "./travel.ts";
 import { cloneAudioState } from "./audio.ts";
 import {
   acquireSessionMap,
@@ -296,9 +295,14 @@ export function restoreSessionSnapshot(
     scene: battle,
   };
   if (snap.travel) {
-    state.travel = cloneTravelState(snap.travel);
+    state.travel = deepClone(snap.travel);
   } else if (session.travelProject) {
-    const travel = createTravelState(session.travelProject, state.move, session.cfg, state.sw.switches);
+    const travel = session.travelRuntime!.createTravelState(
+      session.travelProject,
+      state.move,
+      session.cfg,
+      state.sw.switches,
+    );
     if (travel) state.travel = travel;
   }
   // Older saves have no left-map snapshot: that map shows its entry preview.

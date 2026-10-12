@@ -49,6 +49,8 @@ import {
 import type { ExtensionOptions } from "./extensions.ts";
 import type { BattleRules } from "./battle.ts";
 import type { SceneRules } from "./scene.ts";
+import type { RpgMakerTextRuntime } from "./rpgmaker-text-contract.ts";
+import type { TravelRuntime } from "./travel-contract.ts";
 import { deepClone } from "./clone.ts";
 import {
   acquireSessionMap,
@@ -183,6 +185,9 @@ export interface AttractOptions {
   /** KG1: game-scene reducers keyed by id, forwarded to createSession. */
   scenes?: Record<string, SceneRules>;
   scene?: SceneOptions;
+  /** Optional capabilities required by imported RPG Maker text/travel. */
+  rpgMakerText?: RpgMakerTextRuntime;
+  travel?: TravelRuntime;
   /** Message pagination, forwarded to createSession (pure, like the
    *  registrations above). */
   paginateText?: TextPaginator;
@@ -439,6 +444,8 @@ export class AttractController {
       battle: opts.battle,
       scenes: opts.scenes,
       scene: opts.scene,
+      rpgMakerText: opts.rpgMakerText,
+      travel: opts.travel,
       immutableState: opts.immutableState,
       paginateText: opts.paginateText,
       layoutScrollText: opts.layoutScrollText,

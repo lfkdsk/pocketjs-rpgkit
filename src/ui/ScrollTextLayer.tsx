@@ -5,17 +5,14 @@
 // that state: the block starts immediately below the 480x272 viewport and
 // travels upward until its final row has left the top edge.
 
-import { createMemo, For, Show, type Accessor, type JSX } from "solid-js";
+import { createMemo, For, Show, type Accessor, type Component, type JSX } from "solid-js";
 import { Text, View } from "@pocketjs/framework/components";
 import type {
   Modal,
   ScrollTextModal,
 } from "../engine/interpreter.ts";
-import type { RpgMakerTextColourSpan } from "../engine/rpgmaker-text.ts";
-import {
-  revealColourRuns,
-  type TextColourRun,
-} from "./text-flow.ts";
+import type { RpgMakerTextColourSpan } from "../engine/rpgmaker-text-contract.ts";
+import type { ChoiceTextRuntime, ChoiceTextRunsProps } from "./choice-text-contract.ts";
 import { slotMeasure } from "./text-measure.ts";
 import { CLEAR_COLOR, resolveUiTheme, type UiTheme } from "./theme.ts";
 import {
@@ -58,32 +55,14 @@ export interface ScrollTextLayerProps {
   modal: Accessor<Modal | null>;
   /** Uncoloured text uses the dialog theme's normal ink. */
   theme?: Partial<UiTheme>;
+  /** Optional RPG Maker colour layout and renderer. */
+  choiceText?: ChoiceTextRuntime;
 }
 
-function ColourRuns(props: {
-  runs: readonly TextColourRun[];
-  textColor: string;
-}): JSX.Element {
-  return (
-    <For each={props.runs}>
-      {(run) => (
-        <Text
-          class="text-xs"
-          style={{
-            textColor: run.colour ?? props.textColor,
-            lineHeight: SCROLL_TEXT_ROW_HEIGHT,
-            height: SCROLL_TEXT_ROW_HEIGHT,
-            shrink: 0,
-          }}
-        >
-          {run.text || " "}
-        </Text>
-      )}
-    </For>
-  );
-}
+const EmptyChoiceRuns: Component<ChoiceTextRunsProps> = () => null;
 
 export function ScrollTextLayer(props: ScrollTextLayerProps): JSX.Element {
+  const ChoiceRuns = props.choiceText?.Runs ?? EmptyChoiceRuns;
   const theme = createMemo(() => resolveUiTheme(props.theme));
   const scroll = createMemo((): ScrollTextModal | null => {
     const modal = props.modal();
@@ -104,8 +83,8 @@ export function ScrollTextLayer(props: ScrollTextLayerProps): JSX.Element {
   );
   const flow = createMemo(() => scrollTextFlow(lines(), slotMeasure()));
   const colourRows = createMemo(() =>
-    colours().length > 0
-      ? revealColourRuns(flow(), Number.POSITIVE_INFINITY, colours())
+    colours().length > 0 && props.choiceText
+      ? props.choiceText.reveal(flow(), Number.POSITIVE_INFINITY, colours())
       : null
   );
 
@@ -161,7 +140,11 @@ export function ScrollTextLayer(props: ScrollTextLayerProps): JSX.Element {
             <For each={rows()}>
               {(runs) => (
                 <View class="flex-row" style={{ height: SCROLL_TEXT_ROW_HEIGHT, shrink: 0 }}>
-                  <ColourRuns runs={runs} textColor={theme().ink} />
+                  <ChoiceRuns
+                    runs={runs}
+                    textColor={theme().ink}
+                    rowH={SCROLL_TEXT_ROW_HEIGHT}
+                  />
                 </View>
               )}
             </For>

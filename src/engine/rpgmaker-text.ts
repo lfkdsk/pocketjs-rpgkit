@@ -1,3 +1,20 @@
+import type {
+  ParsedRpgMakerText,
+  RpgMakerTextColourSpan,
+  RpgMakerTextContext,
+  RpgMakerTextLayoutControl,
+  RpgMakerTextRuntime,
+} from "./rpgmaker-text-contract.ts";
+
+export type {
+  ParsedRpgMakerText,
+  RpgMakerTextActor,
+  RpgMakerTextColourSpan,
+  RpgMakerTextContext,
+  RpgMakerTextLayoutControl,
+  RpgMakerTextRuntime,
+} from "./rpgmaker-text-contract.ts";
+
 /** The 32 text colours in RPG Maker MV's stock Window.png palette. */
 export const DEFAULT_MV_COLOURS: readonly string[] = Object.freeze([
   "#FFFFFF", "#20A0D6", "#FF784C", "#66CC40",
@@ -12,52 +29,6 @@ export const DEFAULT_MV_COLOURS: readonly string[] = Object.freeze([
 
 /** US-English alias for callers that use `color` elsewhere. */
 export const DEFAULT_MV_COLORS = DEFAULT_MV_COLOURS;
-
-export interface RpgMakerTextActor {
-  readonly databaseId: number;
-  readonly name: string;
-}
-
-export interface RpgMakerTextContext {
-  readonly variables: Readonly<Record<string, number | string>>;
-  readonly variableIds?: Readonly<Record<number, string | undefined>> | readonly (string | undefined)[];
-  readonly actors: readonly RpgMakerTextActor[];
-  /** Actor database ids, in current party order. */
-  readonly partyActorIds: readonly number[];
-  readonly currencyUnit: string;
-  /** A replacement palette. Missing or invalid indices fall back to colour 0. */
-  readonly colours?: readonly string[] | Readonly<Record<number, string | undefined>>;
-}
-
-export interface RpgMakerTextColourSpan {
-  /** Inclusive global Unicode-code-point offset in `text`. */
-  readonly start: number;
-  /** Exclusive global Unicode-code-point offset in `text`. */
-  readonly end: number;
-  /** Normalized six-digit hexadecimal colour. */
-  readonly colour: string;
-}
-
-/** A zero-width MZ layout control at a Unicode-code-point offset in `text`.
- * Controls at the same offset are folded together in source order; a later
- * assignment to the same property wins, like Window_Base's text state. */
-export interface RpgMakerTextLayoutControl {
-  readonly at: number;
-  readonly x?: number;
-  readonly y?: number;
-  readonly fontSize?: number;
-}
-
-export interface ParsedRpgMakerText {
-  /** Visible text only: recognized escape codes are not included. */
-  readonly text: string;
-  /** Present only when at least one colour escape styles visible text. */
-  readonly spans?: readonly RpgMakerTextColourSpan[];
-  /** Present only when an MZ PX/PY/FS escape changes the live text state. */
-  readonly layout?: readonly RpgMakerTextLayoutControl[];
-  /** Retained for API compatibility; every built-in code recognized here is supported. */
-  readonly unsupported: readonly [];
-}
 
 const PARAMETER_ESCAPE = /^\\(V|N|P|C|PX|PY|FS)\[([0-9]+)\]/i;
 const HEX_COLOUR = /^#[0-9a-f]{6}$/i;
@@ -197,3 +168,8 @@ export function parseRpgMakerText(input: string, context: RpgMakerTextContext): 
     unsupported: [],
   };
 }
+
+/** Explicit capability passed to sessions that opt into RPG Maker text. */
+export const rpgMakerTextRuntime: RpgMakerTextRuntime = Object.freeze({
+  parse: parseRpgMakerText,
+});

@@ -4,7 +4,7 @@ import {
   parseRpgMakerText,
   type RpgMakerTextContext,
 } from "../src/engine/rpgmaker-text.ts";
-import { layoutRpgMakerTextRuns } from "../src/ui/text-flow.ts";
+import { layoutRpgMakerTextRuns } from "../src/ui/choice-colour.ts";
 
 function context(overrides: Partial<RpgMakerTextContext> = {}): RpgMakerTextContext {
   return {

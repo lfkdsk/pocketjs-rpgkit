@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { activePage } from "../src/engine/interpreter.ts";
 import { createSession, startSession } from "../src/engine/session.ts";
 import type { Project } from "../src/engine/types.ts";
+import { travelRuntime } from "../src/travel.ts";
 import {
   checkConditionContext,
   worldFingerprint,
@@ -49,7 +50,7 @@ function project(): Project {
 describe("rpgkit-check dynamic vehicle context", () => {
   test("uses live ridden state for page sampling and progress fingerprints", () => {
     const doc = project();
-    const session = createSession(doc, 60);
+    const session = createSession(doc, 60, { travel: travelRuntime });
     const state = startSession(doc, session);
     const map = session.maps.get("field")!;
     const event = map.events![0]!;

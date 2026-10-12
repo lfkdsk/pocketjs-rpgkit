@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { AttractController } from "../src/engine/attract.ts";
 import type { ScrollTextModal, TextModal } from "../src/engine/interpreter.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { createAutosaveSessionSnapshot, createSessionSnapshot } from "../src/engine/save.ts";
 import { loadSession } from "../src/engine/save-restore.ts";
 import {
@@ -16,6 +17,7 @@ import {
   type Session,
   type SessionState,
 } from "../src/engine/session.ts";
+import { travelRuntime } from "../src/travel.ts";
 import type { Command, GameEvent, Project } from "../src/engine/types.ts";
 import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject } from "../tools/rpgmaker-import/project.ts";
@@ -269,7 +271,10 @@ describe("RPG Maker imported message E2E", () => {
     const results: ReturnType<typeof modalEvidence>[] = [];
     for (const hz of RATES) {
       const masks = Array(hz).fill(0);
-      const session = createSession(project, hz);
+      const session = createSession(project, hz, {
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
+      });
       const terminal = drive(session, startSession(project, session), masks);
       expect((terminal.interp.modal as TextModal).lines.join("\n")).toContain("Lantern Stage!");
       expect((terminal.interp.modal as TextModal).colours?.some((span) => span.colour !== "#FFFFFF")).toBe(true);
@@ -289,6 +294,8 @@ describe("RPG Maker imported message E2E", () => {
         attractEnabled: false,
         idleFrames: hz * 10,
         rewindSeconds: 1,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
       });
       for (const mask of masks) controller.step(mask);
       const beforeRewind = structuredClone(controller.state);
@@ -311,7 +318,11 @@ describe("RPG Maker imported scrolling text E2E", () => {
     for (const hz of RATES) {
       const half = Array(hz / 2).fill(SCROLL_FAST);
       const masks = [...half, ...half];
-      const session = createSession(project, hz, { layoutScrollText });
+      const session = createSession(project, hz, {
+        layoutScrollText,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
+      });
       const mid = drive(session, startSession(project, session), half);
       expect(mid.interp.modal?.kind).toBe("scrollText");
       const saved = createAutosaveSessionSnapshot(session, mid, SCROLL_FAST);
@@ -328,6 +339,8 @@ describe("RPG Maker imported scrolling text E2E", () => {
         attractEnabled: false,
         rewindSeconds: 1,
         layoutScrollText,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
       });
       for (const mask of masks) controller.step(mask);
       const beforeRewind = structuredClone(controller.state);
@@ -350,7 +363,10 @@ describe("RPG Maker imported audio E2E", () => {
     const results: ReturnType<typeof audioEvidence>[] = [];
     for (const hz of RATES) {
       const half = Array(hz / 2).fill(0);
-      const session = createSession(project, hz);
+      const session = createSession(project, hz, {
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
+      });
       const mid = drive(session, startSession(project, session), half);
       expect(mid.interp.audio?.bgm).toMatchObject({ id: "bgm-stage-overture", pan: -60, positionTicks: 0 });
       expect(mid.interp.audio?.me).toMatchObject({
@@ -369,6 +385,8 @@ describe("RPG Maker imported audio E2E", () => {
         hz,
         attractEnabled: false,
         rewindSeconds: 1,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
       });
       for (let frame = 0; frame < hz; frame++) controller.step(0);
       const beforeRewind = structuredClone(controller.state);
@@ -388,7 +406,11 @@ describe("RPG Maker imported actor-condition E2E", () => {
     const results: ReturnType<typeof actorEvidence>[] = [];
     for (const hz of RATES) {
       const masks = Array(hz).fill(0);
-      const session = createSession(project, hz, { immutableState: true });
+      const session = createSession(project, hz, {
+        immutableState: true,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
+      });
       const mid = drive(session, startSession(project, session), masks.slice(0, hz / 2));
       expect(actorEvidence(mid)).toEqual([true, true, true, true, true]);
       const loaded = loadSession(session, createSessionSnapshot(session, mid, 0));
@@ -402,6 +424,8 @@ describe("RPG Maker imported actor-condition E2E", () => {
         attractEnabled: false,
         rewindSeconds: 1,
         immutableState: true,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
       });
       for (const mask of masks) controller.step(mask);
       const beforeRewind = structuredClone(controller.state);
@@ -422,7 +446,11 @@ describe("RPG Maker imported Steps and region E2E", () => {
     for (const hz of RATES) {
       const enterMasks = [RIGHT, ...Array(hz - 1).fill(0)];
       const leaveMasks = [LEFT, ...Array(hz - 1).fill(0)];
-      const session = createSession(project, hz, { immutableState: true });
+      const session = createSession(project, hz, {
+        immutableState: true,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
+      });
       const entered = drive(session, startSession(project, session), enterMasks);
       expect(entered.sw.steps).toBe(1);
       expect(entered.sw.variables.v009).toBe(1);
@@ -442,6 +470,8 @@ describe("RPG Maker imported Steps and region E2E", () => {
         idleFrames: hz * 10,
         rewindSeconds: 2,
         immutableState: true,
+        rpgMakerText: rpgMakerTextRuntime,
+        travel: travelRuntime,
       });
       for (const mask of masks) controller.step(mask);
       const beforeRewind = structuredClone(controller.state);

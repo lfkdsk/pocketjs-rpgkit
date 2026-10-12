@@ -249,8 +249,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // MZ layout runs, sparse encounter-rate state and the conditional tile-event
 // art resolver add 11,151 B more shared runtime code. The importer, Studio
 // flow and optional battle UI remain outside the graph, as checked below.
+// Isolating unused RPG Maker text/presentation and travel capabilities removes
+// 50,779 B on this baseline without admitting any battle implementation.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_161_185;
+const EXPECTED_BYTES = 1_110_406;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

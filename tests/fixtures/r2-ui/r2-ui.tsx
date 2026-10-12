@@ -10,6 +10,10 @@ import {
 } from "../../../src/ui/index.ts";
 import type { MapRepository, Project, ProjectShell, ProjectSource } from "../../../src/engine/types.ts";
 import type { SceneRules } from "../../../src/engine/scene.ts";
+import { rpgMakerTextRuntime } from "../../../src/engine/rpgmaker-text.ts";
+import { travelRuntime } from "../../../src/travel.ts";
+import { rpgMakerChoiceTextRuntime } from "../../../src/ui/ChoiceColourLine.tsx";
+import { travelPresentation } from "../../../src/ui/TravelActors.tsx";
 import { toyBattleRules, toyState } from "../toy-battle.ts";
 import { GAME_ASSETS } from "./assets-game.ts";
 import { KV1_UI_PROJECT, KV2_TAPE, R2_SECOND_MAP_ID, R2_UI_PROJECT } from "./fixture-data.ts";
@@ -430,6 +434,10 @@ mount(() => (
     assets={capRepro ? { ...GAME_ASSETS, maxActors: 1 } : GAME_ASSETS}
     battle={toyBattleRules}
     battleScene={ToyBattleScene}
+    rpgMakerText={rpgMakerTextRuntime}
+    choiceText={rpgMakerChoiceTextRuntime}
+    travel={travelRuntime}
+    travelPresentation={travelPresentation}
     scenes={battleThenSceneFixture ? { "probe.keptAlive": keptAliveSceneRules } : undefined}
     sceneViews={battleThenSceneFixture ? { "probe.keptAlive": KeptAliveScene } : undefined}
     worldOverlay={worldOverlayFixture ? FixtureWorldOverlay : undefined}

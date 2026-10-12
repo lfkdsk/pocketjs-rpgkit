@@ -503,6 +503,27 @@ from the kit's brace-token grammar above: when it is present, the box uses the
 RPG Maker parser only. Without it, backslashes retain their original literal
 meaning, so existing projects remain byte- and pixel-compatible.
 
+The implementation is a package capability, not part of the ordinary engine
+or UI entry. A headless session passes `rpgMakerTextRuntime`; a `GameView`
+also passes the paired choice presentation when coloured choices are wanted:
+
+```tsx
+import { rpgMakerTextRuntime } from "pocket-rpgkit/rpgmaker-text";
+import { rpgMakerChoiceTextRuntime } from "pocket-rpgkit/ui/rpgmaker-text";
+
+createSession(project, 60, { rpgMakerText: rpgMakerTextRuntime });
+<GameView
+  project={project}
+  assets={assets}
+  rpgMakerText={rpgMakerTextRuntime}
+  choiceText={rpgMakerChoiceTextRuntime}
+/>;
+```
+
+A project that declares `system.rpgMakerText` without the engine capability
+fails at session creation. Projects that omit it never import or evaluate the
+parser or the styled-choice layout and renderer.
+
 The project supplies actor database ids through `actors`, plus the initial
 party order and currency unit through `system.rpgMakerText`:
 
@@ -538,9 +559,10 @@ uses the stock 32-colour MV palette. The supported escapes are:
 
 Parsing is one left-to-right pass when the box opens. Replacement values are
 never scanned again, even if they contain another escape. Unknown or malformed
-escapes remain visible. MZ `\PX[n]`, `\PY[n]` and `\FS[n]` are recognized as
-zero-width controls but their positioning/font-size effect is not rendered;
-the importer preserves their source spelling and reports that limitation.
+escapes remain visible. MZ `\PX[n]` and `\PY[n]` assign a scaled cursor
+position inside the message box, while `\FS[n]` selects the nearest baked
+regular font slot. These are portable approximations of MZ's pixel space and
+font rasterizer, and do not affect choice lists.
 
 Colour ranges use Unicode-code-point offsets in the expanded visible text.
 Those offsets are carried through newlines, CJK-aware wrapping, pagination and
@@ -720,6 +742,23 @@ Transfer semantics:
 Followers and RPG Maker-style vehicles are additive project capabilities. A
 project that omits both fields keeps `SessionState.travel` absent and mounts
 no travel actor nodes:
+
+```tsx
+import { travelRuntime } from "pocket-rpgkit/travel";
+import { travelPresentation } from "pocket-rpgkit/ui/travel";
+
+createSession(project, 60, { travel: travelRuntime });
+<GameView
+  project={project}
+  assets={assets}
+  travel={travelRuntime}
+  travelPresentation={travelPresentation}
+/>;
+```
+
+Declaring followers or vehicles without the reducer capability fails at
+session creation. The separate entries keep the reducer and travel actor
+presentation out of projects that only need ordinary walking.
 
 ```json
 {

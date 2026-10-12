@@ -8,6 +8,7 @@
 
 import { NAME_INPUT_SCENE_ID, nameInputRules } from "../../src/engine/name-input.ts";
 import { canStepFrom, type Dir4 } from "../../src/engine/passability.ts";
+import { rpgMakerTextRuntime } from "../../src/engine/rpgmaker-text.ts";
 import { createSession, startSession, stepSession, type Session, type SessionState } from "../../src/engine/session.ts";
 import type { Project } from "../../src/engine/types.ts";
 import {
@@ -15,6 +16,7 @@ import {
   createRpgMakerBattleRules,
 } from "../../src/rpgmaker-battle/rules.ts";
 import type { RpgMakerBattleDatabase } from "../../src/rpgmaker-battle/types.ts";
+import { travelRuntime } from "../../src/travel.ts";
 
 export const BTN_UP = 0x0010;
 export const BTN_RIGHT = 0x0020;
@@ -30,6 +32,8 @@ export const FACE = { down: 0, left: 1, up: 2, right: 3 } as const satisfies Rec
 
 export function rmiSession(project: Project, battle: RpgMakerBattleDatabase, hz = 60): Session {
   return createSession(project, hz, {
+    rpgMakerText: rpgMakerTextRuntime,
+    travel: travelRuntime,
     extensions: createRpgMakerBattleExtensions(battle),
     battle: createRpgMakerBattleRules(battle),
     scenes: { [NAME_INPUT_SCENE_ID]: nameInputRules },

@@ -111,12 +111,22 @@ mod kp1_quickjs_bench {
         surface.set_tick_rate(60);
         surface.set_svc_allowlist(args.companions.clone());
         surface.feed_pak(&pak);
-        let supervisor =
-            AppSupervisor::new(args.system.as_ref(), &surface, args.data_root.clone())?;
+        let audio_host = audio::AudioHost::new(
+            1 + args
+                .system
+                .as_ref()
+                .map_or(0, |system| system.applications.len()),
+        );
+        let supervisor = AppSupervisor::new(
+            args.system.as_ref(),
+            &surface,
+            args.data_root.clone(),
+            &audio_host,
+        )?;
         let surface_ms = elapsed_ms(stage);
 
         let stage = Instant::now();
-        let guest = Guest::new()?;
+        let guest = Guest::new_with_idle_gc(IdleGcConfig::default())?;
         let guest_ms = elapsed_ms(stage);
 
         let stage = Instant::now();
@@ -126,6 +136,9 @@ mod kp1_quickjs_bench {
         let app_id = args.app_id.clone().unwrap_or_else(|| args.app.clone());
         let fs_roots = fs::data_roots(args.data_root.as_deref(), &app_id)?;
         let fs_mount = fs::mount_fs(&guest, &fs_roots)?;
+        let audio = audio::AudioSurface::new(audio_host.client(0));
+        audio.mount(&guest)?;
+        let network = network::Network::mount(&guest)?;
         install_profile(&guest, total)?;
         let mounts_ms = elapsed_ms(stage);
 
@@ -135,6 +148,7 @@ mod kp1_quickjs_bench {
         if !guest.has_frame() {
             return Err(anyhow!("bundle installed no frame handler"));
         }
+        guest.arm_idle_gc();
         surface.svc_push(
             json!({"t":"hello","w":args.viewport.0,"h":args.viewport.1,"epoch":epoch_ms()})
                 .to_string(),
@@ -160,7 +174,10 @@ mod kp1_quickjs_bench {
                 guest,
                 supervisor,
                 offload,
+                audio,
+                _audio_host: audio_host,
                 _fs: fs_mount,
+                network,
                 ticks: 0,
                 buttons: 0,
                 script_buttons: 0,
@@ -211,7 +228,10 @@ mod kp1_quickjs_bench {
         let marks: Vec<Mark> = json(&runtime, "JSON.stringify(globalThis.__kp1Marks)");
         let ops: Ops = json(&runtime, "JSON.stringify(globalThis.__kp1Ops)");
 
+        runtime._audio_host.begin_tick();
+        runtime.audio.begin_tick();
         runtime.offload.begin_frame();
+        runtime.network.begin_tick();
         let stage = Instant::now();
         runtime.guest.frame(0).expect("QuickJS first frame");
         let first_qjs_ms = elapsed_ms(stage);

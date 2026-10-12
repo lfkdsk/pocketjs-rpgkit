@@ -1,7 +1,21 @@
 import { For, Show, type Accessor, type JSX } from "solid-js";
 import { Text, View } from "@pocketjs/framework/components";
 import { marqueeOffset } from "./list-window.ts";
-import { choiceRunColour, type ChoiceColourCell, type ChoiceColourRun } from "./choice-colour.ts";
+import {
+  choiceRunColour,
+  fitChoiceColourCell,
+  layoutRpgMakerTextRuns,
+  revealChoiceColourRuns,
+  wrapChoiceColourRows,
+  type ChoiceColourCell,
+  type ChoiceColourRun,
+} from "./choice-colour.ts";
+import type {
+  ChoiceTextMessageRowProps,
+  ChoiceTextPositionedProps,
+  ChoiceTextRuntime,
+  ChoiceTextRunsProps,
+} from "./choice-text-contract.ts";
 
 export interface ColourBoundedLineProps {
   cell: ChoiceColourCell;
@@ -13,12 +27,7 @@ export interface ColourBoundedLineProps {
   sizeClass?: string;
 }
 
-function ColourRuns(props: {
-  runs: readonly ChoiceColourRun[];
-  textColor: string;
-  rowH: number;
-  sizeClass?: string;
-}): JSX.Element {
+export function ColourRuns(props: ChoiceTextRunsProps): JSX.Element {
   return (
     <For each={props.runs}>
       {(run) => (
@@ -35,6 +44,59 @@ function ColourRuns(props: {
         </Text>
       )}
     </For>
+  );
+}
+
+/** Coloured counterpart to DialogBox's compact plain message row. */
+export function ColourMessageRow(props: ChoiceTextMessageRowProps): JSX.Element {
+  return (
+    <View
+      class="flex-row"
+      style={{
+        height: props.rowH,
+        width: props.width,
+        display: props.text ? 0 : 1,
+        translateX: props.translateX,
+        translateY: props.translateY,
+      }}
+      debugName={`rpgkit-message-row-${props.row}`}
+    >
+      <ColourRuns runs={props.runs} textColor={props.textColor} rowH={props.rowH} />
+      <Show when={props.runs.length === 0}>
+        <Text
+          class="text-xs"
+          style={{ textColor: props.textColor, lineHeight: props.rowH, height: props.rowH, shrink: 0 }}
+        > </Text>
+      </Show>
+    </View>
+  );
+}
+
+/** Positioned MZ text is optional together with the colour runtime, keeping
+ * its font-slot and absolute-layout renderer out of ordinary projects. */
+export function PositionedRpgMakerText(props: ChoiceTextPositionedProps): JSX.Element {
+  return (
+    <View style={{ height: props.height, width: props.width }} debugName="rpgkit-message-mz-layout">
+      <For each={props.runs}>
+        {(run) => (
+          <Text
+            class="text-xs"
+            style={{
+              posType: 1,
+              insetL: run.x,
+              insetT: run.y,
+              width: run.width,
+              height: run.lineHeight,
+              lineHeight: run.lineHeight,
+              fontSlot: run.fontSlot,
+              textColor: run.colour ?? props.textColor,
+            }}
+          >
+            {run.text}
+          </Text>
+        )}
+      </For>
+    </View>
   );
 }
 
@@ -86,3 +148,15 @@ export function ColourBoundedLine(props: ColourBoundedLineProps): JSX.Element {
     </Show>
   );
 }
+
+/** UI half of the explicit RPG Maker text capability. */
+export const rpgMakerChoiceTextRuntime: ChoiceTextRuntime = Object.freeze({
+  fit: fitChoiceColourCell,
+  layout: layoutRpgMakerTextRuns,
+  reveal: revealChoiceColourRuns,
+  wrap: wrapChoiceColourRows,
+  BoundedLine: ColourBoundedLine,
+  MessageRow: ColourMessageRow,
+  Positioned: PositionedRpgMakerText,
+  Runs: ColourRuns,
+});

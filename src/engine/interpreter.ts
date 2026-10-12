@@ -59,12 +59,12 @@ import {
 } from "./audio.ts";
 import { TILE } from "./tiles.ts";
 import { scalarLength } from "./text-break.ts";
-import {
-  parseRpgMakerText,
-  type RpgMakerTextActor,
-  type RpgMakerTextColourSpan,
-  type RpgMakerTextLayoutControl,
-} from "./rpgmaker-text.ts";
+import type {
+  RpgMakerTextActor,
+  RpgMakerTextColourSpan,
+  RpgMakerTextLayoutControl,
+  RpgMakerTextRuntime,
+} from "./rpgmaker-text-contract.ts";
 import {
   cloneMoveControlState,
   type MoveControlState,
@@ -2518,6 +2518,7 @@ export interface World {
   characterNames?: boolean;
   /** Compiled project database/config for runtime RPG Maker text escapes. */
   rpgMakerText?: {
+    runtime: RpgMakerTextRuntime;
     actors: readonly RpgMakerTextActor[];
     partyActorIds: readonly number[];
     currencyUnit: string;
@@ -2559,6 +2560,7 @@ export interface WorldOptions {
   /** Project.system.characterNames: switches built-in {char:} expansion on. */
   characterNames?: boolean;
   rpgMakerText?: {
+    runtime: RpgMakerTextRuntime;
     actors: readonly RpgMakerTextActor[];
     partyActorIds: readonly number[];
     currencyUnit: string;
@@ -5579,7 +5581,7 @@ function rpgMakerTextActors(s: InterpState, w: World): readonly RpgMakerTextActo
 
 function rpgMakerBoxText(s: InterpState, w: World, text: string) {
   const options = w.rpgMakerText!;
-  return parseRpgMakerText(text, {
+  return options.runtime.parse(text, {
     variables: s.sw.variables,
     actors: rpgMakerTextActors(s, w),
     partyActorIds: options.partyActorIds,

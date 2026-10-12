@@ -6,6 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { createSession, startSession } from "../src/engine/session.ts";
 import type { Project } from "../src/engine/types.ts";
+import { travelRuntime } from "../src/travel.ts";
 import { airshipShadowFrame, travelActorFrames } from "../src/ui/travel-actors.ts";
 import { actorDepth } from "../src/ui/OccludingUpperLayer.tsx";
 
@@ -45,7 +46,7 @@ const STRIDE = 8 * 16;
 
 describe("travel actor rendering projection", () => {
   test("selects walker frames and paints only current-map parked vehicles", () => {
-    const session = createSession(project);
+    const session = createSession(project, 60, { travel: travelRuntime });
     const state = startSession(project, session);
     const member = state.travel!.followers!.members[0]!;
     member.move.phase = 2;
@@ -68,7 +69,7 @@ describe("travel actor rendering projection", () => {
   });
 
   test("keeps nodes stable but hides the chain and ridden vehicle while mounted", () => {
-    const session = createSession(project);
+    const session = createSession(project, 60, { travel: travelRuntime });
     const state = startSession(project, session);
     state.travel!.vehicles!.riding = "boat-1";
     const mounted = travelActorFrames(state, sprites, npcSrc, STRIDE);
@@ -85,7 +86,7 @@ describe("travel actor rendering projection", () => {
   });
 
   test("keeps the ridden airship shadow on the ground and fades it by altitude", () => {
-    const session = createSession(project);
+    const session = createSession(project, 60, { travel: travelRuntime });
     const state = startSession(project, session);
     const airship = state.travel!.vehicles!.entries.find((entry) => entry.id === "airship-1")!;
     airship.mapId = state.mapId;

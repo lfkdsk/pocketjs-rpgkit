@@ -36,6 +36,10 @@ const GUEST_EXPORTS = [
   "src/ui/world/index.ts",
   "src/ui/session-saves.ts",
   "src/ui/audio/index.ts",
+  "src/ui/ChoiceColourLine.tsx",
+  "src/ui/TravelActors.tsx",
+  "src/engine/rpgmaker-text.ts",
+  "src/travel.ts",
   "src/host/index.ts",
 ];
 

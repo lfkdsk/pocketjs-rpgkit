@@ -22,6 +22,10 @@
     "./ui/saves": "./src/ui/session-saves.ts",
     "./ui/audio": "./src/ui/audio/index.ts",
     "./ui/krm2": "./src/ui/krm2/index.ts",
+    "./ui/rpgmaker-text": "./src/ui/ChoiceColourLine.tsx",
+    "./ui/travel": "./src/ui/TravelActors.tsx",
+    "./rpgmaker-text": "./src/engine/rpgmaker-text.ts",
+    "./travel": "./src/travel.ts",
     "./host": "./src/host/index.ts",
     "./editor-api": "./editor/api/index.ts",
     "./schema": "./src/data/schema.json"

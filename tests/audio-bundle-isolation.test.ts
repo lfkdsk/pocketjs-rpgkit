@@ -275,9 +275,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // tile-event art resolver add a measured 8,892 B to Meadow, 11,151 B to
 // Sunstone and 9,671 B to the WAV fixture. Importer and Studio code remain
 // outside these game graphs, and the decoder needles below retain isolation.
-const EXPECTED_MEADOW_BYTES = 722_929;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_161_185;
-const EXPECTED_WAV_FIXTURE_BYTES = 925_393;
+// Explicit RPG Maker text/presentation and travel capabilities then remove
+// 44,930 B from Meadow, 50,779 B from Sunstone and 51,057 B from the WAV
+// fixture on this baseline. The opted-in fixture pins their positive graph.
+const EXPECTED_MEADOW_BYTES = 677_999;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_406;
+const EXPECTED_WAV_FIXTURE_BYTES = 874_336;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

@@ -54,27 +54,24 @@
 // are aligned as whole rows (paint offsets of the fixed row nodes), so the
 // typewriter never shifts letters it has already drawn.
 
-import { createMemo, For, Show, type Accessor } from "solid-js";
+import { createMemo, For, Show, type Accessor, type Component } from "solid-js";
 import { Image, Text, View } from "@pocketjs/framework/components";
 import type { Modal, ShopRow } from "../engine/interpreter.ts";
 import { fitBounded, marqueeOffset, windowByRows, wrapLabel, type BoundedCell } from "./list-window.ts";
 import { useMarqueeTick } from "./use-marquee-tick.ts";
 import { BoundedLine } from "./BoundedLine.tsx";
-import { ColourBoundedLine } from "./ChoiceColourLine.tsx";
-import {
-  choiceColourCellsEqual,
-  choiceRunColour,
-  fitChoiceColourCell,
-  type ChoiceColourCell,
-  type ChoiceColourRun,
-} from "./choice-colour.ts";
-import {
-  flowRows,
-  layoutRpgMakerTextRuns,
-  revealColourRuns,
-  revealRows,
-  type TextColourRun,
-} from "./text-flow.ts";
+import type {
+  ChoiceTextCell,
+  ChoiceTextBoundedLineProps,
+  ChoiceTextMessageRowProps,
+  ChoiceTextPositionedProps,
+  ChoiceTextPositionedRun,
+  ChoiceTextRow,
+  ChoiceTextRun,
+  ChoiceTextRunsProps,
+  ChoiceTextRuntime,
+} from "./choice-text-contract.ts";
+import { flowRows, revealRows } from "./text-flow.ts";
 import {
   DIALOG_PAGE_VIEWPORT,
   DIALOG_ROWS,
@@ -157,6 +154,10 @@ export interface DialogBoxProps {
    *  resolveChoiceIcon over the project's sprites). An icon this returns
    *  null for (or every icon, without the prop) shows a "?" placeholder. */
   choiceIcon?: ChoiceIconResolver;
+  /** Optional styled-choice implementation. RPG Maker projects pass the
+   * dedicated UI capability; ordinary games retain the plain text path and
+   * do not bundle colour-span layout or rendering. */
+  choiceText?: ChoiceTextRuntime;
   /** The kit's words (engine/ui-text.ts): any subset of keys; missing keys
    *  keep English. */
   uiText?: UiTextOverrides;
@@ -201,7 +202,8 @@ const sameBox = (a: TextBoxLayout | undefined, b: TextBoxLayout | undefined): bo
   a === b || (a !== undefined && b !== undefined && a.position === b.position && a.align === b.align &&
     a.valign === b.valign && a.background === b.background);
 const EMPTY_LINES: readonly string[] = [];
-const EMPTY_COLOUR_ROWS: readonly (readonly TextColourRun[])[] = [];
+const EMPTY_COLOUR_ROWS: readonly (readonly ChoiceTextRun[])[] = [];
+const EMPTY_POSITIONED_RUNS: readonly ChoiceTextPositionedRun[] = [];
 const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
 const sameRange = (a: number[], b: number[]): boolean => a.length === b.length;
 
@@ -218,7 +220,7 @@ interface ChoiceListRow extends ListRow {
   leftMarquee: number;
   /** Present only for an RPG Maker-coloured option. The cursor prefix is
    * deliberately an uncoloured run and keeps the selected/disabled theme. */
-  colourRuns?: readonly ChoiceColourRun[];
+  colourRuns?: readonly ChoiceTextRun[];
 }
 
 interface ShopListRow extends ListRow {
@@ -238,6 +240,18 @@ const sameLines = (a: readonly string[], b: readonly string[]): boolean =>
   a === b || (a.length === b.length && a.every((line, i) => line === b[i]));
 const sameCell = (a: BoundedCell, b: BoundedCell): boolean =>
   a.kind === b.kind && a.overflow === b.overflow && sameLines(a.rows, b.rows);
+const sameChoiceRows = (a: readonly ChoiceTextRow[], b: readonly ChoiceTextRow[]): boolean =>
+  a === b || (a.length === b.length && a.every((row, index) => {
+    const other = b[index]!;
+    return row.text === other.text && row.runs.length === other.runs.length &&
+      row.runs.every((run, at) => run.text === other.runs[at]!.text && run.colour === other.runs[at]!.colour);
+  }));
+const sameChoiceCell = (a: ChoiceTextCell, b: ChoiceTextCell): boolean =>
+  a === b || (sameCell(a.layout, b.layout) && sameChoiceRows(a.rows, b.rows));
+const EmptyChoiceBoundedLine: Component<ChoiceTextBoundedLineProps> = () => null;
+const EmptyChoiceMessageRow: Component<ChoiceTextMessageRowProps> = () => null;
+const EmptyChoicePositioned: Component<ChoiceTextPositionedProps> = () => null;
+const EmptyChoiceRuns: Component<ChoiceTextRunsProps> = () => null;
 
 let warnedNoIconBox = false;
 
@@ -271,6 +285,10 @@ export function DialogBox(props: DialogBoxProps) {
     );
   });
   const ItemIconRow = props.itemIconRow;
+  const ChoiceBoundedLine = props.choiceText?.BoundedLine ?? EmptyChoiceBoundedLine;
+  const ChoiceMessageRow = props.choiceText?.MessageRow ?? EmptyChoiceMessageRow;
+  const ChoicePositioned = props.choiceText?.Positioned ?? EmptyChoicePositioned;
+  const ChoiceRuns = props.choiceText?.Runs ?? EmptyChoiceRuns;
   const message = createMemo(() => {
     const modal = props.modal();
     return modal?.kind === "text" ? modal : null;
@@ -365,10 +383,15 @@ export function DialogBox(props: DialogBoxProps) {
   const choicePromptCell = createMemo(
     () => {
       const m = textChoice();
-      return fitChoiceColourCell(m?.prompt ?? "", listBudget(), PROMPT_MAX_ROWS, measure, m?.promptColours);
+      return m?.promptColours && props.choiceText
+        ? props.choiceText.fit(m.prompt, listBudget(), PROMPT_MAX_ROWS, measure, m.promptColours)
+        : {
+            layout: fitBounded(m?.prompt ?? "", listBudget(), PROMPT_MAX_ROWS, measure),
+            rows: [],
+          };
     },
-    { layout: { kind: "wrap", rows: [], overflow: 0 }, rows: [] } as ChoiceColourCell,
-    { equals: choiceColourCellsEqual },
+    { layout: { kind: "wrap", rows: [], overflow: 0 }, rows: [] } as ChoiceTextCell,
+    { equals: sameChoiceCell },
   );
   const choiceOptions = createMemo(() => textChoice()?.options ?? EMPTY_LINES, EMPTY_LINES, { equals: sameLines });
   // The option labels' row capacity depends on the chrome the cap leaves;
@@ -381,8 +404,12 @@ export function DialogBox(props: DialogBoxProps) {
     const legendBlock = BOX_GAP + LEGEND_ROW_H * legendCell().rows.length;
     const windowPx = BOX_CAP_H - BOX_FRAME - promptRows * LIST_ROW_H - BOX_GAP - legendBlock;
     const maxRows = Math.max(1, Math.floor(windowPx / LIST_ROW_H));
-    const labels = choiceOptions().map((option, index) =>
-      fitChoiceColourCell(option, labelBudget(), maxRows, measure, m.optionColours?.[index]));
+    const labels = choiceOptions().map((option, index) => {
+      const spans = m.optionColours?.[index];
+      return spans && props.choiceText
+        ? props.choiceText.fit(option, labelBudget(), maxRows, measure, spans)
+        : { layout: fitBounded(option, labelBudget(), maxRows, measure), rows: [] };
+    });
     const rowCounts = labels.map((cell) => cell.layout.rows.length);
     const { start, end } = windowByRows(m.index, rowCounts, VISIBLE_ROWS, maxRows);
     const rows: ChoiceListRow[] = [];
@@ -397,7 +424,7 @@ export function DialogBox(props: DialogBoxProps) {
           item,
           left,
           right: "",
-          ...(m.optionColours?.[item] ? {
+          ...(m.optionColours?.[item] && labelCell.rows[j] ? {
             colourRuns: [{ text: prefix }, ...labelCell.rows[j]!.runs],
           } : {}),
           // A marquee is one row. Measure the actual prefixed string against
@@ -560,7 +587,7 @@ export function DialogBox(props: DialogBoxProps) {
   // The box grows by the text rows past its own and by the wrapped
   // legend's extra rows (shown once the message is complete).
   const extraTextH = () => {
-    const textExtra = message()?.rpgMakerLayout
+    const textExtra = props.choiceText && message()?.rpgMakerLayout
       ? Math.max(0, rpgMakerTextHeight() - boxRows() * MESSAGE_ROW_H)
       : Math.max(0, flow().rows.length - boxRows()) * MESSAGE_ROW_H;
     return textExtra + (messageLegend() ? legendExtra() : 0);
@@ -582,138 +609,128 @@ export function DialogBox(props: DialogBoxProps) {
     const visible = revealRows(flow(), shown);
     return textRows().map((i) => visible[i] ?? "");
   });
-  const colourRows = createMemo((): readonly (readonly TextColourRun[])[] => {
-    const m = message();
-    if (m?.kind !== "text" || !m.colours || m.colours.length === 0) return EMPTY_COLOUR_ROWS;
-    const starts = pageStarts();
-    const at = page();
-    const offset = starts && starts.length > 1 && at > 0 ? starts[at]! : speaker().cut;
-    const shown = pageRevealed(m.revealed, speaker().cut, starts, at);
-    return revealColourRuns(flow(), shown, m.colours, offset);
-  });
-  const rpgMakerRuns = createMemo(() => {
-    const m = message();
-    if (m?.kind !== "text" || !m.rpgMakerLayout) return [];
-    const starts = pageStarts();
-    const at = page();
-    const pageFrom = starts && starts.length > 1 ? Math.max(0, starts[at]! - speaker().cut) : 0;
-    const globalFrom = speaker().cut + pageFrom;
-    const source = pageLines().join("\n");
-    const sourceLength = Array.from(source).length;
-    const globalTo = globalFrom + sourceLength;
-    let carriedFontSize: number | undefined;
-    for (const control of m.rpgMakerLayout) {
-      if (control.at >= globalFrom) break;
-      if (control.fontSize !== undefined) carriedFontSize = control.fontSize;
-    }
-    const controls = m.rpgMakerLayout.flatMap((control) => {
-      if (control.at < globalFrom || control.at > globalTo) return [];
-      return [{ ...control, at: control.at - globalFrom }];
-    });
-    if (carriedFontSize !== undefined) {
-      if (controls[0]?.at === 0) controls[0] = { fontSize: carriedFontSize, ...controls[0] };
-      else controls.unshift({ at: 0, fontSize: carriedFontSize });
-    }
-    const colours = (m.colours ?? []).flatMap((span) => {
-      const start = Math.max(globalFrom, span.start);
-      const end = Math.min(globalTo, span.end);
-      return start < end ? [{ start: start - globalFrom, end: end - globalFrom, colour: span.colour }] : [];
-    });
-    const shown = Math.min(sourceLength, pageRevealed(m.revealed, speaker().cut, starts, at));
-    return layoutRpgMakerTextRuns(source, shown, controls, colours, slotMeasure);
-  });
-  const rpgMakerTextHeight = createMemo(() => rpgMakerRuns().reduce(
-    (height, run) => Math.max(height, run.y + run.lineHeight),
-    DIALOG_ROWS * MESSAGE_ROW_H,
-  ));
+  // `choiceText` is an immutable package capability. Keep the ordinary
+  // dialog tree byte-for-byte reactive-equivalent to its pre-colour path:
+  // projects which omit the capability must not allocate even a dormant
+  // colour memo on every DialogBox mount.
+  const colourRows: Accessor<readonly (readonly ChoiceTextRun[])[]> = props.choiceText
+    ? createMemo(() => {
+        const m = message();
+        if (m?.kind !== "text" || !m.colours || m.colours.length === 0) {
+          return EMPTY_COLOUR_ROWS;
+        }
+        const starts = pageStarts();
+        const at = page();
+        const offset = starts && starts.length > 1 && at > 0 ? starts[at]! : speaker().cut;
+        const shown = pageRevealed(m.revealed, speaker().cut, starts, at);
+        return props.choiceText!.reveal(flow(), shown, m.colours, offset);
+      })
+    : () => EMPTY_COLOUR_ROWS;
+  const rpgMakerRuns: Accessor<readonly ChoiceTextPositionedRun[]> = props.choiceText
+    ? createMemo(() => {
+        const m = message();
+        if (m?.kind !== "text" || !m.rpgMakerLayout) return EMPTY_POSITIONED_RUNS;
+        const starts = pageStarts();
+        const at = page();
+        const pageFrom = starts && starts.length > 1 ? Math.max(0, starts[at]! - speaker().cut) : 0;
+        const globalFrom = speaker().cut + pageFrom;
+        const source = pageLines().join("\n");
+        const sourceLength = Array.from(source).length;
+        const globalTo = globalFrom + sourceLength;
+        let carriedFontSize: number | undefined;
+        for (const control of m.rpgMakerLayout) {
+          if (control.at >= globalFrom) break;
+          if (control.fontSize !== undefined) carriedFontSize = control.fontSize;
+        }
+        const controls = m.rpgMakerLayout.flatMap((control) => {
+          if (control.at < globalFrom || control.at > globalTo) return [];
+          return [{ ...control, at: control.at - globalFrom }];
+        });
+        if (carriedFontSize !== undefined) {
+          if (controls[0]?.at === 0) controls[0] = { fontSize: carriedFontSize, ...controls[0] };
+          else controls.unshift({ at: 0, fontSize: carriedFontSize });
+        }
+        const colours = (m.colours ?? []).flatMap((span) => {
+          const start = Math.max(globalFrom, span.start);
+          const end = Math.min(globalTo, span.end);
+          return start < end ? [{ start: start - globalFrom, end: end - globalFrom, colour: span.colour }] : [];
+        });
+        const shown = Math.min(sourceLength, pageRevealed(m.revealed, speaker().cut, starts, at));
+        return props.choiceText!.layout(source, shown, controls, colours, slotMeasure);
+      })
+    : () => EMPTY_POSITIONED_RUNS;
+  const rpgMakerTextHeight: Accessor<number> = props.choiceText
+    ? createMemo(() => rpgMakerRuns().reduce(
+        (height, run) => Math.max(height, run.y + run.lineHeight),
+        DIALOG_ROWS * MESSAGE_ROW_H,
+      ))
+    : () => DIALOG_ROWS * MESSAGE_ROW_H;
 
   // Solid replaces an empty string's Text child on the next character. Keep
   // a space in that child and hide its row instead: revealing it only
   // restyles and replaces the retained leaf.
   // Four text rows + the legend row; the column holding them is the paper
   // itself, or the text column right of the portrait when faces are on.
+  const plainMessageRow = (row: number, line: Accessor<string>) => (
+    <Text
+      class="text-xs"
+      style={{
+        textColor: theme().ink,
+        lineHeight: MESSAGE_ROW_H,
+        height: MESSAGE_ROW_H,
+        width: textWidth(),
+        display: line() ? 0 : 1,
+        translateX: rowShifts()?.[row] ?? 0,
+        translateY: rowsShift(),
+      }}
+      debugName={`rpgkit-message-row-${row}`}
+    >
+      {line() || " "}
+    </Text>
+  );
   const messageRows = () => (
     <>
-      <Show when={message()?.rpgMakerLayout} fallback={
+      {props.choiceText ? (
+        <Show
+          when={message()?.rpgMakerLayout}
+          fallback={
+            <For each={textRows()}>
+              {(row) => {
+                const line = createMemo(() => textLines()[row]!);
+                const runs = createMemo(() => colourRows()[row] ?? []);
+                return (
+                  <Show when={colourRows().length > 0} fallback={plainMessageRow(row, line)}>
+                    <ChoiceMessageRow
+                      runs={runs()}
+                      text={line()}
+                      textColor={theme().ink}
+                      rowH={MESSAGE_ROW_H}
+                      width={textWidth()}
+                      translateX={rowShifts()?.[row] ?? 0}
+                      translateY={rowsShift()}
+                      row={row}
+                    />
+                  </Show>
+                );
+              }}
+            </For>
+          }
+        >
+          <ChoicePositioned
+            runs={rpgMakerRuns()}
+            height={rpgMakerTextHeight()}
+            width={textWidth()}
+            textColor={theme().ink}
+          />
+        </Show>
+      ) : (
         <For each={textRows()}>
           {(row) => {
             const line = createMemo(() => textLines()[row]!);
-            const runs = createMemo(() => colourRows()[row] ?? []);
-            return (
-              <Show when={colourRows().length > 0} fallback={
-                <Text
-                  class="text-xs"
-                  style={{
-                    textColor: theme().ink,
-                    lineHeight: MESSAGE_ROW_H,
-                    height: MESSAGE_ROW_H,
-                    width: textWidth(),
-                    display: line() ? 0 : 1,
-                    translateX: rowShifts()?.[row] ?? 0,
-                    translateY: rowsShift(),
-                  }}
-                  debugName={`rpgkit-message-row-${row}`}
-                >
-                  {line() || " "}
-                </Text>
-              }>
-                <View
-                  class="flex-row"
-                  style={{
-                    height: MESSAGE_ROW_H,
-                    width: textWidth(),
-                    display: line() ? 0 : 1,
-                    translateX: rowShifts()?.[row] ?? 0,
-                    translateY: rowsShift(),
-                  }}
-                  debugName={`rpgkit-message-row-${row}`}
-                >
-                  <For each={runs()}>
-                    {(run) => (
-                      <Text
-                        class="text-xs"
-                        style={{
-                          textColor: run.colour ?? theme().ink,
-                          lineHeight: MESSAGE_ROW_H,
-                          height: MESSAGE_ROW_H,
-                          shrink: 0,
-                        }}
-                      >
-                        {run.text}
-                      </Text>
-                    )}
-                  </For>
-                  <Show when={runs().length === 0}>
-                    <Text class="text-xs" style={{ textColor: theme().ink, lineHeight: MESSAGE_ROW_H, height: MESSAGE_ROW_H, shrink: 0 }}> </Text>
-                  </Show>
-                </View>
-              </Show>
-            );
+            return plainMessageRow(row, line);
           }}
         </For>
-      }>
-        <View style={{ height: rpgMakerTextHeight(), width: textWidth() }} debugName="rpgkit-message-mz-layout">
-          <For each={rpgMakerRuns()}>
-            {(run) => (
-              <Text
-                class="text-xs"
-                style={{
-                  posType: 1,
-                  insetL: run.x,
-                  insetT: run.y,
-                  width: run.width,
-                  height: run.lineHeight,
-                  lineHeight: run.lineHeight,
-                  fontSlot: run.fontSlot,
-                  textColor: run.colour ?? theme().ink,
-                }}
-              >
-                {run.text}
-              </Text>
-            )}
-          </For>
-        </View>
-      </Show>
+      )}
       <View class="flex-row justify-end" style={{ height: LEGEND_ROW_H * messageLegendRows().length, translateY: rowsShift() }}>
         <Text
           class="text-xs"
@@ -782,7 +799,27 @@ export function DialogBox(props: DialogBoxProps) {
         paperClass="flex-col p-[6]"
         debugName="rpgkit-choices-box"
       >
-        <Show when={textChoice()?.promptColours} fallback={
+        {props.choiceText ? (
+          <Show when={textChoice()?.promptColours} fallback={
+            <BoundedLine
+              cell={choicePromptCell().layout}
+              tick={marqueeTick}
+              textColor={theme().dim}
+              rowH={LIST_ROW_H}
+              width={listBudget()}
+              debugName="rpgkit-choice-prompt"
+            />
+          }>
+            <ChoiceBoundedLine
+              cell={choicePromptCell()}
+              tick={marqueeTick}
+              textColor={theme().dim}
+              rowH={LIST_ROW_H}
+              width={listBudget()}
+              debugName="rpgkit-choice-prompt"
+            />
+          </Show>
+        ) : (
           <BoundedLine
             cell={choicePromptCell().layout}
             tick={marqueeTick}
@@ -791,16 +828,7 @@ export function DialogBox(props: DialogBoxProps) {
             width={listBudget()}
             debugName="rpgkit-choice-prompt"
           />
-        }>
-          <ColourBoundedLine
-            cell={choicePromptCell()}
-            tick={marqueeTick}
-            textColor={theme().dim}
-            rowH={LIST_ROW_H}
-            width={listBudget()}
-            debugName="rpgkit-choice-prompt"
-          />
-        </Show>
+        )}
         <View class="flex-col" style={{ height: 4 }} />
         <For each={choiceLayout().slots}>
           {(slot) => {
@@ -811,7 +839,7 @@ export function DialogBox(props: DialogBoxProps) {
             const rowColor = () => disabled() ? theme().dim : selected() ? theme().accent : theme().ink;
             const left = () => row()?.left ?? "";
             return (
-              <Show when={row()?.colourRuns} fallback={
+              <Show when={row()?.colourRuns && props.choiceText} fallback={
                 row()?.leftMarquee ? (
                   <View
                     style={{ width: listBudget(), height: LIST_ROW_H, overflow: 1 }}
@@ -846,21 +874,11 @@ export function DialogBox(props: DialogBoxProps) {
                       translateX: -marqueeOffset(row()?.leftMarquee ?? 0, marqueeTick()),
                     }}
                   >
-                    <For each={row()?.colourRuns ?? []}>
-                      {(run) => (
-                        <Text
-                          class="text-xs"
-                          style={{
-                            textColor: choiceRunColour(run, rowColor()),
-                            lineHeight: LIST_ROW_H,
-                            height: LIST_ROW_H,
-                            shrink: 0,
-                          }}
-                        >
-                          {run.text || " "}
-                        </Text>
-                      )}
-                    </For>
+                    <ChoiceRuns
+                      runs={row()?.colourRuns ?? []}
+                      textColor={rowColor()}
+                      rowH={LIST_ROW_H}
+                    />
                   </View>
                 </View>
               </Show>
@@ -880,7 +898,13 @@ export function DialogBox(props: DialogBoxProps) {
       </Panel>
       {IconBox && (
         <Show when={iconBoxMounted()}>
-          <IconBox modal={iconChoice} legend={props.legend} theme={theme} resolve={props.choiceIcon} />
+          <IconBox
+            modal={iconChoice}
+            legend={props.legend}
+            theme={theme}
+            resolve={props.choiceIcon}
+            choiceText={props.choiceText}
+          />
         </Show>
       )}
 

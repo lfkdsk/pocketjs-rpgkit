@@ -47,7 +47,7 @@ import type { MapContentIdentity } from "./map-repository.ts";
 import { MAP_SCHEMA_HASH, describeMapSchemaRefusal, isCompatibleMapSchemaHash } from "./schema-identity.ts";
 import type { JsonValue } from "./types.ts";
 import type { FadeState, LeftMapSnapshot, PlayerRoute, Session, SessionState } from "./session.ts";
-import { cloneTravelState, type TravelState } from "./travel.ts";
+import type { TravelState } from "./travel-types.ts";
 import { cloneScene, type BattleScene } from "./battle.ts";
 
 export const SAVE_FORMAT = "rpgkit-save/v1" as const;
@@ -172,7 +172,7 @@ export function cloneSnapshot(snap: SaveSnapshot): SaveSnapshot {
     ext: deepClone((snap as SaveSnapshot & { ext?: JsonValue }).ext ?? null),
   };
   if (snap.mapRuntime !== undefined) out.mapRuntime = cloneMapRuntime(snap.mapRuntime);
-  if (snap.travel !== undefined) out.travel = cloneTravelState(snap.travel);
+  if (snap.travel !== undefined) out.travel = deepClone(snap.travel);
   if (snap.battle !== undefined) out.battle = cloneScene(snap.battle);
   return out;
 }
