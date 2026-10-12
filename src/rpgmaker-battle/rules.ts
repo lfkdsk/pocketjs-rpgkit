@@ -405,7 +405,12 @@ function runtimeRoot(db: RpgMakerBattleDatabase, ext: JsonValue): { root: Record
   }
   const encounterRaw = object(raw.encounter);
   const encounter = typeof encounterRaw.map === "string" && encounterRaw.map.length > 0
-    ? { map: encounterRaw.map, remaining: Math.max(0, integer(encounterRaw.remaining)) }
+    ? {
+        map: encounterRaw.map,
+        remaining: typeof encounterRaw.remaining === "number" && Number.isFinite(encounterRaw.remaining)
+          ? Math.max(0, encounterRaw.remaining)
+          : 0,
+      }
     : null;
   const mapSettings: NonNullable<RpgMakerBattleRuntime["mapSettings"]> = {};
   for (const [map, value] of Object.entries(object(raw.mapSettings))) {
@@ -443,6 +448,23 @@ function nextEncounterCount(step: number, random: () => number): number {
   return Math.floor(random() * n) + Math.floor(random() * n) + 1;
 }
 
+/** Game_Party.partyAbility reads the first four live party members and
+ * includes actor, class, equipment and persistent-state traits. Building a
+ * transient combatant reuses the battle module's one trait projection
+ * without adding encounter-only state to generic sessions. */
+function encounterPartyAbility(
+  db: RpgMakerBattleDatabase,
+  runtime: RpgMakerBattleRuntime,
+  context: Pick<ExtensionReadContext, "switches" | "partyOrder">,
+  dataId: number,
+): boolean {
+  return currentBattlePartyActorIds(db, context.switches, context.partyOrder).some((actorId, index) => {
+    const actor = runtime.actors[String(actorId)] ?? initialActorRuntime(db, actorId);
+    const combatant = actor ? actorCombatant(db, actor, index) : null;
+    return combatant !== null && hasTrait(db, combatant, 64, dataId);
+  });
+}
+
 /** Opt-in stock walking-encounter integration. The importer installs one
  * hidden parallel Battle Processing event on maps with encounter tables;
  * this player-step hook owns only the saved countdown and raises its private
@@ -451,7 +473,8 @@ function nextEncounterCount(step: number, random: () => number): number {
 function encounterStepHandler(db: RpgMakerBattleDatabase) {
   return (context: ExtensionCommandContext): ExtensionCommandResult => {
     const { root, runtime } = runtimeRoot(db, context.ext);
-    if (runtime.settings?.encounterDisabled === true) {
+    const vehicle = context.vehicle;
+    if (runtime.settings?.encounterDisabled === true || vehicle === "airship") {
       return {
         ext: withRuntime(root, runtime),
         writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 },
@@ -470,7 +493,13 @@ function encounterStepHandler(db: RpgMakerBattleDatabase) {
     let remaining = previous !== null && previous.map === mapId
       ? previous.remaining
       : nextEncounterCount(encounter.step, context.random);
-    remaining--;
+    // Stock encounterProgressValue: walking and boats consume one point;
+    // Encounter Half and ships independently halve it. Bush doubling is
+    // intentionally not inferred from terrain here (the importer has no
+    // stock bush flag in this extension contract).
+    let progress = encounterPartyAbility(db, runtime, context, 0) ? 0.5 : 1;
+    if (vehicle === "ship") progress *= 0.5;
+    remaining -= progress;
     const due = remaining <= 0;
     if (due) remaining = nextEncounterCount(encounter.step, context.random);
     runtime.encounter = { map: mapId!, remaining };
@@ -496,6 +525,19 @@ function currentPartyActorIds(
       .filter((id) => !initial.has(id) && switches[partySwitchKey(id)] === true)
       .sort((a, b) => a - b),
   ];
+}
+
+function currentBattlePartyActorIds(
+  db: RpgMakerBattleDatabase,
+  switches: Readonly<Record<string, boolean>>,
+  partyOrder: readonly number[] | undefined,
+): number[] {
+  const members = currentPartyActorIds(db, switches);
+  const active = new Set(members);
+  return [
+    ...(partyOrder ?? []).filter((id, at, all) => active.has(id) && all.indexOf(id) === at),
+    ...members.filter((id) => !(partyOrder ?? []).includes(id)),
+  ].slice(0, 4);
 }
 
 function actorCommandTargets(
@@ -2110,19 +2152,7 @@ function createInitialState(
 
   const { runtime } = runtimeRoot(db, ext);
   runtime.battleCount++;
-  const initialParty = new Set(db.party);
-  const members = [
-    ...db.party.filter((actorId) => context.switches[partyOutSwitchKey(actorId)] !== true),
-    ...db.actors
-      .map((actor) => actor.id)
-      .filter((actorId) => !initialParty.has(actorId) && context.switches[partySwitchKey(actorId)] === true)
-      .sort((a, b) => a - b),
-  ];
-  const active = new Set(members);
-  const party = [
-    ...(context.partyOrder ?? []).filter((id, at, all) => active.has(id) && all.indexOf(id) === at),
-    ...members.filter((id) => !(context.partyOrder ?? []).includes(id)),
-  ].slice(0, 4);
+  const party = currentBattlePartyActorIds(db, context.switches, context.partyOrder);
   for (const actorId of party) {
     if (!runtime.actors[String(actorId)]) {
       const initial = initialActorRuntime(db, actorId);

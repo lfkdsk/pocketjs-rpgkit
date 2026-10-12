@@ -17,6 +17,7 @@ import type { Command, GameEvent, MapDef, Project } from "../src/engine/types.ts
 
 const RAW = String.raw`\C[2]\N[1]` + "😀" + String.raw`/\N[2]/\P[1]/\P[2]/\V[3]\G\C[0]!`;
 const VISIBLE = "Hero😀/Aster/Aster/Hero/7G!";
+const LAYOUT_RAW = String.raw`A\PX[26]B\PY[52]\FS[30]` + "中";
 
 function map(commands: Command[]): MapDef {
   const event: GameEvent = {
@@ -71,6 +72,30 @@ describe("RPG Maker text in the interpreter", () => {
       { start: 0, end: beforeBang, colour: "#FF784C" },
       { start: beforeBang, end: beforeBang + 1, colour: "#FFFFFF" },
     ]);
+  });
+
+  test("freezes MZ PX/PY/FS controls in modal state and clones them for rewind snapshots", () => {
+    const world = createWorld(map([{ op: "text", lines: [LAYOUT_RAW] }]), [], 60, {
+      rpgMakerText: { actors: [], partyActorIds: [], currencyUnit: "G" },
+    });
+    const state = stepInterp(world, createInterpState(bank()), input);
+    const modal = state.modal as TextModal;
+    expect(modal).toMatchObject({
+      lines: ["AB中"],
+      total: 3,
+      rpgMakerLayout: [
+        { at: 1, x: 26 },
+        { at: 2, y: 52, fontSize: 30 },
+      ],
+    });
+
+    const cloned = cloneModal(modal) as TextModal;
+    expect(cloned).toEqual(modal);
+    expect(cloned.rpgMakerLayout).not.toBe(modal.rpgMakerLayout);
+    expect(cloned.rpgMakerLayout![0]).not.toBe(modal.rpgMakerLayout![0]);
+    expect(modalChanged(modal, cloned)).toBe(false);
+    cloned.rpgMakerLayout = [{ ...cloned.rpgMakerLayout![0]!, x: 27 }, cloned.rpgMakerLayout![1]!];
+    expect(modalChanged(modal, cloned)).toBe(true);
   });
 
   test("is explicitly opt-in and does not mix with kit brace-token expansion", () => {
@@ -181,7 +206,7 @@ describe("RPG Maker text in the interpreter", () => {
   });
 });
 
-function project(): Project {
+function project(raw = RAW): Project {
   return {
     format: "rpgkit-project/v1",
     title: "RPG Maker text",
@@ -196,7 +221,7 @@ function project(): Project {
     ],
     sheets: [{ id: "floor", cols: 1, rows: 1, defaultPassage: "pass" }],
     items: [],
-    maps: [map([{ op: "text", lines: [RAW] }])],
+    maps: [map([{ op: "text", lines: [raw] }])],
   };
 }
 
@@ -223,6 +248,25 @@ describe("RPG Maker text session determinism", () => {
     expect(results).toEqual([results[0], results[0], results[0]]);
   });
 
+  test("60/30/20 Hz retain identical MZ layout controls", () => {
+    const results: unknown[] = [];
+    for (const hz of [60, 30, 20]) {
+      const source = project(LAYOUT_RAW);
+      const session = createSession(source, hz);
+      let state = startSession(source, session, bank());
+      for (let frame = 0; frame < hz / 10; frame++) {
+        state = stepSession(session, state, { buttons: 0 });
+      }
+      const modal = state.interp.modal as TextModal;
+      results.push({
+        lines: modal.lines,
+        revealed: modal.revealed,
+        rpgMakerLayout: modal.rpgMakerLayout,
+      });
+    }
+    expect(results).toEqual([results[0], results[0], results[0]]);
+  });
+
   test("autosave validation accepts canonical spans and rejects malformed colour state", () => {
     const source = project();
     const session = createSession(source);
@@ -234,6 +278,20 @@ describe("RPG Maker text session determinism", () => {
       { start: 0, end: 1, colour: "#ff0000" },
     ];
     expect(validateSnapshot(snapshot)).toContain("uppercase six-digit hex colour");
+  });
+
+  test("autosave validation accepts canonical MZ controls and rejects malformed assignments", () => {
+    const source = project(LAYOUT_RAW);
+    const session = createSession(source);
+    const opened = stepSession(session, startSession(source, session, bank()), { buttons: 0 });
+    const clean = createAutosaveSessionSnapshot(session, opened, 0)!;
+    expect(validateSnapshot(clean)).toBeNull();
+
+    const bad = structuredClone(clean);
+    (bad.interp.modal as unknown as {
+      rpgMakerLayout: { at: number; x?: number; y?: number; fontSize?: number }[];
+    }).rpgMakerLayout[0]!.x = -1;
+    expect(validateSnapshot(bad)).toContain("non-negative safe integers");
   });
 
   test("choice save validation accepts canonical runs and rejects malformed prompt/option columns", () => {

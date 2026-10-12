@@ -655,6 +655,7 @@ export const SANDBOX_PREVIEW_STAMPED_CONTEXT: {
   partyOrder: "record",
   mapId: "project",
   playerCell: "project",
+  vehicle: "project",
   playerAppearance: "record",
   itemCatalog: "project",
 };

@@ -26,6 +26,9 @@ export interface ExtensionReadContext {
    * command contexts may omit these fields. */
   readonly mapId?: string;
   readonly playerCell?: Readonly<{ x: number; y: number; region: number }>;
+  /** Vehicle ridden for a spatial player-step callback. null means walking;
+   * absent on ordinary extension calls and in projects without travel. */
+  readonly vehicle?: string | null;
   /** The player's sparse appearance state (walking sprite baseline/override,
    *  battle back-sheet baseline/override), so a scene (battle) can read the
    *  current combat sheet. Populated by the session for scene/battle starts;

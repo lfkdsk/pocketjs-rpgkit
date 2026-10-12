@@ -4118,6 +4118,7 @@ function runPlayerStepHook(
         y: s.move.ty,
         region: world.regionCells?.get(s.move.ty * world.map.width + s.move.tx) ?? 0,
       },
+      ...(s.sw.partyOrder ? { partyOrder: [...s.sw.partyOrder] } : {}),
       ...(s.travel?.vehicles ? { vehicle: s.travel.vehicles.riding ?? null } : {}),
     },
   );

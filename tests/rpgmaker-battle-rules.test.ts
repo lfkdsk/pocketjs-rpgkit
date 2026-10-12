@@ -534,6 +534,38 @@ describe("RPG Maker battle rules", () => {
     expect(started.enemies[0]!.lastTargetIndex).toBe(0);
   });
 
+  test("stock smooth-target retargets an explicit hidden-but-living opponent", () => {
+    const db = cloneDb();
+    db.troops[0]!.members.push({ enemyId: 1, x: 320, y: 160, hidden: true });
+    Object.assign(db.skills[0]!, {
+      hitType: 0,
+      successRate: 100,
+      repeats: 1,
+      damage: {
+        ...db.skills[0]!.damage,
+        type: 1,
+        critical: false,
+        variance: 0,
+        source: "10",
+        formula: { kind: "number", value: 10 },
+      },
+      effects: [],
+    });
+    const { rules, state: opened } = start(db, 44);
+    const before = state(opened);
+    expect(before.enemies[1]!.hp).toBeGreaterThan(0);
+    expect(before.enemies[1]!.hidden).toBe(true);
+    const firstHp = before.enemies[0]!.hp;
+    const hiddenHp = before.enemies[1]!.hp;
+    const acted = forceAction(rules, opened, {
+      side: "actor", user: 0, kind: "skill", id: 1, target: 1, speed: 0,
+    });
+
+    expect(state(acted).enemies[0]!.hp).toBe(firstHp - 10);
+    expect(state(acted).enemies[1]!.hp).toBe(hiddenHp);
+    expect(state(acted).actors[0]!.lastTargetIndex).toBe(0);
+  });
+
   test("state removal uses message4 for actors and scope-zero actions have no target", () => {
     const db = cloneDb();
     db.states[1]!.messages = [" actor added", " enemy added", " persists", " fades"];
@@ -677,6 +709,67 @@ describe("RPG Maker battle rules", () => {
     }).ext!;
     expect(draws).toBe(2);
     expect((ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1);
+  });
+
+  test("Encounter Half and ship progress stack while airships freeze the saved countdown", () => {
+    const db = cloneDb();
+    db.encounters = [{ map: "map003", step: 10, entries: [{ troopId: 1, weight: 1, regions: [] }] }];
+    db.actors[0]!.traits.push({ code: 64, dataId: 0, value: 1 });
+    const seeded = {
+      rpgmakerBattle: { encounter: { map: "map003", remaining: 2 } },
+    } as unknown as JsonValue;
+    const step = (ext: JsonValue, vehicle?: string | null) => runExtensionCommand(
+      db,
+      RPGMAKER_ENCOUNTER_STEP_CALL,
+      null,
+      {
+        ext,
+        ...(vehicle === undefined ? {} : { vehicle }),
+        random: () => { throw new Error("countdown must not reset before it is due"); },
+        playerStep: { dx: 1, dy: 0, kind: "step" },
+      },
+    );
+
+    const walked = step(seeded, null);
+    expect((walked.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1.5);
+    const shipped = step(walked.ext!, "ship");
+    expect((shipped.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1.25);
+    const boated = step(shipped.ext!, "boat");
+    expect((boated.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(0.75);
+    const airborne = step(boated.ext!, "airship");
+    expect((airborne.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(0.75);
+
+    // Re-hydration must preserve stock's fractional cursor exactly.
+    const resumed = step(JSON.parse(JSON.stringify(airborne.ext)), "ship");
+    expect((resumed.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(0.5);
+  });
+
+  test("Encounter Half follows the current four-member formation", () => {
+    const db = cloneDb();
+    const template = db.actors[0]!;
+    for (const id of [3, 4, 5]) {
+      db.actors.push({ ...structuredClone(template), id, name: `Actor ${id}`, traits: [] });
+    }
+    db.party = [1, 2, 3, 4, 5];
+    for (const actor of db.actors) actor.traits = actor.id === 5
+      ? [{ code: 64, dataId: 0, value: 1 }]
+      : actor.traits.filter((trait) => trait.code !== 64 || trait.dataId !== 0);
+    db.encounters = [{ map: "map003", step: 10, entries: [{ troopId: 1, weight: 1, regions: [] }] }];
+    const seeded = { rpgmakerBattle: { encounter: { map: "map003", remaining: 2 } } } as JsonValue;
+    const step = (partyOrder?: readonly number[]) => runExtensionCommand(
+      db,
+      RPGMAKER_ENCOUNTER_STEP_CALL,
+      null,
+      {
+        ext: seeded,
+        ...(partyOrder ? { partyOrder } : {}),
+        random: () => { throw new Error("countdown must not reset before it is due"); },
+        playerStep: { dx: 1, dy: 0, kind: "step" },
+      },
+    );
+
+    expect((step().ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1);
+    expect((step([5, 1, 2, 3, 4]).ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1.5);
   });
 
   test("confusion restrictions target opponents, either side, and friends for actors and enemies", () => {
@@ -1105,6 +1198,32 @@ describe("RPG Maker battle rules", () => {
     }, 1, { ...CONTEXT, playerCell: { x: 1, y: 1, region: 7 } });
     expect(encounter).not.toBeNull();
     expect(state(encounter!.state).troopId).toBe(1);
+  });
+
+  test("eligible zero-weight encounters never win and an all-zero table declines battle", () => {
+    const db = cloneDb();
+    db.encounters = [{
+      map: "map003",
+      step: 30,
+      entries: [
+        { troopId: 999, weight: 0, regions: [7] },
+        { troopId: 1, weight: 5, regions: [7] },
+      ],
+    }];
+    const rules = createRpgMakerBattleRules(db);
+    const setupValue = {
+      system: "rpgmaker", databaseHash: db.databaseHash, encounter: true, map: "map003",
+      canEscape: true, canLose: true,
+    } as JsonValue;
+    const context = { ...CONTEXT, playerCell: { x: 1, y: 1, region: 7 } };
+    for (const seed of [0, 1, 2, 0xffffffff]) {
+      const started = rules.start({}, setupValue, seed, context);
+      expect(started, `seed ${seed}`).not.toBeNull();
+      expect(state(started!.state).troopId).toBe(1);
+    }
+
+    db.encounters[0]!.entries[1]!.weight = 0;
+    expect(createRpgMakerBattleRules(db).start({}, setupValue, 1, context)).toBeNull();
   });
 
   test("walking encounter countdown is saved in ext and survives battle settlement", () => {

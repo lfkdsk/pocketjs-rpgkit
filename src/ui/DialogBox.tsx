@@ -68,7 +68,13 @@ import {
   type ChoiceColourCell,
   type ChoiceColourRun,
 } from "./choice-colour.ts";
-import { flowRows, revealColourRuns, revealRows, type TextColourRun } from "./text-flow.ts";
+import {
+  flowRows,
+  layoutRpgMakerTextRuns,
+  revealColourRuns,
+  revealRows,
+  type TextColourRun,
+} from "./text-flow.ts";
 import {
   DIALOG_PAGE_VIEWPORT,
   DIALOG_ROWS,
@@ -553,8 +559,12 @@ export function DialogBox(props: DialogBoxProps) {
   const textRows = createMemo(() => range(Math.max(DIALOG_ROWS, flow().rows.length)), range(DIALOG_ROWS), { equals: sameRange });
   // The box grows by the text rows past its own and by the wrapped
   // legend's extra rows (shown once the message is complete).
-  const extraTextH = () =>
-    Math.max(0, flow().rows.length - boxRows()) * MESSAGE_ROW_H + (messageLegend() ? legendExtra() : 0);
+  const extraTextH = () => {
+    const textExtra = message()?.rpgMakerLayout
+      ? Math.max(0, rpgMakerTextHeight() - boxRows() * MESSAGE_ROW_H)
+      : Math.max(0, flow().rows.length - boxRows()) * MESSAGE_ROW_H;
+    return textExtra + (messageLegend() ? legendExtra() : 0);
+  };
   // Paint offsets of the page's rows (dialog-pages.ts): null/0 for the
   // default box, so its rows draw exactly where they always did.
   const rowShifts = createMemo(() => {
@@ -581,6 +591,41 @@ export function DialogBox(props: DialogBoxProps) {
     const shown = pageRevealed(m.revealed, speaker().cut, starts, at);
     return revealColourRuns(flow(), shown, m.colours, offset);
   });
+  const rpgMakerRuns = createMemo(() => {
+    const m = message();
+    if (m?.kind !== "text" || !m.rpgMakerLayout) return [];
+    const starts = pageStarts();
+    const at = page();
+    const pageFrom = starts && starts.length > 1 ? Math.max(0, starts[at]! - speaker().cut) : 0;
+    const globalFrom = speaker().cut + pageFrom;
+    const source = pageLines().join("\n");
+    const sourceLength = Array.from(source).length;
+    const globalTo = globalFrom + sourceLength;
+    let carriedFontSize: number | undefined;
+    for (const control of m.rpgMakerLayout) {
+      if (control.at >= globalFrom) break;
+      if (control.fontSize !== undefined) carriedFontSize = control.fontSize;
+    }
+    const controls = m.rpgMakerLayout.flatMap((control) => {
+      if (control.at < globalFrom || control.at > globalTo) return [];
+      return [{ ...control, at: control.at - globalFrom }];
+    });
+    if (carriedFontSize !== undefined) {
+      if (controls[0]?.at === 0) controls[0] = { fontSize: carriedFontSize, ...controls[0] };
+      else controls.unshift({ at: 0, fontSize: carriedFontSize });
+    }
+    const colours = (m.colours ?? []).flatMap((span) => {
+      const start = Math.max(globalFrom, span.start);
+      const end = Math.min(globalTo, span.end);
+      return start < end ? [{ start: start - globalFrom, end: end - globalFrom, colour: span.colour }] : [];
+    });
+    const shown = Math.min(sourceLength, pageRevealed(m.revealed, speaker().cut, starts, at));
+    return layoutRpgMakerTextRuns(source, shown, controls, colours, slotMeasure);
+  });
+  const rpgMakerTextHeight = createMemo(() => rpgMakerRuns().reduce(
+    (height, run) => Math.max(height, run.y + run.lineHeight),
+    DIALOG_ROWS * MESSAGE_ROW_H,
+  ));
 
   // Solid replaces an empty string's Text child on the next character. Keep
   // a space in that child and hide its row instead: revealing it only
@@ -589,62 +634,86 @@ export function DialogBox(props: DialogBoxProps) {
   // itself, or the text column right of the portrait when faces are on.
   const messageRows = () => (
     <>
-      <For each={textRows()}>
-        {(row) => {
-          const line = createMemo(() => textLines()[row]!);
-          const runs = createMemo(() => colourRows()[row] ?? []);
-          return (
-            <Show when={colourRows().length > 0} fallback={
+      <Show when={message()?.rpgMakerLayout} fallback={
+        <For each={textRows()}>
+          {(row) => {
+            const line = createMemo(() => textLines()[row]!);
+            const runs = createMemo(() => colourRows()[row] ?? []);
+            return (
+              <Show when={colourRows().length > 0} fallback={
+                <Text
+                  class="text-xs"
+                  style={{
+                    textColor: theme().ink,
+                    lineHeight: MESSAGE_ROW_H,
+                    height: MESSAGE_ROW_H,
+                    width: textWidth(),
+                    display: line() ? 0 : 1,
+                    translateX: rowShifts()?.[row] ?? 0,
+                    translateY: rowsShift(),
+                  }}
+                  debugName={`rpgkit-message-row-${row}`}
+                >
+                  {line() || " "}
+                </Text>
+              }>
+                <View
+                  class="flex-row"
+                  style={{
+                    height: MESSAGE_ROW_H,
+                    width: textWidth(),
+                    display: line() ? 0 : 1,
+                    translateX: rowShifts()?.[row] ?? 0,
+                    translateY: rowsShift(),
+                  }}
+                  debugName={`rpgkit-message-row-${row}`}
+                >
+                  <For each={runs()}>
+                    {(run) => (
+                      <Text
+                        class="text-xs"
+                        style={{
+                          textColor: run.colour ?? theme().ink,
+                          lineHeight: MESSAGE_ROW_H,
+                          height: MESSAGE_ROW_H,
+                          shrink: 0,
+                        }}
+                      >
+                        {run.text}
+                      </Text>
+                    )}
+                  </For>
+                  <Show when={runs().length === 0}>
+                    <Text class="text-xs" style={{ textColor: theme().ink, lineHeight: MESSAGE_ROW_H, height: MESSAGE_ROW_H, shrink: 0 }}> </Text>
+                  </Show>
+                </View>
+              </Show>
+            );
+          }}
+        </For>
+      }>
+        <View style={{ height: rpgMakerTextHeight(), width: textWidth() }} debugName="rpgkit-message-mz-layout">
+          <For each={rpgMakerRuns()}>
+            {(run) => (
               <Text
                 class="text-xs"
                 style={{
-                  textColor: theme().ink,
-                  lineHeight: MESSAGE_ROW_H,
-                  height: MESSAGE_ROW_H,
-                  width: textWidth(),
-                  display: line() ? 0 : 1,
-                  translateX: rowShifts()?.[row] ?? 0,
-                  translateY: rowsShift(),
+                  posType: 1,
+                  insetL: run.x,
+                  insetT: run.y,
+                  width: run.width,
+                  height: run.lineHeight,
+                  lineHeight: run.lineHeight,
+                  fontSlot: run.fontSlot,
+                  textColor: run.colour ?? theme().ink,
                 }}
-                debugName={`rpgkit-message-row-${row}`}
               >
-                {line() || " "}
+                {run.text}
               </Text>
-            }>
-              <View
-                class="flex-row"
-                style={{
-                  height: MESSAGE_ROW_H,
-                  width: textWidth(),
-                  display: line() ? 0 : 1,
-                  translateX: rowShifts()?.[row] ?? 0,
-                  translateY: rowsShift(),
-                }}
-                debugName={`rpgkit-message-row-${row}`}
-              >
-                <For each={runs()}>
-                  {(run) => (
-                    <Text
-                      class="text-xs"
-                      style={{
-                        textColor: run.colour ?? theme().ink,
-                        lineHeight: MESSAGE_ROW_H,
-                        height: MESSAGE_ROW_H,
-                        shrink: 0,
-                      }}
-                    >
-                      {run.text}
-                    </Text>
-                  )}
-                </For>
-                <Show when={runs().length === 0}>
-                  <Text class="text-xs" style={{ textColor: theme().ink, lineHeight: MESSAGE_ROW_H, height: MESSAGE_ROW_H, shrink: 0 }}> </Text>
-                </Show>
-              </View>
-            </Show>
-          );
-        }}
-      </For>
+            )}
+          </For>
+        </View>
+      </Show>
       <View class="flex-row justify-end" style={{ height: LEGEND_ROW_H * messageLegendRows().length, translateY: rowsShift() }}>
         <Text
           class="text-xs"

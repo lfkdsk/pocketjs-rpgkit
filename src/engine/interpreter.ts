@@ -63,6 +63,7 @@ import {
   parseRpgMakerText,
   type RpgMakerTextActor,
   type RpgMakerTextColourSpan,
+  type RpgMakerTextLayoutControl,
 } from "./rpgmaker-text.ts";
 import {
   cloneMoveControlState,
@@ -1832,6 +1833,9 @@ export interface TextModal {
   /** RPG Maker colour runs over `lines.join("\n")`, indexed in Unicode
    *  code points. Omitted keeps legacy message state and rendering shape. */
   colours?: readonly RpgMakerTextColourSpan[];
+  /** MZ PX/PY/FS assignments over `lines.join("\n")`, indexed in Unicode
+   *  code points. Omitted keeps the legacy fixed-row render path. */
+  rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
 }
 
 /** Full-screen transparent RPG Maker scrolling text. Distances use integer
@@ -1870,6 +1874,7 @@ function openTextModal(
   lines: string[],
   box: TextBoxLayout | undefined,
   colours?: readonly RpgMakerTextColourSpan[],
+  rpgMakerLayout?: readonly RpgMakerTextLayoutControl[],
 ): TextModal {
   const modal: TextModal = {
     kind: "text",
@@ -1881,6 +1886,7 @@ function openTextModal(
   };
   if (box) modal.box = box;
   if (colours && colours.length > 0) modal.colours = colours;
+  if (rpgMakerLayout && rpgMakerLayout.length > 0) modal.rpgMakerLayout = rpgMakerLayout;
   const starts = w.paginateText?.(lines, box);
   if (starts && starts.length > 1) {
     modal.pageStarts = starts;
@@ -2016,6 +2022,19 @@ function colourSpansEqual(
   });
 }
 
+function rpgMakerLayoutEqual(
+  a: readonly RpgMakerTextLayoutControl[] | null | undefined,
+  b: readonly RpgMakerTextLayoutControl[] | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a == null || b == null || a.length !== b.length) return false;
+  return a.every((control, index) => {
+    const other = b[index]!;
+    return control.at === other.at && control.x === other.x && control.y === other.y &&
+      control.fontSize === other.fontSize;
+  });
+}
+
 /** Did the VISIBLE modal identity/content change between two reducer
  *  frames? The UI repaints the message layer only when this is true, so a
  *  parked typewriter emits zero ops on idle frames. Comparing only kind and
@@ -2039,6 +2058,7 @@ export function modalChanged(a: Modal | null, b: Modal | null): boolean {
       a.lines.length !== b.lines.length ||
       a.lines.some((line, i) => line !== b.lines[i]) ||
       !colourSpansEqual(a.colours, b.colours) ||
+      !rpgMakerLayoutEqual(a.rpgMakerLayout, b.rpgMakerLayout) ||
       !textBoxEquals(a.box, b.box) ||
       (a.pageStarts === undefined) !== (b.pageStarts === undefined) ||
       (a.pageStarts !== undefined && (
@@ -3184,6 +3204,7 @@ export function cloneModal(m: Modal | null): Modal | null {
     ...m,
     lines: [...m.lines],
     ...(m.colours ? { colours: m.colours.map((span) => ({ ...span })) } : {}),
+    ...(m.rpgMakerLayout ? { rpgMakerLayout: m.rpgMakerLayout.map((control) => ({ ...control })) } : {}),
   };
   if (m.kind === "scrollText") return {
     ...m,
@@ -5001,7 +5022,7 @@ export function runExtensionHookInPlace(
     dy: number;
     kind: "step" | "relocation";
   }>,
-  spatial?: Readonly<Pick<ExtensionReadContext, "mapId" | "playerCell" | "vehicle">>,
+  spatial?: Readonly<Pick<ExtensionReadContext, "mapId" | "playerCell" | "partyOrder" | "vehicle">>,
 ): JsonValue {
   const extension: MutableExtensionScope = { runtime: w.extensions, ext: ext0 };
   const handler = extension.runtime.commands[call];
@@ -5570,6 +5591,7 @@ function rpgMakerBoxText(s: InterpState, w: World, text: string) {
 interface ExpandedBoxText {
   text: string;
   colours?: readonly RpgMakerTextColourSpan[];
+  rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
 }
 
 function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: string): ExpandedBoxText {
@@ -5581,6 +5603,7 @@ function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: 
     return {
       text: parsed.text,
       ...(parsed.spans ? { colours: parsed.spans } : {}),
+      ...(parsed.layout ? { rpgMakerLayout: parsed.layout } : {}),
     };
   }
   const xEnabled = w.textTokensEnabled === true;
@@ -5622,12 +5645,17 @@ function boxLines(
   lines: readonly string[],
   ext: JsonValue,
   fiber: string,
-): { lines: string[]; colours?: readonly RpgMakerTextColourSpan[] } {
+): {
+  lines: string[];
+  colours?: readonly RpgMakerTextColourSpan[];
+  rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
+} {
   if (w.rpgMakerText) {
     const parsed = rpgMakerBoxText(s, w, lines.join("\n"));
     return {
       lines: parsed.text.split("\n"),
       ...(parsed.spans ? { colours: parsed.spans } : {}),
+      ...(parsed.layout ? { rpgMakerLayout: parsed.layout } : {}),
     };
   }
   const xEnabled = w.textTokensEnabled === true;
@@ -5707,7 +5735,14 @@ function runFiber(
         ? s.modal
         : (() => {
             const expanded = boxLines(s, w, ins.lines, extension.ext, f.key);
-            return openTextModal(w, f.key, expanded.lines, ins.box, expanded.colours);
+            return openTextModal(
+              w,
+              f.key,
+              expanded.lines,
+              ins.box,
+              expanded.colours,
+              expanded.rpgMakerLayout,
+            );
           })();
       // The typewriter counts code points (one per drawn glyph), not UTF-16
       // units: a supplementary character is one step. Same as .length for
@@ -5735,6 +5770,7 @@ function runFiber(
       // immutable box-open data, like lines/page starts/layout, and must
       // survive reveal updates and page turns.
       if (open.colours) next.colours = open.colours;
+      if (open.rpgMakerLayout) next.rpgMakerLayout = open.rpgMakerLayout;
       if (input.confirmEdge && timed >= pageLength) {
         if (next.pageStarts && next.page! + 1 < next.pageStarts.length) {
           // Turn the page: its typewriter starts on this frame, like a box
@@ -6597,7 +6633,14 @@ function runFiber(
         f.mode = "text";
         f.since = s.frame;
         const first = boxLines(s, w, ins.lines, extension.ext, f.key);
-        s.modal = openTextModal(w, f.key, first.lines, ins.box, first.colours);
+        s.modal = openTextModal(
+          w,
+          f.key,
+          first.lines,
+          ins.box,
+          first.colours,
+          first.rpgMakerLayout,
+        );
         return;
       case "scrollText": {
         // Scrolling text shares the one modal slot with messages, choices

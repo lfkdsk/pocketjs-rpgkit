@@ -4,6 +4,7 @@ import {
   parseRpgMakerText,
   type RpgMakerTextContext,
 } from "../src/engine/rpgmaker-text.ts";
+import { layoutRpgMakerTextRuns } from "../src/ui/text-flow.ts";
 
 function context(overrides: Partial<RpgMakerTextContext> = {}): RpgMakerTextContext {
   return {
@@ -48,15 +49,20 @@ describe("parseRpgMakerText", () => {
     });
   });
 
-  test("removes MZ position and font-size codes and reports each code once", () => {
+  test("records MZ position and font-size assignments at visible code-point offsets", () => {
     const result = parseRpgMakerText(
-      "a\\PX[10]b\\py[20]\\FS[28]中\\px[1]",
+      "a\\PX[10]b\\py[20]\\FS[28]中\\px[1]\\PY[2]\\fs[30]😀",
       context(),
     );
 
     expect(result).toEqual({
-      text: "ab中",
-      unsupported: ["\\PX", "\\PY", "\\FS"],
+      text: "ab中😀",
+      layout: [
+        { at: 1, x: 10 },
+        { at: 2, y: 20, fontSize: 28 },
+        { at: 3, x: 1, y: 2, fontSize: 30 },
+      ],
+      unsupported: [],
     });
   });
 
@@ -101,5 +107,36 @@ describe("parseRpgMakerText", () => {
       String.raw`\V[404]|\N[404]|\P[0]|\P[404]`,
       context(),
     )).toEqual({ text: "0|||", unsupported: [] });
+  });
+});
+
+describe("MZ message layout", () => {
+  test("PX/PY assign the cursor and FS changes measured font runs without consuming reveal steps", () => {
+    const parsed = parseRpgMakerText(
+      String.raw`a\PX[26]b\PY[52]\FS[30]\C[2]` + "中\nc",
+      context(),
+    );
+    const measureSlot = (slot: number) => (text: string) => Array.from(text).length * (slot === 1 ? 7 : 6);
+
+    expect(layoutRpgMakerTextRuns(
+      parsed.text,
+      3,
+      parsed.layout!,
+      parsed.spans!,
+      measureSlot,
+    )).toEqual([
+      { text: "a", x: 0, y: 0, width: 6, fontSlot: 0, lineHeight: 15 },
+      { text: "b", x: 12, y: 0, width: 6, fontSlot: 0, lineHeight: 15 },
+      { text: "中", colour: "#FF784C", x: 18, y: 24, width: 7, fontSlot: 1, lineHeight: 17 },
+    ]);
+    expect(layoutRpgMakerTextRuns(
+      parsed.text,
+      5,
+      parsed.layout!,
+      parsed.spans!,
+      measureSlot,
+    ).at(-1)).toEqual({
+      text: "c", colour: "#FF784C", x: 0, y: 41, width: 7, fontSlot: 1, lineHeight: 17,
+    });
   });
 });

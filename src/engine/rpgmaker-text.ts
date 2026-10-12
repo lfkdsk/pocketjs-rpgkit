@@ -38,15 +38,25 @@ export interface RpgMakerTextColourSpan {
   readonly colour: string;
 }
 
-export type UnsupportedRpgMakerTextCode = "\\PX" | "\\PY" | "\\FS";
+/** A zero-width MZ layout control at a Unicode-code-point offset in `text`.
+ * Controls at the same offset are folded together in source order; a later
+ * assignment to the same property wins, like Window_Base's text state. */
+export interface RpgMakerTextLayoutControl {
+  readonly at: number;
+  readonly x?: number;
+  readonly y?: number;
+  readonly fontSize?: number;
+}
 
 export interface ParsedRpgMakerText {
   /** Visible text only: recognized escape codes are not included. */
   readonly text: string;
   /** Present only when at least one colour escape styles visible text. */
   readonly spans?: readonly RpgMakerTextColourSpan[];
-  /** Unsupported codes encountered, normalized and de-duplicated in source order. */
-  readonly unsupported: readonly UnsupportedRpgMakerTextCode[];
+  /** Present only when an MZ PX/PY/FS escape changes the live text state. */
+  readonly layout?: readonly RpgMakerTextLayoutControl[];
+  /** Retained for API compatibility; every built-in code recognized here is supported. */
+  readonly unsupported: readonly [];
 }
 
 const PARAMETER_ESCAPE = /^\\(V|N|P|C|PX|PY|FS)\[([0-9]+)\]/i;
@@ -77,8 +87,7 @@ function variableId(context: RpgMakerTextContext, databaseId: number): string {
 export function parseRpgMakerText(input: string, context: RpgMakerTextContext): ParsedRpgMakerText {
   const actorNames = new Map(context.actors.map((actor) => [actor.databaseId, actor.name] as const));
   const spans: RpgMakerTextColourSpan[] = [];
-  const unsupported: UnsupportedRpgMakerTextCode[] = [];
-  const seenUnsupported = new Set<UnsupportedRpgMakerTextCode>();
+  const layout: RpgMakerTextLayoutControl[] = [];
   let text = "";
   let offset = 0;
   let activeColour: string | undefined;
@@ -105,10 +114,13 @@ export function parseRpgMakerText(input: string, context: RpgMakerTextContext): 
     activeColourStart = offset;
   };
 
-  const recordUnsupported = (code: UnsupportedRpgMakerTextCode): void => {
-    if (seenUnsupported.has(code)) return;
-    seenUnsupported.add(code);
-    unsupported.push(code);
+  const assignLayout = (property: "x" | "y" | "fontSize", value: number): void => {
+    const previous = layout.at(-1);
+    if (previous?.at === offset) {
+      layout[layout.length - 1] = { ...previous, [property]: value };
+    } else {
+      layout.push({ at: offset, [property]: value });
+    }
   };
 
   for (let position = 0; position < input.length;) {
@@ -155,8 +167,12 @@ export function parseRpgMakerText(input: string, context: RpgMakerTextContext): 
         appendVisible(actorId === undefined ? "" : actorNames.get(actorId) ?? "");
       } else if (code === "C") {
         selectColour(colourAt(context, argument));
+      } else if (code === "PX") {
+        assignLayout("x", argument);
+      } else if (code === "PY") {
+        assignLayout("y", argument);
       } else {
-        recordUnsupported(`\\${code}` as UnsupportedRpgMakerTextCode);
+        assignLayout("fontSize", argument);
       }
       continue;
     }
@@ -174,5 +190,10 @@ export function parseRpgMakerText(input: string, context: RpgMakerTextContext): 
   }
 
   closeColourSpan();
-  return spans.length === 0 ? { text, unsupported } : { text, spans, unsupported };
+  return {
+    text,
+    ...(spans.length > 0 ? { spans } : {}),
+    ...(layout.length > 0 ? { layout } : {}),
+    unsupported: [],
+  };
 }

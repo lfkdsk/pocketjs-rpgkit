@@ -792,6 +792,7 @@ describe("sandbox hook isolation and the durable fingerprint", () => {
     partyOrder: (state) => withSw(state, { partyOrder: [2, 1] }),
     mapId: "project",
     playerCell: "project",
+    vehicle: "project",
     playerAppearance: (state) => withSw(state, {
       playerAppearance: { ...state.sw.playerAppearance, combatSheet: "heroine" },
     }),

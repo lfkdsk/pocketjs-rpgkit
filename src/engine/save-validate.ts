@@ -114,6 +114,33 @@ function validateColourSpans(v: unknown, total: number, path: string): string | 
   return null;
 }
 
+function validateRpgMakerLayout(v: unknown, total: number, path: string): string | null {
+  if (!Array.isArray(v) || v.length === 0) {
+    return fail(path, "non-empty layout control array required when present");
+  }
+  let previousAt = -1;
+  for (let index = 0; index < v.length; index++) {
+    const control = v[index];
+    const at = `${path}[${index}]`;
+    if (!isRecord(control)) return fail(at, "layout control object required");
+    for (const key of Object.keys(control)) {
+      if (key !== "at" && key !== "x" && key !== "y" && key !== "fontSize") {
+        return fail(`${at}.${key}`, "unknown layout control field");
+      }
+    }
+    if (!isNonNegInt(control.at) || control.at > total || control.at <= previousAt) {
+      return fail(`${at}.at`, "strictly ascending code-point offset within total required");
+    }
+    const assignments = [control.x, control.y, control.fontSize].filter((value) => value !== undefined);
+    if (assignments.length === 0) return fail(at, "at least one PX, PY or FS assignment required");
+    if (assignments.some((value) => !Number.isSafeInteger(value) || (value as number) < 0)) {
+      return fail(at, "PX, PY and FS assignments must be non-negative safe integers");
+    }
+    previousAt = control.at;
+  }
+  return null;
+}
+
 function fail(path: string, msg: string): string {
   return `${path}: ${msg}`;
 }
@@ -2235,6 +2262,10 @@ function validateModal(v: unknown, path: string, liveKeys: ReadonlySet<string>):
     }
     if (v.colours !== undefined) {
       const e = validateColourSpans(v.colours, v.total as number, `${path}.colours`);
+      if (e) return e;
+    }
+    if (v.rpgMakerLayout !== undefined) {
+      const e = validateRpgMakerLayout(v.rpgMakerLayout, v.total as number, `${path}.rpgMakerLayout`);
       if (e) return e;
     }
     if (v.box !== undefined) return validateTextBox(v.box, `${path}.box`);

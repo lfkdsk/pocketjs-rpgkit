@@ -17,7 +17,10 @@
 //      time (dialog-pages.ts); a band or label box grows to show them.
 
 import { breakLine, breakText, isCjk, scalarOffset, type Measure, type TextRow } from "../engine/text-break.ts";
-import type { RpgMakerTextColourSpan } from "../engine/rpgmaker-text.ts";
+import type {
+  RpgMakerTextColourSpan,
+  RpgMakerTextLayoutControl,
+} from "../engine/rpgmaker-text.ts";
 
 /** Marks a soft-joined "\n" between two CJK characters: never drawn, zero
  *  width, a break opportunity. Same UTF-16 length as "\n", so reveal offsets
@@ -37,6 +40,140 @@ export interface TextFlow {
 export interface TextColourRun {
   text: string;
   colour?: string;
+}
+
+/** One visible run from MZ's mutable text state. `x`/`y` are pixels inside
+ * the message content box; `fontSlot` selects the nearest baked PocketJS
+ * regular face to the authored FS size. */
+export interface PositionedRpgMakerTextRun extends TextColourRun {
+  x: number;
+  y: number;
+  width: number;
+  fontSlot: number;
+  lineHeight: number;
+}
+
+export interface RpgMakerFontMetrics {
+  slot: number;
+  px: number;
+  lineHeight: number;
+}
+
+const MZ_DEFAULT_FONT_SIZE = 26;
+const KIT_DEFAULT_FONT_SIZE = 12;
+const MZ_TO_KIT_TEXT_SCALE = KIT_DEFAULT_FONT_SIZE / MZ_DEFAULT_FONT_SIZE;
+const MAX_LAYOUT_PIXEL = 4096;
+const FONT_METRICS: readonly RpgMakerFontMetrics[] = [
+  { slot: 19, px: 10, lineHeight: 13 },
+  { slot: 0, px: 12, lineHeight: 15 },
+  { slot: 1, px: 14, lineHeight: 17 },
+  { slot: 2, px: 16, lineHeight: 19 },
+  { slot: 3, px: 18, lineHeight: 21 },
+  { slot: 4, px: 20, lineHeight: 23 },
+  { slot: 5, px: 24, lineHeight: 27 },
+  { slot: 6, px: 36, lineHeight: 39 },
+  { slot: 14, px: 54, lineHeight: 57 },
+];
+
+/** Map MZ's freely assigned font size to the closest regular font atlas the
+ * host bakes. The relative size is retained (26 MZ px == the kit's 12 px
+ * default) without adding a new atlas or cost to projects that never use FS. */
+export function rpgMakerFontMetrics(fontSize: number): RpgMakerFontMetrics {
+  const target = Math.max(0, fontSize) * MZ_TO_KIT_TEXT_SCALE;
+  let best = FONT_METRICS[0]!;
+  for (const candidate of FONT_METRICS.slice(1)) {
+    if (Math.abs(candidate.px - target) < Math.abs(best.px - target)) best = candidate;
+  }
+  return best;
+}
+
+function assignedPixel(value: number): number {
+  return Math.min(MAX_LAYOUT_PIXEL, Math.round(Math.max(0, value) * MZ_TO_KIT_TEXT_SCALE));
+}
+
+/** Replay MZ's PX/PY/FS assignments and place the revealed glyphs. Newlines
+ * reset x and advance by the tallest FS value on that authored line, while
+ * an explicit PY replaces the cursor y exactly. Controls and colour spans
+ * use the reducer's global Unicode-code-point coordinate system. */
+export function layoutRpgMakerTextRuns(
+  source: string,
+  revealed: number,
+  controls: readonly RpgMakerTextLayoutControl[],
+  spans: readonly RpgMakerTextColourSpan[],
+  measureSlot: (slot: number) => Measure,
+): PositionedRpgMakerTextRun[] {
+  const lineHeights: number[] = [];
+  let controlIndex = 0;
+  let fontSize = MZ_DEFAULT_FONT_SIZE;
+  let lineHeight = rpgMakerFontMetrics(fontSize).lineHeight;
+  let offset = 0;
+  for (const scalar of source) {
+    while (controls[controlIndex]?.at === offset) {
+      const control = controls[controlIndex++]!;
+      if (control.fontSize !== undefined) fontSize = control.fontSize;
+    }
+    lineHeight = Math.max(lineHeight, rpgMakerFontMetrics(fontSize).lineHeight);
+    if (scalar === "\n") {
+      lineHeights.push(lineHeight);
+      lineHeight = rpgMakerFontMetrics(fontSize).lineHeight;
+    }
+    offset++;
+  }
+  lineHeights.push(lineHeight);
+
+  const runs: PositionedRpgMakerTextRun[] = [];
+  controlIndex = 0;
+  fontSize = MZ_DEFAULT_FONT_SIZE;
+  let metrics = rpgMakerFontMetrics(fontSize);
+  let x = 0;
+  let y = 0;
+  let line = 0;
+  let spanIndex = 0;
+  offset = 0;
+  for (const scalar of source) {
+    while (controls[controlIndex]?.at === offset) {
+      const control = controls[controlIndex++]!;
+      if (control.x !== undefined) x = assignedPixel(control.x);
+      if (control.y !== undefined) y = assignedPixel(control.y);
+      if (control.fontSize !== undefined) {
+        fontSize = control.fontSize;
+        metrics = rpgMakerFontMetrics(fontSize);
+      }
+    }
+    if (scalar === "\n") {
+      x = 0;
+      y += lineHeights[line++]!;
+      offset++;
+      continue;
+    }
+    while (spanIndex < spans.length && spans[spanIndex]!.end <= offset) spanIndex++;
+    const span = spans[spanIndex];
+    const colour = span !== undefined && span.start <= offset && offset < span.end
+      ? span.colour
+      : undefined;
+    const width = measureSlot(metrics.slot)(scalar);
+    if (offset < revealed) {
+      const previous = runs.at(-1);
+      if (previous !== undefined && previous.fontSlot === metrics.slot && previous.lineHeight === metrics.lineHeight &&
+          previous.colour === colour && previous.y === y && previous.x + previous.width === x) {
+        previous.text += scalar;
+        previous.width += width;
+      } else {
+        runs.push({
+          text: scalar,
+          ...(colour === undefined ? {} : { colour }),
+          x,
+          y,
+          width,
+          fontSlot: metrics.slot,
+          lineHeight: metrics.lineHeight,
+        });
+      }
+    }
+    x += width;
+    offset++;
+  }
+  return runs;
 }
 
 function codePointBefore(text: string, i: number): number {

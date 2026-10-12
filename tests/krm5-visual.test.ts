@@ -315,7 +315,7 @@ simDescribe("K-RPGM5 imported map presentation", () => {
       const state = world.probes().state;
       expect(state.frame).toBe(baseState.frame);
       expect(state.sw.formationAccess).toBe(false);
-      expect(state.sw.windowTone).toEqual({ r: -72, g: 36, b: -18, gray: 90 });
+      expect(state.sw.windowTone).toEqual({ r: -72, g: 36, b: -18, gray: 0 });
       expect(state.interp.screen?.tone?.to).toEqual({ r: -68, g: 34, b: -17, gray: 96 });
       expect(nodesWithPrefix(world.getTree() as TreeNode, "rpgkit-screen-tone-").map((node) => node.n)).toEqual([
         "rpgkit-screen-tone-gray",

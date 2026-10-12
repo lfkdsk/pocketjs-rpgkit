@@ -21,9 +21,9 @@ const DEGRADE_REASONS: Record<string, string> = {
   I: "inline icons are preserved but not interpreted at runtime",
   "{": "font size changes are preserved but not interpreted at runtime",
   "}": "font size changes are preserved but not interpreted at runtime",
-  FS: "MZ font size changes are preserved but omitted at runtime",
-  PX: "MZ text position changes are preserved but omitted at runtime",
-  PY: "MZ text position changes are preserved but omitted at runtime",
+  FS: "MZ font sizes are scaled and mapped to the nearest baked PocketJS font slot",
+  PX: "MZ horizontal positions are scaled into the kit message content box",
+  PY: "MZ vertical positions are scaled into the kit message content box",
   $: "gold-window control is preserved but not interpreted at runtime",
   ".": "message timing controls are preserved but not interpreted at runtime",
   "|": "message timing controls are preserved but not interpreted at runtime",
@@ -60,9 +60,6 @@ function scanLine(text: string, ctx: TextContext): void {
     }
 
     // These parameter escapes are parsed live by src/engine/rpgmaker-text.
-    // MZ's layout codes are deliberately retained too; the runtime reports
-    // and omits their presentation effect instead of exposing or losing the
-    // source spelling.
     const parameter = /^(V|N|P|C|PX|PY|FS)\[([0-9]+)\]/i.exec(rest);
     if (parameter) {
       const code = parameter[1]!.toUpperCase();
