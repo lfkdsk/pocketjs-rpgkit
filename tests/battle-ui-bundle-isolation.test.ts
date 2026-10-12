@@ -263,10 +263,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Re-measure after every shared-path change.
 // Presentation-only audio gain projection adds 312 B to the already audio-
 // enabled graph without reaching any battle presentation implementation.
+// Recursive load-time RPG Maker screen-capability admission adds a measured
+// 4,422 B to this shared session graph; the battle needles below remain absent.
 // Applying a freshly latched speed to the first immediate event-route step
 // adds 161 B on the shared session path; the isolation checks below continue
 // to prove that no optional battle code became reachable.
-const EXPECTED_BYTES = 1_102_076;
+const EXPECTED_BYTES = 1_106_498;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

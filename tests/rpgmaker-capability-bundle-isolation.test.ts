@@ -57,13 +57,17 @@ const EXPECTED_BYTES = {
   // Frozen-battle capability routing then adds about 1.2 KiB to the shared
   // session reducer. Moving tone/weather behind the optional KRM2 entry
   // removes about 11.1 KiB from GameView-only Sunstone; rmi-play retains it.
+  // Load-time RPG Maker screen-capability admission adds a measured 4,205 B
+  // to Meadow, 4,422 B to Sunstone and 4,659 B to the opted-in fixture. It
+  // does not link either optional screen implementation into the controls;
+  // the graph and bundle needles below keep that boundary.
   // The implementation-graph and bundle needles below still prove that the
   // optional RPG Maker and travel implementations stay out of both controls.
   // Effective first-step config for immediate event routes adds 161 B to each
   // shared session graph without admitting an optional capability module.
-  meadow: 678_110,
-  sunstone: 1_102_076,
-  "rmi-play": 1_291_191,
+  meadow: 682_315,
+  sunstone: 1_106_498,
+  "rmi-play": 1_295_850,
 } as const;
 
 function implementationModules(app: string): string[] {

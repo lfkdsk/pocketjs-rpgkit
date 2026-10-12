@@ -293,12 +293,16 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Separating presentation-only gain changes from reducer timeline identity adds
 // 312 B to each audio-enabled graph; Meadow does not reach that settings
 // projection path.
+// Load-time RPG Maker screen-capability admission scans inline, common and
+// staged programs. It adds a measured 4,205 B to Meadow and 4,422 B to each
+// audio graph; their differing pre-existing reachability explains the delta.
+// Optional screen implementations and audio decoders remain excluded.
 // Deriving an immediate event route's first-step config from its freshly
 // latched route speed adds 161 B to every shared session graph. It reaches no
 // audio decoder or optional presentation implementation.
-const EXPECTED_MEADOW_BYTES = 678_110;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_102_076;
-const EXPECTED_WAV_FIXTURE_BYTES = 864_442;
+const EXPECTED_MEADOW_BYTES = 682_315;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_106_498;
+const EXPECTED_WAV_FIXTURE_BYTES = 868_864;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
