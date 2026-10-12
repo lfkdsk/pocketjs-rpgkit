@@ -1357,8 +1357,12 @@ RPG Maker screen tone/weather, numbered-picture nodes, the timer HUD and the
 map-name banner are an explicit presentation entry. Import
 `krm2ScreenPresentation` from
 `pocket-rpgkit/ui/krm2` and pass it as `GameView.screenPresentation`; projects
-that omit it still run and save the commands but keep this UI out of their
-bundle and node tree. The editor and preview host register it themselves.
+whose commands require it fail during `GameView` session loading when it is
+omitted, instead of waiting on invisible presentation. A deliberately
+headless `createSession` caller may omit the presentation policy while it
+inspects reducer state only. Projects that use no such commands keep this UI
+out of their bundle and node tree. The editor and preview host register it
+themselves.
 
 PocketJS currently has no portable per-image colour matrix or blend-mode
 primitive. The reducer and RPG Maker importer retain `blend` and the complete

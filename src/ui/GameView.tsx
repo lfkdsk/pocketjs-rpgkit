@@ -1063,7 +1063,9 @@ export interface GameViewProps {
   hostActions?: Readonly<GameViewHostCallbacks>;
   /** Optional reducer-backed screen presentation. Import the RPG Maker
    * numbered-picture/timer/banner implementation from
-   * `pocket-rpgkit/ui/krm2`; omitting it keeps that UI out of the bundle. */
+   * `pocket-rpgkit/ui/krm2`. A project that authors commands requiring this
+   * capability fails session loading when it is omitted; projects without
+   * those commands keep the UI out of their bundle. */
   screenPresentation?: Readonly<GameScreenPresentation>;
   /** DialogBox colours (ui/theme.ts); missing keys keep the kit default. */
   theme?: Partial<UiTheme>;

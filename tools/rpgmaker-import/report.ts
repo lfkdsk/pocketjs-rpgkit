@@ -221,9 +221,11 @@ export function coverageMarkdown(
   out.push(
     "## Required application capabilities",
     "",
-    "Project JSON records data, not code-side registrations. A session or rendering",
-    "application that omits a required row below fails during loading instead of",
-    "waiting on an invisible effect.",
+    "Project JSON records data, not code-side registrations. Missing a required",
+    "reducer runtime fails every session during loading. `GameView` also declares",
+    "whether screen presentation is registered and rejects a missing one instead of",
+    "waiting on an invisible effect. A deliberately headless `createSession` caller",
+    "may omit that presentation policy while it inspects reducer state only.",
     "",
   );
   if (capabilities.length === 0) {
