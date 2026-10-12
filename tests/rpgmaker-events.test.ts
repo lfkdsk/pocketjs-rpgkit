@@ -114,6 +114,7 @@ function makeCtx(opts: {
   flavor?: "MV" | "MZ";
   party?: number[];
   sideView?: boolean;
+  audioCalls?: string[];
 } = {}): EventContext {
   let shop = 0;
   let animation = 0;
@@ -141,7 +142,10 @@ function makeCtx(opts: {
     animation: (n) => n === 1 ? { id: "anim001", disposition: "Native" } : null,
     animationFailure: (n) => n === 2 ? "animation 2 could not be cooked" : undefined,
     balloon: (n) => (opts.balloon === false ? null : `balloon${n}`),
-    audio: (kind, name) => audioId(kind, name),
+    audio: (kind, name) => {
+      opts.audioCalls?.push(`${kind}:${name}`);
+      return audioId(kind, name);
+    },
     nextShopId: () => `shop${++shop}`,
     nextAnimationId: () => `animation${++animation}`,
   };
@@ -1084,6 +1088,124 @@ describe("characters and routes", () => {
     r = conv([C(213, 0, [-1, 3, false])], { balloon: false });
     expect(r.cmds).toEqual([]);
     expect(only(r.cov, 213)).toBe("Dropped");
+  });
+});
+
+// --- actor changes and battle settings ----------------------------------------------------------
+
+describe("actor changes and battle settings", () => {
+  test("actor selectors, numeric operands, and allowDeath keep their payload shape", () => {
+    const { cmds, cov } = conv([
+      C(311, 0, [0, 1, 1, 0, 25.5, true]),
+      C(312, 0, [1, 4, 0, 1, 7]),
+      C(326, 0, [0, 0, 0, 0, 12]),
+    ]);
+    expect(cmds).toEqual([
+      {
+        op: "ext", call: "rpgmaker.actorChange",
+        args: {
+          kind: "hp", target: { kind: "actor", id: 1 }, operation: "sub",
+          operand: { kind: "constant", value: 25.5 }, allowDeath: true,
+        },
+      },
+      {
+        op: "ext", call: "rpgmaker.actorChange",
+        args: {
+          kind: "mp", target: { kind: "variable", id: "v004" }, operation: "add",
+          operand: { kind: "variable", id: "v007" },
+        },
+      },
+      {
+        op: "ext", call: "rpgmaker.actorChange",
+        args: {
+          kind: "tp", target: { kind: "all" }, operation: "add",
+          operand: { kind: "constant", value: 12 },
+        },
+      },
+    ]);
+    for (const code of [311, 312, 326]) expect(only(cov, code)).toBe("Native");
+  });
+
+  test("actor mutations preserve ids, flags, strings, and zero-based equipment slots", () => {
+    const { cmds, cov } = conv([
+      C(313, 0, [0, 1, 0, 1]),
+      C(314, 0, [0, 1]),
+      C(315, 0, [0, 1, 0, 0, 120, true]),
+      C(316, 0, [0, 1, 1, 1, 8, true]),
+      C(317, 0, [0, 1, 2, 0, 0, 3]),
+      C(318, 0, [0, 1, 0, 1]),
+      C(319, 0, [1, 4, 1]),
+      C(321, 0, [1, 1, true]),
+      C(322, 0, [1, "Hero", 3, "HeroFace", 5, "HeroBattler"]),
+      C(324, 0, [1, "The Swift"]),
+      C(325, 0, [1, "No line is trimmed."]),
+    ]);
+    expect(cmds.map((c) => c.op === "ext" ? c.args : null)).toEqual([
+      { kind: "state", target: { kind: "actor", id: 1 }, operation: "add", stateId: 1 },
+      { kind: "recoverAll", target: { kind: "actor", id: 1 } },
+      { kind: "exp", target: { kind: "actor", id: 1 }, operation: "add", operand: { kind: "constant", value: 120 }, show: true },
+      { kind: "level", target: { kind: "actor", id: 1 }, operation: "sub", operand: { kind: "variable", id: "v008" }, show: true },
+      { kind: "parameter", target: { kind: "actor", id: 1 }, paramId: 2, operation: "add", operand: { kind: "constant", value: 3 } },
+      { kind: "skill", target: { kind: "actor", id: 1 }, operation: "add", skillId: 1 },
+      { kind: "equipment", actorId: 1, slotId: 3, itemId: 1 },
+      { kind: "class", actorId: 1, classId: 1, keepExp: true },
+      {
+        kind: "images", actorId: 1, characterName: "Hero", characterIndex: 3,
+        faceName: "HeroFace", faceIndex: 5, battlerName: "HeroBattler",
+      },
+      { kind: "nickname", actorId: 1, value: "The Swift" },
+      { kind: "profile", actorId: 1, value: "No line is trimmed." },
+    ]);
+    for (const code of [313, 314, 317, 318, 319, 321, 324, 325]) expect(only(cov, code)).toBe("Native");
+    expect(only(cov, 315)).toBe("Degraded");
+    expect(only(cov, 316)).toBe("Degraded");
+    expect(only(cov, 322)).toBe("Degraded");
+
+    const hidden = conv([C(316, 0, [0, 1, 0, 0, 2, false])]);
+    expect(hidden.cmds[0]).toMatchObject({
+      op: "ext",
+      args: { kind: "level", show: false },
+    });
+    expect(only(hidden.cov, 316)).toBe("Native");
+  });
+
+  test("invalid actor database references are reported and dropped", () => {
+    const cases: [number, unknown[]][] = [
+      [311, [0, 99, 0, 0, 1, false]],
+      [313, [0, 1, 0, 99]],
+      [318, [0, 1, 0, 99]],
+      [319, [1, 1, 99]],
+      [321, [1, 99, false]],
+      [322, [99, "", 0, "", 0, ""]],
+    ];
+    for (const [code, parameters] of cases) {
+      const { cmds, cov } = conv([C(code, 0, parameters)]);
+      expect(cmds).toEqual([]);
+      expect(only(cov, code)).toBe("Dropped");
+    }
+  });
+
+  test("battle settings preserve authored values and register only non-empty audio", () => {
+    const audioCalls: string[] = [];
+    const { cmds, cov } = conv([
+      C(132, 0, [{ name: "Battle1", volume: 123.5, pitch: 47, pan: -120 }]),
+      C(133, 0, [{ name: "", volume: 80, pitch: 90, pan: 4 }]),
+      C(139, 0, [{ name: "Defeat1", volume: 77, pitch: 101, pan: 8 }]),
+      C(283, 0, ["Lava", "Clouds"]),
+      C(136, 0, [0]),
+      C(136, 0, [1]),
+    ], { audioCalls });
+    expect(cmds.map((c) => c.op === "ext" ? c.args : null)).toEqual([
+      { kind: "battleBgm", audio: { name: "Battle1", volume: 123.5, pitch: 47, pan: -120, id: "bgm-battle1" } },
+      { kind: "victoryMe", audio: { name: "", volume: 80, pitch: 90, pan: 4 } },
+      { kind: "defeatMe", audio: { name: "Defeat1", volume: 77, pitch: 101, pan: 8, id: "me-defeat1" } },
+      { kind: "battleback", battleback1Name: "Lava", battleback2Name: "Clouds" },
+      { kind: "encounter", disabled: true },
+      { kind: "encounter", disabled: false },
+    ]);
+    expect(audioCalls).toEqual(["bgm:Battle1", "me:Defeat1"]);
+    for (const code of [132, 133, 139, 283]) expect(only(cov, code)).toBe("Degraded");
+    expect(counts(cov, "command", "136")).toMatchObject({ Native: 2 });
   });
 });
 

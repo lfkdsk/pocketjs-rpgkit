@@ -2,12 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { rngNext } from "../src/engine/interpreter.ts";
 import type { BattleInput, BattleRules } from "../src/engine/battle.ts";
-import type { ExtensionReadContext } from "../src/engine/extensions.ts";
+import type {
+  ExtensionCommandContext,
+  ExtensionCommandResult,
+  ExtensionReadContext,
+} from "../src/engine/extensions.ts";
 import type { JsonValue } from "../src/engine/types.ts";
 import {
   augmentRpgMakerBattleExtensions,
   createRpgMakerBattleExtensions,
   createRpgMakerBattleRules,
+  RPGMAKER_ACTOR_CHANGE_CALL,
+  RPGMAKER_BATTLE_SETTING_CALL,
   RPGMAKER_ENCOUNTER_DUE_VARIABLE,
   RPGMAKER_ENCOUNTER_STEP_CALL,
   rpgMakerBattleState,
@@ -89,6 +95,19 @@ function forceAction(
   next.queueIndex = 0;
   next.message = "";
   return confirm(rules, json(next));
+}
+
+function runExtensionCommand(
+  db: RpgMakerBattleDatabase,
+  call: string,
+  args: JsonValue,
+  context: Partial<ExtensionCommandContext> = {},
+): ExtensionCommandResult {
+  const handler = createRpgMakerBattleExtensions(db).commands?.[call];
+  if (!handler) throw new Error(`missing extension command ${call}`);
+  const result = handler({ ...CONTEXT, random: () => 0, ...context }, args);
+  if (!result) throw new Error(`extension command ${call} returned no result`);
+  return result;
 }
 
 describe("RPG Maker battle rules", () => {
@@ -198,6 +217,225 @@ describe("RPG Maker battle rules", () => {
     }).state);
     expect(swapped.actors.map((actor) => actor.name)).toEqual(["Moss"]);
     expect(rpgMakerCombatantParam(db, swapped.actors[0]!, 2)).toBe(32);
+  });
+
+  test("actor-change extensions mutate every selector form and preserve progression metadata", () => {
+    const db = cloneDb();
+    db.party = [1, 2];
+    db.states.push({
+      id: 2, name: "Poison", restriction: 0, priority: 50,
+      minTurns: 2, maxTurns: 2, autoRemovalTiming: 0,
+      removeAtBattleEnd: false, removeByDamage: false, chanceByDamage: 0,
+      messages: ["", "", "", ""], traits: [],
+    });
+    db.skills.push({ ...structuredClone(db.skills[0]!), id: 2, name: "Second Wind" });
+    db.classes[0]!.learnings.push({ level: 2, skillId: 2 });
+    db.classes.push({ ...structuredClone(db.classes[0]!), id: 2, name: "Wayfarer" });
+
+    let ext: JsonValue = {};
+    let items: Record<string, number> = { weapon002: 1 };
+    const invoke = (args: JsonValue, extra: Partial<ExtensionCommandContext> = {}) => {
+      const result = runExtensionCommand(db, RPGMAKER_ACTOR_CHANGE_CALL, args, {
+        ext,
+        items,
+        variables: { selectedActor: 2, amount: 7 },
+        ...extra,
+      });
+      ext = result.ext ?? ext;
+      if (result.items) items = { ...items, ...result.items };
+      return result;
+    };
+
+    invoke({
+      kind: "hp", target: { kind: "all" }, operation: "sub",
+      operand: { kind: "constant", value: 99999 }, allowDeath: false,
+    });
+    let actors = (ext as Record<string, any>).rpgmakerBattle.actors;
+    expect(actors["1"].hp).toBe(1);
+    expect(actors["2"].hp).toBe(1);
+
+    invoke({ kind: "state", target: { kind: "all" }, operation: "add", stateId: 2 });
+    actors = (ext as Record<string, any>).rpgmakerBattle.actors;
+    expect(actors["1"].states).toEqual([{ id: 2, turns: 2 }]);
+    expect(actors["2"].states).toEqual([{ id: 2, turns: 2 }]);
+    invoke({
+      kind: "state", target: { kind: "variable", id: "selectedActor" },
+      operation: "remove", stateId: 2,
+    });
+    actors = (ext as Record<string, any>).rpgmakerBattle.actors;
+    expect(actors["1"].states).toHaveLength(1);
+    expect(actors["2"].states).toEqual([]);
+    invoke({ kind: "recoverAll", target: { kind: "all" } });
+
+    invoke({
+      kind: "mp", target: { kind: "variable", id: "selectedActor" }, operation: "sub",
+      operand: { kind: "variable", id: "amount" },
+    });
+    invoke({
+      kind: "tp", target: { kind: "all" }, operation: "add",
+      operand: { kind: "constant", value: 20 },
+    });
+    invoke({
+      kind: "exp", target: { kind: "actor", id: 1 }, operation: "add",
+      operand: { kind: "constant", value: rpgMakerExpForLevel(db, 1, 2) }, show: true,
+    });
+    invoke({
+      kind: "level", target: { kind: "actor", id: 2 }, operation: "add",
+      operand: { kind: "constant", value: 1 }, show: true,
+    });
+    invoke({
+      kind: "parameter", target: { kind: "actor", id: 1 }, paramId: 2, operation: "add",
+      operand: { kind: "constant", value: 5 },
+    });
+    invoke({ kind: "skill", target: { kind: "actor", id: 2 }, operation: "remove", skillId: 2 });
+    const equipment = invoke({ kind: "equipment", actorId: 1, slotId: 0, itemId: 2 });
+    expect(equipment.items).toEqual({ weapon001: 1, weapon002: 0 });
+    invoke({ kind: "class", actorId: 1, classId: 2, keepExp: true });
+    invoke({
+      kind: "images", actorId: 1, characterName: "Hero2", characterIndex: 3,
+      faceName: "Face2", faceIndex: 4, battlerName: "Battler2",
+    });
+    invoke({ kind: "nickname", actorId: 1, value: "Sparrow" });
+    invoke({ kind: "profile", actorId: 1, value: "Keeps walking." });
+
+    actors = (ext as Record<string, any>).rpgmakerBattle.actors;
+    expect(actors["1"]).toMatchObject({
+      classId: 2,
+      level: 2,
+      skills: [1, 2],
+      paramPlus: [0, 0, 5, 0, 0, 0, 0, 0],
+      equips: [{ kind: "weapon", id: 2 }, null, null, { kind: "armor", id: 1 }, null],
+      nickname: "Sparrow",
+      profile: "Keeps walking.",
+      characterName: "Hero2",
+      characterIndex: 3,
+      faceName: "Face2",
+      faceIndex: 4,
+      battlerName: "Battler2",
+    });
+    expect(actors["1"].classExp["2"]).toBe(actors["1"].exp);
+    expect(actors["2"]).toMatchObject({ level: 2, mp: 59, tp: 20, skills: [1] });
+
+    const restored = JSON.parse(JSON.stringify(ext)) as JsonValue;
+    const battle = state(start(db, 5, restored, { ...CONTEXT, items }).state);
+    expect(battle.actors.map((actor) => actor.actor?.level)).toEqual([2, 2]);
+    expect(battle.actors[0]!.actor!.equips?.[0]).toEqual({ kind: "weapon", id: 2 });
+    expect(rpgMakerCombatantParam(db, battle.actors[0]!, 2)).toBe(39);
+    expect(battle.actors[1]!.mp).toBe(59);
+  });
+
+  test("troop enemy effects appear, transform, recover, animate, and force the authored target", () => {
+    const db = cloneDb();
+    db.party = [1, 2];
+    db.states.push({
+      id: 2, name: "Poison", restriction: 0, priority: 50,
+      minTurns: 2, maxTurns: 2, autoRemovalTiming: 0,
+      removeAtBattleEnd: false, removeByDamage: false, chanceByDamage: 0,
+      messages: ["", "", "", ""], traits: [],
+    });
+    db.enemies[0]!.params[1] = 30;
+    db.enemies.push({
+      ...structuredClone(db.enemies[0]!),
+      id: 2,
+      name: "Crystal Golem",
+      params: [80, 50, 50, 10, 8, 8, 20, 6],
+      image: "sprites/crystal-golem.png",
+    });
+    db.skills[0]!.hitType = 0;
+    db.skills[0]!.damage.critical = false;
+    db.skills[0]!.damage.variance = 0;
+    db.troops[0]!.members.push({ enemyId: 1, x: 320, y: 160, hidden: true });
+    db.troops[0]!.pages = [{
+      span: 0,
+      condition: { turn: { a: 0, b: 0 } },
+      unsupported: 0,
+      effects: [
+        { kind: "enemyHp", index: 0, operation: "sub", operand: { kind: "constant", value: 10 }, allowDeath: false },
+        { kind: "enemyMp", index: 0, operation: "sub", operand: { kind: "constant", value: 5 } },
+        { kind: "enemyTp", index: 0, operation: "add", operand: { kind: "constant", value: 100 } },
+        { kind: "enemyState", index: 0, operation: "add", stateId: 2 },
+        { kind: "enemyAppear", index: 1 },
+        { kind: "enemyTransform", index: 1, enemyId: 2 },
+        { kind: "enemyHp", index: 1, operation: "sub", operand: { kind: "constant", value: 15 }, allowDeath: true },
+        { kind: "enemyMp", index: 1, operation: "sub", operand: { kind: "constant", value: 12 } },
+        { kind: "enemyState", index: 1, operation: "add", stateId: 2 },
+        { kind: "enemyRecoverAll", index: 1 },
+        { kind: "battleAnimation", index: -1, animationId: 4, entireTroop: true, animation: "anim004" },
+        { kind: "forceAction", side: "enemy", subject: 1, skillId: 1, target: 1 },
+      ],
+    }];
+
+    const started = state(start(db, 0x10203040).state);
+    expect(started.enemies[0]).toMatchObject({ hp: 110, mp: 25, tp: 100, states: [{ id: 2, turns: 2 }] });
+    expect(started.enemies[1]).toMatchObject({
+      databaseId: 2,
+      name: "Crystal Golem",
+      hp: 80,
+      mp: 50,
+      hidden: false,
+      states: [],
+      image: "sprites/crystal-golem.png",
+      lastTargetIndex: 1,
+    });
+    expect(started.battleAnimation).toEqual({ id: "anim004", targets: [0, 1], startTick: 0 });
+    expect(started.actors[0]!.hp).toBe(rpgMakerCombatantParam(db, started.actors[0]!, 0));
+    expect(started.actors[1]!.hp).toBeLessThan(rpgMakerCombatantParam(db, started.actors[1]!, 0));
+  });
+
+  test("Abort Battle ends as escape even when ordinary escape is disabled", () => {
+    const db = cloneDb();
+    db.troops[0]!.pages = [{
+      span: 0,
+      condition: { turn: { a: 0, b: 0 } },
+      effects: [{ kind: "abort" }],
+      unsupported: 0,
+    }];
+    const rules = createRpgMakerBattleRules(db);
+    const started = rules.start({}, setup(db, { canEscape: false }), 1, CONTEXT)!;
+    expect(state(started.state)).toMatchObject({ phase: "done", result: "escape", canEscape: false });
+    expect(rules.done(started.state)?.result).toBe("escape");
+  });
+
+  test("battle settings persist globally while battlebacks remain map-local", () => {
+    const db = cloneDb();
+    db.settings = {
+      battleBgm: { name: "Default", volume: 90, pitch: 100, pan: 0 },
+      encounterDisabled: false,
+    };
+    db.mapSettings = [
+      { map: "map001", battleback1Name: "Field", battleback2Name: "Clouds" },
+      { map: "map003", battleback1Name: "Cave", battleback2Name: "Rock" },
+    ];
+    let ext: JsonValue = {};
+    const invoke = (args: JsonValue, mapId = "map003") => {
+      const result = runExtensionCommand(db, RPGMAKER_BATTLE_SETTING_CALL, args, { ext, mapId });
+      ext = result.ext ?? ext;
+      return result;
+    };
+    invoke({
+      kind: "battleBgm",
+      audio: { name: "Boss", volume: 80, pitch: 105, pan: -5, id: "bgm-boss" },
+    });
+    invoke({ kind: "battleback", battleback1Name: "Lava", battleback2Name: "Smoke" });
+    const encounter = invoke({ kind: "encounter", disabled: true });
+    expect(encounter.writes).toEqual({ [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 });
+
+    const restored = JSON.parse(JSON.stringify(ext)) as JsonValue;
+    const cave = state(start(db, 1, restored, { ...CONTEXT, mapId: "map003" }).state);
+    expect(cave.settings).toMatchObject({
+      battleBgm: { name: "Boss", volume: 80, pitch: 105, pan: -5, id: "bgm-boss" },
+      battleback1Name: "Lava",
+      battleback2Name: "Smoke",
+      encounterDisabled: true,
+    });
+    const field = state(start(db, 1, restored, { ...CONTEXT, mapId: "map001" }).state);
+    expect(field.settings).toMatchObject({ battleback1Name: "Field", battleback2Name: "Clouds" });
+    const step = runExtensionCommand(db, RPGMAKER_ENCOUNTER_STEP_CALL, null, {
+      ext: restored,
+      mapId: "map003",
+      playerStep: { dx: 1, dy: 0, kind: "step" },
+    });
+    expect(step.writes).toEqual({ [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 });
   });
 
   test("confusion restrictions target opponents, either side, and friends for actors and enemies", () => {

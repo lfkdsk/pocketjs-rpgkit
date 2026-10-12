@@ -11,6 +11,7 @@ import { sha256Text } from "../../src/engine/map-repository.ts";
 import { canonicalJson } from "../../src/engine/save.ts";
 import type {
   RpgMakerBattleDatabase,
+  RpgMakerBattleEquipment,
   RpgMakerBattleItem,
   RpgMakerBattleSkill,
   RpgMakerDamage,
@@ -52,6 +53,13 @@ interface InitialEquip {
   item: RmItem;
 }
 
+interface InitialEquipment {
+  aggregate: RpgMakerBattleDatabase["actors"][number]["equipment"];
+  refs: RpgMakerBattleDatabase["actors"][number]["initialEquips"];
+  slots: NonNullable<RpgMakerBattleDatabase["actors"][number]["equipSlots"]>;
+  types: NonNullable<RpgMakerBattleDatabase["actors"][number]["equipTypes"]>;
+}
+
 function traitDataIds(source: readonly RmTrait[] | undefined, code: number): number[] {
   return (source ?? []).flatMap((trait) =>
     trait.code === code && Number.isInteger(trait.dataId) && trait.dataId > 0 ? [trait.dataId] : []);
@@ -66,7 +74,7 @@ function equipSlots(rm: RmProject, source: readonly RmTrait[]): number[] {
 function initialEquipment(
   rm: RmProject,
   actor: RmActor,
-): RpgMakerBattleDatabase["actors"][number]["equipment"] {
+): InitialEquipment {
   const klass = rm.classes[actor.classId] ?? null;
   const baseTraits = [...(actor.traits ?? []), ...(klass?.traits ?? [])];
   const slots = equipSlots(rm, baseTraits);
@@ -104,13 +112,18 @@ function initialEquipment(
   const surviving = equipped.flatMap((entry) => entry ? [entry.item] : []);
   const equipTraits = surviving.flatMap((entry) => entry.traits ?? []);
   return {
-    params: Array.from({ length: 8 }, (_, id) =>
-      surviving.reduce((sum, entry) => sum + integer(entry.params?.[id]), 0)) as
-      [number, number, number, number, number, number, number, number],
-    traits: traits(equipTraits),
-    skills: [...new Set(traitDataIds(equipTraits, TRAIT_SKILL_ADD))]
-      .filter((id) => !!rm.skills[id])
-      .sort((a, b) => a - b),
+    aggregate: {
+      params: Array.from({ length: 8 }, (_, id) =>
+        surviving.reduce((sum, entry) => sum + integer(entry.params?.[id]), 0)) as
+        [number, number, number, number, number, number, number, number],
+      traits: traits(equipTraits),
+      skills: [...new Set(traitDataIds(equipTraits, TRAIT_SKILL_ADD))]
+        .filter((id) => !!rm.skills[id])
+        .sort((a, b) => a - b),
+    },
+    refs: equipped.map((entry) => entry ? { kind: entry.kind, id: nonNegative(entry.item.id) } : null),
+    slots: slots.map((slot) => slot === 1 ? "weapon" : "armor"),
+    types: slots,
   };
 }
 
@@ -129,6 +142,33 @@ function effects(source: readonly RmEffect[] | undefined): RpgMakerEffect[] {
     value1: finite(effect.value1),
     value2: finite(effect.value2),
   }));
+}
+
+function equipmentCatalog(
+  source: readonly (RmItem | null)[],
+  kind: RpgMakerBattleEquipment["kind"],
+): RpgMakerBattleEquipment[] {
+  return source.flatMap((entry) => entry ? [{
+    id: nonNegative(entry.id),
+    kind,
+    name: String(entry.name ?? ""),
+    etypeId: nonNegative(entry.etypeId),
+    typeId: nonNegative(kind === "weapon" ? entry.wtypeId : entry.atypeId),
+    params: Array.from({ length: 8 }, (_, index) => integer(entry.params?.[index])) as
+      [number, number, number, number, number, number, number, number],
+    traits: traits(entry.traits),
+  }] : []);
+}
+
+function audioSetting(source: RmProject["system"]["battleBgm"]): NonNullable<
+  NonNullable<RpgMakerBattleDatabase["settings"]>["battleBgm"]
+> {
+  return {
+    name: String(source?.name ?? ""),
+    volume: finite(source?.volume, 90),
+    pitch: finite(source?.pitch, 100),
+    pan: finite(source?.pan),
+  };
 }
 
 function damage(
@@ -185,9 +225,16 @@ function usable(
   };
 }
 
-function troopEffects(commands: readonly RmCommand[]): { effects: RpgMakerTroopPageEffect[]; unsupported: number } {
+function troopEffects(
+  commands: readonly RmCommand[],
+  cov: Coverage,
+): { effects: RpgMakerTroopPageEffect[]; unsupported: number } {
   const out: RpgMakerTroopPageEffect[] = [];
   let unsupported = 0;
+  const operand = (type: unknown, value: unknown) => integer(type) === 1
+    ? { kind: "variable" as const, id: variableId(nonNegative(value)) }
+    : { kind: "constant" as const, value: integer(value) };
+  const operation = (value: unknown): "add" | "sub" => integer(value) === 0 ? "add" : "sub";
   for (let i = 0; i < commands.length; i++) {
     const command = commands[i]!;
     const p = command.parameters ?? [];
@@ -216,9 +263,82 @@ function troopEffects(commands: readonly RmCommand[]): { effects: RpgMakerTroopP
         continue;
       }
     }
+    if (command.code === 331) {
+      out.push({
+        kind: "enemyHp",
+        index: integer(p[0]),
+        operation: operation(p[1]),
+        operand: operand(p[2], p[3]),
+        allowDeath: p[4] === true,
+      });
+      cov.record("command", 331, "Native");
+      continue;
+    }
+    if (command.code === 332 || command.code === 342) {
+      out.push({
+        kind: command.code === 332 ? "enemyMp" : "enemyTp",
+        index: integer(p[0]),
+        operation: operation(p[1]),
+        operand: operand(p[2], p[3]),
+      });
+      cov.record("command", command.code, "Native");
+      continue;
+    }
+    if (command.code === 333) {
+      out.push({
+        kind: "enemyState",
+        index: integer(p[0]),
+        operation: integer(p[1]) === 0 ? "add" : "remove",
+        stateId: nonNegative(p[2]),
+      });
+      cov.record("command", 333, "Native");
+      continue;
+    }
+    if (command.code === 334 || command.code === 335) {
+      out.push({ kind: command.code === 334 ? "enemyRecoverAll" : "enemyAppear", index: integer(p[0]) });
+      cov.record("command", command.code, "Native");
+      continue;
+    }
+    if (command.code === 336) {
+      out.push({ kind: "enemyTransform", index: integer(p[0]), enemyId: nonNegative(p[1]) });
+      cov.record("command", 336, "Native");
+      continue;
+    }
+    if (command.code === 337) {
+      out.push({
+        kind: "battleAnimation",
+        index: integer(p[0]),
+        animationId: nonNegative(p[1]),
+        entireTroop: p[2] === true,
+      });
+      cov.record(
+        "command",
+        337,
+        "Degraded",
+        "battle animation keeps its numeric database id because no cooked animation id is available",
+      );
+      continue;
+    }
+    if (command.code === 339) {
+      out.push({
+        kind: "forceAction",
+        side: integer(p[0]) === 0 ? "enemy" : "actor",
+        subject: integer(p[1]),
+        skillId: nonNegative(p[2]),
+        target: integer(p[3]),
+      });
+      cov.record("command", 339, "Native");
+      continue;
+    }
+    if (command.code === 340) {
+      out.push({ kind: "abort" });
+      cov.record("command", 340, "Native");
+      continue;
+    }
     // Comments are metadata, not a battle-side effect.
     if (command.code === 108) continue;
     unsupported++;
+    cov.record("command", command.code, "Dropped", "battle-event command is not executable by the battle interpreter");
   }
   return { effects: out, unsupported };
 }
@@ -235,13 +355,13 @@ function troopPage(page: RmTroopPage, cov: Coverage, troopId: number, index: num
     condition.actorHp = { actorId: nonNegative(raw.actorId), percent: clamp(raw.actorHp, 0, 100, 100) };
   }
   if (raw?.switchValid) condition.switch = switchId(nonNegative(raw.switchId));
-  const converted = troopEffects(page.list ?? []);
+  const converted = troopEffects(page.list ?? [], cov);
   if (converted.unsupported > 0) {
     cov.record(
       "battle",
       `troop ${troopId} page ${index + 1}`,
       "Degraded",
-      `${converted.unsupported} battle-event command(s) are outside the message/switch/constant-variable subset`,
+      `${converted.unsupported} battle-event command(s) are not executable by the battle interpreter`,
     );
   } else {
     cov.record("battle", `troop ${troopId} page ${index + 1}`, "Native");
@@ -266,16 +386,29 @@ export function importBattleDatabase(
   const actors = rm.actors.flatMap((actor) => {
     if (!actor) return [];
     cov.record("battle", `actor ${actor.id}`, "Native");
+    const initial = initialEquipment(rm, actor);
     return [{
       id: nonNegative(actor.id),
       name: String(actor.name ?? ""),
+      nickname: String(actor.nickname ?? ""),
+      profile: String(actor.profile ?? ""),
+      characterName: String(actor.characterName ?? ""),
+      characterIndex: nonNegative(actor.characterIndex),
+      faceName: String(actor.faceName ?? ""),
+      faceIndex: nonNegative(actor.faceIndex),
+      battlerName: String(actor.battlerName ?? ""),
       classId: nonNegative(actor.classId),
       initialLevel: Math.max(1, nonNegative(actor.initialLevel, 1)),
       maxLevel: Math.max(1, nonNegative(actor.maxLevel, 99)),
       traits: traits(actor.traits),
-      equipment: initialEquipment(rm, actor),
+      initialEquips: initial.refs,
+      equipSlots: initial.slots,
+      equipTypes: initial.types,
+      equipment: initial.aggregate,
     }];
   });
+  const weapons = equipmentCatalog(rm.weapons, "weapon");
+  const armors = equipmentCatalog(rm.armors, "armor");
   const classes = rm.classes.flatMap((entry) => {
     if (!entry) return [];
     const params = Array.from({ length: 8 }, (_, param) =>
@@ -421,6 +554,8 @@ export function importBattleDatabase(
     },
     party: (rm.system.partyMembers ?? []).map((id) => nonNegative(id)).filter((id) => id > 0),
     actors,
+    weapons,
+    armors,
     classes,
     enemies,
     troops,
@@ -430,6 +565,19 @@ export function importBattleDatabase(
     encounters,
     elements: (rm.system.elements ?? []).map((entry) => String(entry ?? "")),
     currencyUnit: String(rm.system.currencyUnit ?? "G"),
+    settings: {
+      battleBgm: audioSetting(rm.system.battleBgm),
+      victoryMe: audioSetting(rm.system.victoryMe),
+      defeatMe: audioSetting(rm.system.defeatMe),
+      encounterDisabled: false,
+    },
+    mapSettings: [...rm.maps.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([id, map]) => ({
+        map: mapId(id),
+        battleback1Name: String(map.battleback1Name ?? ""),
+        battleback2Name: String(map.battleback2Name ?? ""),
+      })),
     terms: {
       fight: String(commands[0] ?? "Fight"),
       escape: String(commands[1] ?? "Escape"),

@@ -11,18 +11,25 @@ import type { JsonValue, VariableValue } from "../engine/types.ts";
 import { evaluateRpgMakerDamageBase, type RpgMakerFormulaBattler } from "./formula.ts";
 import type {
   RpgMakerActorRuntime,
+  RpgMakerActorCommand,
+  RpgMakerActorTarget,
   RpgMakerBattleAction,
   RpgMakerBattleCombatant,
   RpgMakerBattleDatabase,
+  RpgMakerBattleEquipment,
   RpgMakerBattleItem,
   RpgMakerBattleRuntime,
+  RpgMakerBattleSettings,
   RpgMakerBattleSkill,
   RpgMakerBattleState,
   RpgMakerBattleStateDef,
   RpgMakerBattleTroop,
   RpgMakerEffect,
+  RpgMakerEquipmentRef,
   RpgMakerTrait,
   RpgMakerUsableItem,
+  RpgMakerValueOperand,
+  RpgMakerSettingCommand,
 } from "./types.ts";
 
 const EFFECT_TICKS = 18;
@@ -32,6 +39,8 @@ const PARAM_MAX = [999_999, 9_999, 999, 999, 999, 999, 999, 999] as const;
 /** Reserved importer/runtime handshake for stock walking encounters. */
 export const RPGMAKER_ENCOUNTER_STEP_CALL = "rpgmaker.encounterStep";
 export const RPGMAKER_ENCOUNTER_DUE_VARIABLE = "rmi-encounter-due";
+export const RPGMAKER_ACTOR_CHANGE_CALL = "rpgmaker.actorChange";
+export const RPGMAKER_BATTLE_SETTING_CALL = "rpgmaker.battleSetting";
 
 interface RpgMakerBattleSetup {
   system?: unknown;
@@ -104,12 +113,33 @@ function actorBaseParams(
   actorId: number,
   classId: number,
   level: number,
+  paramPlus?: readonly number[],
+  equips?: readonly (RpgMakerEquipmentRef | null)[],
 ): [number, number, number, number, number, number, number, number] {
   const actor = findById(db.actors, actorId);
   const klass = findById(db.classes, classId);
+  const equipped = equips === undefined
+    ? []
+    : equips.flatMap((ref) => {
+        if (!ref) return [];
+        const item = findById(ref.kind === "weapon" ? db.weapons ?? [] : db.armors ?? [], ref.id);
+        return item ? [item] : [];
+      });
+  const useCatalog = equips !== undefined && (db.weapons !== undefined || db.armors !== undefined);
   return Array.from({ length: 8 }, (_, id) => Math.max(0,
-    integer(klass?.params[id]?.[level]) + integer(actor?.equipment.params[id]))) as
+    integer(klass?.params[id]?.[level]) + integer(paramPlus?.[id]) +
+    (useCatalog
+      ? equipped.reduce((sum, item) => sum + integer(item.params[id]), 0)
+      : integer(actor?.equipment.params[id])))) as
     [number, number, number, number, number, number, number, number];
+}
+
+function equipmentFor(
+  db: RpgMakerBattleDatabase,
+  ref: RpgMakerEquipmentRef | null | undefined,
+): RpgMakerBattleEquipment | undefined {
+  if (!ref) return undefined;
+  return findById(ref.kind === "weapon" ? db.weapons ?? [] : db.armors ?? [], ref.id);
 }
 
 function stateDef(db: RpgMakerBattleDatabase, id: number): RpgMakerBattleStateDef | undefined {
@@ -117,10 +147,14 @@ function stateDef(db: RpgMakerBattleDatabase, id: number): RpgMakerBattleStateDe
 }
 
 function combatantTraits(db: RpgMakerBattleDatabase, battler: RpgMakerBattleCombatant): RpgMakerTrait[] {
+  const actorDef = battler.side === "actor" ? findById(db.actors, battler.databaseId) : undefined;
+  const catalogTraits = battler.actor?.equips === undefined
+    ? actorDef?.equipment.traits ?? []
+    : battler.actor.equips.flatMap((ref) => equipmentFor(db, ref)?.traits ?? []);
   const base = battler.side === "actor"
     ? [
-        ...(findById(db.actors, battler.databaseId)?.traits ?? []),
-        ...(findById(db.actors, battler.databaseId)?.equipment.traits ?? []),
+        ...(actorDef?.traits ?? []),
+        ...catalogTraits,
         ...(findById(db.classes, battler.actor?.classId ?? 0)?.traits ?? []),
       ]
     : [...(findById(db.enemies, battler.databaseId)?.traits ?? [])];
@@ -181,7 +215,9 @@ export function rpgMakerCombatantParam(
   const base = battler.params[id] ?? 0;
   const traitRate = traitProduct(db, battler as RpgMakerBattleCombatant, 21, id);
   const buffRate = 1 + clamp(battler.buffs[id]?.level ?? 0, -2, 2) * 0.25;
-  return clamp(Math.round(base * traitRate * buffRate), id === 0 ? 1 : 0, PARAM_MAX[id]!);
+  const minimum = db.flavor === "MV" ? (id === 1 ? 0 : 1) : (id === 0 ? 1 : 0);
+  const maximum = db.flavor === "MV" ? PARAM_MAX[id]! : Number.MAX_SAFE_INTEGER;
+  return clamp(Math.round(base * traitRate * buffRate), minimum, maximum);
 }
 
 function formulaBattler(db: RpgMakerBattleDatabase, battler: RpgMakerBattleCombatant): RpgMakerFormulaBattler {
@@ -271,16 +307,13 @@ function initialActorRuntime(db: RpgMakerBattleDatabase, actorId: number): RpgMa
   const level = clamp(actor.initialLevel, 1, actor.maxLevel);
   const skills = [
     ...klass.learnings.filter((learning) => learning.level <= level).map((learning) => learning.skillId),
-    ...actor.equipment.skills,
-    ...[...actor.traits, ...klass.traits]
-      .filter((trait) => trait.code === 43)
-      .map((trait) => trait.dataId),
   ];
-  return {
+  const exp = rpgMakerExpForLevel(db, actor.classId, level);
+  const runtime: RpgMakerActorRuntime = {
     actorId,
     classId: actor.classId,
     level,
-    exp: rpgMakerExpForLevel(db, actor.classId, level),
+    exp,
     // Negative values are an internal construction sentinel; published
     // runtime records always contain the full initial HP/MP computed below.
     hp: -1,
@@ -289,23 +322,101 @@ function initialActorRuntime(db: RpgMakerBattleDatabase, actorId: number): RpgMa
     skills: [...new Set(skills)].sort((a, b) => a - b),
     states: [],
     buffs: Array(8).fill(0),
+    name: actor.name,
+    nickname: actor.nickname ?? "",
+    profile: actor.profile ?? "",
+    characterName: actor.characterName ?? "",
+    characterIndex: Math.max(0, integer(actor.characterIndex)),
+    faceName: actor.faceName ?? "",
+    faceIndex: Math.max(0, integer(actor.faceIndex)),
+    battlerName: actor.battlerName ?? "",
+    paramPlus: Array(8).fill(0) as RpgMakerActorRuntime["paramPlus"],
+    ...(actor.initialEquips ? { equips: actor.initialEquips.map((entry) => entry ? { ...entry } : null) } : {}),
+    classExp: { [String(actor.classId)]: exp },
   };
+  refreshRuntimeActor(db, runtime);
+  return runtime;
 }
 
-function runtimeRoot(ext: JsonValue): { root: Record<string, JsonValue>; runtime: RpgMakerBattleRuntime } {
+function normalizeActorRuntime(
+  db: RpgMakerBattleDatabase,
+  value: JsonValue,
+): RpgMakerActorRuntime | null {
+  const record = object(value);
+  const actorId = integer(record.actorId);
+  const actor = findById(db.actors, actorId);
+  const initial = actor ? initialActorRuntime(db, actorId) : null;
+  if (!actor || !initial) return null;
+  const copied = deepClone(record) as unknown as Partial<RpgMakerActorRuntime>;
+  const runtime: RpgMakerActorRuntime = { ...initial, ...copied } as RpgMakerActorRuntime;
+  runtime.actorId = actorId;
+  if (!findById(db.classes, runtime.classId)) runtime.classId = actor.classId;
+  runtime.level = clamp(integer(runtime.level, initial.level), 1, actor.maxLevel);
+  runtime.exp = Math.max(0, integer(runtime.exp, initial.exp));
+  runtime.hp = integer(runtime.hp, initial.hp);
+  runtime.mp = integer(runtime.mp, initial.mp);
+  runtime.tp = clamp(integer(runtime.tp), 0, 100);
+  runtime.skills = Array.isArray(runtime.skills)
+    ? [...new Set(runtime.skills.map((id) => integer(id)).filter((id) => id > 0))].sort((a, b) => a - b)
+    : [...initial.skills];
+  runtime.states = Array.isArray(runtime.states)
+    ? runtime.states.flatMap((active) => integer(active?.id) > 0
+      ? [{ id: integer(active.id), turns: Math.max(0, integer(active.turns)) }]
+      : [])
+    : [];
+  runtime.buffs = Array.isArray(runtime.buffs)
+    ? Array.from({ length: 8 }, (_, index) => clamp(integer(runtime.buffs[index]), -2, 2))
+    : Array(8).fill(0);
+  runtime.name = typeof runtime.name === "string" ? runtime.name : actor.name;
+  runtime.nickname = typeof runtime.nickname === "string" ? runtime.nickname : actor.nickname ?? "";
+  runtime.profile = typeof runtime.profile === "string" ? runtime.profile : actor.profile ?? "";
+  runtime.characterName = typeof runtime.characterName === "string" ? runtime.characterName : actor.characterName ?? "";
+  runtime.characterIndex = Math.max(0, integer(runtime.characterIndex, actor.characterIndex ?? 0));
+  runtime.faceName = typeof runtime.faceName === "string" ? runtime.faceName : actor.faceName ?? "";
+  runtime.faceIndex = Math.max(0, integer(runtime.faceIndex, actor.faceIndex ?? 0));
+  runtime.battlerName = typeof runtime.battlerName === "string" ? runtime.battlerName : actor.battlerName ?? "";
+  runtime.paramPlus = Array.from({ length: 8 }, (_, index) => integer(runtime.paramPlus?.[index])) as
+    NonNullable<RpgMakerActorRuntime["paramPlus"]>;
+  if (Array.isArray(runtime.equips)) {
+    runtime.equips = runtime.equips.map((entry) => {
+      if (!entry || (entry.kind !== "weapon" && entry.kind !== "armor") || integer(entry.id) <= 0) return null;
+      return { kind: entry.kind, id: integer(entry.id) };
+    });
+  } else if (actor.initialEquips) {
+    runtime.equips = actor.initialEquips.map((entry) => entry ? { ...entry } : null);
+  }
+  const classExp: Record<string, number> = {};
+  if (runtime.classExp && typeof runtime.classExp === "object") {
+    for (const [id, exp] of Object.entries(runtime.classExp)) classExp[id] = Math.max(0, integer(exp));
+  }
+  classExp[String(runtime.classId)] = runtime.exp;
+  runtime.classExp = classExp;
+  return runtime;
+}
+
+function runtimeRoot(db: RpgMakerBattleDatabase, ext: JsonValue): { root: Record<string, JsonValue>; runtime: RpgMakerBattleRuntime } {
   const root = object(ext);
   const raw = object(root.rpgmakerBattle);
   const actorsRaw = object(raw.actors);
   const actors: Record<string, RpgMakerActorRuntime> = {};
   for (const [id, value] of Object.entries(actorsRaw)) {
-    const record = object(value);
-    if (integer(record.actorId) <= 0) continue;
-    actors[id] = deepClone(record) as unknown as RpgMakerActorRuntime;
+    const actor = normalizeActorRuntime(db, value);
+    if (actor) actors[id] = actor;
   }
   const encounterRaw = object(raw.encounter);
   const encounter = typeof encounterRaw.map === "string" && encounterRaw.map.length > 0
     ? { map: encounterRaw.map, remaining: Math.max(0, integer(encounterRaw.remaining)) }
     : null;
+  const mapSettings: NonNullable<RpgMakerBattleRuntime["mapSettings"]> = {};
+  for (const [map, value] of Object.entries(object(raw.mapSettings))) {
+    const setting = object(value);
+    if (typeof setting.battleback1Name === "string" && typeof setting.battleback2Name === "string") {
+      mapSettings[map] = {
+        battleback1Name: setting.battleback1Name,
+        battleback2Name: setting.battleback2Name,
+      };
+    }
+  }
   return {
     root,
     runtime: {
@@ -315,6 +426,11 @@ function runtimeRoot(ext: JsonValue): { root: Record<string, JsonValue>; runtime
       winCount: Math.max(0, integer(raw.winCount)),
       escapeCount: Math.max(0, integer(raw.escapeCount)),
       encounter,
+      settings: {
+        ...(db.settings ?? {}),
+        ...(object(raw.settings) as unknown as RpgMakerBattleSettings),
+      },
+      ...(Object.keys(mapSettings).length > 0 ? { mapSettings } : {}),
     },
   };
 }
@@ -334,7 +450,13 @@ function nextEncounterCount(step: number, random: () => number): number {
  * no step-hook cost and never import this module. */
 function encounterStepHandler(db: RpgMakerBattleDatabase) {
   return (context: ExtensionCommandContext): ExtensionCommandResult => {
-    const { root, runtime } = runtimeRoot(context.ext);
+    const { root, runtime } = runtimeRoot(db, context.ext);
+    if (runtime.settings?.encounterDisabled === true) {
+      return {
+        ext: withRuntime(root, runtime),
+        writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 },
+      };
+    }
     const mapId = context.mapId;
     const encounter = mapId ? db.encounters.find((entry) => entry.map === mapId) : undefined;
     if (!encounter || encounter.entries.length === 0) {
@@ -355,6 +477,305 @@ function encounterStepHandler(db: RpgMakerBattleDatabase) {
     return {
       ext: withRuntime(root, runtime),
       writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: due ? 1 : 0 },
+    };
+  };
+}
+
+function operandValue(context: ExtensionCommandContext, operand: RpgMakerValueOperand): number {
+  return operand.kind === "variable" ? integer(context.variables[operand.id]) : integer(operand.value);
+}
+
+function currentPartyActorIds(
+  db: RpgMakerBattleDatabase,
+  switches: Readonly<Record<string, boolean>>,
+): number[] {
+  const initial = new Set(db.party);
+  return [
+    ...db.party.filter((id) => switches[partyOutSwitchKey(id)] !== true),
+    ...db.actors.map((actor) => actor.id)
+      .filter((id) => !initial.has(id) && switches[partySwitchKey(id)] === true)
+      .sort((a, b) => a - b),
+  ];
+}
+
+function actorCommandTargets(
+  db: RpgMakerBattleDatabase,
+  context: ExtensionCommandContext,
+  target: RpgMakerActorTarget,
+): number[] {
+  if (target.kind === "all") return currentPartyActorIds(db, context.switches);
+  const id = target.kind === "variable" ? integer(context.variables[target.id]) : target.id;
+  return id === 0 ? currentPartyActorIds(db, context.switches) : [id];
+}
+
+function ensureRuntimeActor(
+  db: RpgMakerBattleDatabase,
+  runtime: RpgMakerBattleRuntime,
+  actorId: number,
+): RpgMakerActorRuntime | null {
+  const key = String(actorId);
+  const current = runtime.actors[key];
+  if (current) return current;
+  const created = initialActorRuntime(db, actorId);
+  if (!created) return null;
+  runtime.actors[key] = created;
+  return created;
+}
+
+function runtimeActorParam(db: RpgMakerBattleDatabase, runtime: RpgMakerActorRuntime, id: number): number {
+  const battler = actorCombatant(db, runtime, 0);
+  return battler ? rpgMakerCombatantParam(db, battler, id) : id === 0 ? 1 : 0;
+}
+
+function refreshRuntimeActor(db: RpgMakerBattleDatabase, runtime: RpgMakerActorRuntime): void {
+  const mhp = runtimeActorParam(db, runtime, 0);
+  const mmp = runtimeActorParam(db, runtime, 1);
+  runtime.hp = runtime.hp < 0 ? mhp : clamp(integer(runtime.hp), 0, mhp);
+  runtime.mp = runtime.mp < 0 ? mmp : clamp(integer(runtime.mp), 0, mmp);
+  runtime.tp = clamp(integer(runtime.tp), 0, 100);
+  if (runtime.hp > 0) runtime.states = runtime.states.filter((active) => active.id !== 1);
+}
+
+function runtimeStateTurns(
+  db: RpgMakerBattleDatabase,
+  context: ExtensionCommandContext,
+  stateId: number,
+): number {
+  const definition = stateDef(db, stateId);
+  if (!definition) return 0;
+  const minimum = Math.max(0, definition.minTurns);
+  const span = Math.max(1, definition.maxTurns - minimum + 1);
+  return minimum + Math.floor(context.random() * span);
+}
+
+function killRuntimeActor(
+  db: RpgMakerBattleDatabase,
+  context: ExtensionCommandContext,
+  runtime: RpgMakerActorRuntime,
+): void {
+  runtime.hp = 0;
+  runtime.states = [];
+  runtime.buffs = Array(8).fill(0);
+  if (stateDef(db, 1)) runtime.states.push({ id: 1, turns: runtimeStateTurns(db, context, 1) });
+}
+
+function learnThroughLevel(
+  db: RpgMakerBattleDatabase,
+  actor: RpgMakerActorRuntime,
+  fromExclusive: number,
+  toInclusive: number,
+): void {
+  const klass = findById(db.classes, actor.classId);
+  if (!klass || toInclusive <= fromExclusive) return;
+  const additions = klass.learnings
+    .filter((learning) => learning.level > fromExclusive && learning.level <= toInclusive)
+    .map((learning) => learning.skillId);
+  actor.skills = [...new Set([...actor.skills, ...additions])].sort((a, b) => a - b);
+}
+
+function setActorExp(
+  db: RpgMakerBattleDatabase,
+  actor: RpgMakerActorRuntime,
+  requested: number,
+): void {
+  const definition = findById(db.actors, actor.actorId);
+  if (!definition) return;
+  actor.exp = Math.max(0, Math.round(requested));
+  const before = actor.level;
+  while (actor.level < definition.maxLevel && actor.exp >= rpgMakerExpForLevel(db, actor.classId, actor.level + 1)) {
+    actor.level++;
+    learnThroughLevel(db, actor, actor.level - 1, actor.level);
+  }
+  while (actor.level > 1 && actor.exp < rpgMakerExpForLevel(db, actor.classId, actor.level)) actor.level--;
+  if (actor.level > before) learnThroughLevel(db, actor, before, actor.level);
+  (actor.classExp ??= {})[String(actor.classId)] = actor.exp;
+  refreshRuntimeActor(db, actor);
+}
+
+function equipmentItemKey(ref: RpgMakerEquipmentRef): string {
+  return `${ref.kind}${String(ref.id).padStart(3, "0")}`;
+}
+
+function runtimeActorTraits(db: RpgMakerBattleDatabase, actor: RpgMakerActorRuntime): RpgMakerTrait[] {
+  const battler = actorCombatant(db, actor, 0);
+  return battler ? combatantTraits(db, battler) : [];
+}
+
+function actorCanEquip(
+  db: RpgMakerBattleDatabase,
+  actor: RpgMakerActorRuntime,
+  slot: number,
+  item: RpgMakerBattleEquipment,
+): boolean {
+  const definition = findById(db.actors, actor.actorId);
+  const etype = definition?.equipTypes?.[slot] ?? (definition?.equipSlots?.[slot] === "weapon" ? 1 : slot + 1);
+  if (item.etypeId !== etype) return false;
+  const traits = runtimeActorTraits(db, actor);
+  if (traits.some((trait) => trait.code === 54 && trait.dataId === etype)) return false;
+  const permission = item.kind === "weapon" ? 51 : 52;
+  return traits.some((trait) => trait.code === permission && trait.dataId === item.typeId);
+}
+
+function changeActorEquipment(
+  db: RpgMakerBattleDatabase,
+  context: ExtensionCommandContext,
+  actor: RpgMakerActorRuntime,
+  slot: number,
+  itemId: number,
+  itemWrites: Record<string, number>,
+): void {
+  const definition = findById(db.actors, actor.actorId);
+  if (!definition || slot < 0 || slot >= (definition.equipTypes?.length ?? definition.equipSlots?.length ?? actor.equips?.length ?? 0)) return;
+  const equips = actor.equips ??= (definition.initialEquips ?? []).map((entry) => entry ? { ...entry } : null);
+  while (equips.length <= slot) equips.push(null);
+  const old = equips[slot] ?? null;
+  const etype = definition.equipTypes?.[slot] ?? (definition.equipSlots?.[slot] === "weapon" ? 1 : slot + 1);
+  const kind = etype === 1 ? "weapon" : "armor";
+  const nextRef: RpgMakerEquipmentRef | null = itemId > 0 ? { kind, id: itemId } : null;
+  const next = equipmentFor(db, nextRef);
+  if (nextRef && (!next || !actorCanEquip(db, actor, slot, next))) return;
+  if (nextRef) {
+    const key = equipmentItemKey(nextRef);
+    const available = itemWrites[key] ?? context.items[key] ?? 0;
+    if (available <= 0) return;
+    itemWrites[key] = available - 1;
+  }
+  if (old) {
+    const key = equipmentItemKey(old);
+    itemWrites[key] = (itemWrites[key] ?? context.items[key] ?? 0) + 1;
+  }
+  equips[slot] = nextRef;
+  refreshRuntimeActor(db, actor);
+}
+
+function actorChangeHandler(db: RpgMakerBattleDatabase) {
+  return (context: ExtensionCommandContext, args: JsonValue): ExtensionCommandResult => {
+    const command = deepClone(args) as unknown as RpgMakerActorCommand;
+    const { root, runtime } = runtimeRoot(db, context.ext);
+    const itemWrites: Record<string, number> = {};
+    const directActorId = "actorId" in command ? integer(command.actorId) : 0;
+    const ids = "target" in command
+      ? actorCommandTargets(db, context, command.target)
+      : directActorId > 0 ? [directActorId] : [];
+    for (const actorId of ids) {
+      const actor = ensureRuntimeActor(db, runtime, actorId);
+      if (!actor) continue;
+      if (command.kind === "hp") {
+        if (actor.hp <= 0) continue;
+        const amount = operandValue(context, command.operand) * (command.operation === "add" ? 1 : -1);
+        let next = actor.hp + amount;
+        if (!command.allowDeath) next = Math.max(1, next);
+        if (next <= 0) killRuntimeActor(db, context, actor);
+        else {
+          actor.hp = next;
+          refreshRuntimeActor(db, actor);
+        }
+      } else if (command.kind === "mp" || command.kind === "tp") {
+        const amount = operandValue(context, command.operand) * (command.operation === "add" ? 1 : -1);
+        actor[command.kind] += amount;
+        refreshRuntimeActor(db, actor);
+      } else if (command.kind === "state") {
+        const index = actor.states.findIndex((active) => active.id === command.stateId);
+        if (command.operation === "remove") {
+          if (index >= 0) actor.states.splice(index, 1);
+          if (command.stateId === 1 && actor.hp <= 0) actor.hp = 1;
+        } else if (actor.hp > 0 && stateDef(db, command.stateId)) {
+          const battler = actorCombatant(db, actor, 0);
+          if (battler && !hasTrait(db, battler, 14, command.stateId)) {
+            if (command.stateId === 1) killRuntimeActor(db, context, actor);
+            else {
+              const turns = runtimeStateTurns(db, context, command.stateId);
+              if (index >= 0) actor.states[index] = { id: command.stateId, turns };
+              else actor.states.push({ id: command.stateId, turns });
+            }
+          }
+        }
+        refreshRuntimeActor(db, actor);
+      } else if (command.kind === "recoverAll") {
+        actor.states = [];
+        actor.hp = runtimeActorParam(db, actor, 0);
+        actor.mp = runtimeActorParam(db, actor, 1);
+      } else if (command.kind === "exp") {
+        const amount = operandValue(context, command.operand) * (command.operation === "add" ? 1 : -1);
+        setActorExp(db, actor, actor.exp + amount);
+      } else if (command.kind === "level") {
+        const definition = findById(db.actors, actor.actorId);
+        if (!definition) continue;
+        const amount = operandValue(context, command.operand) * (command.operation === "add" ? 1 : -1);
+        const target = clamp(actor.level + amount, 1, definition.maxLevel);
+        const before = actor.level;
+        actor.level = target;
+        actor.exp = rpgMakerExpForLevel(db, actor.classId, target);
+        learnThroughLevel(db, actor, before, target);
+        (actor.classExp ??= {})[String(actor.classId)] = actor.exp;
+        refreshRuntimeActor(db, actor);
+      } else if (command.kind === "parameter") {
+        if (command.paramId < 0 || command.paramId > 7) continue;
+        const plus = actor.paramPlus ??= Array(8).fill(0) as NonNullable<RpgMakerActorRuntime["paramPlus"]>;
+        const amount = operandValue(context, command.operand) * (command.operation === "add" ? 1 : -1);
+        plus[command.paramId] = clamp(
+          integer(plus[command.paramId]) + amount,
+          -Number.MAX_SAFE_INTEGER,
+          Number.MAX_SAFE_INTEGER,
+        );
+        refreshRuntimeActor(db, actor);
+      } else if (command.kind === "skill") {
+        const skills = new Set(actor.skills);
+        if (command.operation === "add") skills.add(command.skillId);
+        else skills.delete(command.skillId);
+        actor.skills = [...skills].filter((id) => !!findById(db.skills, id)).sort((a, b) => a - b);
+      } else if (command.kind === "equipment") {
+        changeActorEquipment(db, context, actor, command.slotId, command.itemId, itemWrites);
+      } else if (command.kind === "class") {
+        if (!findById(db.classes, command.classId)) continue;
+        (actor.classExp ??= {})[String(actor.classId)] = actor.exp;
+        const previousExp = actor.exp;
+        actor.classId = command.classId;
+        // MZ deliberately restarts at level zero before replaying the new
+        // class EXP curve; MV adjusts from the actor's current level. Normal
+        // monotonic curves converge, while malformed curves expose the
+        // flavor difference pinned by the stock implementations.
+        if (db.flavor === "MZ") actor.level = 0;
+        setActorExp(db, actor, command.keepExp ? previousExp : actor.classExp[String(command.classId)] ?? 0);
+      } else if (command.kind === "images") {
+        actor.characterName = command.characterName;
+        actor.characterIndex = command.characterIndex;
+        actor.faceName = command.faceName;
+        actor.faceIndex = command.faceIndex;
+        actor.battlerName = command.battlerName;
+      } else if (command.kind === "nickname") actor.nickname = command.value;
+      else if (command.kind === "profile") actor.profile = command.value;
+    }
+    return {
+      ext: withRuntime(root, runtime),
+      ...(Object.keys(itemWrites).length > 0 ? { items: itemWrites } : {}),
+    };
+  };
+}
+
+function battleSettingHandler(db: RpgMakerBattleDatabase) {
+  return (context: ExtensionCommandContext, args: JsonValue): ExtensionCommandResult => {
+    const command = deepClone(args) as unknown as RpgMakerSettingCommand;
+    const { root, runtime } = runtimeRoot(db, context.ext);
+    const settings = runtime.settings ??= { ...(db.settings ?? {}) };
+    if (command.kind === "battleBgm" || command.kind === "victoryMe" || command.kind === "defeatMe") {
+      settings[command.kind] = { ...command.audio };
+    } else if (command.kind === "battleback") {
+      if (context.mapId) {
+        (runtime.mapSettings ??= {})[context.mapId] = {
+          battleback1Name: command.battleback1Name,
+          battleback2Name: command.battleback2Name,
+        };
+      }
+    } else if (command.kind === "encounter") {
+      settings.encounterDisabled = command.disabled;
+      const mapId = context.mapId;
+      const encounter = mapId ? db.encounters.find((entry) => entry.map === mapId) : undefined;
+      runtime.encounter = mapId && encounter ? { map: mapId, remaining: nextEncounterCount(encounter.step, context.random) } : null;
+    }
+    return {
+      ext: withRuntime(root, runtime),
+      ...(command.kind === "encounter" ? { writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 } } : {}),
     };
   };
 }
@@ -401,11 +822,17 @@ export function augmentRpgMakerBattleExtensions(
   db: RpgMakerBattleDatabase,
 ): ExtensionOptions {
   const commands = { ...(base.commands ?? {}) };
-  if (commands[RPGMAKER_ENCOUNTER_STEP_CALL]) {
-    throw new Error(`RPG Maker encounter extension command collision: ${RPGMAKER_ENCOUNTER_STEP_CALL}`);
+  for (const call of [
+    RPGMAKER_ENCOUNTER_STEP_CALL,
+    RPGMAKER_ACTOR_CHANGE_CALL,
+    RPGMAKER_BATTLE_SETTING_CALL,
+  ]) {
+    if (commands[call]) throw new Error(`RPG Maker battle extension command collision: ${call}`);
   }
   const encounter = encounterStepHandler(db);
   commands[RPGMAKER_ENCOUNTER_STEP_CALL] = encounter;
+  commands[RPGMAKER_ACTOR_CHANGE_CALL] = actorChangeHandler(db);
+  commands[RPGMAKER_BATTLE_SETTING_CALL] = battleSettingHandler(db);
   if (!base.playerStep) {
     return { ...base, commands, playerStep: { call: RPGMAKER_ENCOUNTER_STEP_CALL } };
   }
@@ -448,12 +875,12 @@ function actorCombatant(
   const klass = actor ? findById(db.classes, runtime.classId) : undefined;
   if (!actor || !klass) return null;
   const level = clamp(runtime.level, 1, actor.maxLevel);
-  const params = actorBaseParams(db, actor.id, runtime.classId, level);
+  const params = actorBaseParams(db, actor.id, runtime.classId, level, runtime.paramPlus, runtime.equips);
   const combatant: RpgMakerBattleCombatant = {
     key: `actor${String(runtime.actorId).padStart(3, "0")}`,
     side: "actor",
     databaseId: runtime.actorId,
-    name: actor.name,
+    name: runtime.name ?? actor.name,
     hp: runtime.hp,
     mp: runtime.mp,
     tp: clamp(runtime.tp, 0, 100),
@@ -467,6 +894,9 @@ function actorCombatant(
       level,
       exp: Math.max(0, integer(runtime.exp)),
       skills: [...new Set(runtime.skills ?? [])].sort((a, b) => a - b),
+      ...(runtime.paramPlus ? { paramPlus: [...runtime.paramPlus] as NonNullable<RpgMakerActorRuntime["paramPlus"]> } : {}),
+      ...(runtime.equips ? { equips: runtime.equips.map((entry) => entry ? { ...entry } : null) } : {}),
+      ...(runtime.classExp ? { classExp: { ...runtime.classExp } } : {}),
     },
   };
   const mhp = rpgMakerCombatantParam(db, combatant, 0);
@@ -606,6 +1036,135 @@ function applyVariableOperation(current: number, op: string, value: number): num
   }
 }
 
+function troopEffectEnemies(
+  state: RpgMakerBattleState,
+  index: number,
+): { enemy: RpgMakerBattleCombatant; index: number }[] {
+  if (index < 0) return state.enemies.map((enemy, enemyIndex) => ({ enemy, index: enemyIndex }));
+  const enemy = state.enemies[index];
+  return enemy ? [{ enemy, index }] : [];
+}
+
+function battleOperandValue(state: RpgMakerBattleState, operand: RpgMakerValueOperand): number {
+  return operand.kind === "variable" ? integer(state.variables[operand.id]) : integer(operand.value);
+}
+
+function transformEnemy(
+  db: RpgMakerBattleDatabase,
+  enemy: RpgMakerBattleCombatant,
+  enemyId: number,
+): void {
+  const definition = findById(db.enemies, enemyId);
+  if (!definition) return;
+  enemy.databaseId = definition.id;
+  enemy.name = definition.name;
+  enemy.params = [...definition.params];
+  if (definition.image) enemy.image = definition.image;
+  else delete enemy.image;
+  enemy.hp = clamp(enemy.hp, 0, rpgMakerCombatantParam(db, enemy, 0));
+  enemy.mp = clamp(enemy.mp, 0, rpgMakerCombatantParam(db, enemy, 1));
+}
+
+function runForcedAction(
+  db: RpgMakerBattleDatabase,
+  state: RpgMakerBattleState,
+  effect: Extract<RpgMakerBattleTroop["pages"][number]["effects"][number], { kind: "forceAction" }>,
+): string[] {
+  if (!findById(db.skills, effect.skillId)) return [];
+  const users = effect.side === "enemy"
+    ? troopEffectEnemies(state, effect.subject).map(({ index }) => index)
+    : state.actors.flatMap((actor, index) => actor.databaseId === effect.subject ? [index] : []);
+  const messages: string[] = [];
+  for (const userIndex of users) {
+    const user = effect.side === "actor" ? state.actors[userIndex] : state.enemies[userIndex];
+    if (!user || user.states.some((active) => active.id === 1)) continue;
+    const target = effect.target === -2 ? integer(user.lastTargetIndex) : effect.target;
+    const text = resolveAction(db, state, {
+      side: effect.side,
+      user: userIndex,
+      kind: "skill",
+      id: effect.skillId,
+      target,
+      speed: 0,
+      forced: true,
+    });
+    if (text) messages.push(text);
+  }
+  return messages;
+}
+
+function applyTroopPageEffect(
+  db: RpgMakerBattleDatabase,
+  state: RpgMakerBattleState,
+  effect: RpgMakerBattleTroop["pages"][number]["effects"][number],
+): string[] {
+  if (effect.kind === "message") return [effect.lines.join("\n")];
+  if (effect.kind === "switch") {
+    state.switches[effect.id] = effect.value;
+    return [];
+  }
+  if (effect.kind === "variable") {
+    const current = typeof state.variables[effect.id] === "number" ? state.variables[effect.id] as number : 0;
+    const next = applyVariableOperation(current, effect.op, effect.value);
+    state.variables[effect.id] = Number.isFinite(next) ? Math.trunc(next) : 0;
+    return [];
+  }
+  if (effect.kind === "enemyHp") {
+    const amount = battleOperandValue(state, effect.operand) * (effect.operation === "add" ? 1 : -1);
+    for (const { enemy } of troopEffectEnemies(state, effect.index)) {
+      if (!alive(enemy)) continue;
+      const next = effect.allowDeath ? enemy.hp + amount : Math.max(1, enemy.hp + amount);
+      setHp(db, state, enemy, next);
+    }
+    return [];
+  }
+  if (effect.kind === "enemyMp" || effect.kind === "enemyTp") {
+    const amount = battleOperandValue(state, effect.operand) * (effect.operation === "add" ? 1 : -1);
+    for (const { enemy } of troopEffectEnemies(state, effect.index)) {
+      if (effect.kind === "enemyMp") {
+        enemy.mp = clamp(enemy.mp + amount, 0, rpgMakerCombatantParam(db, enemy, 1));
+      } else enemy.tp = clamp(enemy.tp + amount, 0, 100);
+    }
+    return [];
+  }
+  if (effect.kind === "enemyState") {
+    for (const { enemy } of troopEffectEnemies(state, effect.index)) {
+      if (effect.operation === "add") applyState(db, state, enemy, effect.stateId);
+      else removeState(db, enemy, effect.stateId);
+    }
+    return [];
+  }
+  if (effect.kind === "enemyRecoverAll") {
+    for (const { enemy } of troopEffectEnemies(state, effect.index)) {
+      enemy.states = [];
+      enemy.hp = rpgMakerCombatantParam(db, enemy, 0);
+      enemy.mp = rpgMakerCombatantParam(db, enemy, 1);
+    }
+    return [];
+  }
+  if (effect.kind === "enemyAppear") {
+    for (const { enemy } of troopEffectEnemies(state, effect.index)) enemy.hidden = false;
+    return [];
+  }
+  if (effect.kind === "enemyTransform") {
+    for (const { enemy } of troopEffectEnemies(state, effect.index)) transformEnemy(db, enemy, effect.enemyId);
+    return [];
+  }
+  if (effect.kind === "battleAnimation") {
+    if (effect.animation) {
+      const targets = (effect.entireTroop ? troopEffectEnemies(state, -1) : troopEffectEnemies(state, effect.index))
+        .filter(({ enemy }) => alive(enemy))
+        .map(({ index }) => index);
+      state.battleAnimation = { id: effect.animation, targets, startTick: state.nowTick };
+    }
+    return [];
+  }
+  if (effect.kind === "forceAction") return runForcedAction(db, state, effect);
+  state.result = "escape";
+  state.phase = "done";
+  return [];
+}
+
 function runTroopPages(
   db: RpgMakerBattleDatabase,
   state: RpgMakerBattleState,
@@ -628,13 +1187,8 @@ function runTroopPages(
     if (page.span === 1) run.lastTurn = state.turn;
     const messages: string[] = [];
     for (const effect of page.effects) {
-      if (effect.kind === "message") messages.push(effect.lines.join("\n"));
-      else if (effect.kind === "switch") state.switches[effect.id] = effect.value;
-      else {
-        const current = typeof state.variables[effect.id] === "number" ? state.variables[effect.id] as number : 0;
-        const next = applyVariableOperation(current, effect.op, effect.value);
-        state.variables[effect.id] = Number.isFinite(next) ? Math.trunc(next) : 0;
-      }
+      messages.push(...applyTroopPageEffect(db, state, effect));
+      if (state.phase === "done") break;
     }
     // Game_Troop.setupBattleEvent starts the first eligible page only. A
     // moment page stays eligible after its interpreter becomes idle; battle
@@ -807,6 +1361,7 @@ function prepareResolution(
 
 function startPreparedResolution(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
   const pages = runTroopPages(db, state, false);
+  if (state.phase === "done") return;
   if (pages.length > 0) showMessage(state, pages.join("\n"), "nextAction");
   else resolveNextAction(db, state);
 }
@@ -884,7 +1439,7 @@ function actionTargets(
 ): { side: "actor" | "enemy"; index: number }[] {
   const scopeSide = targetSide(usable.scope);
   if (scopeSide === "user") return [{ side: action.side, index: action.user }];
-  const userRestriction = restriction(db, user);
+  const userRestriction = action.forced ? 0 : restriction(db, user);
   let targetSideName: "actor" | "enemy";
   if (userRestriction >= 1 && userRestriction <= 3) {
     const opponents = action.side === "actor" ? "enemy" : "actor";
@@ -1219,7 +1774,9 @@ function updateActionEndStates(db: RpgMakerBattleDatabase, battler: RpgMakerBatt
 
 function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, action: RpgMakerBattleAction): string {
   const user = action.side === "actor" ? state.actors[action.user] : state.enemies[action.user];
-  if (!user || !alive(user) || restriction(db, user) === 4) return "";
+  if (!user || (action.forced
+    ? user.states.some((active) => active.id === 1)
+    : !alive(user) || restriction(db, user) === 4)) return "";
   if (action.kind === "guard") {
     user.guarding = true;
     return formatTerm(db, db.terms.messages.useItem, user.name, db.terms.guard);
@@ -1233,8 +1790,8 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
   ].join("\n");
   if (action.kind === "skill") {
     const skill = usable as RpgMakerBattleSkill;
-    if (!skillAffordable(user, skill)) return formatTerm(db, db.terms.messages.actionFailure, user.name);
-    user.mp -= skill.mpCost;
+    if (!action.forced && !skillAffordable(user, skill)) return formatTerm(db, db.terms.messages.actionFailure, user.name);
+    user.mp = clamp(user.mp - skill.mpCost, 0, rpgMakerCombatantParam(db, user, 1));
     user.tp = clamp(user.tp - skill.tpCost, 0, 100);
   } else {
     const key = itemKey(action.id);
@@ -1255,6 +1812,7 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
       if (result.effect) state.effect = result.effect;
     }
   }
+  user.lastTargetIndex = targets[targets.length - 1]?.index ?? 0;
   user.tp = clamp(user.tp + usable.tpGain, 0, 100);
   updateActionEndStates(db, user);
   return messages.join("\n");
@@ -1383,6 +1941,7 @@ function finishTurn(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): voi
   state.actors.forEach((actor) => updateTurnEndStates(db, state, actor));
   state.enemies.forEach((enemy) => updateTurnEndStates(db, state, enemy));
   const pages = runTroopPages(db, state, true);
+  if (state.phase === "done") return;
   if (allEnemiesDefeated(state)) beginVictory(db, state);
   else if (allActorsDefeated(state)) beginDefeat(db, state);
   else if (pages.length > 0) showMessage(state, pages.join("\n"), "party");
@@ -1408,6 +1967,7 @@ function resolveNextAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleStat
   }
   const text = resolveAction(db, state, action);
   const pages = runTroopPages(db, state, false);
+  if (state.phase === "done") return;
   const message = [text, ...pages].filter((line) => line.length > 0).join("\n");
   if (allEnemiesDefeated(state)) beginVictory(db, state);
   else if (allActorsDefeated(state)) beginDefeat(db, state);
@@ -1439,10 +1999,15 @@ function completionRuntime(
   db: RpgMakerBattleDatabase,
   state: Readonly<RpgMakerBattleState>,
 ): RpgMakerBattleRuntime {
-  const { runtime } = runtimeRoot(state.ext);
+  const { runtime } = runtimeRoot(db, state.ext);
   for (const battler of state.actors) {
     if (!battler.actor) continue;
-    runtime.actors[String(battler.databaseId)] = {
+    const key = String(battler.databaseId);
+    const previous = runtime.actors[key] ?? initialActorRuntime(db, battler.databaseId);
+    const classExp = { ...(previous?.classExp ?? {}), ...(battler.actor.classExp ?? {}) };
+    classExp[String(battler.actor.classId)] = battler.actor.exp;
+    runtime.actors[key] = {
+      ...(previous ?? {}),
       actorId: battler.databaseId,
       classId: battler.actor.classId,
       level: battler.actor.level,
@@ -1454,6 +2019,9 @@ function completionRuntime(
       states: battler.states.filter((active) => stateDef(db, active.id)?.removeAtBattleEnd !== true)
         .map((active) => ({ ...active })),
       buffs: Array(8).fill(0),
+      ...(battler.actor.paramPlus ? { paramPlus: [...battler.actor.paramPlus] as NonNullable<RpgMakerActorRuntime["paramPlus"]> } : {}),
+      ...(battler.actor.equips ? { equips: battler.actor.equips.map((entry) => entry ? { ...entry } : null) } : {}),
+      classExp,
     };
   }
   if (state.result === "win") runtime.winCount++;
@@ -1470,6 +2038,23 @@ function changed<T extends number | string | boolean>(
     if (before[id] !== after[id] && after[id] !== undefined) out[id] = after[id]!;
   }
   return out;
+}
+
+function effectiveBattleSettings(
+  db: RpgMakerBattleDatabase,
+  runtime: RpgMakerBattleRuntime,
+  mapId: string | undefined,
+): RpgMakerBattleSettings {
+  const authored = mapId ? db.mapSettings?.find((entry) => entry.map === mapId) : undefined;
+  const override = mapId ? runtime.mapSettings?.[mapId] : undefined;
+  return {
+    ...(runtime.settings ?? db.settings ?? {}),
+    ...(authored ? {
+      battleback1Name: authored.battleback1Name,
+      battleback2Name: authored.battleback2Name,
+    } : {}),
+    ...(override ?? {}),
+  };
 }
 
 function createInitialState(
@@ -1489,7 +2074,7 @@ function createInitialState(
   const troop = findById(db.troops, troopId);
   if (!troop) return null;
 
-  const { runtime } = runtimeRoot(ext);
+  const { runtime } = runtimeRoot(db, ext);
   runtime.battleCount++;
   const initialParty = new Set(db.party);
   const party = [
@@ -1551,6 +2136,7 @@ function createInitialState(
     afterMessage: "party",
     result: null,
     effect: null,
+    battleAnimation: null,
     pageRuns: troop.pages.map(() => ({ battle: false, lastTurn: -1, active: false })),
     variables,
     initialVariables: { ...variables },
@@ -1561,6 +2147,7 @@ function createInitialState(
     gold: context.gold,
     initialGold: context.gold,
     reward: { exp: 0, gold: 0, items: {}, levels: [] },
+    settings: effectiveBattleSettings(db, runtime, typeof setup.map === "string" ? setup.map : context.mapId),
     ext: startedExt,
   };
   for (const battler of [...state.actors, ...state.enemies]) {
@@ -1568,7 +2155,9 @@ function createInitialState(
   }
   const pages = runTroopPages(db, state, false);
   const enemyNames = enemies.filter((enemy) => !enemy.hidden).map((enemy) => enemy.name).join(", ");
-  showMessage(state, [formatTerm(db, db.terms.messages.emerge, enemyNames), ...pages].join("\n"), "party");
+  if (state.phase !== "done") {
+    showMessage(state, [formatTerm(db, db.terms.messages.emerge, enemyNames), ...pages].join("\n"), "party");
+  }
   return { state, ext: startedExt };
 }
 
@@ -1727,6 +2316,9 @@ function savedCombatantProblem(value: unknown, path: string): string | null {
   if (typeof value.guarding !== "boolean" || typeof value.hidden !== "boolean") {
     return `${path}: guarding/hidden booleans required`;
   }
+  if (value.lastTargetIndex !== undefined && !savedInteger(value.lastTargetIndex)) {
+    return `${path}.lastTargetIndex: non-negative integer required`;
+  }
   if (value.image !== undefined && typeof value.image !== "string") return `${path}.image: string required`;
   if (value.actor !== undefined) {
     const actor = value.actor;
@@ -1748,6 +2340,7 @@ function savedActionProblem(value: unknown, path: string): string | null {
   if (!savedInteger(value.id) || !savedInteger(value.target, -1) || !savedNumber(value.speed)) {
     return `${path}: integer id/target and finite speed required`;
   }
+  if (value.forced !== undefined && typeof value.forced !== "boolean") return `${path}.forced: boolean required`;
   return null;
 }
 
@@ -1812,6 +2405,11 @@ function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): 
     }
     const count = value.effect.side === "actor" ? actors.length : enemies.length;
     if ((value.effect.index as number) >= count) return "effect index is outside its side";
+  }
+  if (value.battleAnimation !== undefined && value.battleAnimation !== null) {
+    if (!savedStateRecord(value.battleAnimation) || typeof value.battleAnimation.id !== "string" ||
+        !Array.isArray(value.battleAnimation.targets) || !value.battleAnimation.targets.every(savedInteger) ||
+        !savedInteger(value.battleAnimation.startTick)) return "battleAnimation is malformed";
   }
   const troop = db.troops.find((entry) => entry.id === value.troopId)!;
   if (!Array.isArray(value.pageRuns) || value.pageRuns.length !== troop.pages.length || !value.pageRuns.every((run) =>

@@ -66,6 +66,13 @@ import type {
   RmProject,
 } from "./rm-types.ts";
 import { convertMessage } from "./text.ts";
+import type {
+  RpgMakerActorCommand,
+  RpgMakerActorTarget,
+  RpgMakerAudioSetting,
+  RpgMakerSettingCommand,
+  RpgMakerValueOperand,
+} from "../../src/rpgmaker-battle/types.ts";
 
 export interface EventContext {
   rm: RmProject;
@@ -350,6 +357,29 @@ const int = (v: unknown, fallback = 0): number => Math.trunc(num(v, fallback));
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 const seconds = (frames: unknown): number => Math.max(0, num(frames)) / FPS;
 const byte = (v: unknown): number => clamp(int(v), 0, 255);
+
+const actorOperation = (v: unknown): "add" | "sub" => int(v) === 0 ? "add" : "sub";
+
+function actorTarget(kind: unknown, value: unknown, st: State): RpgMakerActorTarget | null {
+  if (int(kind) !== 0) return { kind: "variable", id: variableId(int(value)) };
+  const id = int(value);
+  if (id === 0) return { kind: "all" };
+  return st.ctx.rm.actors[id] ? { kind: "actor", id } : null;
+}
+
+function valueOperand(kind: unknown, value: unknown): RpgMakerValueOperand {
+  return int(kind) === 0
+    ? { kind: "constant", value: num(value) }
+    : { kind: "variable", id: variableId(int(value)) };
+}
+
+function actorExt(command: RpgMakerActorCommand): Command[] {
+  return [{ op: "ext", call: "rpgmaker.actorChange", args: command as JsonValue }];
+}
+
+function settingExt(command: RpgMakerSettingCommand): Command[] {
+  return [{ op: "ext", call: "rpgmaker.battleSetting", args: command as JsonValue }];
+}
 
 /** MV Select Item itemType is the database itypeId (1 regular, 2 key,
  *  3 hidden A, 4 hidden B). Returns the kit type for one of the four
@@ -646,6 +676,11 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       // actor-in-party conditions; no party UI is modelled.
       rec(st, 129, "Native");
       return [{ op: "switch", id: partySwitchId(int(p[0])), value: int(p[1]) === 0 }];
+    case 132:
+    case 133:
+    case 136:
+    case 139:
+      return emitBattleSetting(code, p, st);
     case 140:
       return emitVehicleBgm(p, st);
     case 201:
@@ -773,6 +808,8 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
     case 281:
       rec(st, 281, "Native");
       return [{ op: "mapNameDisplay", visible: int(p[0]) === 0 }];
+    case 283:
+      return emitBattleSetting(code, p, st);
     case 284: {
       const art = ctx.parallax(String(p[0] ?? ""));
       rec(st, 284, "Native");
@@ -792,6 +829,21 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       return emitShop(nd, p, st);
     case 303:
       return emitNameInput(p, st);
+    case 311:
+    case 312:
+    case 313:
+    case 314:
+    case 315:
+    case 316:
+    case 317:
+    case 318:
+    case 319:
+    case 321:
+    case 322:
+    case 324:
+    case 325:
+    case 326:
+      return emitActorChange(code, p, st);
     case 320: {
       const actor = int(p[0]);
       if (actor !== playerActorId(st)) {
@@ -853,6 +905,198 @@ function exitCommand(st: State, code: number): Command[] {
     rec(st, code, "Native");
   }
   return [{ op: "exit" }];
+}
+
+function emitActorChange(code: number, p: readonly unknown[], st: State): Command[] {
+  const fail = (reason: string): Command[] => {
+    rec(st, code, "Dropped", reason);
+    return [];
+  };
+  const fixedActor = (value: unknown): number | null => {
+    const id = int(value);
+    return st.ctx.rm.actors[id] ? id : null;
+  };
+  const selected = (): RpgMakerActorTarget | null => actorTarget(p[0], p[1], st);
+  let command: RpgMakerActorCommand;
+  let disposition: Disposition = "Native";
+  let reason: string | undefined;
+
+  switch (code) {
+    case 311: {
+      const target = selected();
+      if (!target) return fail("fixed actor does not exist");
+      command = {
+        kind: "hp",
+        target,
+        operation: actorOperation(p[2]),
+        operand: valueOperand(p[3], p[4]),
+        allowDeath: !!p[5],
+      };
+      break;
+    }
+    case 312:
+    case 326: {
+      const target = selected();
+      if (!target) return fail("fixed actor does not exist");
+      command = {
+        kind: code === 312 ? "mp" : "tp",
+        target,
+        operation: actorOperation(p[2]),
+        operand: valueOperand(p[3], p[4]),
+      };
+      break;
+    }
+    case 313: {
+      const target = selected();
+      if (!target) return fail("fixed actor does not exist");
+      const state = int(p[3]);
+      if (!st.ctx.rm.states[state]) return fail("state does not exist");
+      command = { kind: "state", target, operation: int(p[2]) === 0 ? "add" : "remove", stateId: state };
+      break;
+    }
+    case 314: {
+      const target = selected();
+      if (!target) return fail("fixed actor does not exist");
+      command = { kind: "recoverAll", target };
+      break;
+    }
+    case 315:
+    case 316: {
+      const target = selected();
+      if (!target) return fail("fixed actor does not exist");
+      const show = !!p[5];
+      command = {
+        kind: code === 315 ? "exp" : "level",
+        target,
+        operation: actorOperation(p[2]),
+        operand: valueOperand(p[3], p[4]),
+        show,
+      };
+      if (show) {
+        disposition = "Degraded";
+        reason = "level-up and learned-skill messages are not shown on the map";
+      }
+      break;
+    }
+    case 317: {
+      const target = selected();
+      if (!target) return fail("fixed actor does not exist");
+      const paramId = int(p[2]);
+      if (paramId < 0 || paramId > 7) return fail("unknown actor parameter");
+      command = {
+        kind: "parameter",
+        target,
+        paramId,
+        operation: actorOperation(p[3]),
+        operand: valueOperand(p[4], p[5]),
+      };
+      break;
+    }
+    case 318: {
+      const target = selected();
+      if (!target) return fail("fixed actor does not exist");
+      const skill = int(p[3]);
+      if (!st.ctx.rm.skills[skill]) return fail("skill does not exist");
+      command = { kind: "skill", target, operation: int(p[2]) === 0 ? "add" : "remove", skillId: skill };
+      break;
+    }
+    case 319: {
+      const actor = fixedActor(p[0]);
+      if (actor === null) return fail("actor does not exist");
+      const slotId = int(p[1]) - 1;
+      if (slotId < 0) return fail("equipment slot does not exist");
+      const item = int(p[2]);
+      if (item < 0 || (item !== 0 && !st.ctx.rm.weapons[item] && !st.ctx.rm.armors[item])) {
+        return fail("equipment item does not exist");
+      }
+      command = { kind: "equipment", actorId: actor, slotId, itemId: item };
+      break;
+    }
+    case 321: {
+      const actor = fixedActor(p[0]);
+      if (actor === null) return fail("actor does not exist");
+      const cls = int(p[1]);
+      if (!st.ctx.rm.classes[cls]) return fail("class does not exist");
+      command = { kind: "class", actorId: actor, classId: cls, keepExp: !!p[2] };
+      break;
+    }
+    case 322: {
+      const actor = fixedActor(p[0]);
+      if (actor === null) return fail("actor does not exist");
+      command = {
+        kind: "images",
+        actorId: actor,
+        characterName: String(p[1] ?? ""),
+        characterIndex: int(p[2]),
+        faceName: String(p[3] ?? ""),
+        faceIndex: int(p[4]),
+        battlerName: String(p[5] ?? ""),
+      };
+      disposition = "Degraded";
+      reason = "actor images persist, but map, face, and side-view presentation do not update live";
+      break;
+    }
+    case 324:
+    case 325: {
+      const actor = fixedActor(p[0]);
+      if (actor === null) return fail("actor does not exist");
+      command = { kind: code === 324 ? "nickname" : "profile", actorId: actor, value: String(p[1] ?? "") };
+      break;
+    }
+    default:
+      return fail("unknown actor change command");
+  }
+
+  rec(st, code, disposition, reason);
+  return actorExt(command);
+}
+
+function battleAudioSetting(a: RmAudio | undefined, kind: "bgm" | "me", st: State): RpgMakerAudioSetting {
+  const audio: RpgMakerAudioSetting = {
+    name: String(a?.name ?? ""),
+    volume: num(a?.volume, 90),
+    pitch: num(a?.pitch, 100),
+    pan: num(a?.pan, 0),
+  };
+  if (audio.name) audio.id = st.ctx.audio(kind, audio.name);
+  return audio;
+}
+
+function emitBattleSetting(code: number, p: readonly unknown[], st: State): Command[] {
+  let command: RpgMakerSettingCommand;
+  let disposition: Disposition = "Degraded";
+  let reason: string | undefined;
+  switch (code) {
+    case 132:
+      command = { kind: "battleBgm", audio: battleAudioSetting(p[0] as RmAudio | undefined, "bgm", st) };
+      reason = "battle BGM setting persists, but the current battle audio lifecycle does not play it";
+      break;
+    case 133:
+      command = { kind: "victoryMe", audio: battleAudioSetting(p[0] as RmAudio | undefined, "me", st) };
+      reason = "victory ME setting persists, but the current battle audio lifecycle does not play it";
+      break;
+    case 139:
+      command = { kind: "defeatMe", audio: battleAudioSetting(p[0] as RmAudio | undefined, "me", st) };
+      reason = "defeat ME setting persists, but the current battle audio lifecycle does not play it";
+      break;
+    case 283:
+      command = {
+        kind: "battleback",
+        battleback1Name: String(p[0] ?? ""),
+        battleback2Name: String(p[1] ?? ""),
+      };
+      reason = "battle background names persist, but battle backgrounds are not presented";
+      break;
+    case 136:
+      command = { kind: "encounter", disabled: p[0] === 0 };
+      disposition = "Native";
+      break;
+    default:
+      rec(st, code, "Dropped", "unknown battle setting command");
+      return [];
+  }
+  rec(st, code, disposition, reason);
+  return settingExt(command);
 }
 
 // --- text and choices --------------------------------------------------------
@@ -2042,7 +2286,10 @@ function emitBattle(nd: RmNode, p: readonly unknown[], st: State, scope: Scope):
     else if (br.marker.code === 602) cmd.onEscape = cmds;
     else cmd.onLose = cmds;
   }
-  if (!canLose && !cmd.onLose) cmd.onLose = [{ op: "gameOver" }, { op: "exit" }];
+  // Stock always enters Scene_Gameover after a disallowed defeat. Although
+  // the battle callback first records result 2, even a malformed source list
+  // carrying a 603 branch never resumes that branch on the map.
+  if (!canLose) cmd.onLose = [{ op: "gameOver" }, { op: "exit" }];
   rec(
     st,
     301,

@@ -146,6 +146,8 @@ export interface RmEvent {
 export interface RmMap {
   autoplayBgm: boolean;
   autoplayBgs: boolean;
+  battleback1Name?: string;
+  battleback2Name?: string;
   bgm: RmAudio;
   bgs: RmAudio;
   displayName: string;
@@ -262,6 +264,7 @@ export interface RmActor {
   initialLevel: number;
   maxLevel?: number;
   battlerName?: string;
+  profile?: string;
   /** Database ids aligned with the actor's equip slots. */
   equips: number[];
   traits: RmTrait[];
@@ -388,6 +391,9 @@ export interface RmSystem {
   gameTitle: string;
   currencyUnit: string;
   partyMembers: number[];
+  battleBgm?: RmAudio;
+  victoryMe?: RmAudio;
+  defeatMe?: RmAudio;
   optSideView?: boolean;
   optDisplayTp?: boolean;
   optExtraExp?: boolean;

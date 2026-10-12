@@ -20,6 +20,20 @@ export interface RpgMakerBattleActor {
   initialLevel: number;
   maxLevel: number;
   traits: RpgMakerTrait[];
+  nickname?: string;
+  profile?: string;
+  characterName?: string;
+  characterIndex?: number;
+  faceName?: string;
+  faceIndex?: number;
+  battlerName?: string;
+  /** Slot-aligned ids retained for runtime Change Equipment. Older imported
+   * databases omit this and fall back to the immutable aggregate below. */
+  initialEquips?: (RpgMakerEquipmentRef | null)[];
+  /** Base slot kinds after actor/class dual-wield traits are applied. */
+  equipSlots?: ("weapon" | "armor")[];
+  /** RPG Maker etype id per slot (1 weapon, 2+ armor categories). */
+  equipTypes?: number[];
   /** Immutable projection of Game_Actor.setup's surviving initial equips.
    * Runtime equipment-changing commands remain an importer degradation. */
   equipment: {
@@ -28,6 +42,63 @@ export interface RpgMakerBattleActor {
     skills: number[];
   };
 }
+
+export interface RpgMakerEquipmentRef {
+  kind: "weapon" | "armor";
+  id: number;
+}
+
+export interface RpgMakerBattleEquipment extends RpgMakerEquipmentRef {
+  name: string;
+  etypeId: number;
+  typeId: number;
+  params: [number, number, number, number, number, number, number, number];
+  traits: RpgMakerTrait[];
+}
+
+export interface RpgMakerAudioSetting {
+  name: string;
+  volume: number;
+  pitch: number;
+  pan: number;
+  /** Imported logical audio id when compatible media was available. */
+  id?: string;
+}
+
+export interface RpgMakerBattleSettings {
+  battleBgm?: RpgMakerAudioSetting;
+  victoryMe?: RpgMakerAudioSetting;
+  defeatMe?: RpgMakerAudioSetting;
+  battleback1Name?: string;
+  battleback2Name?: string;
+  encounterDisabled?: boolean;
+}
+
+export type RpgMakerValueOperand =
+  | { kind: "constant"; value: number }
+  | { kind: "variable"; id: string };
+
+export type RpgMakerActorTarget =
+  | { kind: "all" }
+  | { kind: "actor"; id: number }
+  | { kind: "variable"; id: string };
+
+export type RpgMakerActorCommand =
+  | { kind: "hp"; target: RpgMakerActorTarget; operation: "add" | "sub"; operand: RpgMakerValueOperand; allowDeath: boolean }
+  | { kind: "mp" | "tp" | "exp" | "level"; target: RpgMakerActorTarget; operation: "add" | "sub"; operand: RpgMakerValueOperand; show?: boolean }
+  | { kind: "state"; target: RpgMakerActorTarget; operation: "add" | "remove"; stateId: number }
+  | { kind: "recoverAll"; target: RpgMakerActorTarget }
+  | { kind: "parameter"; target: RpgMakerActorTarget; paramId: number; operation: "add" | "sub"; operand: RpgMakerValueOperand }
+  | { kind: "skill"; target: RpgMakerActorTarget; operation: "add" | "remove"; skillId: number }
+  | { kind: "equipment"; actorId: number; slotId: number; itemId: number }
+  | { kind: "class"; actorId: number; classId: number; keepExp: boolean }
+  | { kind: "images"; actorId: number; characterName: string; characterIndex: number; faceName: string; faceIndex: number; battlerName: string }
+  | { kind: "nickname" | "profile"; actorId: number; value: string };
+
+export type RpgMakerSettingCommand =
+  | { kind: "battleBgm" | "victoryMe" | "defeatMe"; audio: RpgMakerAudioSetting }
+  | { kind: "battleback"; battleback1Name: string; battleback2Name: string }
+  | { kind: "encounter"; disabled: boolean };
 
 export interface RpgMakerBattleClass {
   id: number;
@@ -122,7 +193,15 @@ export type RpgMakerTroopPageEffect =
       id: string;
       op: "set" | "add" | "sub" | "mul" | "div" | "mod";
       value: number;
-    };
+    }
+  | { kind: "enemyHp"; index: number; operation: "add" | "sub"; operand: RpgMakerValueOperand; allowDeath: boolean }
+  | { kind: "enemyMp" | "enemyTp"; index: number; operation: "add" | "sub"; operand: RpgMakerValueOperand }
+  | { kind: "enemyState"; index: number; operation: "add" | "remove"; stateId: number }
+  | { kind: "enemyRecoverAll" | "enemyAppear"; index: number }
+  | { kind: "enemyTransform"; index: number; enemyId: number }
+  | { kind: "battleAnimation"; index: number; animationId: number; entireTroop: boolean; animation?: string }
+  | { kind: "forceAction"; side: "enemy" | "actor"; subject: number; skillId: number; target: number }
+  | { kind: "abort" };
 
 export interface RpgMakerTroopPageCondition {
   turnEnding?: true;
@@ -213,6 +292,8 @@ export interface RpgMakerBattleDatabase {
   screen: { width: number; height: number };
   party: number[];
   actors: RpgMakerBattleActor[];
+  weapons?: RpgMakerBattleEquipment[];
+  armors?: RpgMakerBattleEquipment[];
   classes: RpgMakerBattleClass[];
   enemies: RpgMakerBattleEnemy[];
   troops: RpgMakerBattleTroop[];
@@ -222,6 +303,8 @@ export interface RpgMakerBattleDatabase {
   encounters: RpgMakerMapEncounter[];
   elements: string[];
   currencyUnit: string;
+  settings?: RpgMakerBattleSettings;
+  mapSettings?: { map: string; battleback1Name: string; battleback2Name: string }[];
   terms: {
     fight: string;
     escape: string;
@@ -258,6 +341,19 @@ export interface RpgMakerActorRuntime {
   skills: number[];
   states: { id: number; turns: number }[];
   buffs: number[];
+  /** Runtime-mutable fields default from the database when absent so saves
+   * produced before actor-change support remain readable. */
+  name?: string;
+  nickname?: string;
+  profile?: string;
+  characterName?: string;
+  characterIndex?: number;
+  faceName?: string;
+  faceIndex?: number;
+  battlerName?: string;
+  paramPlus?: [number, number, number, number, number, number, number, number];
+  equips?: (RpgMakerEquipmentRef | null)[];
+  classExp?: Record<string, number>;
 }
 
 export interface RpgMakerBattleRuntime {
@@ -270,6 +366,10 @@ export interface RpgMakerBattleRuntime {
     map: string;
     remaining: number;
   } | null;
+  settings?: RpgMakerBattleSettings;
+  /** Change Battle Background is map-local in RPG Maker. Keys are imported
+   * map ids so a transfer restores the destination map's authored default. */
+  mapSettings?: Record<string, { battleback1Name: string; battleback2Name: string }>;
 }
 
 /** The module owns one namespaced member and preserves every sibling. */
@@ -296,8 +396,18 @@ export interface RpgMakerBattleCombatant {
   buffs: RpgMakerBattleBuff[];
   guarding: boolean;
   hidden: boolean;
+  /** Game_Battler's saved cursor used by Force Action target -2. */
+  lastTargetIndex?: number;
   image?: string;
-  actor?: { classId: number; level: number; exp: number; skills: number[] };
+  actor?: {
+    classId: number;
+    level: number;
+    exp: number;
+    skills: number[];
+    paramPlus?: [number, number, number, number, number, number, number, number];
+    equips?: (RpgMakerEquipmentRef | null)[];
+    classExp?: Record<string, number>;
+  };
 }
 
 export interface RpgMakerBattleAction {
@@ -308,6 +418,8 @@ export interface RpgMakerBattleAction {
   /** -1 means resolve the usable item's all/random/user scope at execution. */
   target: number;
   speed: number;
+  /** Forced actions bypass ordinary usability/restriction checks. */
+  forced?: boolean;
 }
 
 export type RpgMakerBattleAfterMessage =
@@ -364,6 +476,10 @@ export interface RpgMakerBattleState {
   gold: number;
   initialGold: number;
   reward: { exp: number; gold: number; items: Record<string, number>; levels: string[] };
+  settings?: RpgMakerBattleSettings;
+  /** A playable MV animation can be surfaced by the optional renderer. MZ
+   * Effekseer records remain an explicit importer degradation. */
+  battleAnimation?: { id: string; targets: number[]; startTick: number } | null;
   ext: JsonValue;
 }
 

@@ -88,6 +88,121 @@ describe("RPG Maker battle database import", () => {
     expect(result.images.has("battlers/enemy001.png")).toBe(true);
   });
 
+  test("retains actor metadata, slot-aligned equipment catalogs, and authored battle defaults", async () => {
+    const project = loadRmProject(HOLLOW);
+    const actor = project.actors[1]!;
+    actor.nickname = "The Wayfarer";
+    actor.profile = "Keeps walking when the road disappears.";
+    actor.faceName = "PeopleFaces";
+    actor.faceIndex = 3;
+    actor.battlerName = "WrenBattler";
+    actor.traits.push({ code: 55, dataId: 1, value: 0 });
+    project.system.battleBgm = { name: "BattleTheme", volume: 71, pitch: 105, pan: -4 };
+    project.system.victoryMe = { name: "Victory", volume: 82, pitch: 100, pan: 3 };
+    project.system.defeatMe = { name: "Defeat", volume: 63, pitch: 95, pan: 0 };
+    project.maps.get(1)!.battleback1Name = "Grassland";
+    project.maps.get(1)!.battleback2Name = "Forest";
+    project.maps.get(2)!.battleback1Name = "Room";
+    project.maps.get(2)!.battleback2Name = "Wall";
+
+    const battle = (await importRmProject(project)).battle;
+
+    expect(battle.actors[0]).toMatchObject({
+      nickname: "The Wayfarer",
+      profile: "Keeps walking when the road disappears.",
+      characterName: "People",
+      characterIndex: 0,
+      faceName: "PeopleFaces",
+      faceIndex: 3,
+      battlerName: "WrenBattler",
+      equipSlots: ["weapon", "weapon", "armor", "armor", "armor"],
+      equipTypes: [1, 1, 3, 4, 5],
+      initialEquips: [
+        { kind: "weapon", id: 1 },
+        null,
+        null,
+        { kind: "armor", id: 1 },
+        null,
+      ],
+      // Keep the legacy immutable aggregate alongside the slot-aligned data.
+      equipment: { params: [0, 0, 8, 5, 0, 0, 0, 0] },
+    });
+    expect(battle.weapons?.[0]).toEqual({
+      id: 1,
+      kind: "weapon",
+      name: "Oak Staff",
+      etypeId: 1,
+      typeId: 1,
+      params: [0, 0, 8, 0, 0, 0, 0, 0],
+      traits: [
+        { code: 31, dataId: 1, value: 0 },
+        { code: 22, dataId: 0, value: 0 },
+      ],
+    });
+    expect(battle.armors?.[0]).toEqual({
+      id: 1,
+      kind: "armor",
+      name: "Cloth Vest",
+      etypeId: 4,
+      typeId: 1,
+      params: [0, 0, 0, 5, 0, 0, 0, 0],
+      traits: [],
+    });
+    expect(battle.settings).toEqual({
+      battleBgm: { name: "BattleTheme", volume: 71, pitch: 105, pan: -4 },
+      victoryMe: { name: "Victory", volume: 82, pitch: 100, pan: 3 },
+      defeatMe: { name: "Defeat", volume: 63, pitch: 95, pan: 0 },
+      encounterDisabled: false,
+    });
+    expect(battle.mapSettings).toEqual(expect.arrayContaining([
+      { map: "map001", battleback1Name: "Grassland", battleback2Name: "Forest" },
+      { map: "map002", battleback1Name: "Room", battleback2Name: "Wall" },
+    ]));
+  });
+
+  test("normalizes executable troop enemy effects and records command coverage", async () => {
+    const project = loadRmProject(HOLLOW);
+    project.troops[1]!.pages[0]!.list = [
+      { code: 331, indent: 0, parameters: [-1, 1, 1, 7, true] },
+      { code: 332, indent: 0, parameters: [2, 0, 0, 11] },
+      { code: 342, indent: 0, parameters: [0, 1, 1, 8] },
+      { code: 333, indent: 0, parameters: [-1, 1, 5] },
+      { code: 334, indent: 0, parameters: [1] },
+      { code: 335, indent: 0, parameters: [2] },
+      { code: 336, indent: 0, parameters: [3, 9] },
+      { code: 337, indent: 0, parameters: [-1, 12, true] },
+      { code: 339, indent: 0, parameters: [1, 4, 6, -2] },
+      { code: 340, indent: 0, parameters: [] },
+      { code: 999, indent: 0, parameters: ["unknown"] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+
+    const result = await importRmProject(project);
+    const page = result.battle.troops[0]!.pages[0]!;
+
+    expect(page.effects).toEqual([
+      { kind: "enemyHp", index: -1, operation: "sub", operand: { kind: "variable", id: "v007" }, allowDeath: true },
+      { kind: "enemyMp", index: 2, operation: "add", operand: { kind: "constant", value: 11 } },
+      { kind: "enemyTp", index: 0, operation: "sub", operand: { kind: "variable", id: "v008" } },
+      { kind: "enemyState", index: -1, operation: "remove", stateId: 5 },
+      { kind: "enemyRecoverAll", index: 1 },
+      { kind: "enemyAppear", index: 2 },
+      { kind: "enemyTransform", index: 3, enemyId: 9 },
+      { kind: "battleAnimation", index: -1, animationId: 12, entireTroop: true },
+      { kind: "forceAction", side: "actor", subject: 4, skillId: 6, target: -2 },
+      { kind: "abort" },
+    ]);
+    expect(page.unsupported).toBe(1);
+
+    const commandCoverage = new Map(result.cov.list("command").map((row) => [Number(row.key), row]));
+    for (const code of [331, 332, 342, 333, 334, 335, 336, 339, 340]) {
+      expect(commandCoverage.get(code)?.counts.Native).toBe(1);
+    }
+    expect(commandCoverage.get(337)?.counts).toMatchObject({ Native: 0, Degraded: 1, Dropped: 0 });
+    expect(commandCoverage.get(337)?.reasons.join(" ")).toContain("numeric database id");
+    expect(commandCoverage.get(999)?.counts.Dropped).toBe(1);
+  });
+
   test("binds battle.json to commands with a canonical content hash", async () => {
     const first = await importRmProject(loadRmProject(HOLLOW));
     const second = await importRmProject(loadRmProject(HOLLOW));
