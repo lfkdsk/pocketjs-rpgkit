@@ -48,6 +48,8 @@ const BUNDLE_NEEDLES = [
   "// src/ui/travel-actors.ts",
 ] as const;
 
+// Presentation-only audio gain projection adds 312 B to each audio-enabled
+// graph (Sunstone and the opted-in fixture); Meadow does not reach it.
 const EXPECTED_BYTES = {
   // Immediate facing/routes and bounded backdrop history add 8,898 B to the
   // plain control, 10,485 B where save/demo code is already reachable, and
@@ -58,8 +60,8 @@ const EXPECTED_BYTES = {
   // The implementation-graph and bundle needles below still prove that the
   // optional RPG Maker and travel implementations stay out of both controls.
   meadow: 677_949,
-  sunstone: 1_101_603,
-  "rmi-play": 1_290_718,
+  sunstone: 1_101_915,
+  "rmi-play": 1_291_030,
 } as const;
 
 function implementationModules(app: string): string[] {

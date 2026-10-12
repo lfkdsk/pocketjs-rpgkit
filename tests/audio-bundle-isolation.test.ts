@@ -290,9 +290,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Frozen-battle capability routing adds 1,185 B to these reducer graphs.
 // Moving tone/weather presentation behind the optional KRM2 entry then
 // removes 11,122 B from the two GameView graphs, for a net 9,937 B reduction.
+// Separating presentation-only gain changes from reducer timeline identity adds
+// 312 B to each audio-enabled graph; Meadow does not reach that settings
+// projection path.
 const EXPECTED_MEADOW_BYTES = 677_949;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_101_603;
-const EXPECTED_WAV_FIXTURE_BYTES = 863_969;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_101_915;
+const EXPECTED_WAV_FIXTURE_BYTES = 864_281;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

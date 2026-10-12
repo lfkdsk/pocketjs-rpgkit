@@ -261,7 +261,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Frozen-battle routing adds 1,185 B; moving tone/weather presentation to the
 // optional KRM2 entry removes 11,122 B, for a net 9,937 B reduction.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_101_603;
+// Presentation-only audio gain projection adds 312 B to the already audio-
+// enabled graph without reaching any battle presentation implementation.
+const EXPECTED_BYTES = 1_101_915;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
