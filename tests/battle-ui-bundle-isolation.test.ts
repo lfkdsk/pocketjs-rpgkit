@@ -251,10 +251,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // flow and optional battle UI remain outside the graph, as checked below.
 // Isolating unused RPG Maker text/presentation and travel capabilities removes
 // 50,779 B on this baseline, then moving actor-name and formation conventions
-// behind the same capability removes another 1,314 B, without admitting any
-// battle implementation.
+// behind the same capability removes another 1,314 B. Choice colouring and
+// formation validation remove 180 B more, without admitting battle code.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_109_092;
+const EXPECTED_BYTES = 1_108_912;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
