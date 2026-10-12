@@ -12,12 +12,9 @@ import {
 } from "../engine/screen.ts";
 import type { PictureTone, ScreenColor } from "../engine/types.ts";
 import type { ScreenLayerVariant } from "./game-assets.ts";
+import { toneOverlays, type ToneOverlay } from "./tone-overlay.ts";
 
-export interface PictureToneOverlay {
-  kind: "gray" | "darken" | "brighten";
-  color: string;
-  opacity: number;
-}
+export type PictureToneOverlay = ToneOverlay;
 
 export interface PictureRenderStyle {
   insetL: number;
@@ -55,42 +52,7 @@ function unit(value: number): number {
  * This cannot be pixel-identical to a colour matrix on every source colour,
  * but it is deterministic and renders the same on every PocketJS backend. */
 export function pictureToneOverlays(tone: Readonly<PictureTone>): PictureToneOverlay[] {
-  const overlays: PictureToneOverlay[] = [];
-  const gray = unit(tone.gray / 255);
-  if (gray > 0) overlays.push({ kind: "gray", color: "#808080", opacity: gray });
-
-  const negative = [Math.max(0, -tone.r), Math.max(0, -tone.g), Math.max(0, -tone.b)] as const;
-  const dark = Math.max(...negative);
-  if (dark > 0) {
-    const complement = (amount: number): number => 255 * (1 - amount / dark);
-    overlays.push({
-      kind: "darken",
-      color: screenColorHex({
-        r: complement(negative[0]),
-        g: complement(negative[1]),
-        b: complement(negative[2]),
-        a: 255,
-      }),
-      opacity: unit(dark / 255),
-    });
-  }
-
-  const positive = [Math.max(0, tone.r), Math.max(0, tone.g), Math.max(0, tone.b)] as const;
-  const bright = Math.max(...positive);
-  if (bright > 0) {
-    const normalized = (amount: number): number => 255 * amount / bright;
-    overlays.push({
-      kind: "brighten",
-      color: screenColorHex({
-        r: normalized(positive[0]),
-        g: normalized(positive[1]),
-        b: normalized(positive[2]),
-        a: 255,
-      }),
-      opacity: unit(bright / 255),
-    });
-  }
-  return overlays;
+  return toneOverlays(tone);
 }
 
 /** Stable painter order for numbered pictures. Record insertion order is not

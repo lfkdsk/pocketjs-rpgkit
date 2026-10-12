@@ -118,6 +118,61 @@ export interface AnimatedTile {
   sprite: string;
 }
 
+/** Pre-cooked render sources for one runtime map-tileset identity. The
+ * reducer keeps only the active tileset id; bulky chunk names and animated
+ * atlas bindings stay in the immutable asset manifest. Both bands use the
+ * same eager/streamed mode as the GameAssets base sources. */
+export interface GameTilesetVariantAssets {
+  ground: MapLayerVariant;
+  upper: MapLayerVariant;
+  /** Map id -> animated placements for this tileset. An explicit empty array
+   * suppresses the base map's animation cells. */
+  animated: Readonly<Record<string, readonly AnimatedTile[]>>;
+}
+
+/** Change Tileset is an atomic world-source change. A named generic
+ * ground/upper layer may replace the ordinary baked source, but it must not
+ * keep stale art mounted once a tileset variant is active while collision,
+ * terrain and animated cells have already switched. */
+export function tilesetLayerSource(
+  tileset: Readonly<GameTilesetVariantAssets> | undefined,
+  placement: "ground" | "upper",
+  generic: MapLayerVariant | undefined,
+): MapLayerVariant | undefined {
+  return tileset?.[placement] ?? generic;
+}
+
+/** In a connected world, Change Tileset belongs to the current map rather
+ * than every visible placement. Keep every neighbour on its prior source
+ * and replace exactly one map entry (including an explicitly empty band). */
+export function mapScopedLayerSource(
+  base: Readonly<MapLayerVariant>,
+  alternate: Readonly<MapLayerVariant>,
+  mapId: string,
+): MapLayerVariant {
+  if ("chunks" in alternate) {
+    if (!("chunks" in base)) throw new Error("map-scoped tileset source mode mismatch");
+    return {
+      chunks: { ...base.chunks, [mapId]: alternate.chunks[mapId] ?? [] },
+      columns: { ...base.columns, [mapId]: alternate.columns[mapId] ?? base.columns[mapId] ?? 1 },
+    };
+  }
+  if (!("refs" in base)) throw new Error("map-scoped tileset source mode mismatch");
+  return {
+    ...alternate,
+    refs: { ...base.refs, [mapId]: alternate.refs[mapId] ?? [] },
+    columns: { ...base.columns, [mapId]: alternate.columns[mapId] ?? base.columns[mapId] ?? 1 },
+  };
+}
+
+export function mapScopedAnimatedSource(
+  base: Readonly<Record<string, readonly AnimatedTile[]>> | undefined,
+  alternate: Readonly<Record<string, readonly AnimatedTile[]>>,
+  mapId: string,
+): Readonly<Record<string, readonly AnimatedTile[]>> {
+  return { ...base, [mapId]: alternate[mapId] ?? [] };
+}
+
 /** The 12 static walker frames for one character, indexed by facing
  *  (0 down, 1 left, 2 up, 3 right) and by walk pose. Frames are baked IMG
  *  entries chosen from the saved reducer facing + mover phase, never a host
@@ -165,6 +220,9 @@ export interface GameAssets {
   stream?: StreamedGameAssets;
   /** Map id -> render-only animated tile placements. */
   animated?: Readonly<Record<string, readonly AnimatedTile[]>>;
+  /** Tileset id -> pre-cooked map art selected by InterpState.tileset.
+   * Omission keeps the pre-K-RPGM5 asset path byte-for-byte. */
+  tilesetVariants?: Readonly<Record<string, GameTilesetVariantAssets>>;
   /** AnimationDef id -> cooked per-frame static images in play order. The
    *  mapAnim layer selects frames[animFrameIndex(...)] per frame from the
    *  saved reference tick; never an auto-play atlas. */

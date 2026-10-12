@@ -1,8 +1,9 @@
 // Viewport-space projection of reducer-owned screen presentation. Backdrops,
-// tint and flash sit below dialogs (matching RPG Maker's spriteset effects);
-// the independent fade is mounted separately above dialogs by GameView.
+// tone/weather, tint and flash sit below dialogs (matching RPG Maker's
+// spriteset effects); the independent fade is mounted separately above
+// dialogs by GameView.
 
-import { createMemo, type Accessor, type JSX } from "solid-js";
+import { createMemo, Show, type Accessor, type JSX } from "solid-js";
 import { Image, View } from "@pocketjs/framework/components";
 import {
   colorAt,
@@ -11,14 +12,23 @@ import {
 } from "../engine/screen.ts";
 import type { ScreenColor } from "../engine/types.ts";
 import type { GameScreenLayerAssets, ScreenLayerVariant } from "./game-assets.ts";
+import { ScreenToneWeatherLayer } from "./ScreenToneWeatherLayer.tsx";
+import { screenToneWeatherActive } from "./screen-presentation.ts";
 
 export interface ScreenEffectsLayerProps {
   screen: Accessor<ScreenEffectsState | undefined>;
   layers: Readonly<Record<string, GameScreenLayerAssets>>;
+  /** Live logical viewport used only while deterministic weather exists.
+   * Direct legacy callers may omit these and retain the 480x272 design size. */
+  width?: Accessor<number>;
+  height?: Accessor<number>;
   /** Optional opt-in screen content (for example RPG Maker numbered
    * pictures). It paints above the backdrop and below tint/flash. */
   children?: JSX.Element;
 }
+
+const DESIGN_WIDTH = (): number => 480;
+const DESIGN_HEIGHT = (): number => 272;
 
 function channelHex(value: number): string {
   return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
@@ -79,6 +89,16 @@ export function ScreenEffectsLayer(props: ScreenEffectsLayerProps) {
           style={{ posType: 1, display: backdrop()?.image ? 0 : 1 }}
         />
       </View>
+      <Show when={screenToneWeatherActive(props.screen())}>
+        <ScreenToneWeatherLayer
+          screen={props.screen}
+          width={props.width ?? DESIGN_WIDTH}
+          height={props.height ?? DESIGN_HEIGHT}
+        />
+      </Show>
+      {/* MV creates weather and its tone changer in the lower spriteset,
+          then mounts numbered pictures in the upper layer. Keep imported
+          pictures unfiltered and above weather for the same painter order. */}
       {props.children}
       <View
         class="absolute w-full h-full"

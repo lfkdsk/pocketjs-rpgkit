@@ -831,6 +831,7 @@ const K = {
 const H5 = { void: 0, wood: 1, caveFloor: 2, doormat: 3, counter: 4, stone: 5, rug: 6, darkCave: 7 } as const;
 
 const HOLLOW_SHEETS = ["Hollow_A1", "Hollow_A2", "Hollow_A3", "Hollow_A4", "Hollow_A5", "Hollow_B", "", "", ""];
+const HOLLOW_FROST_SHEETS = ["Hollow_A1", "HollowFrost_A2", "Hollow_A3", "Hollow_A4", "Hollow_A5", "HollowFrost_B", "", "", ""];
 
 function hollowFlags(): number[] {
   return tilesetFlags({
@@ -856,6 +857,16 @@ function hollowFlags(): number[] {
       [HB.window]: F.star,
     },
   });
+}
+
+/** The alternate field composition keeps the source map's tile ids but
+ * makes every grass autotile impassable. The player begins on dirt, so a
+ * save during the waited frost sequence still has a standable origin while
+ * Change Tileset gains a concrete passage difference without RTP art. */
+function hollowFrostFlags(): number[] {
+  const flags = hollowFlags();
+  for (let shape = 0; shape < 48; shape++) flags[makeAutotileId(K.grass, shape)]! |= F.block;
+  return flags;
 }
 
 function hollowMaterials() {
@@ -902,6 +913,21 @@ function hollowMaterials() {
     }
   };
   return { a1, a2, a3, a4 };
+}
+
+/** A visibly distinct outdoor A2 palette for the third Hollow tileset. */
+function hollowFrostA2(kind: number): Material {
+  switch (kind) {
+    case K.grass: return material(rgb("#b8d8dc"), "speckle", 216);
+    case K.dirt: return material(rgb("#70889a"), "checker", 217);
+    case K.tallGrass: return material(rgb("#8ab8b8"), "grass", 218);
+    case K.stone: return material(rgb("#c0ccd4"), "rock", 219);
+    case K.caveDirt: return material(rgb("#586878"), "rock", 220);
+    case K.carpet: return material(rgb("#684878"), "weave", 221);
+    case K.snow: return material(rgb("#f4fbff"), "speckle", 222);
+    case K.table: return material(rgb("#607080"), "planks", 223);
+    default: return hueMaterial(kind + 240, "speckle");
+  }
 }
 
 function hollowA5(i: number): TileDraw {
@@ -1031,6 +1057,23 @@ function hollowB(): Map<number, TileDraw> {
   return t;
 }
 
+/** Frost also changes a star/upper tile. This makes upper-plane source
+ * invalidation observable instead of letting a stale base B sheet pass a
+ * ground-only screenshot. */
+function hollowFrostB(): Map<number, TileDraw> {
+  const tiles = hollowB();
+  const ice = rgb("#d8f4ff");
+  const shadow = rgb("#78a8b8");
+  tiles.set(HB.treeTop, (c, x, y) => {
+    c.rect(x + 3, y + 3, 10, 13, shadow);
+    c.rect(x + 2, y + 5, 12, 11, shadow);
+    c.rect(x + 4, y + 4, 8, 12, ice);
+    c.rect(x + 3, y + 6, 10, 10, ice);
+    c.rect(x + 5, y + 6, 2, 2, rgb("#ffffff"));
+  });
+  return tiles;
+}
+
 /** A standard 16-column IconSet with only the fixture database's cells
  * occupied. Each motif is original integer-pixel art; the importer halves
  * the 32 px source cells to the kit's 16 px item sprites. */
@@ -1083,10 +1126,12 @@ function hollowArt(files: Files): void {
   const img = (path: string, canvas: Canvas) => files.set(`${HOLLOW}/img/${path}`, canvas.png());
   img("tilesets/Hollow_A1.png", sheetA1(m.a1));
   img("tilesets/Hollow_A2.png", sheetA2(m.a2));
+  img("tilesets/HollowFrost_A2.png", sheetA2(hollowFrostA2));
   img("tilesets/Hollow_A3.png", sheetA3(m.a3));
   img("tilesets/Hollow_A4.png", sheetA4(m.a4));
   img("tilesets/Hollow_A5.png", sheetA5(hollowA5));
   img("tilesets/Hollow_B.png", sheetB(hollowB()));
+  img("tilesets/HollowFrost_B.png", sheetB(hollowFrostB()));
   img(
     "characters/People.png",
     characterSheet([
@@ -1255,15 +1300,19 @@ function hollowVillage(): RmMap {
       page({
         trigger: 3,
         list: list(
-          comment("Opening: rain, a plugin call and a script line.", "Runs once (self switch A)."),
-          cmd(236, "rain", 3, 60, false),
+          comment("Opening: waited rain, storm and snow, a tileset change, a plugin call and a script line.", "Runs once (self switch A)."),
+          cmd(236, "rain", 3, 30, true),
           cmd(357, "HollowLog", "mark", "Mark Chapter", { chapter: "1", label: "Arrival" }),
           cmd(657, "Chapter = 1"),
           cmd(657, "Label = Arrival"),
           script("const tag = \"hollow-intro\";", "$gameTemp.hollowTag = tag;"),
           mzText("", "Rain drums on the roofs of Hollow."),
-          cmd(230, 30),
-          cmd(236, "none", 0, 60, false),
+          cmd(236, "storm", 7, 30, true),
+          cmd(282, 3),
+          cmd(236, "snow", 5, 30, true),
+          mzText("", "For one strange moment, frost seals the village lawns."),
+          cmd(282, 1),
+          cmd(236, "none", 0, 30, true),
           selfOn("A"),
         ),
       }),
@@ -1507,6 +1556,7 @@ function hollowData(files: Files): void {
       null,
       tileset(1, "Hollow Field", 0, HOLLOW_SHEETS, hollowFlags()),
       tileset(2, "Hollow Interior", 1, HOLLOW_SHEETS, hollowFlags()),
+      tileset(3, "Hollow Frost", 0, HOLLOW_FROST_SHEETS, hollowFrostFlags()),
     ]),
   );
   const common: (RmCommonEvent | null)[] = [
@@ -1926,7 +1976,8 @@ function stageMap(): RmMap {
   const director = page({
     trigger: 3,
     list: list(
-      comment("Opening cutscene. Runs once; self switch A hands control back."),
+      comment("Opening cutscene. Formation is disabled during staging; self switch A hands control back."),
+      cmd(137, 0),
       cmd(211, 0),
       cmd(221),
       cmd(241, MV_SE.overture),
@@ -1941,7 +1992,8 @@ function stageMap(): RmMap {
       cmd(211, 1),
       cmd(284, "!StageGlow", false, false, 0, 0),
       cmd(356, "StageLights dim 50"),
-      cmd(223, [-34, -34, 0, 34], 30, true),
+      cmd(138, [-72, 36, -18, 90]),
+      cmd(223, [-68, 34, -17, 96], 30, true),
       cmd(249, MV_SE.fanfare),
       cmd(224, [255, 255, 224, 170], 20, true),
       cmd(213, -1, 1, true),
@@ -1959,6 +2011,7 @@ function stageMap(): RmMap {
       cmd(213, 4, 3, false),
       cmd(223, [0, 0, 0, 0], 30, true),
       mvText("The show begins! Have a word with the usher."),
+      cmd(137, 1),
       switchOn(S_SCENE_DONE),
       selfOn("A"),
     ),
@@ -2099,7 +2152,7 @@ function stageData(files: Files): void {
         },
         variables: { [V_CLAPS]: "Claps", [V_ENCORE]: "Encore" },
         versionId: 72005318,
-        partyMembers: [1],
+        partyMembers: [1, 2],
       }),
     ),
   );
@@ -2133,7 +2186,14 @@ function stageData(files: Files): void {
   put("Items.json", recordsJson([null, item(1, "Ticket", "Front row, center aisle.", 0, 2, 195)]));
   put("Weapons.json", recordsJson([null]));
   put("Armors.json", recordsJson([null]));
-  put("Actors.json", recordsJson([null, actor(1, "Ivy", "Cast", 0, [0, 0, 0, 0, 0])]));
+  put(
+    "Actors.json",
+    recordsJson([
+      null,
+      actor(1, "Ivy", "Cast", 0, [0, 0, 0, 0, 0]),
+      actor(2, "Rowan", "Cast", 4, [0, 0, 0, 0, 0]),
+    ]),
+  );
   put("Classes.json", recordsJson(classes("Performer")));
   put("Skills.json", recordsJson(skills()));
   put("States.json", recordsJson(states()));

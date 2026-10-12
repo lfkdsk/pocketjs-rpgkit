@@ -18,7 +18,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { decodePng } from "../../../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../../../vendor/pocketjs/tests/png.ts";
-import { CHUNK_PX, TILE } from "../../../src/engine/tiles.ts";
+import { CHUNK_PX, TILE, mapForTileset } from "../../../src/engine/tiles.ts";
 import type { Project, TileId } from "../../../src/engine/types.ts";
 import { bakeMapChunks, cutCell } from "../../../tools/lib/chunks.ts";
 import { sliceWalkerSheet, TUXEMON_WALKER_LAYOUT } from "../../../tools/lib/bake.ts";
@@ -91,7 +91,20 @@ mkdirSync(ASSETS, { recursive: true });
 const q = JSON.stringify;
 const gameSources: string[] = [];
 const animSequences: AnimationSequenceInput[] = [];
-const animPlacements: { game: string; map: string; x: number; y: number; above: boolean; seq: string }[] = [];
+const animPlacements: {
+  game: string;
+  map: string;
+  tileset?: string;
+  x: number;
+  y: number;
+  above: boolean;
+  seq: string;
+}[] = [];
+const tilesetChunks = new Map<string, {
+  ground: Record<string, Record<string, string[]>>;
+  upper: Record<string, Record<string, string[]>>;
+  columns: Record<string, Record<string, number>>;
+}>();
 const summaries: string[] = [];
 const pakAudio = new Map<string, string>();
 
@@ -125,6 +138,9 @@ for (const source of RMI_SOURCES) {
   const ground: Record<string, string[]> = {};
   const upper: Record<string, string[]> = {};
   const columns: Record<string, number> = {};
+  const variantGround: Record<string, Record<string, string[]>> = {};
+  const variantUpper: Record<string, Record<string, string[]>> = {};
+  const variantColumns: Record<string, Record<string, number>> = {};
   let maxChunks = 1;
   for (const map of project.maps) {
     // A parallax map needs transparent void cells so the backdrop below the
@@ -144,6 +160,43 @@ for (const source of RMI_SOURCES) {
       ground[map.id]!.push(g);
       upper[map.id]!.push(u);
     }
+    for (const tilesetId of Object.keys(map.tilesetVariants ?? {}).sort()) {
+      const variant = mapForTileset(map, tilesetId);
+      if (!variant) throw new Error(`rmi-play: map ${map.id} has no composed tileset ${tilesetId}`);
+      const variantBake = bakeMapChunks(variant, tileArt, map.parallax ? null : black);
+      const variantCount = variantBake.columns * variantBake.rows;
+      maxChunks = Math.max(maxChunks, variantCount);
+      (variantColumns[tilesetId] ??= {})[map.id] = variantBake.columns;
+      const bakedGround: string[] = [];
+      const bakedUpper: string[] = [];
+      (variantGround[tilesetId] ??= {})[map.id] = bakedGround;
+      (variantUpper[tilesetId] ??= {})[map.id] = bakedUpper;
+      for (let i = 0; i < variantCount; i++) {
+        const stem = `${prefix}/map-${map.id}-tileset-${tilesetId}`;
+        const g = writeAsset(`${stem}-ground-${i}.png`, encodePNG(variantBake.ground[i]!, CHUNK_PX, CHUNK_PX));
+        const u = writeAsset(`${stem}-upper-${i}.png`, encodePNG(variantBake.upper[i]!, CHUNK_PX, CHUNK_PX));
+        imageMeta[g] = { psm: 3 };
+        imageMeta[u] = { psm: 3 };
+        bakedGround.push(g);
+        bakedUpper.push(u);
+      }
+      for (const cell of assets.animatedVariants?.[map.id]?.[tilesetId] ?? []) {
+        const seq = `${source.id}:${map.id}:${tilesetId}:${cell.x},${cell.y}:${cell.above ? "a" : "b"}`;
+        animSequences.push({
+          id: seq,
+          frames: cell.frames.map((t) => ({ rgba: tileArt(t)!, durationMs: Math.round(cell.frameSeconds * 1000) })),
+        });
+        animPlacements.push({
+          game: source.id,
+          map: map.id,
+          tileset: tilesetId,
+          x: cell.x,
+          y: cell.y,
+          above: cell.above,
+          seq,
+        });
+      }
+    }
     for (const cell of result.assets.animated[map.id] ?? []) {
       const seq = `${source.id}:${map.id}:${cell.x},${cell.y}:${cell.above ? "a" : "b"}`;
       animSequences.push({
@@ -153,6 +206,7 @@ for (const source of RMI_SOURCES) {
       animPlacements.push({ game: source.id, map: map.id, x: cell.x, y: cell.y, above: cell.above, seq });
     }
   }
+  tilesetChunks.set(source.id, { ground: variantGround, upper: variantUpper, columns: variantColumns });
 
   // --- item icons ---------------------------------------------------------
   const itemSource: string[] = [];
@@ -257,6 +311,7 @@ for (const source of RMI_SOURCES) {
       `  itemSrc: { ${itemSource.join(", ")} },\n` +
       `  player: ${player},\n  playerHeight: ${assets.player ? `${assets.sprites[assets.player]!.h}` : 16},\n` +
       `  animated: ANIMATED_${source.id},\n` +
+      (Object.keys(variantGround).length > 0 ? `  tilesetVariants: TILESET_VARIANTS_${source.id},\n` : "") +
       `  anims: { ${animSource.join(", ")} },\n` +
       `  parallaxes: { ${parallaxSource.join(", ")} },\n` +
       `  layers: { picture: { placement: "screen", defaultVisible: false, variants: { ${pictureVariants.join(", ")} } } },\n` +
@@ -278,11 +333,38 @@ for (const atlas of cooked.atlases) writeAsset(atlas.file, atlas.png);
 writeFileSync(join(HERE, "sprites.json"), JSON.stringify(cooked.spritesJson, null, 2) + "\n");
 const animatedSources = RMI_SOURCES.map((source) => {
   const byMap = new Map<string, { x: number; y: number; above: boolean; sprite: string }[]>();
-  for (const p of animPlacements.filter((a) => a.game === source.id)) {
+  for (const p of animPlacements.filter((a) => a.game === source.id && a.tileset === undefined)) {
     if (!byMap.has(p.map)) byMap.set(p.map, []);
     byMap.get(p.map)!.push({ x: p.x, y: p.y, above: p.above, sprite: cooked.atlasFor.get(p.seq)! });
   }
   return `const ANIMATED_${source.id}: GameAssets["animated"] = ${animatedManifestSource([...byMap.entries()].map(([id, tiles]) => ({ id, tiles })))};\n`;
+});
+const tilesetSources = RMI_SOURCES.map((source) => {
+  const chunks = tilesetChunks.get(source.id)!;
+  const variants: Record<string, {
+    ground: { chunks: Record<string, string[]>; columns: Record<string, number> };
+    upper: { chunks: Record<string, string[]>; columns: Record<string, number> };
+    animated: Record<string, { x: number; y: number; above: boolean; sprite: string }[]>;
+  }> = {};
+  for (const tilesetId of Object.keys(chunks.ground).sort()) {
+    const animated: Record<string, { x: number; y: number; above: boolean; sprite: string }[]> = {};
+    for (const map of Object.keys(chunks.ground[tilesetId]!).sort()) animated[map] = [];
+    for (const placement of animPlacements.filter((entry) =>
+      entry.game === source.id && entry.tileset === tilesetId)) {
+      animated[placement.map]!.push({
+        x: placement.x,
+        y: placement.y,
+        above: placement.above,
+        sprite: cooked.atlasFor.get(placement.seq)!,
+      });
+    }
+    variants[tilesetId] = {
+      ground: { chunks: chunks.ground[tilesetId]!, columns: chunks.columns[tilesetId]! },
+      upper: { chunks: chunks.upper[tilesetId]!, columns: chunks.columns[tilesetId]! },
+      animated,
+    };
+  }
+  return `const TILESET_VARIANTS_${source.id}: NonNullable<GameAssets["tilesetVariants"]> = ${q(variants)};\n`;
 });
 
 writeFileSync(join(HERE, "images.json"), JSON.stringify(imageMeta, null, 2) + "\n");
@@ -304,6 +386,7 @@ writeFileSync(
     `import type { CharacterFrames, GameAssets } from "../../../src/ui/game-assets.ts";\n\n` +
     `export type RmiGameId = ${RMI_SOURCES.map((s) => q(s.id)).join(" | ")};\n\n` +
     animatedSources.join("\n") + "\n" +
+    tilesetSources.join("\n") + "\n" +
     gameSources.join("\n") + "\n" +
     `export const RMI_GAMES: Record<RmiGameId, { project: Project; battle: RpgMakerBattleDatabase; enemyImages: Record<string, string>; assets: GameAssets }> = {\n` +
     RMI_SOURCES.map((s) => `  ${s.id}: { project: PROJECT_${s.id}, battle: BATTLE_${s.id}, enemyImages: BATTLERS_${s.id}, assets: ASSETS_${s.id} },`).join("\n") +

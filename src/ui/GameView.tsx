@@ -108,7 +108,7 @@ import { wrapLabel } from "./list-window.ts";
 import { formatUiText, KIT_UI_TEXT, mergeUiText, withUiText, type UiTextOverrides } from "../engine/ui-text.ts";
 import { resolveChoiceIcon, type ChoiceIconBoxComponent } from "./choice-icons.ts";
 import type { ItemIconRowComponent } from "./item-icon.ts";
-import { resolveUiTheme, type UiTheme } from "./theme.ts";
+import { resolveUiTheme, windowToneTheme, type UiTheme } from "./theme.ts";
 import type {
   GameAssets,
   GameMapLayerAssets,
@@ -116,6 +116,12 @@ import type {
   MapLayerVariant,
   NpcArt,
   ScreenLayerVariant,
+  StreamedMapLayerVariant,
+} from "./game-assets.ts";
+import {
+  mapScopedAnimatedSource,
+  mapScopedLayerSource,
+  tilesetLayerSource,
 } from "./game-assets.ts";
 import { AnimatedTiles, type AnimatedTilesStats } from "./AnimatedTiles.tsx";
 import { MapAnimLayer, type MapAnimStats } from "./MapAnimLayer.tsx";
@@ -996,6 +1002,12 @@ export interface BattleSceneViewProps {
    *  GameView's prop), for scene views that draw kit text such as the name
    *  input. Undefined when the game replaces none. */
   uiText?: UiTextOverrides;
+  /** Reducer-owned global screen presentation. Optional so existing custom
+   * scenes keep their old contract; the RPG Maker renderer projects tone and
+   * weather between its sprites and windows. */
+  screen?: Readonly<ScreenEffectsState>;
+  /** Effective UI theme after the reducer's runtime window tone. */
+  theme?: Partial<UiTheme>;
 }
 
 export type BattleSceneComponent = Component<BattleSceneViewProps>;
@@ -1265,7 +1277,7 @@ export function GameView(props: GameViewProps) {
       })
     : undefined;
   const WorldRendererView = worldRenderer?.View;
-  const hasAnimatedTiles = assets.animated !== undefined;
+  const hasAnimatedTiles = assets.animated !== undefined || assets.tilesetVariants !== undefined;
   const layerAssets = assets.layers ?? {};
   const groundLayer = layerAssets.ground?.placement === "ground" ? layerAssets.ground : undefined;
   const upperLayer = layerAssets.upper?.placement === "upper" ? layerAssets.upper : undefined;
@@ -1589,21 +1601,37 @@ export function GameView(props: GameViewProps) {
     : null;
   const [fade, setFade] = createSignal(0);
   const layerFingerprint = (value: SessionState): string =>
-    value.interp.layers ? JSON.stringify(value.interp.layers) : "";
+    value.interp.layers || value.interp.tileset
+      ? JSON.stringify([value.interp.layers, value.interp.tileset])
+      : "";
   let paintedLayers = layerFingerprint(state);
   const [layerRevision, setLayerRevision] = createSignal(0);
-  const baseScreenFingerprint = (screen: Readonly<ScreenEffectsState> | undefined): string =>
-    screen && (screen.fade || screen.tints || screen.flash || screen.backdrop)
-      ? JSON.stringify([screen.fade, screen.tints, screen.flash, screen.backdrop])
+  const baseScreenFingerprint = (value: Readonly<SessionState>): string => {
+    const screen = value.interp.screen;
+    const windowTone = value.interp.sw.windowTone;
+    return (screen && (
+        screen.fade || screen.tints || screen.flash || screen.backdrop ||
+        screen.tone || screen.weather
+      )) || windowTone
+      ? JSON.stringify([
+          screen?.fade,
+          screen?.tints,
+          screen?.flash,
+          screen?.backdrop,
+          screen?.tone,
+          screen?.weather,
+          windowTone,
+        ])
       : "";
+  };
   const presentationFingerprint = props.screenPresentation?.fingerprint;
   const screenFingerprint: (value: SessionState) => string = presentationFingerprint
     ? (value) => {
-        const base = baseScreenFingerprint(value.interp.screen);
+        const base = baseScreenFingerprint(value);
         const extra = presentationFingerprint(value.interp.screen, value.interp.sw.timer);
         return extra ? `${base}\u0000${extra}` : base;
       }
-    : (value) => baseScreenFingerprint(value.interp.screen);
+    : baseScreenFingerprint;
   let paintedScreen = screenFingerprint(state);
   const [screenRevision, setScreenRevision] = createSignal(0);
   const presentedScreen = () => {
@@ -1614,6 +1642,10 @@ export function GameView(props: GameViewProps) {
     screenRevision();
     return state.interp.sw.timer;
   };
+  const effectiveTheme = createMemo(() => {
+    screenRevision();
+    return windowToneTheme(props.theme, state.interp.sw.windowTone);
+  });
   const builtInLayer = (
     id: "ground" | "upper",
     definition: GameMapLayerAssets | undefined,
@@ -1635,18 +1667,80 @@ export function GameView(props: GameViewProps) {
   };
   const groundSelection = () => builtInLayer("ground", groundLayer);
   const upperSelection = () => builtInLayer("upper", upperLayer);
+  const activeTilesetAssets = () => {
+    layerRevision();
+    const id = state.interp.tileset;
+    if (id === undefined) return undefined;
+    const variant = assets.tilesetVariants?.[id];
+    if (!variant) {
+      throw new Error(`GameView: active tileset ${JSON.stringify(id)} has no baked asset variant`);
+    }
+    return variant;
+  };
+  const tilesetSourceKey = (): string => {
+    layerRevision();
+    return state.interp.tileset ?? "";
+  };
+  const activeAnimatedTilesMemo = createMemo((): GameAssets["animated"] => {
+    const variant = activeTilesetAssets();
+    if (!variant) return assets.animated;
+    return worldRenderer
+      ? mapScopedAnimatedSource(assets.animated, variant.animated, mapId())
+      : variant.animated;
+  });
+  const activeAnimatedTiles = (): GameAssets["animated"] => activeAnimatedTilesMemo();
+  const groundSourceVariant = (): MapLayerVariant | undefined =>
+    tilesetLayerSource(activeTilesetAssets(), "ground", groundSelection().variant);
+  const upperSourceVariant = (): MapLayerVariant | undefined =>
+    tilesetLayerSource(activeTilesetAssets(), "upper", upperSelection().variant);
   const groundStreamVariant = () => {
-    const variant = groundSelection().variant;
+    const variant = groundSourceVariant();
     return variant && "refs" in variant ? variant : undefined;
   };
   const groundEagerVariant = () => {
-    const variant = groundSelection().variant;
+    const variant = groundSourceVariant();
     return variant && "chunks" in variant ? variant : undefined;
   };
   const upperStreamVariant = () => {
-    const variant = upperSelection().variant;
+    const variant = upperSourceVariant();
     return variant && "refs" in variant ? variant : undefined;
   };
+  const builtinGroundStream: StreamedMapLayerVariant | undefined = stream ? {
+    refs: stream.ground,
+    columns: stream.columns,
+    chunkPx: stream.chunkPx,
+    margin: stream.margin,
+    loadBudget: stream.loadBudget,
+  } : undefined;
+  const builtinUpperStream: StreamedMapLayerVariant | undefined = stream ? {
+    refs: stream.upper,
+    columns: stream.columns,
+    chunkPx: stream.chunkPx,
+    margin: stream.margin,
+    loadBudget: stream.loadBudget,
+  } : undefined;
+  const worldGroundStreamVariant = createMemo((): StreamedMapLayerVariant | undefined => {
+    if (!worldRenderer) return groundStreamVariant();
+    const active = activeTilesetAssets();
+    if (!active) return groundStreamVariant();
+    if (!("refs" in active.ground) || !builtinGroundStream) {
+      throw new Error("GameView: connected-world tileset ground must be streamed");
+    }
+    const generic = groundSelection().variant;
+    const base = generic && "refs" in generic ? generic : builtinGroundStream;
+    return mapScopedLayerSource(base, active.ground, mapId()) as StreamedMapLayerVariant;
+  });
+  const worldUpperStreamVariant = createMemo((): StreamedMapLayerVariant | undefined => {
+    if (!worldRenderer) return upperStreamVariant();
+    const active = activeTilesetAssets();
+    if (!active) return upperStreamVariant();
+    if (!("refs" in active.upper) || !builtinUpperStream) {
+      throw new Error("GameView: connected-world tileset upper must be streamed");
+    }
+    const generic = upperSelection().variant;
+    const base = generic && "refs" in generic ? generic : builtinUpperStream;
+    return mapScopedLayerSource(base, active.upper, mapId()) as StreamedMapLayerVariant;
+  });
   const activeMapCamera = (): CameraState => {
     return worldRenderer?.localCameraFor(mapId(), camera) ?? camera;
   };
@@ -2236,7 +2330,7 @@ export function GameView(props: GameViewProps) {
               margin={groundStreamVariant()?.margin ?? stream.margin}
               loadBudget={groundStreamVariant()?.loadBudget ?? stream.loadBudget}
               loadTile={stream.loadTile}
-              sourceKey={`ground:${groundSelection().name ?? ""}`}
+              sourceKey={`ground:${groundSelection().name ?? ""}:${tilesetSourceKey()}`}
               visible={groundSelection().visible}
               active={() => !sceneActive()}
               debugName="rpgkit-ground"
@@ -2257,10 +2351,11 @@ export function GameView(props: GameViewProps) {
             />
           )}
 
-          {assets.animated ? (
+          {hasAnimatedTiles ? (
             <AnimatedTiles
               mapId={mapId()}
-              tiles={assets.animated}
+              tiles={activeAnimatedTiles() ?? {}}
+              sourceKey={tilesetSourceKey()}
               above={false}
               camera={() => camera}
               viewport={() => viewport()}
@@ -2287,9 +2382,10 @@ export function GameView(props: GameViewProps) {
             viewport={() => viewport()}
             active={() => !sceneActive()}
             source={() => ({
-              key: `upper:${upperSelection().name ?? ""}`,
-              variant: upperSelection().variant,
+              key: `upper:${upperSelection().name ?? ""}:${tilesetSourceKey()}`,
+              variant: upperSourceVariant(),
             })}
+            animated={activeAnimatedTiles}
             visible={() => upperSelection().visible}
             debugName="rpgkit-actors"
             nodeRef={(node) => { actorHost = node; }}
@@ -2309,23 +2405,24 @@ export function GameView(props: GameViewProps) {
                 camera={() => camera}
                 viewport={viewport}
                 stream={stream!}
-                animated={assets.animated}
+                animated={activeAnimatedTiles()}
+                animatedSourceKey={tilesetSourceKey}
                 active={() => !sceneActive()}
                 ground={{
-                  refs: () => groundStreamVariant()?.refs ?? stream!.ground,
-                  columns: () => groundStreamVariant()?.columns ?? stream!.columns,
-                  sourceKey: () => `ground:${groundSelection().name ?? ""}`,
+                  refs: () => worldGroundStreamVariant()?.refs ?? stream!.ground,
+                  columns: () => worldGroundStreamVariant()?.columns ?? stream!.columns,
+                  sourceKey: () => `ground:${groundSelection().name ?? ""}:${tilesetSourceKey()}`,
                   visible: () => groundSelection().visible,
-                  margin: () => groundStreamVariant()?.margin ?? stream!.margin,
-                  loadBudget: () => groundStreamVariant()?.loadBudget ?? stream!.loadBudget,
+                  margin: () => worldGroundStreamVariant()?.margin ?? stream!.margin,
+                  loadBudget: () => worldGroundStreamVariant()?.loadBudget ?? stream!.loadBudget,
                 }}
                 upper={{
-                  refs: () => upperStreamVariant()?.refs ?? stream!.upper,
-                  columns: () => upperStreamVariant()?.columns ?? stream!.columns,
-                  sourceKey: () => `upper:${upperSelection().name ?? ""}`,
+                  refs: () => worldUpperStreamVariant()?.refs ?? stream!.upper,
+                  columns: () => worldUpperStreamVariant()?.columns ?? stream!.columns,
+                  sourceKey: () => `upper:${upperSelection().name ?? ""}:${tilesetSourceKey()}`,
                   visible: () => upperSelection().visible,
-                  margin: () => upperStreamVariant()?.margin ?? stream!.margin,
-                  loadBudget: () => upperStreamVariant()?.loadBudget ?? stream!.loadBudget,
+                  margin: () => worldUpperStreamVariant()?.margin ?? stream!.margin,
+                  loadBudget: () => worldUpperStreamVariant()?.loadBudget ?? stream!.loadBudget,
                 }}
                 below={<ActiveBelow />}
                 actors={<ActiveActors />}
@@ -2360,13 +2457,15 @@ export function GameView(props: GameViewProps) {
         <WorldOverlay state={readState} />
       ) : null}
 
-      {/* Screen effects (tints, flash, shake, backdrops) and the fade sit
-          outside the kept-alive world so they keep their place above the
-          map and around the dialog; the battle scene below draws over them
-          while it is active. */}
+      {/* Screen effects sit outside the kept-alive world so they keep their
+          place above the map and below dialogs. A battle covers this map
+          instance; the RPG Maker battle renderer receives the same saved
+          descriptor and reprojects tone/weather inside its own stack. */}
       <ScreenEffectsLayer
         screen={presentedScreen}
         layers={screenLayerAssets}
+        width={() => viewport().w}
+        height={() => viewport().h}
       >
         {ScreenPresentationEffects ? (
           <ScreenPresentationEffects
@@ -2395,7 +2494,7 @@ export function GameView(props: GameViewProps) {
         <DialogBox
           modal={() => sceneActive() ? null : modal()}
           legend={actions.legend}
-          theme={props.theme}
+          theme={effectiveTheme()}
           faces={props.faces}
           faceWidth={props.faceWidth}
           items={itemNames}
@@ -2409,7 +2508,7 @@ export function GameView(props: GameViewProps) {
       </ProfileMount>
       <ScrollTextLayer
         modal={() => sceneActive() ? null : modal()}
-        theme={props.theme}
+        theme={effectiveTheme()}
       />
       <ScreenFadeLayer screen={presentedScreen} />
 
@@ -2435,6 +2534,8 @@ export function GameView(props: GameViewProps) {
                 height={viewport().h}
                 active={scene()?.kind === "battle"}
                 uiText={uiTextOverrides()}
+                screen={presentedScreen()}
+                theme={effectiveTheme()}
               />
             </ProfileMount>
           ) : null}
@@ -2525,8 +2626,8 @@ export function GameView(props: GameViewProps) {
       />
       {/* Opt-in demo chrome stays above the world/fade but below fatal
           errors. Its implementation is supplied by the isolated demo entry. */}
-      {demoRuntime ? demoRuntime.render(props.theme, uiTextOverrides()) : null}
-      {overlayRuntime ? overlayRuntime.render(props.theme, uiTextOverrides()) : null}
+      {demoRuntime ? demoRuntime.render(effectiveTheme(), uiTextOverrides()) : null}
+      {overlayRuntime ? overlayRuntime.render(effectiveTheme(), uiTextOverrides()) : null}
       <Show when={fatalError() !== null}>
         <View
           class="absolute inset-0 flex-col justify-center items-center"

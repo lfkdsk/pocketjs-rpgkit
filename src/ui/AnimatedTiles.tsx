@@ -48,6 +48,8 @@ export interface AnimatedTilesProps {
   /** Map id -> every animated tile placement; this instance keeps only the
    *  entries matching its `above` band. */
   tiles: Readonly<Record<string, readonly AnimatedTile[]>>;
+  /** Changes when the same map selects another immutable tile source. */
+  sourceKey?: string;
   above: boolean;
   camera: () => ChunkPoint;
   viewport: () => ChunkViewport;
@@ -87,6 +89,7 @@ export function AnimatedTiles(props: AnimatedTilesProps): SolidJSX.Element {
   /** Key `${x},${y}` -> bound node, for the current map only. */
   const live = new Map<string, NodeMirror>();
   let currentMap = "";
+  let currentSourceKey = "";
   /** Sparse rows keep window changes proportional to animated cells. */
   const rows = new Map<number, { x: number; key: string; sprite: string }[]>();
   let hasTiles = false;
@@ -103,10 +106,11 @@ export function AnimatedTiles(props: AnimatedTilesProps): SolidJSX.Element {
     pool.push(node);
   };
 
-  const selectMap = (mapId: string): void => {
+  const selectMap = (mapId: string, sourceKey: string): void => {
     for (const node of live.values()) unbind(node);
     live.clear();
     currentMap = mapId;
+    currentSourceKey = sourceKey;
     rows.clear();
     const cells = new Map<string, AnimatedTile>();
     for (const tile of props.tiles[mapId] ?? []) {
@@ -141,7 +145,8 @@ export function AnimatedTiles(props: AnimatedTilesProps): SolidJSX.Element {
       visible = nextVisible;
       setProp(root, "style", { display: visible ? 0 : 1 }, root.domAttrs?.style);
     }
-    if (currentMap !== props.mapId) selectMap(props.mapId);
+    const sourceKey = props.sourceKey ?? "";
+    if (currentMap !== props.mapId || currentSourceKey !== sourceKey) selectMap(props.mapId, sourceKey);
     if (!hasTiles) {
       if (live.size !== 0) {
         for (const node of live.values()) unbind(node);

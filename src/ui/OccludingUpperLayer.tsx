@@ -100,6 +100,9 @@ export interface OccludingUpperLayerProps {
   debugName?: string;
   /** Selected prepackaged upper source. undefined keeps the legacy source. */
   source?: () => { key: string; variant?: MapLayerVariant };
+  /** Active animated-tile manifest. Omit to read GameAssets.animated. The
+   * source key above invalidates both upper chunks and these placements. */
+  animated?: () => GameAssets["animated"];
   /** Hide upper rows/above animations without hiding actor children. */
   visible?: () => boolean;
   onStreamStats?: (stats: StreamedChunkLayerStats) => void;
@@ -176,7 +179,7 @@ export function OccludingUpperLayer(props: OccludingUpperLayerProps): SolidJSX.E
   };
 
   const reportAnimated = (): void => {
-    if (!props.assets.animated || !props.onAnimatedStats) return;
+    if (!(props.animated?.() ?? props.assets.animated) || !props.onAnimatedStats) return;
     let mounted = 0;
     for (const row of rows) mounted += row.animations.size;
     props.onAnimatedStats({
@@ -275,7 +278,7 @@ export function OccludingUpperLayer(props: OccludingUpperLayerProps): SolidJSX.E
 
     aboveByRow = new Map();
     let id = 0;
-    for (const tile of props.assets.animated?.[mapId] ?? []) {
+    for (const tile of (props.animated?.() ?? props.assets.animated)?.[mapId] ?? []) {
       if (!tile.above) continue;
       const group = aboveByRow.get(tile.y) ?? [];
       group.push({ id: id++, x: tile.x, sprite: tile.sprite });

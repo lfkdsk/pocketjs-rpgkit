@@ -7,6 +7,7 @@ export { Panel, type PanelProps } from "./Panel.tsx";
 export {
   DEFAULT_UI_THEME,
   resolveUiTheme,
+  windowToneTheme,
   speakerLabel,
   splitSpeaker,
   type SpeakerSplit,
@@ -34,6 +35,23 @@ export {
   screenColorHex,
   type ScreenEffectsLayerProps,
 } from "./ScreenEffectsLayer.tsx";
+export {
+  ScreenToneWeatherLayer,
+  type ScreenToneWeatherLayerProps,
+} from "./ScreenToneWeatherLayer.tsx";
+export {
+  screenToneOverlays,
+  screenToneWeatherActive,
+  WEATHER_DIMMER_COLOR,
+  weatherDimmerOpacity,
+  weatherParticleCount,
+  weatherParticleGeometry,
+  weatherParticleVector,
+  weatherParticles,
+  type WeatherParticle,
+  type WeatherParticleGeometry,
+  type WeatherParticleVector,
+} from "./screen-presentation.ts";
 export {
   ScrollTextLayer,
   type ScrollTextLayerProps,
@@ -109,3 +127,4 @@ export type {
   StreamedGameAssets,
   StreamedMapLayerVariant,
 } from "./game-assets.ts";
+export { mapScopedAnimatedSource, mapScopedLayerSource, tilesetLayerSource } from "./game-assets.ts";

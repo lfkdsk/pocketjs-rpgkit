@@ -156,6 +156,8 @@ export interface GameViewWorldRenderProps {
   active: Accessor<boolean>;
   stream: StreamedGameAssets;
   animated?: Readonly<Record<string, readonly AnimatedTile[]>>;
+  /** Invalidates animated bindings when the active map changes tilesets. */
+  animatedSourceKey?: Accessor<string>;
   ground: GameViewWorldBandSource;
   upper: GameViewWorldBandSource;
   below?: JSX.Element;

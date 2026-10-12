@@ -21,6 +21,8 @@ import {
   createRpgMakerBattleRules,
 } from "../../../src/rpgmaker-battle/index.ts";
 import { createRpgMakerBattleScene } from "../../../src/ui/rpgmaker-battle/index.tsx";
+import { createRpgMakerFormation } from "../../../src/ui/rpgmaker-formation/index.tsx";
+import type { Command, GameEvent, Project } from "../../../src/engine/types.ts";
 import { RMI_GAMES, type RmiGameId } from "./games.ts";
 
 declare global {
@@ -28,25 +30,132 @@ declare global {
   var __rmiGame: RmiGameId | undefined;
   // eslint-disable-next-line no-var
   var __rmiBattlePreview: "en" | "zh" | undefined;
+  // eslint-disable-next-line no-var
+  var __rmiBattleScreenEffects: boolean | undefined;
+  // eslint-disable-next-line no-var
+  var __rmiScreenPreview: "weather" | "weather-base" | "tone" | "tone-base" | undefined;
 }
 
 const game = RMI_GAMES[globalThis.__rmiGame ?? "hollow"];
 const preview = globalThis.__rmiBattlePreview;
+const battleScreenEffects = globalThis.__rmiBattleScreenEffects === true;
+const screenPreview = globalThis.__rmiScreenPreview;
 globalThis.__rmiGame = undefined;
 globalThis.__rmiBattlePreview = undefined;
+globalThis.__rmiBattleScreenEffects = undefined;
+globalThis.__rmiScreenPreview = undefined;
+
+function command(
+  commands: readonly Command[],
+  op: Command["op"],
+  occurrence = 0,
+): Command {
+  const found = commands.filter((candidate) => candidate.op === op)[occurrence];
+  if (!found) throw new Error(`rmi-play: imported command ${op}[${occurrence}] is absent`);
+  return found;
+}
+
+/** Keep these review scenes coupled to the imported fixture: the shortened
+ * autoruns select the real lowered commands instead of spelling equivalent
+ * reducer commands in the app. This makes a visual green depend on the
+ * importer, cooked assets, GameView and renderer together. */
+function screenPreviewProject(
+  source: Project,
+  kind: "weather" | "weather-base" | "tone" | "tone-base",
+): Project {
+  const map = source.maps.find((candidate) => candidate.id === "map001");
+  const importedEvent = map?.events?.find((candidate) => candidate.id === "ev001");
+  const importedPage = importedEvent?.pages[0];
+  if (!map || !importedEvent || !importedPage) {
+    throw new Error("rmi-play: screen preview source event is absent");
+  }
+  const imported = importedPage.commands;
+  const textCommands = imported.filter((candidate) => candidate.op === "text");
+  const commands: Command[] = kind === "weather"
+    ? [
+        command(imported, "weather", 0),
+        textCommands[2]!,
+        command(imported, "weather", 1),
+        command(imported, "changeTileset", 0),
+        command(imported, "weather", 2),
+        textCommands[3]!,
+        command(imported, "changeTileset", 1),
+        command(imported, "weather", 3),
+        command(imported, "selfSwitch", 0),
+      ]
+    : kind === "tone"
+      ? [
+        command(imported, "formationAccess", 0),
+        command(imported, "windowTone", 0),
+        command(imported, "screenTone", 0),
+        textCommands[textCommands.length - 1]!,
+        command(imported, "formationAccess", 1),
+        command(imported, "selfSwitch", 0),
+      ]
+      : [
+          // Match the imported 30-frame wait so base/effect raster
+          // comparisons observe identical map/parallax animation clocks.
+          { op: "wait", seconds: 0.5 },
+          kind === "weather-base" ? textCommands[2]! : textCommands[textCommands.length - 1]!,
+          command(imported, "selfSwitch", 0),
+        ];
+  if (commands.some((entry) => entry === undefined)) {
+    throw new Error(`rmi-play: ${kind} preview source text is absent`);
+  }
+  const previewEvent: GameEvent = {
+    ...importedEvent,
+    pages: [
+      { ...importedPage, commands },
+      importedEvent.pages[1] ?? { trigger: "action", commands: [] },
+    ],
+  };
+  return {
+    ...source,
+    start: { ...source.start, map: map.id },
+    maps: source.maps.map((candidate) => candidate.id === map.id
+      ? { ...candidate, events: [previewEvent] }
+      : candidate),
+  };
+}
 
 const previewMap = preview === undefined
   ? null
   : game.project.maps.find((map) => map.id === "map003");
-const project = previewMap
+const battleEffectCommands: Command[] = battleScreenEffects
+  ? [
+      { op: "screenTone", tone: { r: -68, g: 34, b: -17, gray: 96 }, duration: 0, wait: false },
+      { op: "weather", kind: "rain", power: 3, duration: 0, wait: false },
+    ]
+  : [];
+const battlePreviewProject = previewMap
   ? {
       ...game.project,
       start: { map: "map003", x: 10, y: 5, dir: "up" as const },
       maps: game.project.maps.map((map) => map === previewMap
-        ? { ...map, events: map.events?.filter((event) => event.id === "ev002") }
+        ? {
+            ...map,
+            events: map.events?.filter((event) => event.id === "ev002").map((event) =>
+              battleScreenEffects
+                ? {
+                    ...event,
+                    pages: event.pages.map((page, index) => index === 0
+                      ? {
+                          ...page,
+                          commands: [
+                            ...battleEffectCommands,
+                            ...page.commands,
+                          ],
+                        }
+                      : page),
+                  }
+                : event)
+          }
         : map),
     }
   : game.project;
+const project = screenPreview
+  ? screenPreviewProject(battlePreviewProject, screenPreview)
+  : battlePreviewProject;
 
 const longNames = preview === "zh"
   ? { actor: "守护者巴塞洛缪", enemy: "北方古门的黑曜石巨像" }
@@ -119,6 +228,7 @@ const battleText = preview === "zh"
 const AudioEffects = createAudioEffects(project.audio ?? {});
 const battle = createRpgMakerBattleRules(database);
 const BattleScene = createRpgMakerBattleScene(database, { enemyImages: game.enemyImages, text: battleText });
+const formation = createRpgMakerFormation();
 
 mount(() => (
   <GameView
@@ -130,6 +240,7 @@ mount(() => (
     extensions={createRpgMakerBattleExtensions(database)}
     battle={battle}
     battleScene={BattleScene}
+    overlay={formation}
     scenes={{ [NAME_INPUT_SCENE_ID]: nameInputRules }}
     sceneViews={{ [NAME_INPUT_SCENE_ID]: NameInputScene }}
     effects={AudioEffects}

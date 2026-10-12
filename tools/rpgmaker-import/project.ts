@@ -22,6 +22,7 @@ import type {
   GameEvent,
   Item,
   MapDef,
+  MapTilesetVariant,
   ParallaxDef,
   Page,
   PageCondition,
@@ -62,13 +63,21 @@ import {
 import { rmParallaxSpeed, rmTileSize } from "./load.ts";
 import { passes, RM_FLAG } from "./passage.ts";
 import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
-import type { RmActor, RmItem, RmPageImage, RmProject, RmTrait, RmVehicle } from "./rm-types.ts";
+import type { RmActor, RmCommand, RmItem, RmPageImage, RmProject, RmTrait, RmVehicle } from "./rm-types.ts";
 import { downscale, drawTile, loadTilesetImages, type TilesetImages } from "./tile-render.ts";
 
 export interface ImportOptions {
   /** "visible" turns plugin/script commands into a text box naming them;
    *  "silent" drops them (both count as Placeholder). */
   placeholders?: "visible" | "silent";
+}
+
+export interface ImportAnimatedCell {
+  x: number;
+  y: number;
+  above: boolean;
+  frames: TileId[];
+  frameSeconds: number;
 }
 
 /** Render-side outputs a cooker bakes. Paths are relative to the output
@@ -86,7 +95,12 @@ export interface ImportAssets {
   /** Animation id -> generated source sheet plus render-only target offset. */
   animations: Record<string, { sheet: string; offsetX: number; offsetY: number }>;
   /** Map id -> animated cells (water, waterfalls): sheet cells per step. */
-  animated: Record<string, { x: number; y: number; above: boolean; frames: TileId[]; frameSeconds: number }[]>;
+  animated: Record<string, ImportAnimatedCell[]>;
+  /** Maps with Change Tileset: map id -> tileset id -> animated cells.
+   * Empty lists are significant: selecting that tileset suppresses the
+   * authored tileset's animation rather than falling back to it. `animated`
+   * remains the base-only spelling consumed by older asset cookers. */
+  animatedVariants?: Record<string, Record<string, ImportAnimatedCell[]>>;
   /** Logical audio id -> converted output-relative QOA path. */
   audio: Record<string, string>;
   /** Enemy database id -> imported front-view battler PNG. */
@@ -227,6 +241,17 @@ function vehiclePassage(
     if (passes(stack, flags, RM_FLAG.AIRSHIP) && passes(stack, flags, 0x0f)) airshipLand.push(i);
   }
   return { boat, ship, airshipLand };
+}
+
+/** Collect syntactically valid Change Tileset operands from an RPG Maker
+ * flat command list. Indentation only encodes the command tree; every line
+ * remains reachable through some branch, loop, choice or battle outcome. */
+function collectTilesetReferences(commands: readonly RmCommand[], into: Set<number>): void {
+  for (const command of commands) {
+    if (command.code !== 282) continue;
+    const id = command.parameters?.[0];
+    if (typeof id === "number" && Number.isInteger(id) && id > 0) into.add(id);
+  }
 }
 
 /** MV itypeId (1 regular, 2 key, 3 hidden A, 4 hidden B). Absent/other
@@ -674,6 +699,35 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     });
   }
 
+  // A map event can select variants only for its owning map. Common and
+  // troop event commands can run while any map is current, so their union is
+  // composed for every imported map. Sorting later keeps atlas allocation,
+  // object insertion and warnings byte-stable.
+  const globalTilesetReferences = new Set<number>();
+  for (const common of rm.commonEvents) {
+    if (common) collectTilesetReferences(common.list, globalTilesetReferences);
+  }
+  for (const troop of rm.troops) {
+    if (!troop) continue;
+    for (const page of troop.pages) collectTilesetReferences(page.list, globalTilesetReferences);
+  }
+  const mapTilesetReferences = new Map<number, Set<number>>();
+  const allTilesetReferences = new Set(globalTilesetReferences);
+  for (const [rmId, rmMap] of rm.maps) {
+    const references = new Set<number>();
+    for (const event of rmMap.events) {
+      if (!event) continue;
+      for (const page of event.pages) collectTilesetReferences(page.list, references);
+    }
+    mapTilesetReferences.set(rmId, references);
+    for (const id of references) allTilesetReferences.add(id);
+  }
+  for (const tilesetId of [...allTilesetReferences].sort((a, b) => a - b)) {
+    if (!rm.tilesets[tilesetId]) {
+      warnings.push(`Change Tileset references missing tileset ${tilesetId}; no variant was emitted`);
+    }
+  }
+
   // --- maps ---------------------------------------------------------------
   const maps: MapDef[] = [];
   const mapIds = [...rm.maps.keys()].sort((a, b) => a - b);
@@ -767,12 +821,13 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     const regions = sparseCells(composed.regions);
     const terrain = sparseCells(composed.terrain);
     const tiles = rmMap.data.length > 0 ? sparseTileLayers(rmMap.data, rmMap.width, rmMap.height) : [];
-    maps.push({
+    const mapDef: MapDef = {
       id,
       name: truncate(nonEmpty(rmMap.displayName || info?.name, id), 40),
       width: rmMap.width,
       height: rmMap.height,
       sheets: [atlas.sheetId],
+      tileset: atlas.sheetId,
       ground: composed.ground.map(cellId),
       ...(parallax ? { parallax } : {}),
       ...(composed.upper.length > 0 ? { upper: composed.upper.map(([i, c]) => [i, cellId(c)] as [number, TileId]) } : {}),
@@ -781,21 +836,60 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       ...(tiles.length > 0 ? { tiles } : {}),
       vehiclePassage: vehiclePassage(rmMap.data, rmMap.width, rmMap.height, tileset.flags),
       events,
-    });
-    const opened = [...bumpCells].sort((a, b) => a - b).filter((i) => {
-      const cell = composed.ground[i];
-      return cell === null || cell === undefined || atlas.blocked(cell).length > 0;
-    });
-    if (opened.length > 0) maps[maps.length - 1]!.passage = opened.map((i) => [i, "pass"]);
-    if (composed.animated.length > 0) {
-      assets.animated[id] = composed.animated.map((a) => ({
-        x: a.x,
-        y: a.y,
-        above: a.above,
-        frames: a.frames.map((c) => cellId(c)),
-        frameSeconds: a.frameSeconds,
-      }));
+    };
+    const openedFor = (ground: readonly (number | null)[], sourceAtlas: TileAtlas): number[] =>
+      [...bumpCells].sort((a, b) => a - b).filter((i) => {
+        const cell = ground[i];
+        return cell === null || cell === undefined || sourceAtlas.blocked(cell).length > 0;
+      });
+    const opened = openedFor(composed.ground, atlas);
+    if (opened.length > 0) mapDef.passage = opened.map((i) => [i, "pass"]);
+    const animationAssets = (
+      source: typeof composed.animated,
+      toCellId: (cell: number | null) => TileId,
+    ): ImportAnimatedCell[] => source.map((animation) => ({
+      x: animation.x,
+      y: animation.y,
+      above: animation.above,
+      frames: animation.frames.map((cell) => toCellId(cell)),
+      frameSeconds: animation.frameSeconds,
+    }));
+    const baseAnimated = animationAssets(composed.animated, cellId);
+    const animatedVariants: Record<string, ImportAnimatedCell[]> = {
+      [atlas.sheetId]: baseAnimated,
+    };
+
+    const referenced = new Set<number>(globalTilesetReferences);
+    for (const tilesetId of mapTilesetReferences.get(rmId) ?? []) referenced.add(tilesetId);
+    const variants: Record<string, MapTilesetVariant> = {};
+    for (const tilesetId of [...referenced].sort((a, b) => a - b)) {
+      if (tilesetId === rmMap.tilesetId) continue;
+      const variantTileset = rm.tilesets[tilesetId];
+      if (!variantTileset) continue;
+      const { atlas: variantAtlas, images: variantImages } = await atlasFor(tilesetId);
+      // Variants recompose the same source cells against alternate flags and
+      // art. They are output coverage, not additional source constructs, so
+      // do not multiply the source coverage report for every reachable
+      // Change Tileset target.
+      const variantComposed = composeMap(rmMap, variantTileset, variantImages, variantAtlas, cov, false);
+      const variantCellId = (cell: number | null): TileId =>
+        cell === null ? null : `${variantAtlas.sheetId}.${cell}`;
+      variants[variantAtlas.sheetId] = {
+        sheets: [variantAtlas.sheetId],
+        ground: variantComposed.ground.map(variantCellId),
+        upper: variantComposed.upper.map(([i, c]) => [i, variantCellId(c)] as [number, TileId]),
+        passage: openedFor(variantComposed.ground, variantAtlas).map((i) => [i, "pass"]),
+        vehiclePassage: vehiclePassage(rmMap.data, rmMap.width, rmMap.height, variantTileset.flags),
+        terrain: sparseCells(variantComposed.terrain),
+      };
+      animatedVariants[variantAtlas.sheetId] = animationAssets(variantComposed.animated, variantCellId);
     }
+    if (Object.keys(variants).length > 0) {
+      mapDef.tilesetVariants = variants;
+      (assets.animatedVariants ??= {})[id] = animatedVariants;
+    }
+    maps.push(mapDef);
+    if (baseAnimated.length > 0) assets.animated[id] = baseAnimated;
     if (rmMap.parallaxName) cov.record("tile", "parallax", "Native");
     if (rmMap.autoplayBgm && rmMap.bgm?.name) cov.record("tile", "map autoplay BGM", "Degraded", "autoplay BGM is not started on map entry");
     if (rmMap.encounterList?.length) {

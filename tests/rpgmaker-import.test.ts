@@ -12,15 +12,16 @@ import schema from "../src/data/schema.json";
 import { validateSchema } from "../src/engine/schema-validate.ts";
 import { QoaFile } from "../src/ui/audio/qoa.ts";
 import { buildPassage, canStepFrom } from "../src/engine/passability.ts";
+import { mapForTileset, parseTileId } from "../src/engine/tiles.ts";
 import type { Command, Project } from "../src/engine/types.ts";
 import { RM_COMMANDS } from "../tools/rpgmaker-import/catalog.ts";
 import { itemId } from "../tools/rpgmaker-import/ids.ts";
 import { importToDirectory } from "../tools/rpgmaker-import/index.ts";
 import { loadRmProject, RmLoadError } from "../tools/rpgmaker-import/load.ts";
-import { importRmProject, invertInitialParty } from "../tools/rpgmaker-import/project.ts";
+import { importRmProject, invertInitialParty, type ImportResult } from "../tools/rpgmaker-import/project.ts";
 import type { RmCommand, RmProject } from "../tools/rpgmaker-import/rm-types.ts";
 import { commandTableLines, staticCommandTable } from "../tools/rpgmaker-import/report.ts";
-import { writePngBytes } from "../tools/rpgmaker-import/png.ts";
+import { readPng, writePngBytes } from "../tools/rpgmaker-import/png.ts";
 import { lintProject } from "../tools/rpgkit-check/src/lint.ts";
 import { RMI_GAMES } from "./fixtures/rmi-play/games.ts";
 
@@ -57,6 +58,20 @@ function files(dir: string): Map<string, Buffer> {
 function pixel(image: { width: number; data: Uint8Array }, x: number, y: number): number[] {
   const offset = (y * image.width + x) * 4;
   return [...image.data.subarray(offset, offset + 4)];
+}
+
+function tilePixels(result: ImportResult, id: string): Buffer {
+  const { sheet, cell } = parseTileId(id);
+  const meta = result.assets.sheets[sheet]!;
+  const image = result.images.get(meta.png)!;
+  const x0 = (cell % meta.cols) * 16;
+  const y0 = Math.floor(cell / meta.cols) * 16;
+  const out = Buffer.alloc(16 * 16 * 4);
+  for (let y = 0; y < 16; y++) {
+    const from = ((y0 + y) * image.width + x0) * 4;
+    out.set(image.data.subarray(from, from + 16 * 4), y * 16 * 4);
+  }
+  return out;
 }
 
 function allCommands(project: Project): { op: string }[] {
@@ -108,7 +123,7 @@ describe("rpgmaker-import: output", () => {
       },
     ]);
     expect(hollow.project.system?.rpgMakerText).toEqual({ party: [1], currencyUnit: "G" });
-    expect(hollow.project.sheets.map((s) => s.id)).toEqual(["ts1", "ts2", "iconset"]);
+    expect(hollow.project.sheets.map((s) => s.id)).toEqual(["ts1", "ts2", "ts3", "iconset"]);
     // MV is 48 px: composed at 48 and averaged down, every sheet is 16 px.
     expect(stage.project.maps.map((m) => [m.id, m.width, m.height])).toEqual([["map001", 17, 13]]);
     expect(stage.project.sheets.map((s) => s.id)).toEqual(["ts1", "iconset"]);
@@ -336,7 +351,7 @@ describe("rpgmaker-import: output", () => {
     expect(stage.project.system).toMatchObject({
       messageBlocksPlayer: true,
       mapNameDisplay: true,
-      rpgMakerText: { party: [1], currencyUnit: "G" },
+      rpgMakerText: { party: [1, 2], currencyUnit: "G" },
     });
     const messages = allCommands(hollow.project).filter((c) => c.op === "text") as unknown as { lines: string[] }[];
     expect(messages.some((m) => m.lines.some((line) => line.includes("\\V[2]")))).toBe(true);
@@ -355,7 +370,7 @@ describe("rpgmaker-import: output", () => {
     expect(imported.project.system).toEqual({
       messageBlocksPlayer: true,
       mapNameDisplay: true,
-      rpgMakerText: { party: [1], currencyUnit: "G" },
+      rpgMakerText: { party: [1, 2], currencyUnit: "G" },
     });
     expect(hollow.cov.list("escape").find((row) => row.key === "\\C")?.counts).toEqual({
       Native: 8, Degraded: 0, Placeholder: 0, Dropped: 0,
@@ -595,6 +610,111 @@ describe("rpgmaker-import: output", () => {
     expect(cave).toMatchObject({ trigger: "eventTouch", blocks: false });
   });
 
+  test("Change Tileset composes stable map, common-event and troop-event variants", async () => {
+    const root = mkdtempSync(join(SCRATCH_ROOT, "rmi-tileset-"));
+    try {
+      cpSync(HOLLOW, root, { recursive: true });
+      const alternateB = await readPng(join(root, "img/tilesets/Hollow_B.png"));
+      for (let i = 0; i < alternateB.data.length; i += 4) {
+        alternateB.data[i] = 255 - alternateB.data[i]!;
+        alternateB.data[i + 1] = 255 - alternateB.data[i + 1]!;
+        alternateB.data[i + 2] = 255 - alternateB.data[i + 2]!;
+      }
+      writeFileSync(join(root, "img/tilesets/Alternate_B.png"), writePngBytes(alternateB));
+
+      const source = (): RmProject => {
+        const rm = loadRmProject(root);
+        const baseTileset = rm.tilesets[1]!;
+        const rmMap = rm.maps.get(1)!;
+        const fence = 6 * rmMap.width + 16;
+        const plane = rmMap.width * rmMap.height;
+        const fenceTile = rmMap.data[2 * plane + fence]!;
+        const flags = [...baseTileset.flags];
+        // The authored fence blocks downward. The alternate makes it pass
+        // and assigns terrain tag 5 while retaining every unrelated flag.
+        flags[fenceTile] = ((flags[fenceTile] ?? 0) & ~0x0f & ~(0x07 << 12)) | (5 << 12);
+        rm.tilesets[3] = {
+          ...baseTileset,
+          id: 3,
+          name: "Alternate Field",
+          flags,
+          tilesetNames: baseTileset.tilesetNames.map((name, index) => index === 5 ? "Alternate_B" : name),
+        };
+
+        // A map-local reference applies only to map001. Common and troop
+        // references may execute on any current map and are global.
+        rmMap.events[1]!.pages[0]!.list.unshift(
+          { code: 282, indent: 0, parameters: [3] },
+          { code: 282, indent: 0, parameters: [999] },
+        );
+        rm.commonEvents[1]!.list.unshift({ code: 282, indent: 0, parameters: [2] });
+        rm.troops[1]!.pages[0]!.list.unshift({ code: 282, indent: 0, parameters: [1] });
+        return rm;
+      };
+
+      const imported = await importRmProject(source());
+      expect(validateSchema(imported.project, schema as Record<string, unknown>)).toEqual([]);
+      const map = imported.project.maps.find((entry) => entry.id === "map001")!;
+      const other = imported.project.maps.find((entry) => entry.id === "map002")!;
+      expect(map.tileset).toBe("ts1");
+      expect(Object.keys(map.tilesetVariants ?? {})).toEqual(["ts2", "ts3"]);
+      expect(other.tileset).toBe("ts2");
+      expect(Object.keys(other.tilesetVariants ?? {})).toEqual(["ts1"]);
+
+      const alternate = map.tilesetVariants!.ts3!;
+      expect(alternate.sheets).toEqual(["ts3"]);
+      expect(Array.isArray(alternate.upper)).toBe(true);
+      expect(Array.isArray(alternate.passage)).toBe(true);
+      expect(Array.isArray(alternate.vehiclePassage?.boat)).toBe(true);
+      expect(Array.isArray(alternate.vehiclePassage?.ship)).toBe(true);
+      expect(Array.isArray(alternate.vehiclePassage?.airshipLand)).toBe(true);
+      expect(Array.isArray(alternate.terrain)).toBe(true);
+      const fence = 6 * map.width + 16;
+      expect(map.terrain ?? []).not.toContainEqual([fence, 5]);
+      expect(alternate.terrain).toEqual(expect.arrayContaining([[fence, 5]]));
+      expect(tilePixels(imported, map.ground[fence]!)).not.toEqual(tilePixels(imported, alternate.ground[fence]!));
+      const baseUpper = new Map(map.upper ?? []);
+      const alternateUpper = new Map(alternate.upper ?? []);
+      expect(
+        [...baseUpper].some(([cell, tile]) => {
+          const changed = alternateUpper.get(cell);
+          return tile !== null && changed !== undefined && changed !== null &&
+            !tilePixels(imported, tile).equals(tilePixels(imported, changed));
+        }),
+        "alternate upper art differs at an authored star tile",
+      ).toBe(true);
+
+      const sheets = new Map(imported.project.sheets.map((sheet) => [sheet.id, sheet]));
+      const alternateMap = mapForTileset(map, "ts3")!;
+      expect(canStepFrom(buildPassage(map, sheets), 16, 6, 0)).toBe(false);
+      expect(canStepFrom(buildPassage(alternateMap, sheets), 16, 6, 0)).toBe(true);
+
+      expect(imported.project.sheets.map((sheet) => sheet.id)).toContain("ts3");
+      expect(imported.images.has("tiles/ts3.png")).toBe(true);
+      expect(imported.assets.sheets.ts3).toBeDefined();
+      expect(map.tilesetVariants).not.toHaveProperty("ts999");
+      expect(imported.warnings).toContain("Change Tileset references missing tileset 999; no variant was emitted");
+      const animatedVariants = imported.assets.animatedVariants!.map001!;
+      expect(Object.keys(animatedVariants)).toEqual(["ts1", "ts2", "ts3"]);
+      expect(animatedVariants.ts1).toEqual(imported.assets.animated.map001);
+      expect(animatedVariants.ts3.length).toBeGreaterThan(0);
+      expect(animatedVariants.ts3.every((animation) =>
+        animation.frames.every((frame) => frame?.startsWith("ts3.")))).toBe(true);
+      expect(imported.warnings.some((warning) => warning.includes("alternate animated frames"))).toBe(false);
+
+      const again = await importRmProject(source());
+      expect(JSON.stringify(again.project)).toBe(JSON.stringify(imported.project));
+      expect(JSON.stringify(again.assets)).toBe(JSON.stringify(imported.assets));
+      expect(again.warnings).toEqual(imported.warnings);
+      expect([...again.images.keys()]).toEqual([...imported.images.keys()]);
+      for (const [name, image] of imported.images) {
+        expect(Buffer.from(writePngBytes(again.images.get(name)!))).toEqual(Buffer.from(writePngBytes(image)));
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("vehicle passage uses the boat, ship and airship landing bits", async () => {
     const source = loadRmProject(HOLLOW);
     const rmMap = source.maps.get(1)!;
@@ -677,8 +797,12 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(101)!.disposition).toBe("Native");
     expect(by.get(112)!.disposition).toBe("Native");
     expect(by.get(113)!.disposition).toBe("Native");
-    for (const code of [103, 104, 124, 134, 135, 202, 204, 206, 212, 216, 217, 231, 232, 233, 234, 235, 251, 281, 284, 285, 323, 351, 352, 353, 354]) {
+    for (const code of [103, 104, 124, 134, 135, 202, 204, 206, 212, 216, 217, 231, 232, 233, 234, 235, 236, 251, 281, 284, 285, 323, 351, 352, 353, 354]) {
       expect(by.get(code)!.disposition).toBe("Native");
+      expect(by.get(code)!.needsKit).toBe("");
+    }
+    for (const code of [137, 138, 223, 282]) {
+      expect(by.get(code)!.disposition).toBe("Degraded");
       expect(by.get(code)!.needsKit).toBe("");
     }
     expect(by.get(320)!.disposition).toBe("Native");
@@ -694,7 +818,6 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(357)!.disposition).toBe("Placeholder");
     expect(by.get(301)!.disposition).toBe("Native");
     expect(by.get(301)!.needsKit).toBe("");
-    expect(by.get(236)!.needsKit).not.toBe("");
   });
 
   test("an encrypted deployment is refused", () => {

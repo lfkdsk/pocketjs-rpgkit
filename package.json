@@ -16,6 +16,7 @@
     "./ui/battle": "./src/ui/battle/index.ts",
     "./rpgmaker-battle": "./src/rpgmaker-battle/index.ts",
     "./ui/rpgmaker-battle": "./src/ui/rpgmaker-battle/index.tsx",
+    "./ui/rpgmaker-formation": "./src/ui/rpgmaker-formation/index.tsx",
     "./ui/demo": "./src/ui/demo/index.ts",
     "./ui/world": "./src/ui/world/index.ts",
     "./ui/saves": "./src/ui/session-saves.ts",

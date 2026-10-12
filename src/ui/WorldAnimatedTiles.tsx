@@ -24,6 +24,7 @@ export interface WorldAnimatedTilesProps {
   /** Stable, map-id-sorted result from createVisibleWorldMapsReader. */
   visibleMaps: () => readonly WorldPlacement[];
   tiles: Readonly<Record<string, readonly AnimatedTile[]>>;
+  sourceKey?: () => string;
   above: boolean;
   camera: () => ChunkPoint;
   viewport: () => ChunkViewport;
@@ -66,6 +67,7 @@ export function WorldAnimatedTiles(props: WorldAnimatedTilesProps): SolidJSX.Ele
   const pool: NodeMirror[] = [];
   let created = 0;
   let currentComponent = "";
+  let currentSourceKey = "";
   let previousX0 = Number.NaN;
   let previousY0 = Number.NaN;
   let previousX1 = Number.NaN;
@@ -110,9 +112,11 @@ export function WorldAnimatedTiles(props: WorldAnimatedTilesProps): SolidJSX.Ele
     }
     const component = props.component();
     const componentKey = `${component.worldId}\0${component.componentId}`;
-    if (componentKey !== currentComponent) {
+    const sourceKey = props.sourceKey?.() ?? "";
+    if (componentKey !== currentComponent || sourceKey !== currentSourceKey) {
       clear();
       currentComponent = componentKey;
+      currentSourceKey = sourceKey;
     }
     const ring = props.ringTiles ?? 1;
     if (!Number.isInteger(ring) || ring < 0) {

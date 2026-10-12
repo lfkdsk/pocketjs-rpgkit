@@ -175,6 +175,7 @@ function createRuntime(host: GameViewWorldFactoryHost, options: WorldRendererOpt
                 component={component}
                 visibleMaps={visibleMaps}
                 tiles={props.animated}
+                sourceKey={props.animatedSourceKey}
                 above={false}
                 camera={props.camera}
                 viewport={props.viewport}
@@ -218,6 +219,7 @@ function createRuntime(host: GameViewWorldFactoryHost, options: WorldRendererOpt
                 component={component}
                 visibleMaps={visibleMaps}
                 tiles={props.animated}
+                sourceKey={props.animatedSourceKey}
                 above
                 camera={props.camera}
                 viewport={props.viewport}

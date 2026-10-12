@@ -13,6 +13,8 @@
 // does not move or shrink the content: a themed box lays out its text on
 // exactly the same pixels as the default one.
 
+import type { ScreenTone } from "../engine/types.ts";
+
 export interface UiTheme {
   /** Outer frame of every panel; also the fill of the speaker name tab. */
   border: string;
@@ -50,6 +52,45 @@ export function resolveUiTheme(theme?: Partial<UiTheme>): UiTheme {
     if (value !== undefined) out[key] = value;
   }
   return out;
+}
+
+function toneChannel(value: number): string {
+  return Math.round(Math.max(0, Math.min(255, value))).toString(16).padStart(2, "0");
+}
+
+/** Apply an RPG Maker tone to one flat theme colour. Window chrome is made
+ * from flat fills rather than a texture, so this can transform the actual
+ * colour instead of adding another translucent View. Invalid host colours
+ * remain unchanged. */
+function windowToneColor(color: string, tone: Readonly<ScreenTone>): string {
+  let hex = color.startsWith("#") ? color.slice(1) : "";
+  if (hex.length === 3 || hex.length === 4) hex = [...hex].map((part) => part + part).join("");
+  if ((hex.length !== 6 && hex.length !== 8) || !/^[0-9a-fA-F]+$/.test(hex)) return color;
+
+  const channels = [
+    parseInt(hex.slice(0, 2), 16) + tone.r,
+    parseInt(hex.slice(2, 4), 16) + tone.g,
+    parseInt(hex.slice(4, 6), 16) + tone.b,
+  ];
+  return `#${channels.map(toneChannel).join("")}${hex.length === 8 ? hex.slice(6).toLowerCase() : ""}`;
+}
+
+/** Runtime RPG Maker window tone for message/choice/menu chrome. A missing
+ * or RGB-neutral tone returns the original theme reference and allocates
+ * nothing. The command's gray channel and ink/accent colours are intentionally
+ * ignored: MV applies only RGB offsets to its windowskin chrome. */
+export function windowToneTheme(
+  theme: Partial<UiTheme> | undefined,
+  tone: Readonly<ScreenTone> | undefined,
+): Partial<UiTheme> | undefined {
+  if (!tone || (tone.r === 0 && tone.g === 0 && tone.b === 0)) return theme;
+  const resolved = resolveUiTheme(theme);
+  return {
+    ...resolved,
+    border: windowToneColor(resolved.border, tone),
+    ...(resolved.rim === undefined ? {} : { rim: windowToneColor(resolved.rim, tone) }),
+    paper: windowToneColor(resolved.paper, tone),
+  };
 }
 
 /** A fully transparent colour: a layer that draws nothing. */

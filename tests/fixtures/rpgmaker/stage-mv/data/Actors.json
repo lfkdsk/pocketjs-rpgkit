@@ -1,4 +1,5 @@
 [
 null,
-{"battlerName":"","characterIndex":0,"characterName":"Cast","classId":1,"equips":[0,0,0,0,0],"faceIndex":0,"faceName":"","id":1,"initialLevel":1,"maxLevel":99,"name":"Ivy","nickname":"","note":"","profile":"","traits":[]}
+{"battlerName":"","characterIndex":0,"characterName":"Cast","classId":1,"equips":[0,0,0,0,0],"faceIndex":0,"faceName":"","id":1,"initialLevel":1,"maxLevel":99,"name":"Ivy","nickname":"","note":"","profile":"","traits":[]},
+{"battlerName":"","characterIndex":4,"characterName":"Cast","classId":1,"equips":[0,0,0,0,0],"faceIndex":0,"faceName":"","id":2,"initialLevel":1,"maxLevel":99,"name":"Rowan","nickname":"","note":"","profile":"","traits":[]}
 ]

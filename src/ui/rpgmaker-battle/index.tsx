@@ -32,6 +32,8 @@ import type {
   RpgMakerBattleDatabase,
   RpgMakerBattleState,
 } from "../../rpgmaker-battle/types.ts";
+import { ScreenToneWeatherLayer } from "../ScreenToneWeatherLayer.tsx";
+import { screenToneWeatherActive } from "../screen-presentation.ts";
 
 export interface RpgMakerBattleSceneOptions {
   /** Normalized enemy image id -> baked image source. */
@@ -179,6 +181,7 @@ function FrontViewScene(
                   max={rpgMakerCombatantParam(db, enemy, 0)}
                   width={size()}
                   fill="#e85d75"
+                  theme={props.theme}
                   debugName={`rpgmaker-enemy-hp-${index()}`}
                 />
               </View>
@@ -239,12 +242,24 @@ function FrontViewScene(
                 width={actorWidth()}
                 showNumbers
                 uiText={props.uiText}
+                theme={props.theme}
                 debugName={`rpgmaker-actor-hp-${index()}`}
               />
             </View>
           )}
         </For>
       </View>
+
+      {/* RPG Maker's spriteset-wide presentation covers battlers and the
+          in-scene HUD, while command/message windows remain readable above
+          it. The shared layer is absent until one sparse descriptor exists. */}
+      <Show when={screenToneWeatherActive(props.screen)}>
+        <ScreenToneWeatherLayer
+          screen={() => props.screen}
+          width={() => props.width}
+          height={() => props.height}
+        />
+      </Show>
 
       <Show when={state().phase === "message"}>
         <MessageBand
@@ -253,6 +268,7 @@ function FrontViewScene(
           legend={text.ok}
           width={props.width - 16}
           style={{ insetL: 8, insetB: 8 }}
+          theme={props.theme}
           debugName="rpgmaker-battle-message"
         />
       </Show>
@@ -266,6 +282,7 @@ function FrontViewScene(
           index={state().menuIndex}
           width={menuWidth()}
           style={{ insetR: 8, insetB: 8 }}
+          theme={props.theme}
           debugName="rpgmaker-party-command"
         />
       </Show>
@@ -275,6 +292,7 @@ function FrontViewScene(
           index={state().menuIndex}
           tick={state().nowTick}
           style={{ insetR: 8, insetB: 8 }}
+          theme={props.theme}
           debugName="rpgmaker-actor-command"
         />
       </Show>
@@ -293,6 +311,7 @@ function FrontViewScene(
           description={skills()[state().listIndex]?.description}
           width={menuWidth()}
           style={{ insetR: 8, insetB: 8 }}
+          theme={props.theme}
           debugName="rpgmaker-skill-menu"
         />
       </Show>
@@ -304,6 +323,7 @@ function FrontViewScene(
           description={items()[state().listIndex]?.description}
           width={menuWidth()}
           style={{ insetR: 8, insetB: 8 }}
+          theme={props.theme}
           debugName="rpgmaker-item-menu"
         />
       </Show>
@@ -314,6 +334,7 @@ function FrontViewScene(
           index={Math.max(0, targets().indices.indexOf(state().targetIndex))}
           width={menuWidth()}
           style={{ insetR: 8, insetB: 8 }}
+          theme={props.theme}
           debugName="rpgmaker-target-menu"
         />
       </Show>

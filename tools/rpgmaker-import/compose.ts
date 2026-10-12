@@ -176,6 +176,7 @@ export function composeMap(
   images: TilesetImages,
   atlas: TileAtlas,
   cov: Coverage,
+  recordCoverage = true,
 ): ComposedMap {
   const { width, height, data } = map;
   const flags = tileset.flags;
@@ -258,7 +259,7 @@ export function composeMap(
         if (n > 1) out.animated.push({ x, y, above: true, frames, frameSeconds: TILE_ANIM_SECONDS });
       }
 
-      recordCell(cov, stack, shadowBits, region, flags, images);
+      if (recordCoverage) recordCell(cov, stack, shadowBits, region, flags, images);
     }
   }
   return out;
