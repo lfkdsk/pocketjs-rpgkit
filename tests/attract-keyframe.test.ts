@@ -347,6 +347,12 @@ describe("frozen-scene screen keyframes", () => {
               start: "immediate",
               route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
             },
+            {
+              op: "screenTint",
+              layer: "slow",
+              color: { r: 20, g: 40, b: 80, a: 160 },
+              duration: 0.1,
+            },
             { op: "screenFade", direction: "out", duration: 0.1 },
             { op: "screenBackdrop", layer: "cutscene", variant: "first" },
             { op: "text", lines: ["Cover the first backdrop."], cps: 1 },
@@ -391,6 +397,7 @@ describe("frozen-scene screen keyframes", () => {
     expect(opened.move.moving).toBe(true);
     expect(opened.interp.screen).toMatchObject({
       fade: { left: 5 },
+      tints: { slow: { left: 5 } },
       backdrop: { layer: "cutscene", variant: "second" },
       backdropStack: [{ layer: "cutscene", variant: "first" }],
     });
@@ -399,6 +406,7 @@ describe("frozen-scene screen keyframes", () => {
     expect(controllers.live.state.scene).not.toBeNull();
     expect(controllers.live.state.interp.screen).toMatchObject({
       fade: { left: 0 },
+      tints: { slow: { left: 5 } },
       backdrop: { layer: "cutscene", variant: "second" },
       backdropStack: [{ layer: "cutscene", variant: "first" }],
     });
