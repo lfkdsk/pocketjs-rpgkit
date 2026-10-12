@@ -16,6 +16,8 @@ if (!preflight.ok) console.warn(`KRM2 UI bundle isolation test skipped: ${prefli
 const maybeTest = preflight.ok ? test : test.skip;
 
 const KRM2_UI_NEEDLES = [
+  "rpgkit-screen-tone-",
+  "rpgkit-weather-particle-",
   "rpgkit-picture-",
   "rpgkit-timer-hud",
   "rpgkit-map-name-banner",

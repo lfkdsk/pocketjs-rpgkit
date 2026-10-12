@@ -36,23 +36,6 @@ export {
   type ScreenEffectsLayerProps,
 } from "./ScreenEffectsLayer.tsx";
 export {
-  ScreenToneWeatherLayer,
-  type ScreenToneWeatherLayerProps,
-} from "./ScreenToneWeatherLayer.tsx";
-export {
-  screenToneOverlays,
-  screenToneWeatherActive,
-  WEATHER_DIMMER_COLOR,
-  weatherDimmerOpacity,
-  weatherParticleCount,
-  weatherParticleGeometry,
-  weatherParticleVector,
-  weatherParticles,
-  type WeatherParticle,
-  type WeatherParticleGeometry,
-  type WeatherParticleVector,
-} from "./screen-presentation.ts";
-export {
   ScrollTextLayer,
   type ScrollTextLayerProps,
 } from "./ScrollTextLayer.tsx";

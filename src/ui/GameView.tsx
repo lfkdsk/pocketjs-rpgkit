@@ -2416,8 +2416,6 @@ export function GameView(props: GameViewProps) {
       <ScreenEffectsLayer
         screen={presentedScreen}
         layers={screenLayerAssets}
-        width={() => viewport().w}
-        height={() => viewport().h}
       >
         {ScreenPresentationEffects ? (
           <ScreenPresentationEffects

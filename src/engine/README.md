@@ -519,13 +519,15 @@ RPG Maker parser only. Without it, backslashes retain their original literal
 meaning, so existing projects remain byte- and pixel-compatible.
 
 The implementation is a package capability, not part of the ordinary engine
-or UI entry. The capability also owns RPG Maker screen-tone interpolation and
-weather emitter clocks, so those rules are absent from projects that do not
-opt in. A headless session passes `rpgMakerTextRuntime`; a `GameView` also
-passes the paired choice presentation when coloured choices are wanted:
+or UI entry. The capability also owns RPG Maker screen-tone interpolation,
+weather emitter clocks and their presentation, so those rules and nodes are
+absent from projects that do not opt in. A headless session passes
+`rpgMakerTextRuntime`; a `GameView` also passes the KRM2 screen presentation
+and the paired choice presentation when coloured choices are wanted:
 
 ```tsx
 import { rpgMakerTextRuntime } from "pocket-rpgkit/rpgmaker-text";
+import { krm2ScreenPresentation } from "pocket-rpgkit/ui/krm2";
 import { rpgMakerChoiceTextRuntime } from "pocket-rpgkit/ui/rpgmaker-text";
 
 createSession(project, 60, { rpgMakerText: rpgMakerTextRuntime });
@@ -533,6 +535,7 @@ createSession(project, 60, { rpgMakerText: rpgMakerTextRuntime });
   project={project}
   assets={assets}
   rpgMakerText={rpgMakerTextRuntime}
+  screenPresentation={krm2ScreenPresentation}
   choiceText={rpgMakerChoiceTextRuntime}
 />;
 ```

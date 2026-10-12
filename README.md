@@ -1353,8 +1353,9 @@ behavior. Pictures paint in numeric id order and survive map transfers.
 In-flight endpoints, easing phase, rotation and tone live in reducer state,
 so saves and rewind resume them exactly.
 
-Numbered-picture nodes, the timer HUD and the map-name banner are an explicit
-presentation entry. Import `krm2ScreenPresentation` from
+RPG Maker screen tone/weather, numbered-picture nodes, the timer HUD and the
+map-name banner are an explicit presentation entry. Import
+`krm2ScreenPresentation` from
 `pocket-rpgkit/ui/krm2` and pass it as `GameView.screenPresentation`; projects
 that omit it still run and save the commands but keep this UI out of their
 bundle and node tree. The editor and preview host register it themselves.
@@ -1867,6 +1868,14 @@ mount(() => <GameView
   sceneViews={{ [NAME_INPUT_SCENE_ID]: NameInputScene }}
 />);
 ```
+
+The default freeze parks the map's screen effects too. A project that
+declares RPG Maker semantics is the one exception: while a battle owns the
+foreground, its stock `Game_Screen` clocks (fade, tone, flash, shake,
+weather and pictures) keep advancing. Generic scenes and kit-native named
+tints, camera movement, balloons and map-name banners remain parked. Rewind
+keyframes retain the pre-tick descriptor, so replaying from the middle of a
+battle produces the same reducer bytes as uninterrupted play.
 
 The kit ships two built-in scene pairs: the fixed-width
 `rpgkit.numberInput` editor described above, and **name input**, a generic

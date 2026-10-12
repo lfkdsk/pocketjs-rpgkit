@@ -4,17 +4,22 @@
 
 import type { GameScreenPresentation } from "../GameView.tsx";
 import { Krm2HudLayer } from "../Krm2HudLayer.tsx";
-import { Krm2PictureLayer } from "../Krm2PictureLayer.tsx";
+import { Krm2ScreenEffectsLayer } from "../Krm2ScreenEffectsLayer.tsx";
 import { screenEffectsFingerprint } from "../krm2-ui.ts";
 
 export const krm2ScreenPresentation: Readonly<GameScreenPresentation> = {
   fingerprint: screenEffectsFingerprint,
-  effects: Krm2PictureLayer,
+  effects: Krm2ScreenEffectsLayer,
   hud: Krm2HudLayer,
 };
 
 export { Krm2HudLayer, type Krm2HudLayerProps } from "../Krm2HudLayer.tsx";
 export { Krm2PictureLayer } from "../Krm2PictureLayer.tsx";
+export { Krm2ScreenEffectsLayer } from "../Krm2ScreenEffectsLayer.tsx";
+export {
+  ScreenToneWeatherLayer,
+  type ScreenToneWeatherLayerProps,
+} from "../ScreenToneWeatherLayer.tsx";
 export {
   mapNameBannerOpacity,
   pictureRenderStyle,
@@ -25,3 +30,16 @@ export {
   type PictureRenderStyle,
   type PictureToneOverlay,
 } from "../krm2-ui.ts";
+export {
+  screenToneOverlays,
+  screenToneWeatherActive,
+  WEATHER_DIMMER_COLOR,
+  weatherDimmerOpacity,
+  weatherParticleCount,
+  weatherParticleGeometry,
+  weatherParticleVector,
+  weatherParticles,
+  type WeatherParticle,
+  type WeatherParticleGeometry,
+  type WeatherParticleVector,
+} from "../screen-presentation.ts";
