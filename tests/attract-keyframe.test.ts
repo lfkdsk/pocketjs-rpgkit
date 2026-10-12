@@ -330,6 +330,97 @@ describe("frozen-scene screen keyframes", () => {
       .toBe(canonicalJson(controllers.live.state as unknown as JsonValue));
     expectEquivalent(controllers.keyed, controllers.fromZero, "RPG Maker battle settled");
   });
+
+  test("frozen RPG Maker battles preserve immediate motion and backdrop history across rewind", () => {
+    const director: GameEvent = {
+      id: "director",
+      x: 0,
+      y: 0,
+      pages: [
+        {
+          trigger: "autorun",
+          commands: [
+            {
+              op: "moveRoute",
+              target: "player",
+              wait: false,
+              start: "immediate",
+              route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
+            },
+            { op: "screenFade", direction: "out", duration: 0.1 },
+            { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+            { op: "text", lines: ["Cover the first backdrop."], cps: 1 },
+            { op: "switch", id: "director.done", value: true },
+          ],
+        },
+        { condition: { switch: "director.done" }, trigger: "action", commands: [] },
+      ],
+    };
+    const opener: GameEvent = {
+      id: "opener",
+      x: 0,
+      y: 0,
+      pages: [
+        {
+          trigger: "parallel",
+          commands: [
+            { op: "wait", seconds: 1 / 60 },
+            { op: "screenBackdrop", layer: "cutscene", variant: "second", whenModalOpen: "push" },
+            { op: "battle", setup: null },
+            { op: "switch", id: "scene.done", value: true },
+          ],
+        },
+        { condition: { switch: "scene.done" }, trigger: "action", commands: [] },
+      ],
+    };
+    const project = { ...emptyProject(), maps: [map("a", [director, opener])] };
+    project.system = { rpgMakerText: { party: [], currencyUnit: "G" } };
+    const controllers = screenTimelineControllers(project, {
+      battle: timedBattleRules,
+      rpgMakerText: rpgMakerTextRuntime,
+    });
+    enterScreenScene(controllers);
+
+    const opened = controllers.live.state;
+    const openedBytes = canonicalJson(opened as unknown as JsonValue);
+    const openedMotion = canonicalJson({
+      move: opened.move,
+      playerRoute: opened.playerRoute,
+    } as unknown as JsonValue);
+    expect(opened.playerRoute).not.toBeNull();
+    expect(opened.move.moving).toBe(true);
+    expect(opened.interp.screen).toMatchObject({
+      fade: { left: 5 },
+      backdrop: { layer: "cutscene", variant: "second" },
+      backdropStack: [{ layer: "cutscene", variant: "first" }],
+    });
+
+    for (let frame = 0; frame < 8; frame++) stepScreenTimelines(controllers);
+    expect(controllers.live.state.scene).not.toBeNull();
+    expect(controllers.live.state.interp.screen).toMatchObject({
+      fade: { left: 0 },
+      backdrop: { layer: "cutscene", variant: "second" },
+      backdropStack: [{ layer: "cutscene", variant: "first" }],
+    });
+    expect(canonicalJson({
+      move: controllers.live.state.move,
+      playerRoute: controllers.live.state.playerRoute,
+    } as unknown as JsonValue)).toBe(openedMotion);
+    expect(controllers.live.state.interp.screen?.backdropStack)
+      .not.toBe(opened.interp.screen?.backdropStack);
+    expect(canonicalJson(opened as unknown as JsonValue)).toBe(openedBytes);
+
+    const liveMidScene = canonicalJson(controllers.live.state as unknown as JsonValue);
+    rewindAndReplayFrozenSuffix(controllers, liveMidScene, "RPG Maker battle with immediate motion");
+
+    while (controllers.live.state.scene !== null) stepScreenTimelines(controllers);
+    const frozenX = controllers.live.state.move.px;
+    for (let frame = 0; frame < 4; frame++) stepScreenTimelines(controllers);
+    expect(controllers.live.state.move.px).toBeGreaterThan(frozenX);
+    expect(canonicalJson(controllers.keyed.state as unknown as JsonValue))
+      .toBe(canonicalJson(controllers.live.state as unknown as JsonValue));
+    expectEquivalent(controllers.keyed, controllers.fromZero, "RPG Maker battle motion resumed");
+  });
 });
 
 describe("KR2 rewind keyframes", () => {
