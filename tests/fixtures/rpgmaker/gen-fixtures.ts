@@ -621,6 +621,32 @@ const states = (): unknown[] => [
     stepsToRemove: 100,
     traits: [],
   },
+  null,
+  {
+    autoRemovalTiming: 0,
+    chanceByDamage: 0,
+    iconIndex: 2,
+    id: 3,
+    maxTurns: 3,
+    message1: " is marked!",
+    message2: " is marked!",
+    message3: " remains marked.",
+    message4: " is no longer marked.",
+    minTurns: 3,
+    motion: 0,
+    name: "Marked",
+    note: "Fixture state for actor and troop event commands.",
+    overlay: 0,
+    priority: 50,
+    releaseByDamage: false,
+    removeAtBattleEnd: false,
+    removeByDamage: false,
+    removeByRestriction: false,
+    removeByWalking: false,
+    restriction: 0,
+    stepsToRemove: 100,
+    traits: [],
+  },
 ];
 
 // --- System.json -----------------------------------------------------------------------------------
@@ -1412,6 +1438,13 @@ function hollowCave(): RmMap {
       page({
         image: { characterName: "$Golem", characterIndex: 0 },
         list: list(
+          // Exercise map-time actor changes before Battle Processing. The
+          // weapon is first added to inventory because stock Change Equipment
+          // trades with the party rather than conjuring an item.
+          cmd(127, 2, 0, 0, 1, false),
+          cmd(311, 0, 1, 1, 0, 25, false),
+          cmd(313, 0, 1, 0, 3),
+          cmd(319, 1, 1, 2),
           mzText("Golem", "GRRR... who disturbs the deep?"),
           cmd(124, 0, 90),
           battle(
@@ -1529,6 +1562,23 @@ function hollowData(files: Files): void {
         params: [120, 0, 14, 12, 8, 8, 6, 6],
         traits: [{ code: 22, dataId: 0, value: 0.95 }, { code: 31, dataId: 1, value: 0 }],
       },
+      {
+        actions: [{ conditionParam1: 0, conditionParam2: 0, conditionType: 0, rating: 5, skillId: 1 }],
+        battlerHue: 0,
+        battlerName: "Golem",
+        dropItems: [
+          { dataId: 1, denominator: 1, kind: 0 },
+          { dataId: 1, denominator: 1, kind: 0 },
+          { dataId: 1, denominator: 1, kind: 0 },
+        ],
+        exp: 15,
+        gold: 0,
+        id: 2,
+        name: "Golem Echo",
+        note: "Fixture transform target.",
+        params: [80, 20, 10, 10, 8, 8, 5, 5],
+        traits: [{ code: 22, dataId: 0, value: 0.95 }, { code: 31, dataId: 1, value: 0 }],
+      },
     ]),
   );
   const troops: (RmTroop | null)[] = [
@@ -1544,6 +1594,49 @@ function hollowData(files: Files): void {
             switchId: 1, switchValid: false, turnA: 0, turnB: 0, turnEnding: false, turnValid: false,
           },
           list: list(),
+          span: 0,
+        },
+      ],
+    },
+    {
+      id: 2,
+      members: [
+        { enemyId: 1, x: 220, y: 160, hidden: false },
+        { enemyId: 1, x: 300, y: 160, hidden: true },
+      ],
+      name: "Battle Command Demonstration",
+      pages: [
+        {
+          conditions: {
+            actorHp: 50, actorId: 1, actorValid: false, enemyHp: 50, enemyIndex: 0, enemyValid: false,
+            switchId: 1, switchValid: false, turnA: 0, turnB: 0, turnEnding: false, turnValid: true,
+          },
+          list: list(
+            cmd(335, 1),
+            cmd(336, 1, 2),
+            cmd(331, 1, 1, 0, 10, false),
+            cmd(332, 1, 0, 0, 5),
+            cmd(342, 1, 0, 0, 10),
+            cmd(333, 1, 0, 3),
+            cmd(334, 1),
+            cmd(337, 1, 1, false),
+            cmd(339, 0, 1, 1, 0),
+          ),
+          span: 0,
+        },
+      ],
+    },
+    {
+      id: 3,
+      members: [{ enemyId: 1, x: 240, y: 160, hidden: false }],
+      name: "Abort Demonstration",
+      pages: [
+        {
+          conditions: {
+            actorHp: 50, actorId: 1, actorValid: false, enemyHp: 50, enemyIndex: 0, enemyValid: false,
+            switchId: 1, switchValid: false, turnA: 0, turnB: 0, turnEnding: false, turnValid: true,
+          },
+          list: list(cmd(340)),
           span: 0,
         },
       ],

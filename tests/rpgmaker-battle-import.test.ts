@@ -84,8 +84,10 @@ describe("RPG Maker battle database import", () => {
     });
     expect(result.assets.battlers).toEqual({
       enemy001: { png: "battlers/enemy001.png", w: 64, h: 64 },
+      enemy002: { png: "battlers/enemy002.png", w: 64, h: 64 },
     });
     expect(result.images.has("battlers/enemy001.png")).toBe(true);
+    expect(result.images.has("battlers/enemy002.png")).toBe(true);
   });
 
   test("retains actor metadata, slot-aligned equipment catalogs, and authored battle defaults", async () => {
@@ -162,6 +164,9 @@ describe("RPG Maker battle database import", () => {
 
   test("normalizes executable troop enemy effects and records command coverage", async () => {
     const project = loadRmProject(HOLLOW);
+    for (const troop of project.troops.slice(2)) {
+      for (const page of troop?.pages ?? []) page.list = [{ code: 0, indent: 0, parameters: [] }];
+    }
     project.troops[1]!.pages[0]!.list = [
       { code: 331, indent: 0, parameters: [-1, 1, 1, 7, true] },
       { code: 332, indent: 0, parameters: [2, 0, 0, 11] },

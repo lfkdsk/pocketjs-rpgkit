@@ -223,7 +223,7 @@ describe("RPG Maker battle rules", () => {
     const db = cloneDb();
     db.party = [1, 2];
     db.states.push({
-      id: 2, name: "Poison", restriction: 0, priority: 50,
+      id: 99, name: "Poison", restriction: 0, priority: 50,
       minTurns: 2, maxTurns: 2, autoRemovalTiming: 0,
       removeAtBattleEnd: false, removeByDamage: false, chanceByDamage: 0,
       messages: ["", "", "", ""], traits: [],
@@ -254,13 +254,13 @@ describe("RPG Maker battle rules", () => {
     expect(actors["1"].hp).toBe(1);
     expect(actors["2"].hp).toBe(1);
 
-    invoke({ kind: "state", target: { kind: "all" }, operation: "add", stateId: 2 });
+    invoke({ kind: "state", target: { kind: "all" }, operation: "add", stateId: 99 });
     actors = (ext as Record<string, any>).rpgmakerBattle.actors;
-    expect(actors["1"].states).toEqual([{ id: 2, turns: 2 }]);
-    expect(actors["2"].states).toEqual([{ id: 2, turns: 2 }]);
+    expect(actors["1"].states).toEqual([{ id: 99, turns: 2 }]);
+    expect(actors["2"].states).toEqual([{ id: 99, turns: 2 }]);
     invoke({
       kind: "state", target: { kind: "variable", id: "selectedActor" },
-      operation: "remove", stateId: 2,
+      operation: "remove", stateId: 99,
     });
     actors = (ext as Record<string, any>).rpgmakerBattle.actors;
     expect(actors["1"].states).toHaveLength(1);
@@ -328,7 +328,7 @@ describe("RPG Maker battle rules", () => {
     const db = cloneDb();
     db.party = [1, 2];
     db.states.push({
-      id: 2, name: "Poison", restriction: 0, priority: 50,
+      id: 99, name: "Poison", restriction: 0, priority: 50,
       minTurns: 2, maxTurns: 2, autoRemovalTiming: 0,
       removeAtBattleEnd: false, removeByDamage: false, chanceByDamage: 0,
       messages: ["", "", "", ""], traits: [],
@@ -336,7 +336,7 @@ describe("RPG Maker battle rules", () => {
     db.enemies[0]!.params[1] = 30;
     db.enemies.push({
       ...structuredClone(db.enemies[0]!),
-      id: 2,
+      id: 99,
       name: "Crystal Golem",
       params: [80, 50, 50, 10, 8, 8, 20, 6],
       image: "sprites/crystal-golem.png",
@@ -353,12 +353,12 @@ describe("RPG Maker battle rules", () => {
         { kind: "enemyHp", index: 0, operation: "sub", operand: { kind: "constant", value: 10 }, allowDeath: false },
         { kind: "enemyMp", index: 0, operation: "sub", operand: { kind: "constant", value: 5 } },
         { kind: "enemyTp", index: 0, operation: "add", operand: { kind: "constant", value: 100 } },
-        { kind: "enemyState", index: 0, operation: "add", stateId: 2 },
+        { kind: "enemyState", index: 0, operation: "add", stateId: 99 },
         { kind: "enemyAppear", index: 1 },
-        { kind: "enemyTransform", index: 1, enemyId: 2 },
+        { kind: "enemyTransform", index: 1, enemyId: 99 },
         { kind: "enemyHp", index: 1, operation: "sub", operand: { kind: "constant", value: 15 }, allowDeath: true },
         { kind: "enemyMp", index: 1, operation: "sub", operand: { kind: "constant", value: 12 } },
-        { kind: "enemyState", index: 1, operation: "add", stateId: 2 },
+        { kind: "enemyState", index: 1, operation: "add", stateId: 99 },
         { kind: "enemyRecoverAll", index: 1 },
         { kind: "battleAnimation", index: -1, animationId: 4, entireTroop: true, animation: "anim004" },
         { kind: "forceAction", side: "enemy", subject: 1, skillId: 1, target: 1 },
@@ -366,9 +366,9 @@ describe("RPG Maker battle rules", () => {
     }];
 
     const started = state(start(db, 0x10203040).state);
-    expect(started.enemies[0]).toMatchObject({ hp: 110, mp: 25, tp: 100, states: [{ id: 2, turns: 2 }] });
+    expect(started.enemies[0]).toMatchObject({ hp: 110, mp: 25, tp: 100, states: [{ id: 99, turns: 2 }] });
     expect(started.enemies[1]).toMatchObject({
-      databaseId: 2,
+      databaseId: 99,
       name: "Crystal Golem",
       hp: 80,
       mp: 50,
