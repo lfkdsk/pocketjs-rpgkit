@@ -13,7 +13,10 @@ import {
   cameraFocusAt,
   colorAt,
   compositeScreenTints,
+  popScreenBackdrop,
+  pushScreenBackdrop,
   screenEffectsAfterTransfer,
+  SCREEN_BACKDROP_STACK_LIMIT,
   screenShakeOffset,
   startCameraEffect,
   startScreenFlash,
@@ -93,6 +96,7 @@ describe("KS1 deterministic screen presentation", () => {
       { op: "balloon", target: "player" },
       { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
       { op: "screenBackdrop", layer: "cutscene", variant: "blue", whenModalOpen: "ignore" },
+      { op: "screenBackdrop", layer: "cutscene", variant: "portrait", whenModalOpen: "push" },
       { op: "screenBackdrop", layer: "cutscene", variant: null },
     ];
     expect(validateSchema(schema, project(commands))).toEqual([]);
@@ -374,6 +378,173 @@ describe("KS1 deterministic screen presentation", () => {
     expect(state.sw.switches["replacement-attempted"]).toBe(true);
     expect(state.interp.modal?.kind).toBe("text");
     expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "first" });
+  });
+
+  test("whenModalOpen push dismisses the covering dialog, then pop exposes the prior frame", () => {
+    const p = project([
+      { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+      { op: "text", lines: ["This covering dialog is popped by the portrait state."], cps: 1 },
+      { op: "switch", id: "dialog-owner-resumed", value: true },
+      { op: "switch", id: "done", value: true },
+    ]);
+    p.maps[0]!.events!.push({
+      id: "portrait-state",
+      x: 0,
+      y: 0,
+      pages: [{
+        trigger: "parallel",
+        blocks: false,
+        commands: [
+          { op: "wait", seconds: 0.05 },
+          { op: "screenBackdrop", layer: "cutscene", variant: "second", whenModalOpen: "push" },
+          { op: "switch", id: "portrait-pushed", value: true },
+          { op: "wait", seconds: 0.2 },
+          { op: "screenBackdrop", layer: "cutscene", variant: null },
+          { op: "switch", id: "portrait-popped", value: true },
+          { op: "wait", seconds: 30 },
+        ],
+      }],
+    });
+    const session = createSession(p, 60);
+    let state = run(session, startSession(p, session), 8);
+    expect(state.interp.modal).toBeNull();
+    expect(state.sw.switches).toMatchObject({
+      "dialog-owner-resumed": true,
+      "portrait-pushed": true,
+    });
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "second" });
+    expect(state.interp.screen?.backdropStack).toEqual([{ layer: "cutscene", variant: "first" }]);
+
+    const encoded = encodeEnvelope(createSessionSnapshot(session, state, 0));
+    const restored = restoreSessionEnvelope(session, encoded);
+    expect(restored.interp.screen?.backdropStack).toEqual(state.interp.screen?.backdropStack);
+    expect(restored.interp.screen?.backdropStack).not.toBe(state.interp.screen?.backdropStack);
+
+    state = run(session, state, 12);
+    expect(state.sw.switches["portrait-popped"]).toBe(true);
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "first" });
+    expect(state.interp.screen?.backdropStack).toBeUndefined();
+  });
+
+  test("backdrop stack is bounded at eight and overflow has no partial mutation", () => {
+    const screen: ScreenEffectsState = {};
+    for (let i = 0; i < SCREEN_BACKDROP_STACK_LIMIT; i++) {
+      expect(pushScreenBackdrop(screen, { layer: "cutscene", variant: `frame-${i}` })).toBe(true);
+    }
+    expect(screen.backdrop?.variant).toBe("frame-7");
+    expect(screen.backdropStack?.map((entry) => entry.variant)).toEqual([
+      "frame-0", "frame-1", "frame-2", "frame-3", "frame-4", "frame-5", "frame-6",
+    ]);
+    const before = structuredClone(screen);
+    expect(pushScreenBackdrop(screen, { layer: "cutscene", variant: "overflow" })).toBe(false);
+    expect(screen).toEqual(before);
+
+    for (let i = 6; i >= 0; i--) {
+      popScreenBackdrop(screen);
+      expect(screen.backdrop?.variant).toBe(`frame-${i}`);
+    }
+    popScreenBackdrop(screen);
+    expect(screen).toEqual({});
+  });
+
+  test("a ninth modal-covered push fatalizes before changing the modal or stack", () => {
+    const commands: Command[] = [
+      { op: "screenBackdrop", layer: "cutscene", variant: "frame-0" },
+    ];
+    for (let i = 1; i <= SCREEN_BACKDROP_STACK_LIMIT; i++) {
+      commands.push({ op: "text", lines: [`cover-${i}`], cps: 1 });
+    }
+    const p = project(commands);
+    const pushes: Command[] = [];
+    for (let i = 1; i <= SCREEN_BACKDROP_STACK_LIMIT; i++) {
+      pushes.push(
+        { op: "wait", seconds: 0.05 },
+        { op: "screenBackdrop", layer: "cutscene", variant: `frame-${i}`, whenModalOpen: "push" },
+      );
+    }
+    p.maps[0]!.events!.push({
+      id: "stacker",
+      x: 0,
+      y: 0,
+      pages: [{ trigger: "parallel", blocks: false, commands: pushes }],
+    });
+    const session = createSession(p, 60);
+    const state = run(session, startSession(p, session), 40);
+    expect(state.interp.error).toEqual({
+      kind: "content",
+      message: "screenBackdrop in stage/stacker: stack depth exceeds 8",
+    });
+    expect(state.interp.modal).toMatchObject({ kind: "text", lines: ["cover-8"] });
+    expect(state.interp.screen?.backdrop?.variant).toBe("frame-7");
+    expect(state.interp.screen?.backdropStack).toHaveLength(7);
+  });
+
+  test("transfer keeps both the visible backdrop and hidden stack", () => {
+    const p = project([
+      { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+      { op: "text", lines: ["Cover the first image."], cps: 1 },
+    ]);
+    p.maps[0]!.events!.push({
+      id: "portrait-transfer",
+      x: 0,
+      y: 0,
+      pages: [{
+        trigger: "parallel",
+        blocks: false,
+        commands: [
+          { op: "wait", seconds: 0.05 },
+          { op: "screenBackdrop", layer: "cutscene", variant: "second", whenModalOpen: "push" },
+          { op: "transfer", map: "next", x: 3, y: 4, dir: "right", fade: 0 },
+        ],
+      }],
+    });
+    p.maps.push({
+      id: "next", name: "next", width: 8, height: 8, sheets: ["plain"],
+      ground: new Array(64).fill("plain.0"), events: [],
+    });
+    const session = createSession(p, 60);
+    const state = run(session, startSession(p, session), 8);
+    expect(state.mapId).toBe("next");
+    expect(state.interp.screen?.backdrop).toEqual({ layer: "cutscene", variant: "second" });
+    expect(state.interp.screen?.backdropStack).toEqual([{ layer: "cutscene", variant: "first" }]);
+  });
+
+  test("rewind removes a pushed top and deterministic replay rebuilds the same stack", () => {
+    const p = project([
+      { op: "screenBackdrop", layer: "cutscene", variant: "first" },
+      { op: "text", lines: ["Cover the first image."], cps: 1 },
+      { op: "switch", id: "done", value: true },
+    ]);
+    p.maps[0]!.events!.push({
+      id: "portrait-rewind",
+      x: 0,
+      y: 0,
+      pages: [{
+        trigger: "parallel",
+        blocks: false,
+        commands: [
+          { op: "wait", seconds: 0.05 },
+          { op: "screenBackdrop", layer: "cutscene", variant: "second", whenModalOpen: "push" },
+          { op: "wait", seconds: 30 },
+        ],
+      }],
+    });
+    const controller = new AttractController(p, [], {
+      hz: 60,
+      idleFrames: 60_000,
+      rewindSeconds: 0.1,
+      attractEnabled: false,
+    });
+    for (let i = 0; i < 8; i++) controller.step(0);
+    const pushed = structuredClone(controller.state);
+    expect(pushed.interp.screen?.backdrop?.variant).toBe("second");
+    expect(pushed.interp.screen?.backdropStack?.[0]?.variant).toBe("first");
+
+    controller.step(BTN.LTRIGGER);
+    expect(controller.state.interp.screen?.backdrop?.variant).toBe("first");
+    expect(controller.state.interp.screen?.backdropStack).toBeUndefined();
+    for (let i = 0; i < 6; i++) controller.step(0);
+    expect(controller.state).toEqual(pushed);
   });
 
   test("an active backdrop blocks free movement and worldIdle but not event execution", () => {

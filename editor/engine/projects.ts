@@ -1060,11 +1060,23 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["op", "target", "dir"],
+          "properties": {
+            "op": { "const": "face" },
+            "target": { "$ref": "#/$defs/routeTarget" },
+            "dir": { "enum": ["down", "left", "right", "up"] }
+          },
+          "description": "Turn the player or a map event synchronously at the event instruction boundary."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["op", "target", "route"],
           "properties": {
             "op": { "const": "moveRoute" },
             "target": { "$ref": "#/$defs/routeTarget" },
             "wait": { "type": "boolean" },
+            "start": { "const": "immediate" },
             "route": {
               "type": "object",
               "additionalProperties": false,
@@ -1355,9 +1367,9 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "op": { "const": "screenBackdrop" },
             "layer": { "type": "string", "minLength": 1 },
             "variant": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
-            "whenModalOpen": { "const": "ignore" }
+            "whenModalOpen": { "enum": ["ignore", "push"] }
           },
-          "description": "Select a persistent full-screen cutscene backdrop. Omitting or nulling variant closes it. By default a non-null selection always replaces the current backdrop; whenModalOpen: ignore preserves an existing backdrop while a text, choice, or shop modal is active above it."
+          "description": "Select a persistent full-screen cutscene backdrop. Omitting or nulling variant pops the visible frame, exposing a hidden predecessor or closing the stack. By default a non-null selection replaces the visible top. whenModalOpen: ignore preserves a covered top; push pops the covering modal and pushes a new top. Total stack depth is limited to eight."
         },
         {
           "type": "object",

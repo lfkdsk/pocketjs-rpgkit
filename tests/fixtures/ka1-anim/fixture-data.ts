@@ -260,6 +260,72 @@ export const KS1_PROJECT: Project = {
 
 export const KS1_PERSIST_TARGET_ID = "ks1-persist-target";
 
+/** Visible fixture for same-tick scripted motion and the Tuxemon-style
+ * covered backdrop stack. The first action turns/starts the player before
+ * the rendered frame; the following autorun opens a blue image under a
+ * dialog and a parallel event pushes a red portrait above it. */
+export const KTUX1_PROJECT: Project = {
+  ...KA1_PROJECT,
+  title: "Immediate motion and backdrop stack fixture",
+  maps: [{
+    ...KA1_MAP,
+    events: [{
+      id: "ktux-controller",
+      x: PLAYER_START.x,
+      y: PLAYER_START.y + 1,
+      pages: [
+        {
+          trigger: "action",
+          commands: [
+            { op: "face", target: "player", dir: "right" },
+            {
+              op: "moveRoute",
+              target: "player",
+              wait: false,
+              start: "immediate",
+              route: { steps: ["moveRight"], repeat: false, skippable: false },
+            },
+            { op: "switch", id: "ktux.stage.moving", value: true },
+          ],
+        },
+        {
+          condition: { switch: "ktux.stage.moving" },
+          trigger: "autorun",
+          commands: [
+            { op: "screenBackdrop", layer: "cutscene", variant: "blue" },
+            { op: "switch", id: "ktux.stage.covered", value: true },
+            { op: "text", lines: ["Portrait push reveals the earlier scene when it pops."], cps: 1 },
+            { op: "switch", id: "ktux.stage.done", value: true },
+          ],
+        },
+        {
+          condition: { switch: "ktux.stage.done" },
+          trigger: "action",
+          commands: [],
+        },
+      ],
+    }, {
+      id: "ktux-portrait",
+      x: 0,
+      y: 0,
+      pages: [{
+        condition: { switch: "ktux.stage.covered" },
+        trigger: "parallel",
+        blocks: false,
+        commands: [
+          { op: "wait", seconds: 0.05 },
+          { op: "screenBackdrop", layer: "cutscene", variant: "red", whenModalOpen: "push" },
+          { op: "switch", id: "ktux.stage.pushed", value: true },
+          { op: "wait", seconds: 1 },
+          { op: "screenBackdrop", layer: "cutscene", variant: null },
+          { op: "switch", id: "ktux.stage.popped", value: true },
+          { op: "wait", seconds: 30 },
+        ],
+      }],
+    }],
+  }],
+};
+
 /** Two-map visual fixture for transfer-persistent presentation. The source
  * action starts animation/camera/balloon state and transfers immediately;
  * the target's parallel page later opens two exposed backdrops so replacement

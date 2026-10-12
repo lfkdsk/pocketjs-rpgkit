@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `a59ec3e0a1ee74fe08fb75dff938e56b01b8b6b66ccfd102cb9dbb2866d23444` | `face` command; optional `moveRoute.start: "immediate"`; and additive `screenBackdrop.whenModalOpen: "push"` with an eight-frame saved stack. Documents that omit them keep delayed route startup and the prior single-slot backdrop behavior | additive |
 | `f3a5eb5da11bb5eed3fcad2f7e04409883b06f68addeeb48f64d2b3e6afd7db1` | optional per-map tileset identity/variants; `screenTone`, `weather`, `changeTileset`, `windowTone`, `formationAccess` and `formationSwap` commands. Documents that omit these additions retain their previous presentation, terrain and party order | additive |
 | `c394541ca7c28bd85899f944e3d57e506a66cd3d221d14cb5d3d56b4a21cdc13` | `scrollText` and `stopMe` commands; optional audio pan; optional initial actor class/skill/equipment/state facts and actor condition. Documents that omit the additions retain the previous text, centred-audio and actor behavior | additive |
 | `4f6e1e734edff23e4fbf0fb1bd18708fb56c7ce4d8fca99c01773b65d60efab8` | optional per-vehicle BGM (a track or explicit silence) and `setVehicleBgm` command. Documents that omit vehicle BGM retain the previous no-audio-change boarding path | additive |

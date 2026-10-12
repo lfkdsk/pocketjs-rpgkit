@@ -581,13 +581,13 @@ export type Command =
    * retained across transfers. The named asset must be a screen layer;
    * omitting/nulling variant closes the backdrop. A non-null selection
    * replaces the current backdrop even below a modal. `whenModalOpen` is an
-   * opt-in for sources whose state stack ignores replacement when a modal
-   * covers an existing backdrop. */
+   * opt-in for sources whose state stack either ignores replacement or pops
+   * the covering modal and pushes a new visible backdrop. */
   | {
       op: "screenBackdrop";
       layer: string;
       variant?: string | null;
-      whenModalOpen?: "ignore";
+      whenModalOpen?: "ignore" | "push";
     }
   /** Numbered viewport pictures. Coordinates are viewport pixels and can be
    * read from variables when the command executes. Percent scales use 100 as

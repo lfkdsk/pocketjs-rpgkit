@@ -76,7 +76,11 @@ import {
   cloneScreenEffects,
   erasePicture,
   movePicture,
+  popScreenBackdrop,
+  pushScreenBackdrop,
+  replaceScreenBackdrop,
   rotatePicture,
+  screenBackdropDepth,
   screenEffectsEmpty,
   showPicture,
   startCameraEffect,
@@ -86,6 +90,7 @@ import {
   startScreenTint,
   tintPicture,
   OPAQUE_BLACK,
+  SCREEN_BACKDROP_STACK_LIMIT,
   type ScreenEffectsState,
 } from "./screen.ts";
 import type {
@@ -881,7 +886,7 @@ export type Instr =
       frames: number | null;
       wait: boolean;
     }
-  | { op: "screenBackdrop"; layer: string; variant: string | null; whenModalOpen?: "ignore" }
+  | { op: "screenBackdrop"; layer: string; variant: string | null; whenModalOpen?: "ignore" | "push" }
   | {
       op: "showPicture";
       id: number;
@@ -3800,6 +3805,29 @@ function cancelParallelFiber(s: InterpState, key: string): void {
   delete s.parallels[key];
 }
 
+/** Pop the modal state which covers a Tuxemon-style image state and advance
+ * its owning fiber past the modal instruction. This is deliberately a
+ * policy-specific operation: ordinary backdrop replacement never touches
+ * the shared modal slot. */
+function dismissModalForBackdropPush(s: InterpState): boolean {
+  const modal = s.modal;
+  if (modal === null) return true;
+  const fiber = s.main?.key === modal.fiber ? s.main : s.parallels[modal.fiber];
+  if (!fiber || fiber.stack.length === 0) return false;
+  const expected = modal.kind === "text"
+    ? "text"
+    : modal.kind === "scrollText"
+      ? "scrollText"
+      : modal.kind === "choices"
+        ? "choices"
+        : "shop";
+  if (fiber.mode !== expected) return false;
+  fiber.stack[0]!.pc++;
+  fiber.mode = "run";
+  s.modal = null;
+  return true;
+}
+
 /** Drop queued battle/scene requests whose parallel owner changed page. */
 export function pruneStaleQueuedRequests(
   s: InterpState,
@@ -6229,9 +6257,27 @@ function runFiber(
       case "screenBackdrop": {
         if (ins.variant === null) {
           if (s.screen) {
-            delete s.screen.backdrop;
+            popScreenBackdrop(s.screen);
             if (screenEffectsEmpty(s.screen)) delete s.screen;
           }
+        } else if (ins.whenModalOpen === "push" && s.modal !== null) {
+          // Check the bound before popping the covering modal: overflow is a
+          // content error with no partial stack/modal mutation.
+          if (screenBackdropDepth(s.screen) >= SCREEN_BACKDROP_STACK_LIMIT) {
+            s.error = {
+              kind: "content",
+              message: `screenBackdrop in ${f.key}: stack depth exceeds ${SCREEN_BACKDROP_STACK_LIMIT}`,
+            };
+            return;
+          }
+          if (!dismissModalForBackdropPush(s)) {
+            s.error = {
+              kind: "content",
+              message: `screenBackdrop in ${f.key}: covering modal has no resumable owner`,
+            };
+            return;
+          }
+          pushScreenBackdrop(ensureScreen(s), { layer: ins.layer, variant: ins.variant });
         } else if (
           ins.whenModalOpen !== "ignore" ||
           s.screen?.backdrop === undefined ||
@@ -6240,7 +6286,7 @@ function runFiber(
           // Replacement is the legacy/default contract. Sources with a
           // stacked image state can opt in to preserving an existing
           // backdrop while a modal covers it; its owner still resolves it.
-          ensureScreen(s).backdrop = { layer: ins.layer, variant: ins.variant };
+          replaceScreenBackdrop(ensureScreen(s), { layer: ins.layer, variant: ins.variant });
         }
         top.pc++;
         break;

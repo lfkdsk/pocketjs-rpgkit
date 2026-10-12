@@ -17,6 +17,7 @@
 import { MAX_FIBER_STACK_DEPTH } from "./interpreter.ts";
 import { extensionCallNameValid, jsonValueProblem } from "./extensions.ts";
 import { MOTION_HZ } from "./motion-clock.ts";
+import { SCREEN_BACKDROP_STACK_LIMIT } from "./screen.ts";
 import { scalarLength } from "./text-break.ts";
 
 const INTEGER_OPS = new Set([
@@ -26,7 +27,7 @@ const INTEGER_OPS = new Set([
   "playBgm", "fadeoutBgm", "stopBgm", "pauseBgm", "resumeBgm",
   "playBgs", "fadeoutBgs", "playMe", "stopMe", "playSe", "saveBgm", "replayBgm", "stopSe",
   "erase", "exit", "transfer",
-  "moveRoute", "moveControl", "followers", "gatherFollowers", "vehicle",
+  "face", "moveRoute", "moveControl", "followers", "gatherFollowers", "vehicle",
   "setVehicleLocation", "setVehicleImage", "setVehicleBgm", "common", "lockInput", "unlockInput", "place", "shop",
   "mapAnim", "stopAnim", "appearance", "layer", "changeParallax", "tileProperty",
   "screenFade", "screenTint", "screenTone", "weather", "screenFlash", "screenShake", "camera", "scrollMap", "balloon", "screenBackdrop",
@@ -920,6 +921,17 @@ function validateProg(prog: unknown, path: string): string | null {
         }
         break;
       }
+      case "face":
+        if (
+          ins.target !== "player" && ins.target !== "this" &&
+          !(isRecord(ins.target) && typeof ins.target.event === "string" && ins.target.event.length > 0)
+        ) {
+          return fail(`${here}.target`, "player|this|{event: id} required");
+        }
+        if (!["down", "left", "right", "up"].includes(ins.dir as string)) {
+          return fail(`${here}.dir`, "down|left|right|up required");
+        }
+        break;
       case "moveRoute": {
         if (
           ins.target !== "player" &&
@@ -931,6 +943,9 @@ function validateProg(prog: unknown, path: string): string | null {
         const e = validateMoveRoute(ins.route, `${here}.route`);
         if (e) return e;
         if (typeof ins.wait !== "boolean") return fail(`${here}.wait`, "boolean required");
+        if (ins.start !== undefined && ins.start !== "immediate") {
+          return fail(`${here}.start`, "immediate or absent required");
+        }
         break;
       }
       case "moveControl": {
@@ -1153,8 +1168,8 @@ function validateProg(prog: unknown, path: string): string | null {
         if (ins.variant !== null && (typeof ins.variant !== "string" || ins.variant.length === 0)) {
           return fail(`${here}.variant`, "non-empty string or null required");
         }
-        if (ins.whenModalOpen !== undefined && ins.whenModalOpen !== "ignore") {
-          return fail(`${here}.whenModalOpen`, "ignore or absent required");
+        if (ins.whenModalOpen !== undefined && ins.whenModalOpen !== "ignore" && ins.whenModalOpen !== "push") {
+          return fail(`${here}.whenModalOpen`, "ignore|push or absent required");
         }
         break;
       case "showPicture": {
@@ -1733,7 +1748,7 @@ function validatePicture(v: unknown, key: string, path: string): string | null {
 function validateScreenEffects(v: unknown, path: string): string | null {
   if (!isRecord(v)) return fail(path, "screen effects object required");
   const known = new Set([
-    "fade", "tints", "flash", "shake", "camera", "balloons", "backdrop", "pictures", "mapNameBanner", "tone", "weather",
+    "fade", "tints", "flash", "shake", "camera", "balloons", "backdrop", "backdropStack", "pictures", "mapNameBanner", "tone", "weather",
   ]);
   for (const key of Object.keys(v)) {
     if (!known.has(key)) return fail(`${path}.${key}`, "unknown screen effect field");
@@ -1822,6 +1837,24 @@ function validateScreenEffects(v: unknown, path: string): string | null {
     if (!isRecord(backdrop) || typeof backdrop.layer !== "string" || backdrop.layer.length === 0 ||
         typeof backdrop.variant !== "string" || backdrop.variant.length === 0) {
       return fail(`${path}.backdrop`, "non-empty layer and variant strings required");
+    }
+  }
+  if (v.backdropStack !== undefined) {
+    if (!Array.isArray(v.backdropStack) || v.backdropStack.length === 0) {
+      return fail(`${path}.backdropStack`, "non-empty array required");
+    }
+    if (v.backdrop === undefined) {
+      return fail(`${path}.backdropStack`, "hidden frames require a visible backdrop");
+    }
+    if (v.backdropStack.length + 1 > SCREEN_BACKDROP_STACK_LIMIT) {
+      return fail(`${path}.backdropStack`, `total depth must not exceed ${SCREEN_BACKDROP_STACK_LIMIT}`);
+    }
+    for (let i = 0; i < v.backdropStack.length; i++) {
+      const backdrop = v.backdropStack[i];
+      if (!isRecord(backdrop) || typeof backdrop.layer !== "string" || backdrop.layer.length === 0 ||
+          typeof backdrop.variant !== "string" || backdrop.variant.length === 0) {
+        return fail(`${path}.backdropStack[${i}]`, "non-empty layer and variant strings required");
+      }
     }
   }
   if (v.pictures !== undefined) {

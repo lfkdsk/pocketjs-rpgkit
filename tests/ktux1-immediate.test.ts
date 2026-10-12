@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
+import { AttractController } from "../src/engine/attract.ts";
+import { createSessionSnapshot, encodeEnvelope } from "../src/engine/save.ts";
+import { restoreSessionEnvelope } from "../src/engine/save-restore.ts";
+import { validateSchema } from "../src/engine/schema-validate.ts";
 import {
   createSession,
   startSession,
@@ -14,6 +19,7 @@ import type {
   Project,
   TileId,
 } from "../src/engine/types.ts";
+import schema from "../src/data/schema.json";
 
 const TILE: TileId = "tiles.0";
 
@@ -59,7 +65,34 @@ function action(session: Session, state: SessionState): SessionState {
   return stepSession(session, state, { buttons: 0, confirmEdge: true });
 }
 
+function settle(session: Session, state: SessionState): SessionState {
+  let out = state;
+  for (let i = 0; i < 100 && out.move.moving; i++) {
+    out = stepSession(session, out, { buttons: 0 });
+  }
+  return out;
+}
+
 describe("additive immediate scripted facing and route startup", () => {
+  test("schema accepts the additive command/field and rejects malformed values", () => {
+    const valid = project([controller([
+      { op: "face", target: "this", dir: "left" },
+      {
+        op: "moveRoute",
+        target: "player",
+        start: "immediate",
+        route: { steps: ["moveRight"], repeat: false, skippable: false },
+      },
+    ])]);
+    expect(validateSchema(schema, valid)).toEqual([]);
+    const badFace = structuredClone(valid) as any;
+    badFace.maps[0].events[0].pages[0].commands[0].dir = "sideways";
+    expect(validateSchema(schema, badFace).length).toBeGreaterThan(0);
+    const badStart = structuredClone(valid) as any;
+    badStart.maps[0].events[0].pages[0].commands[1].start = "now";
+    expect(validateSchema(schema, badStart).length).toBeGreaterThan(0);
+  });
+
   test("face is rendered now and a later condition in the same fold reads it", () => {
     const p = project([controller([
       { op: "face", target: "player", dir: "right" },
@@ -93,6 +126,12 @@ describe("additive immediate scripted facing and route startup", () => {
     expect(started.move).toMatchObject({ tx: 2, facing: 3, moving: true });
     expect(started.move.px).toBeGreaterThan(32);
     expect(started.playerRoute).toMatchObject({ pc: 1 });
+  });
+
+  test("face this changes the live event sprite in the issuing tick", () => {
+    const run = boot(project([controller([{ op: "face", target: "this", dir: "left" }])]));
+    const out = action(run.session, run.state);
+    expect(out.chars.chars.controller).toMatchObject({ facing: 1, stepDir: 1 });
   });
 
   test("a scripted turn captures a newly eligible facing-gated playerTouch edge", () => {
@@ -150,5 +189,113 @@ describe("additive immediate scripted facing and route startup", () => {
     });
     expect(outcomes[1]).toEqual(outcomes[0]);
     expect(outcomes[2]).toEqual(outcomes[0]);
+  });
+
+  test("an immediate leader step records the breadcrumb and starts a stationary follower once", () => {
+    const trigger = event("controller", 5, 2, [page("action", [{
+      op: "moveRoute",
+      target: "player",
+      wait: false,
+      start: "immediate",
+      route: { steps: ["moveDown"], repeat: false, skippable: false },
+    }])]);
+    const p = project([trigger]);
+    p.followers = { enabled: true, members: [{ id: "friend", sprite: "friend" }] };
+    const run = boot(p);
+    let out = settle(run.session, stepSession(run.session, run.state, { buttons: BTN.RIGHT }));
+    out = settle(run.session, stepSession(run.session, out, { buttons: BTN.RIGHT }));
+    expect(out.travel?.followers?.members[0]).toMatchObject({
+      move: { tx: 3, ty: 2, moving: false },
+      trail: [],
+    });
+    out = action(run.session, out);
+    expect(out.move).toMatchObject({ tx: 4, ty: 2, facing: 0, moving: true });
+    expect(out.travel?.followers?.members[0]).toMatchObject({
+      move: { tx: 3, ty: 2, facing: 3, moving: true, phase: 1 },
+      trail: [{ x: 4, y: 2 }],
+    });
+  });
+
+  test("a ridden vehicle is resynchronized after a tick-tail immediate step", () => {
+    const driver = event("driver", 0, 0, [
+      page("autorun", [
+        {
+          op: "moveRoute",
+          target: "player",
+          wait: false,
+          start: "immediate",
+          route: { steps: ["moveRight"], repeat: false, skippable: false },
+        },
+        { op: "selfSwitch", key: "A", value: true },
+      ]),
+      page("parallel", [], { condition: { selfSwitch: "A" } }),
+    ]);
+    const p = project([driver]);
+    p.vehicles = [{
+      id: "airship",
+      kind: "airship",
+      sprite: "airship",
+      start: { map: "field", x: 2, y: 2, dir: "down" },
+    }];
+    const run = boot(p);
+    const vehicles = run.state.travel!.vehicles!;
+    vehicles.riding = "airship";
+    vehicles.airshipPhase = "cruising";
+    vehicles.airshipAltitude = 16;
+    const out = stepSession(run.session, run.state, { buttons: 0 });
+    const airship = out.travel?.vehicles?.entries.find((entry) => entry.id === "airship");
+    expect(out.move.moving).toBe(true);
+    expect(airship).toMatchObject({ mapId: "field", move: out.move });
+  });
+
+  test("a mid-route save/load resumes byte-identically", () => {
+    const runner = event("runner", 1, 4, [page("action", [])]);
+    const p = project([
+      controller([{
+        op: "moveRoute",
+        target: { event: "runner" },
+        wait: false,
+        start: "immediate",
+        route: { steps: ["moveRight", "moveDown"], repeat: false, skippable: false },
+      }]),
+      runner,
+    ]);
+    const run = boot(p);
+    let live = action(run.session, run.state);
+    live = stepSession(run.session, live, { buttons: 0 });
+    expect(live.chars.chars.runner).toMatchObject({ moving: true });
+    const restored = restoreSessionEnvelope(
+      run.session,
+      encodeEnvelope(createSessionSnapshot(run.session, live, 0), run.session.content),
+    );
+    let resumed = restored;
+    for (let i = 0; i < 20; i++) {
+      live = stepSession(run.session, live, { buttons: 0 });
+      resumed = stepSession(run.session, resumed, { buttons: 0 });
+    }
+    expect(resumed).toEqual(live);
+  });
+
+  test("rewind restores the state before an immediate route began", () => {
+    const p = project([controller([{
+      op: "moveRoute",
+      target: "player",
+      wait: false,
+      start: "immediate",
+      route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
+    }])]);
+    const attract = new AttractController(p, [], {
+      hz: 60,
+      attractEnabled: false,
+      idleFrames: 60_000,
+      rewindSeconds: 0.25,
+    });
+    attract.step(BTN.CIRCLE);
+    for (let i = 0; i < 10; i++) attract.step(0);
+    expect(attract.state.move.px).toBeGreaterThan(32);
+    attract.step(BTN.LTRIGGER);
+    expect(attract.rewound).toBe(true);
+    expect(attract.state.move).toMatchObject({ tx: 2, ty: 2, px: 32, py: 32, facing: 0, moving: false });
+    expect(attract.state.playerRoute).toBeNull();
   });
 });

@@ -69,6 +69,11 @@ export interface ScreenBackdropState {
   variant: string;
 }
 
+/** Visible backdrop plus hidden predecessors may contain at most this many
+ * frames. The small fixed bound keeps hostile authored loops from growing a
+ * save without limit. */
+export const SCREEN_BACKDROP_STACK_LIMIT = 8;
+
 export interface PictureTransformState {
   x: number;
   y: number;
@@ -149,6 +154,9 @@ export interface ScreenEffectsState {
   camera?: CameraEffectState;
   balloons?: Record<string, BalloonEffectState>;
   backdrop?: ScreenBackdropState;
+  /** Hidden frames ordered oldest to nearest-under-top. Omitted when empty;
+   * it is never valid without `backdrop`. */
+  backdropStack?: ScreenBackdropState[];
   pictures?: Record<string, PictureState>;
   mapNameBanner?: MapNameBannerState;
   tone?: ToneTweenState;
@@ -187,6 +195,7 @@ export function cloneScreenEffects(source: ScreenEffectsState | undefined): Scre
     out.balloons = balloons;
   }
   if (source.backdrop) out.backdrop = { ...source.backdrop };
+  if (source.backdropStack) out.backdropStack = source.backdropStack.map((entry) => ({ ...entry }));
   if (source.pictures) {
     const pictures = keyedRecord<PictureState>();
     for (const id of Object.keys(source.pictures)) {
@@ -225,9 +234,50 @@ export function screenEffectsEmpty(screen: ScreenEffectsState): boolean {
   return screen.fade === undefined && screen.tints === undefined &&
     screen.flash === undefined && screen.shake === undefined &&
     screen.camera === undefined && screen.balloons === undefined &&
-    screen.backdrop === undefined && screen.pictures === undefined &&
+    screen.backdrop === undefined && screen.backdropStack === undefined && screen.pictures === undefined &&
     screen.mapNameBanner === undefined && screen.tone === undefined &&
     screen.weather === undefined;
+}
+
+/** Current total backdrop depth, including the visible top. */
+export function screenBackdropDepth(screen: Readonly<ScreenEffectsState> | undefined): number {
+  return screen?.backdrop === undefined ? 0 : 1 + (screen.backdropStack?.length ?? 0);
+}
+
+/** Replace only the visible top, retaining any hidden predecessors. */
+export function replaceScreenBackdrop(
+  screen: ScreenEffectsState,
+  backdrop: Readonly<ScreenBackdropState>,
+): void {
+  screen.backdrop = { ...backdrop };
+}
+
+/** Push a new visible top. Returns false without mutation at the fixed depth
+ * limit; callers turn that authored overflow into a deterministic content
+ * error. */
+export function pushScreenBackdrop(
+  screen: ScreenEffectsState,
+  backdrop: Readonly<ScreenBackdropState>,
+): boolean {
+  if (screenBackdropDepth(screen) >= SCREEN_BACKDROP_STACK_LIMIT) return false;
+  if (screen.backdrop) {
+    (screen.backdropStack ??= []).push({ ...screen.backdrop });
+  }
+  screen.backdrop = { ...backdrop };
+  return true;
+}
+
+/** Remove the visible top and expose its nearest predecessor. With no hidden
+ * predecessor this closes the backdrop exactly like the legacy single slot. */
+export function popScreenBackdrop(screen: ScreenEffectsState): void {
+  const stack = screen.backdropStack;
+  if (stack && stack.length > 0) {
+    screen.backdrop = { ...stack.pop()! };
+    if (stack.length === 0) delete screen.backdropStack;
+    return;
+  }
+  delete screen.backdrop;
+  delete screen.backdropStack;
 }
 
 export function colorAt(tween: Readonly<ColorTweenState>): ScreenColor {

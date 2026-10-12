@@ -84,7 +84,7 @@ const ICON_FRAMES = ["0", "1", "2"] as const;
 const PICTURE_ORIGINS = ["topLeft", "center"] as const;
 const PICTURE_BLENDS = ["normal", "add", "multiply", "screen"] as const;
 const PICTURE_EASINGS = ["linear", "easeIn", "easeOut", "easeInOut"] as const;
-const BACKDROP_MODAL_OPEN = [OMIT, "ignore"] as const;
+const BACKDROP_MODAL_OPEN = [OMIT, "ignore", "push"] as const;
 /** The text window's optional layout fields (schema order) with the value an
  * absent key means. Choosing that default removes the key, so a default text
  * keeps its exact JSON. The hint names the field in Chinese and English. */
@@ -1494,9 +1494,9 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
       }
       if (key === "whenModalOpen") {
         if (raw === OMIT || raw.trim() === "") return good(setOptional(command, "whenModalOpen", undefined));
-        return raw === "ignore"
-          ? good({ ...command, whenModalOpen: "ignore" })
-          : bad(`whenModalOpen must be ignore or ${OMIT}`);
+        return raw === "ignore" || raw === "push"
+          ? good({ ...command, whenModalOpen: raw })
+          : bad(`whenModalOpen must be ignore, push, or ${OMIT}`);
       }
       break;
     }
