@@ -6,7 +6,6 @@ import { View } from "@pocketjs/framework/components";
 import { BTN } from "@pocketjs/framework/input";
 import { deepClone } from "../../engine/clone.ts";
 import type { SessionState } from "../../engine/session.ts";
-import { reconcileFollowers } from "../../engine/travel.ts";
 import type {
   GameViewDemoRuntime,
   GameViewDemoStepResult,
@@ -144,10 +143,9 @@ function makeRuntime(
     const next = deepClone(current) as SessionState;
     next.interp.sw.partyOrder = order;
     next.sw = next.interp.sw;
-    if (next.travel && host.session.travelProject?.followers) {
-      next.travel = reconcileFollowers(
+    if (next.travel && host.session.travelRuntime) {
+      next.travel = host.session.travelRuntime.reconcileFollowers(
         next.travel,
-        host.session.travelProject.followers,
         next.sw.switches,
         next.move,
         order,

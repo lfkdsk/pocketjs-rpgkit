@@ -65,7 +65,7 @@ import type {
   RpgMakerTextLayoutControl,
   RpgMakerTextRuntime,
 } from "./rpgmaker-text-contract.ts";
-import type { PendingTravelRequest, TravelRuntime } from "./travel-contract.ts";
+import type { PendingTravelRequest, TravelCommandRuntime } from "./travel-contract.ts";
 import {
   cloneMoveControlState,
   type MoveControlState,
@@ -2484,7 +2484,7 @@ export interface World {
     runtime: RpgMakerTextRuntime;
   };
   /** Optional command publisher paired with a follower/vehicle Session. */
-  travelRuntime?: TravelRuntime;
+  travelRuntime?: TravelCommandRuntime;
   /** Actor database facts used by imported actor conditions. */
   actors?: ReadonlyMap<string, Readonly<ActorDef>>;
   playerActor?: string;
@@ -2523,7 +2523,7 @@ export interface WorldOptions {
   rpgMakerText?: RpgMakerTextConfig & {
     runtime: RpgMakerTextRuntime;
   };
-  travelRuntime?: TravelRuntime;
+  travelRuntime?: TravelCommandRuntime;
   actors?: readonly ActorDef[];
   playerActor?: string;
   /** Project.system.textTokens is declared: switches {x:<key>} expansion on.

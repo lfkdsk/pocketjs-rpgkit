@@ -145,8 +145,7 @@ describe("session travel opt-in", () => {
     const start = startSession(p, session);
     expect(start.travel).toBeUndefined();
     expect("travel" in start).toBe(false);
-    expect(session.travelProject).toBeNull();
-    expect(session.vehiclePassages).toBeNull();
+    expect(session.travelRuntime).toBeNull();
     expect("travel" in idle(session, start)).toBe(false);
   });
 

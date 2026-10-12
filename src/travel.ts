@@ -8,6 +8,7 @@ import type { TravelRuntime } from "./engine/travel-contract.ts";
 export const travelRuntime: TravelRuntime = Object.freeze({
   ...implementation,
   ...sessionIntegration,
+  bind: sessionIntegration.bindTravelSession,
 });
 export type { TravelRuntime } from "./engine/travel-contract.ts";
 export * from "./engine/travel.ts";

@@ -97,8 +97,8 @@ import {
   continueScene,
 } from "./interpreter.ts";
 import type { RpgMakerTextRuntime } from "./rpgmaker-text-contract.ts";
-import type { TravelState, VehiclePassageTable } from "./travel-types.ts";
-import type { TravelRuntime } from "./travel-contract.ts";
+import type { TravelState } from "./travel-types.ts";
+import type { TravelRuntime, TravelSessionRuntime } from "./travel-contract.ts";
 import { mapForTileset } from "./tiles.ts";
 import {
   assertImmutableJsonValue,
@@ -466,13 +466,9 @@ export interface Session {
   /** Pure game policy for optional movement capabilities named by trusted
    * WorldOpening data. Null retains ordinary terrain checks. */
   handoffCapability: HandoffCapabilityResolver | null;
-  /** Immutable authored definitions retained only by opted-in sessions. */
-  travelProject: Pick<ProjectSource, "followers" | "vehicles"> | null;
   /** Optional follower/vehicle implementation. Null is the walking-only
    * bundle path; projects declaring travel must register this capability. */
-  travelRuntime: TravelRuntime | null;
-  /** Derived per-map special vehicle flags. Absent in walking-only games. */
-  vehiclePassages: Map<string, VehiclePassageTable | undefined> | null;
+  travelRuntime: TravelSessionRuntime | null;
 }
 
 export type HandoffCapabilityResolver = (
@@ -715,9 +711,7 @@ export function acquireSessionMap(sess: Session, id: string): MapDef {
     // layers, so a rebuilt map starts from a fresh runtime view.
     sess.runtimeTables.delete(id);
     sess.preparingMaps.delete(id);
-    if (sess.vehiclePassages && !sess.vehiclePassages.has(id)) {
-      sess.vehiclePassages.set(id, sess.travelRuntime!.buildVehiclePassage(hit));
-    }
+    sess.travelRuntime?.mapAcquired(hit);
     return hit;
   }
   startupProfileMark("map-acquire:start");
@@ -737,7 +731,7 @@ export function acquireSessionMap(sess: Session, id: string): MapDef {
     sess.tables.set(id, prepared.table);
     sess.runtimeTables.delete(id);
     sess.preparingMaps.delete(id);
-    sess.vehiclePassages?.set(id, sess.travelRuntime!.buildVehiclePassage(prepared.map));
+    sess.travelRuntime?.mapAcquired(prepared.map);
     return prepared.map;
   }
   const map = repository.acquire(id);
@@ -760,7 +754,7 @@ export function acquireSessionMap(sess: Session, id: string): MapDef {
   sess.tables.set(id, table);
   sess.runtimeTables.delete(id);
   sess.preparingMaps.delete(id);
-  sess.vehiclePassages?.set(id, sess.travelRuntime!.buildVehiclePassage(map));
+  sess.travelRuntime?.mapAcquired(map);
   startupProfileMark("map-acquire:end");
   return map;
 }
@@ -844,9 +838,7 @@ export function releaseSessionMapsExcept(sess: Session, ids: readonly string[]):
   for (const id of [...sess.worlds.keys()]) if (!keep.has(id)) sess.worlds.delete(id);
   for (const id of [...sess.tables.keys()]) if (!keep.has(id)) sess.tables.delete(id);
   for (const id of [...sess.runtimeTables.keys()]) if (!keep.has(id)) sess.runtimeTables.delete(id);
-  if (sess.vehiclePassages) {
-    for (const id of [...sess.vehiclePassages.keys()]) if (!keep.has(id)) sess.vehiclePassages.delete(id);
-  }
+  sess.travelRuntime?.releaseMapsExcept(keep);
   for (const id of [...sess.preparingMaps.keys()]) {
     if (!keep.has(id)) sess.preparingMaps.delete(id);
   }
@@ -875,9 +867,7 @@ export function releaseSessionMapLayers(
   for (const id of [...sess.worlds.keys()]) if (!compiledKeep.has(id)) sess.worlds.delete(id);
   for (const id of [...sess.tables.keys()]) if (!compiledKeep.has(id)) sess.tables.delete(id);
   for (const id of [...sess.runtimeTables.keys()]) if (id !== active) sess.runtimeTables.delete(id);
-  if (sess.vehiclePassages) {
-    for (const id of [...sess.vehiclePassages.keys()]) if (!parsedKeep.has(id)) sess.vehiclePassages.delete(id);
-  }
+  sess.travelRuntime?.releaseMapsExcept(parsedKeep);
   for (const id of [...sess.preparingMaps.keys()]) {
     if (!parsedKeep.has(id)) {
       sess.preparingMaps.delete(id);
@@ -922,18 +912,13 @@ export function createSession(
       "RPG Maker text: system.rpgMakerText requires the optional rpgMakerText runtime",
     );
   }
-  const travelProject = project.followers !== undefined || (project.vehicles?.length ?? 0) > 0
-    ? { followers: project.followers, vehicles: project.vehicles }
-    : null;
-  if (travelProject && !options.travel) {
+  const hasTravel = project.followers !== undefined || (project.vehicles?.length ?? 0) > 0;
+  if (hasTravel && !options.travel) {
     throw new Error(
       "travel: project followers/vehicles require the optional travel runtime",
     );
   }
-  const travelRuntime = travelProject ? options.travel! : null;
-  const vehiclePassages = (project.vehicles?.length ?? 0) > 0
-    ? new Map<string, VehiclePassageTable | undefined>()
-    : null;
+  const travelRuntime = hasTravel ? options.travel!.bind(project) : null;
   const preparedRpgMakerText = project.system?.rpgMakerText
     ? options.rpgMakerText!.prepare(project.actors ?? [], project.system.rpgMakerText)
     : undefined;
@@ -1014,9 +999,7 @@ export function createSession(
       worldTraversal,
       handoffResolver,
       handoffCapability: options.handoffCapability ?? null,
-      travelProject,
       travelRuntime,
-      vehiclePassages,
     };
     acquireSessionMap(session, project.start.map);
     releaseSessionMapsExcept(session, [project.start.map]);
@@ -1037,9 +1020,7 @@ export function createSession(
     project.maps.map((m) => [m.id, createWorld(m, commonEvents, MOTION_HZ, worldOptions)]),
   );
   const tables = new Map(project.maps.map((m) => [m.id, buildPassage(m, sheets)]));
-  if (vehiclePassages) {
-    for (const map of project.maps) vehiclePassages.set(map.id, travelRuntime!.buildVehiclePassage(map));
-  }
+  travelRuntime?.mapsAcquired(project.maps);
   startupProfileMark("session-create:end");
   return {
     cfg: { tile: project.tileSize, speed: 2 },
@@ -1067,9 +1048,7 @@ export function createSession(
     worldTraversal,
     handoffResolver,
     handoffCapability: options.handoffCapability ?? null,
-    travelProject,
     travelRuntime,
-    vehiclePassages,
   };
 }
 
@@ -1099,9 +1078,7 @@ export function startSession(
       ext: cloneExtension(session.extensions, ext0 === undefined ? session.extensions.initial : ext0),
       scene: null,
     };
-    const travel = session.travelProject
-      ? session.travelRuntime!.createTravelState(session.travelProject, move, session.cfg, interp.sw.switches)
-      : undefined;
+    const travel = session.travelRuntime?.createTravelState(move, session.cfg, interp.sw.switches);
     if (travel) state.travel = travel;
     showMapNameBanner(state, session.maps.get(start.map)!);
     startupProfileMark("session-start:end");
@@ -1127,9 +1104,7 @@ export function startSession(
     ext: cloneExtension(session.extensions, ext0 === undefined ? session.extensions.initial : ext0),
     scene: null,
   };
-  const travel = session.travelProject
-    ? session.travelRuntime!.createTravelState(session.travelProject, move, session.cfg, interp.sw.switches)
-    : undefined;
+  const travel = session.travelRuntime?.createTravelState(move, session.cfg, interp.sw.switches);
   if (travel) state.travel = travel;
   showMapNameBanner(state, session.maps.get(start.map)!);
   startupProfileMark("session-start:end");
@@ -1282,7 +1257,7 @@ export function createSandboxSession(sess: Session): Session {
     worlds: new Map(),
     tables: new Map(),
     runtimeTables: new Map(),
-    vehiclePassages: sess.vehiclePassages ? new Map() : null,
+    travelRuntime: sess.travelRuntime?.fork() ?? null,
     preparingMaps: new Map(),
     repository: SANDBOX_REPOSITORY,
     // Known ids stay known (a transfer to one is a transfer, not a content
@@ -1311,9 +1286,7 @@ export function holdSandboxMap(sandbox: Session, live: Session, map: Readonly<Ma
     const table = live.tables.get(id) ?? staged?.table;
     if (world && !sandbox.worlds.has(id)) sandbox.worlds.set(id, world);
     if (table && !sandbox.tables.has(id)) sandbox.tables.set(id, table);
-    if (sandbox.vehiclePassages && !sandbox.vehiclePassages.has(id)) {
-      sandbox.vehiclePassages.set(id, live.vehiclePassages?.get(id) ?? sandbox.travelRuntime!.buildVehiclePassage(map));
-    }
+    sandbox.travelRuntime?.mapAcquired(map);
   }
   if (sandbox.worlds.has(id)) sandboxWorldBuilds.get(sandbox)?.delete(id);
   return !sandbox.worlds.has(id) || !sandbox.tables.has(id);
@@ -3047,7 +3020,7 @@ function stepReferenceTick(
   let travel = s.travel;
   const vehicleAtTickStart = travel === undefined
     ? undefined
-    : sess.travelRuntime!.beginTravelReferenceTick(s, sess.travelProject?.followers, sess.cfg);
+    : sess.travelRuntime!.beginTravelReferenceTick(s, sess.cfg);
   travel = s.travel;
 
   // A handoff owns the source map through its final interpolation tick. Move
@@ -3291,7 +3264,7 @@ function stepReferenceTick(
   const playerFree = !handoffAtStart && !busy && !capturesDpad && !held &&
     s.playerRoute === null && !s.interp.inputLocked && s.interp.screen?.backdrop === undefined;
   const vehicleAction = input.confirmEdge === true && playerFree && travel !== undefined &&
-    sess.travelRuntime!.tryToggleVehicle(s, map, passage, sess.cfg, sess.vehiclePassages);
+    sess.travelRuntime!.tryToggleVehicle(s, map, passage, sess.cfg);
   if (vehicleAction) travel = s.travel;
   let finishedWaiters: string[];
   let playerRouteSettings = DEFAULT_MOVE_SETTINGS as ResolvedMoveSettings;
@@ -3351,7 +3324,6 @@ function stepReferenceTick(
           terrainPassage,
           passage,
           map,
-          sess.vehiclePassages,
           authoredPlayerSettings,
         );
     const playerSettings = travelMovement?.settings ?? authoredPlayerSettings;
@@ -3588,7 +3560,6 @@ function stepReferenceTick(
       passage,
       sess.cfg,
       (id) => mapDimensions(sess, id),
-      sess.vehiclePassages,
     );
   }
   s.sw = s.interp.sw;

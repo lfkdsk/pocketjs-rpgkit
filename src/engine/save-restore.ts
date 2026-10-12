@@ -296,13 +296,8 @@ export function restoreSessionSnapshot(
   };
   if (snap.travel) {
     state.travel = deepClone(snap.travel);
-  } else if (session.travelProject) {
-    const travel = session.travelRuntime!.createTravelState(
-      session.travelProject,
-      state.move,
-      session.cfg,
-      state.sw.switches,
-    );
+  } else if (session.travelRuntime) {
+    const travel = session.travelRuntime.createTravelState(state.move, session.cfg, state.sw.switches);
     if (travel) state.travel = travel;
   }
   // Older saves have no left-map snapshot: that map shows its entry preview.

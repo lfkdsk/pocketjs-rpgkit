@@ -50,6 +50,14 @@ export type TravelPublishResult =
   | { readonly request: PendingTravelRequest; readonly wait: boolean }
   | { readonly error: string };
 
+export interface TravelCommandRuntime {
+  publishTravelRequest(
+    instruction: TravelInstruction,
+    variables: Readonly<Record<string, number | string>>,
+    fiber: string,
+  ): TravelPublishResult;
+}
+
 export interface TravelMovementContext {
   riding: Readonly<VehicleTravelState> | null;
   settings: ResolvedMoveSettings;
@@ -57,12 +65,70 @@ export interface TravelMovementContext {
   passage: PassageTable;
 }
 
-export interface TravelRuntime {
-  publishTravelRequest(
-    instruction: TravelInstruction,
-    variables: Readonly<Record<string, number | string>>,
-    fiber: string,
-  ): TravelPublishResult;
+/** Project-bound facade used by Session. Authored definitions and derived
+ * vehicle passage tables live in the opt-in module, so walking-only bundles
+ * retain only one nullable capability reference. */
+export interface TravelSessionRuntime extends TravelCommandRuntime {
+  fork(): TravelSessionRuntime;
+  mapAcquired(map: Readonly<MapDef>): void;
+  mapsAcquired(maps: readonly Readonly<MapDef>[]): void;
+  releaseMapsExcept(keep: ReadonlySet<string>): void;
+  createTravelState(
+    player: Readonly<MovementState>,
+    cfg: Readonly<MovementConfig>,
+    switches?: Readonly<Record<string, boolean>>,
+  ): TravelState | undefined;
+  cloneTravelState(state: Readonly<TravelState>): TravelState;
+  reconcileFollowers(
+    state: Readonly<TravelState>,
+    switches: Readonly<Record<string, boolean>>,
+    leader: Readonly<MovementState>,
+    partyOrder?: readonly number[],
+  ): TravelState;
+  beginTravelReferenceTick(state: SessionState, cfg: Readonly<MovementConfig>): string | null | undefined;
+  passageWithParkedVehicles(
+    base: PassageTable,
+    state: Readonly<TravelState> | undefined,
+    mapId: string,
+  ): PassageTable;
+  rebaseTravelAfterSeamless(
+    state: Readonly<TravelState> | undefined,
+    rebase: Readonly<SeamlessTravelRebase>,
+  ): TravelState | undefined;
+  syncTravelAfterTransfer(
+    state: Readonly<TravelState> | undefined,
+    mapId: string,
+    player: Readonly<MovementState>,
+  ): TravelState | undefined;
+  travelMovementContext(
+    state: Readonly<SessionState>,
+    terrainPassage: PassageTable,
+    ordinaryPassage: PassageTable,
+    map: Readonly<MapDef>,
+    authoredSettings: Readonly<ResolvedMoveSettings>,
+  ): TravelMovementContext;
+  tryToggleVehicle(
+    state: SessionState,
+    map: Readonly<MapDef>,
+    passage: PassageTable,
+    cfg: Readonly<MovementConfig>,
+  ): boolean;
+  finishTravelMovement(
+    state: SessionState,
+    cfg: Readonly<MovementConfig>,
+    origin: Readonly<{ x: number; y: number; moving: boolean }>,
+  ): void;
+  consumeTravelRequests(
+    state: SessionState,
+    map: Readonly<MapDef>,
+    passage: PassageTable,
+    cfg: Readonly<MovementConfig>,
+    dimensions: MapDimensionsResolver,
+  ): void;
+}
+
+export interface TravelRuntime extends TravelCommandRuntime {
+  bind(project: Pick<Project, "followers" | "vehicles">): TravelSessionRuntime;
   activeVehiclePassage(
     cache: Map<string, VehiclePassageTable | undefined> | null,
     state: Readonly<SessionState>,

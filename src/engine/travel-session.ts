@@ -15,9 +15,10 @@ import type {
   TravelInstruction,
   TravelPublishResult,
   TravelMovementContext,
+  TravelSessionRuntime,
 } from "./travel-contract.ts";
 import type { TravelState, VehiclePassageTable } from "./travel-types.ts";
-import type { Facing, FollowersDef, MapDef, VehicleBgm } from "./types.ts";
+import type { Facing, FollowersDef, MapDef, Project, VehicleBgm } from "./types.ts";
 
 const DX = [0, -1, 0, 1] as const;
 const DY = [1, 0, -1, 0] as const;
@@ -75,6 +76,47 @@ export function publishTravelRequest(
       };
     }
   }
+}
+
+/** Bind authored travel definitions and all derived passage caches once.
+ * Session sees this narrow facade; the concrete reducer remains reachable
+ * only from the explicit travel entry. */
+export function bindTravelSession(
+  source: Pick<Project, "followers" | "vehicles">,
+): TravelSessionRuntime {
+  const project = { followers: source.followers, vehicles: source.vehicles };
+  const cache = (project.vehicles?.length ?? 0) > 0
+    ? new Map<string, VehiclePassageTable | undefined>()
+    : null;
+  return {
+    publishTravelRequest,
+    fork: () => bindTravelSession(project),
+    mapAcquired(map) {
+      if (cache && !cache.has(map.id)) cache.set(map.id, travel.buildVehiclePassage(map));
+    },
+    mapsAcquired(maps) {
+      if (cache) for (const map of maps) cache.set(map.id, travel.buildVehiclePassage(map));
+    },
+    releaseMapsExcept(keep) {
+      if (cache) for (const id of [...cache.keys()]) if (!keep.has(id)) cache.delete(id);
+    },
+    createTravelState: (player, cfg, switches) => travel.createTravelState(project, player, cfg, switches),
+    cloneTravelState: travel.cloneTravelState,
+    reconcileFollowers: (state, switches, leader, partyOrder) => project.followers
+      ? travel.reconcileFollowers(state, project.followers, switches, leader, partyOrder)
+      : travel.cloneTravelState(state),
+    beginTravelReferenceTick: (state, cfg) => beginTravelReferenceTick(state, project.followers, cfg),
+    passageWithParkedVehicles,
+    rebaseTravelAfterSeamless: travel.rebaseTravelAfterSeamless,
+    syncTravelAfterTransfer: travel.syncTravelAfterTransfer,
+    travelMovementContext: (state, terrain, ordinary, map, settings) =>
+      travelMovementContext(state, terrain, ordinary, map, cache, settings),
+    tryToggleVehicle: (state, map, passage, cfg) =>
+      tryToggleVehicle(state, map, passage, cfg, cache),
+    finishTravelMovement,
+    consumeTravelRequests: (state, map, passage, cfg, dimensions) =>
+      consumeTravelRequests(state, map, passage, cfg, dimensions, cache),
+  };
 }
 const blockedVehicleTables = new WeakMap<PassageTable, PassageTable>();
 
