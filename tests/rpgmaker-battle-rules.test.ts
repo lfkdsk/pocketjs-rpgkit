@@ -534,7 +534,7 @@ describe("RPG Maker battle rules", () => {
     expect(started.enemies[0]!.lastTargetIndex).toBe(0);
   });
 
-  test("stock smooth-target retargets an explicit hidden-but-living opponent", () => {
+  test("kit deliberately retargets an explicit hidden-but-living opponent unlike stock", () => {
     const db = cloneDb();
     db.troops[0]!.members.push({ enemyId: 1, x: 320, y: 160, hidden: true });
     Object.assign(db.skills[0]!, {

@@ -515,6 +515,10 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   presentation does not consume them. Encounter Disable works; Encounter Half
   halves progress, ships halve it again, boats keep the walking rate and
   airships freeze the saved countdown. Stock bush doubling is not modelled.
+  One targeting edge intentionally differs from stock: MV/MZ can resolve an
+  explicitly indexed hidden-but-living troop member because hiding does not
+  change `isAlive()`, while the kit redirects that explicit target to the first
+  visible eligible member until an Appear command reveals it.
 - **Trait execution is intentionally bounded.** The battle reducer consumes
   parameter, element, state, hit/evasion/critical, recovery/cost/damage,
   targeting, attack-element/state/speed/times/skill, added-skill, Guard and
