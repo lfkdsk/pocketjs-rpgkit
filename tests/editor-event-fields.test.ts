@@ -417,7 +417,7 @@ describe("event inspector command fields", () => {
     backdrop = edit(backdrop, "whenModalOpen", "ignore");
     expect(backdrop).toHaveProperty("whenModalOpen", "ignore");
     expect(commandFields(backdrop).find((entry) => entry.key === "whenModalOpen")).toMatchObject({
-      value: "ignore", kind: "enum", options: ["(unset)", "ignore"],
+      value: "ignore", kind: "enum", options: ["(unset)", "ignore", "push"],
     });
     backdrop = edit(backdrop, "whenModalOpen", "(unset)");
     expect(backdrop).not.toHaveProperty("whenModalOpen");
