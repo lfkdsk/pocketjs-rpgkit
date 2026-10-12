@@ -1,6 +1,7 @@
 {
   "fallback": [
-    "fonts/NotoSansCJKsc-subset.otf"
+    "fonts/NotoSansCJKsc-subset.otf",
+    "../../../tools/preview/fonts/NotoSansCJKsc-preview.otf"
   ],
   "characterFiles": [
     "fonts/cjk-charset.txt"
