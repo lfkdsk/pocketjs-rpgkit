@@ -80,18 +80,18 @@ const grass = (r: number, g: number, b: number) => g > 120 && g > r + 30 && g > 
 const navy = (r: number, g: number, b: number) => r === 11 && g === 22 && b === 38;
 const battleBg = (r: number, g: number, b: number) => r === 0x16 && g === 0x25 && b === 0x36;
 const curtain = (r: number, g: number, b: number) => r > 60 && r > 2 * g && r > 2 * b;
-/** Mean brightness of the stage above the dialog box (x 104..375, y 32..169). */
-const stageBrightness = (rgba: Uint8Array): number => {
+/** Mean green lead over red/blue above the dialog box (x 104..375, y 32..169). */
+const stageGreenBias = (rgba: Uint8Array): number => {
   let sum = 0;
   let n = 0;
   for (let y = 32; y < 170; y++) {
     for (let x = 104; x < 376; x++) {
       const i = (y * W + x) * 4;
-      sum += rgba[i]! + rgba[i + 1]! + rgba[i + 2]!;
+      sum += rgba[i + 1]! - (rgba[i]! + rgba[i + 2]!) / 2;
       n++;
     }
   }
-  return sum / n / 3;
+  return sum / n;
 };
 
 async function writeShot(game: string, name: string, rgba: Uint8Array): Promise<void> {
@@ -242,11 +242,12 @@ describe("rpgmaker-import journey: stage-mv (cutscene)", () => {
     const parallax = shots.get("parallax")!;
     expect([...parallax.subarray(((32 + 80) * W + (104 + 112)) * 4, ((32 + 80) * W + (104 + 112)) * 4 + 4)])
       .toEqual([255, 224, 144, 255]);
-    // Frame two of the cooked Sparkle animation carries cyan pixels around
-    // the lead actor; the count distinguishes it from the actor alone.
+    // Frame two of the cooked Sparkle animation carries bright aqua pixels
+    // around the lead actor. The native dusk tone shifts their blue source
+    // toward green; this class is absent from the same tinted actor alone.
     expect(censusRect(
       shots.get("sparkle")!, 200, 42, 280, 120,
-      (r, g, b) => b > 220 && g > 180 && b > r + 30,
+      (r, g, b) => g > 195 && b > 150 && g > r + 50,
     )).toBeGreaterThan(8);
     // Erase Event hides the smoke puff (6,5) for good: the cell shows the
     // stage floor again (the 17x13 map is centred: origin (104,32)).
@@ -263,7 +264,9 @@ describe("rpgmaker-import journey: stage-mv (cutscene)", () => {
       32 + 6 * 16,
       (r, _g, b) => r > 80 && r - b > 40,
     )).toBeGreaterThan(160);
-    // The dusk tint darkens the stage compared with after the cutscene.
-    expect(stageBrightness(shots.get("tint")!)).toBeLessThan(stageBrightness(shots.get("cutscene-done")!) * 0.97);
+    // The authored [-68,+34,-17,96] tone gives the stage a pronounced
+    // green lead; clearing it restores the fixture's warm red/brown palette.
+    expect(stageGreenBias(shots.get("tint")!))
+      .toBeGreaterThan(stageGreenBias(shots.get("cutscene-done")!) + 50);
   }, 60_000);
 });

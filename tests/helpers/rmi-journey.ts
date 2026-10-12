@@ -339,7 +339,7 @@ export function playHollow(project: Project, battle: RpgMakerBattleDatabase): Rm
 export function playStage(project: Project, battle: RpgMakerBattleDatabase): RmiDriver {
   const d = new RmiDriver(project, battle);
   d.watch("curtain", (s) => s.interp.screen?.pictures?.["1"] !== undefined && s.interp.modal?.kind === "text");
-  d.watch("tint", (s) => Object.keys(s.interp.screen?.tints ?? {}).length > 0 && s.interp.modal?.kind === "text");
+  d.watch("tint", (s) => s.interp.screen?.tone !== undefined && s.interp.modal?.kind === "text");
   d.watch("balloon", (s) => Object.keys(s.interp.screen?.balloons ?? {}).length > 0);
   d.watch("parallax", (s) => s.interp.parallax?.image === "parallax-stageglow" && s.interp.modal?.kind === "text");
   d.watch("sparkle", (s) => {
