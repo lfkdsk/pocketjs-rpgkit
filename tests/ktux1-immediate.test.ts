@@ -4,6 +4,7 @@ import { AttractController } from "../src/engine/attract.ts";
 import { createSessionSnapshot, encodeEnvelope } from "../src/engine/save.ts";
 import { restoreSessionEnvelope } from "../src/engine/save-restore.ts";
 import { validateSchema } from "../src/engine/schema-validate.ts";
+import { travelRuntime } from "../src/travel.ts";
 import {
   createSession,
   startSession,
@@ -57,7 +58,7 @@ function controller(commands: Command[]): GameEvent {
 }
 
 function boot(p: Project, hz = 60): { session: Session; state: SessionState } {
-  const session = createSession(p, hz);
+  const session = createSession(p, hz, { travel: travelRuntime });
   return { session, state: startSession(p, session) };
 }
 

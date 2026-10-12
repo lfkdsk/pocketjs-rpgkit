@@ -413,10 +413,10 @@ export function finishImmediatePlayerRoute(
       state.move,
       cfg,
       { x: origin.x, y: origin.y },
-    );
+    )!;
   }
   if (current.vehicles?.riding) {
-    current = travel.syncRiddenVehicle(current, state.mapId, state.move);
+    current = travel.syncRiddenVehicle(current, state.mapId, state.move)!;
   }
   state.travel = current;
 }
