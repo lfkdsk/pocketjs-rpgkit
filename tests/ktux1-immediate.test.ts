@@ -341,33 +341,46 @@ describe("additive immediate scripted facing and route startup", () => {
     expect(resumed).toEqual(live);
   });
 
-  test("rewind restores the state before an immediate route began", () => {
-    const p = project([controller([
-      {
-        op: "moveControl",
-        target: "player",
-        control: { kind: "routeSpeed", value: 2, tilesPerSecond: 9 },
-      },
-      {
-        op: "moveRoute",
-        target: "player",
-        wait: false,
-        start: "immediate",
-        route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
-      },
-    ])]);
+  test("rewind restores the state before an exact-speed immediate event route began", () => {
+    const p = project([
+      controller([
+        {
+          op: "moveControl",
+          target: { event: "runner" },
+          control: { kind: "routeSpeed", value: 2, tilesPerSecond: 9 },
+        },
+        {
+          op: "moveRoute",
+          target: { event: "runner" },
+          wait: false,
+          start: "immediate",
+          route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
+        },
+      ]),
+      event("runner", 1, 4, [page("action", [])]),
+    ]);
     const attract = new AttractController(p, [], {
       hz: 60,
       attractEnabled: false,
       idleFrames: 60_000,
       rewindSeconds: 0.25,
     });
+    attract.step(0);
+    const beforeRoute = structuredClone(attract.state);
+    expect(beforeRoute.chars.chars.runner).toMatchObject({
+      tx: 1,
+      ty: 4,
+      px: 16,
+      py: 64,
+      facing: 0,
+      moving: false,
+      route: null,
+    });
     attract.step(BTN.CIRCLE);
-    for (let i = 0; i < 10; i++) attract.step(0);
-    expect(attract.state.move.px).toBeGreaterThan(32);
+    for (let i = 0; i < 14; i++) attract.step(0);
+    expect(attract.state.chars.chars.runner?.px).toBeGreaterThan(16);
     attract.step(BTN.LTRIGGER);
     expect(attract.rewound).toBe(true);
-    expect(attract.state.move).toMatchObject({ tx: 2, ty: 2, px: 32, py: 32, facing: 0, moving: false });
-    expect(attract.state.playerRoute).toBeNull();
+    expect(attract.state).toEqual(beforeRoute);
   });
 });
