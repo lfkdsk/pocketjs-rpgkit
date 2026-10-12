@@ -258,8 +258,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 10,485 B of shared interpreter/session/save code. Sunstone authors neither
 // additive behavior, and the isolation needles below still exclude battle,
 // editor and the optional RPG Maker runtime implementations.
+// Frozen-battle routing adds 1,185 B; moving tone/weather presentation to the
+// optional KRM2 entry removes 11,122 B, for a net 9,937 B reduction.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_111_540;
+const EXPECTED_BYTES = 1_101_603;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
