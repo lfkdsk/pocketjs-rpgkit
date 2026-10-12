@@ -24,6 +24,7 @@ import { bakeMapChunks, cutCell } from "../../../tools/lib/chunks.ts";
 import { sliceWalkerSheet, TUXEMON_WALKER_LAYOUT } from "../../../tools/lib/bake.ts";
 import { animatedManifestSource, cookAnimationAtlases, type AnimationSequenceInput } from "../../../tools/lib/animated.ts";
 import { sliceAnimationSheet } from "../../../tools/lib/anim-sheet.ts";
+import { fitPakTexture, resampleRgba } from "../../../tools/lib/pak-image.ts";
 import { importToDirectory } from "../../../tools/rpgmaker-import/index.ts";
 import { readPng, type RgbaImage } from "../../../tools/rpgmaker-import/png.ts";
 
@@ -70,19 +71,6 @@ function padAnimationFrame(png: Uint8Array, width: number, height: number): { pn
     rgba.set(decoded.rgba.subarray(y * width * 4, (y + 1) * width * 4), y * w * 4);
   }
   return { png: encodePNG(rgba, w, h), w, h };
-}
-
-/** Nearest-neighbour resample (pictures only; tile art is never resampled here). */
-function resample(img: RgbaImage, w: number, h: number): Uint8Array {
-  const out = new Uint8Array(w * h * 4);
-  for (let y = 0; y < h; y++) {
-    const sy = Math.min(img.height - 1, Math.floor((y * img.height) / h));
-    for (let x = 0; x < w; x++) {
-      const sx = Math.min(img.width - 1, Math.floor((x * img.width) / w));
-      out.set(img.data.subarray((sy * img.width + sx) * 4, (sy * img.width + sx) * 4 + 4), (y * w + x) * 4);
-    }
-  }
-  return out;
 }
 
 rmSync(ASSETS, { recursive: true, force: true });
@@ -223,7 +211,8 @@ for (const source of RMI_SOURCES) {
   for (const [key, sprite] of Object.entries(assets.sprites)) {
     const img = result.images.get(sprite.png)!;
     if (sprite.kind === "image") {
-      staticSource.push(`${q(key)}: ${q(writeAsset(`${prefix}/sprite-${key}.png`, encodePNG(img.data, img.width, img.height)))}`);
+      const texture = fitPakTexture(img);
+      staticSource.push(`${q(key)}: ${q(writeAsset(`${prefix}/sprite-${key}.png`, encodePNG(texture.data, texture.width, texture.height)))}`);
       continue;
     }
     const frames = sliceWalkerSheet(asSheet(img), { cellW: TILE, cellH: sprite.h, layout: RM_WALKER_LAYOUT }, key);
@@ -237,14 +226,15 @@ for (const source of RMI_SOURCES) {
   }
 
   // --- front-view battlers ------------------------------------------------
-  // ImportAssets keeps the source dimensions for downstream cookers. These
-  // fixture battlers are already power-of-two PNGs, so the registered image
-  // can be copied byte-for-byte into the pak input.
+  // ImportAssets keeps authored dimensions. Real RPG Maker battlers commonly
+  // are not powers of two, so resample them for PocketJS while the battle UI
+  // continues to own their logical on-screen slot.
   const battlerSource: string[] = [];
   for (const [id, battler] of Object.entries(assets.battlers).sort(([a], [b]) => a.localeCompare(b))) {
     const image = result.images.get(battler.png);
     if (!image) throw new Error(`rmi-play: battler ${id} has no imported image ${battler.png}`);
-    const file = writeAsset(`${prefix}/battler-${id}.png`, encodePNG(image.data, image.width, image.height));
+    const texture = fitPakTexture(image);
+    const file = writeAsset(`${prefix}/battler-${id}.png`, encodePNG(texture.data, texture.width, texture.height));
     battlerSource.push(`${q(id)}: ${q(file)}`);
   }
 
@@ -269,7 +259,8 @@ for (const source of RMI_SOURCES) {
   for (const [id, parallax] of Object.entries(assets.parallaxes)) {
     const image = result.images.get(parallax.png);
     if (!image) throw new Error(`rmi-play: parallax ${id} has no imported image ${parallax.png}`);
-    const file = writeAsset(`${prefix}/parallax/${id}.png`, encodePNG(image.data, image.width, image.height));
+    const texture = fitPakTexture(image);
+    const file = writeAsset(`${prefix}/parallax/${id}.png`, encodePNG(texture.data, texture.width, texture.height));
     parallaxSource.push(`${q(id)}: { image: ${q(file)}, w: ${parallax.w}, h: ${parallax.h} }`);
   }
 
@@ -277,7 +268,8 @@ for (const source of RMI_SOURCES) {
   const pictureVariants: string[] = [];
   for (const [variant, rel] of Object.entries(assets.pictures)) {
     const img = await readPng(join(out, rel));
-    const file = writeAsset(`${prefix}/picture-${variant}.png`, encodePNG(resample(img, PICTURE_W, PICTURE_H), PICTURE_W, PICTURE_H));
+    const texture = resampleRgba(img, PICTURE_W, PICTURE_H);
+    const file = writeAsset(`${prefix}/picture-${variant}.png`, encodePNG(texture.data, texture.width, texture.height));
     // The cooked texture is power-of-two for the host, but RPG Maker's
     // picture coordinates and percentage scale use the source PNG's natural
     // logical size. Preserve that size in GameAssets so presentation does
