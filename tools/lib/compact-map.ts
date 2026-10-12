@@ -156,6 +156,26 @@ function encodeSparseInt(entries: readonly [number, number][]): unknown {
   return jsonLength(compact) < jsonLength(raw) ? compact : raw;
 }
 
+function encodeTilesetVariants(variants: NonNullable<MapDef["tilesetVariants"]>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const id of Object.keys(variants)) {
+    const variant = variants[id]!;
+    const encoded: Record<string, unknown> = { g: encodeDense(variant.ground) };
+    if (hasOwn(variant, "sheets")) encoded.s = variant.sheets;
+    if (hasOwn(variant, "upper")) encoded.u = encodeUpper(variant.upper ?? []);
+    if (hasOwn(variant, "passage")) encoded.p = encodePassage(variant.passage ?? []);
+    if (hasOwn(variant, "vehiclePassage")) encoded.q = variant.vehiclePassage;
+    if (hasOwn(variant, "terrain")) encoded.t = encodeSparseInt(variant.terrain ?? []);
+    Object.defineProperty(out, id, {
+      value: encoded,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return out;
+}
+
 /** Sparse [index, [z0,z1,z2,z3]] raw-tile layer: a per-map palette of the
  *  four-tuples plus delta/palette-index pairs, the same shape as the upper
  *  layer's "d" spelling. */
@@ -225,8 +245,11 @@ export function encodeCompactMap(map: MapDef): EncodedCompactMap {
     g: encodeDense(map.ground),
   };
   if (hasOwn(map, "sheets")) value.s = map.sheets;
+  if (hasOwn(map, "tileset")) value.x = map.tileset;
+  if (hasOwn(map, "tilesetVariants")) value.v = encodeTilesetVariants(map.tilesetVariants ?? {});
   if (hasOwn(map, "upper")) value.u = encodeUpper(map.upper ?? []);
   if (hasOwn(map, "passage")) value.p = encodePassage(map.passage ?? []);
+  if (hasOwn(map, "vehiclePassage")) value.q = map.vehiclePassage;
   if (hasOwn(map, "regions")) value.r = encodeSparseInt(map.regions ?? []);
   if (hasOwn(map, "terrain")) value.t = encodeSparseInt(map.terrain ?? []);
   if (hasOwn(map, "tiles")) value.l = encodeTiles(map.tiles ?? []);

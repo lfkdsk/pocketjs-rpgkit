@@ -7,14 +7,19 @@
 // only the small, host-neutral decoder that a game opting into compact maps
 // pays for.
 
-import type { MapDef, ParallaxDef, TileId } from "./types.ts";
+import type { MapDef, MapTilesetVariant, ParallaxDef, TileId, VehiclePassageDef } from "./types.ts";
 
 export const COMPACT_MAP_MAGIC = "rpgkit-map/1";
 
 function isCompactMapField(key: string): boolean {
   return key === "$" || key === "i" || key === "n" || key === "w" || key === "h" ||
     key === "s" || key === "g" || key === "u" || key === "p" || key === "a" ||
-    key === "k" || key === "e" || key === "r" || key === "t" || key === "l";
+    key === "k" || key === "e" || key === "r" || key === "t" || key === "l" ||
+    key === "x" || key === "v" || key === "q";
+}
+
+function isCompactTilesetVariantField(key: string): boolean {
+  return key === "s" || key === "g" || key === "u" || key === "p" || key === "q" || key === "t";
 }
 
 type DenseLayer =
@@ -35,9 +40,12 @@ interface CompactMapEnvelope {
   w: number;
   h: number;
   s?: string[];
+  x?: string;
+  v?: unknown;
   g: DenseLayer;
   u?: SparseTileLayer;
   p?: PassageLayer;
+  q?: unknown;
   a?: unknown;
   k?: string[];
   e?: unknown;
@@ -105,88 +113,88 @@ function decodeParallax(value: unknown): ParallaxDef {
   } as ParallaxDef;
 }
 
-function decodeDense(value: unknown, cells: number): TileId[] {
-  if (!Array.isArray(value) || typeof value[0] !== "string") fail("ground encoding is malformed");
+function decodeDense(value: unknown, cells: number, label = "ground"): TileId[] {
+  if (!Array.isArray(value) || typeof value[0] !== "string") fail(`${label} encoding is malformed`);
   if (value[0] === "j") {
-    if (value.length !== 2) fail("raw ground encoding must have two fields");
+    if (value.length !== 2) fail(`raw ${label} encoding must have two fields`);
     const raw = value[1];
-    if (!Array.isArray(raw) || raw.length !== cells) fail(`raw ground has ${Array.isArray(raw) ? raw.length : "invalid"} cells, expected ${cells}`);
+    if (!Array.isArray(raw) || raw.length !== cells) fail(`raw ${label} has ${Array.isArray(raw) ? raw.length : "invalid"} cells, expected ${cells}`);
     for (let i = 0; i < raw.length; i++) {
-      if (raw[i] !== null && typeof raw[i] !== "string") fail(`raw ground cell ${i} must be a string or null`);
+      if (raw[i] !== null && typeof raw[i] !== "string") fail(`raw ${label} cell ${i} must be a string or null`);
     }
     return raw as TileId[];
   }
-  const palette = tilePalette(value[1], "ground");
+  const palette = tilePalette(value[1], label);
   if (value[0] === "s") {
-    if (value.length !== 4) fail("sparse ground encoding must have four fields");
-    const fallback = integer(value[2], "ground default palette index");
-    if (fallback >= palette.length) fail("ground default palette index is out of range");
-    const encoded = numbers(value[3], "ground exceptions");
-    if (encoded.length % 2 !== 0) fail("ground exceptions must be delta/index pairs");
+    if (value.length !== 4) fail(`sparse ${label} encoding must have four fields`);
+    const fallback = integer(value[2], `${label} default palette index`);
+    if (fallback >= palette.length) fail(`${label} default palette index is out of range`);
+    const encoded = numbers(value[3], `${label} exceptions`);
+    if (encoded.length % 2 !== 0) fail(`${label} exceptions must be delta/index pairs`);
     const out = new Array<TileId>(cells).fill(palette[fallback]!);
     let index = -1;
     for (let cursor = 0; cursor < encoded.length; cursor += 2) {
       const delta = encoded[cursor]!;
       const paletteIndex = encoded[cursor + 1]!;
-      if (delta < 1) fail("ground exception deltas must be positive");
+      if (delta < 1) fail(`${label} exception deltas must be positive`);
       index += delta;
-      if (index >= cells) fail("ground exception index is out of range");
-      if (paletteIndex >= palette.length) fail("ground exception palette index is out of range");
+      if (index >= cells) fail(`${label} exception index is out of range`);
+      if (paletteIndex >= palette.length) fail(`${label} exception palette index is out of range`);
       out[index] = palette[paletteIndex]!;
     }
     return out;
   }
   if (value[0] === "r") {
-    if (value.length !== 3) fail("RLE ground encoding must have three fields");
-    const encoded = numbers(value[2], "ground runs");
-    if (encoded.length % 2 !== 0) fail("ground runs must be length/index pairs");
+    if (value.length !== 3) fail(`RLE ${label} encoding must have three fields`);
+    const encoded = numbers(value[2], `${label} runs`);
+    if (encoded.length % 2 !== 0) fail(`${label} runs must be length/index pairs`);
     const out = new Array<TileId>(cells);
     let cursor = 0;
     for (let i = 0; i < encoded.length; i += 2) {
       const length = encoded[i]!;
       const paletteIndex = encoded[i + 1]!;
-      if (length < 1) fail("ground run lengths must be positive");
-      if (paletteIndex >= palette.length) fail("ground run palette index is out of range");
-      if (cursor + length > cells) fail("ground runs exceed map dimensions");
+      if (length < 1) fail(`${label} run lengths must be positive`);
+      if (paletteIndex >= palette.length) fail(`${label} run palette index is out of range`);
+      if (cursor + length > cells) fail(`${label} runs exceed map dimensions`);
       out.fill(palette[paletteIndex]!, cursor, cursor + length);
       cursor += length;
     }
-    if (cursor !== cells) fail(`ground runs produced ${cursor} cells, expected ${cells}`);
+    if (cursor !== cells) fail(`${label} runs produced ${cursor} cells, expected ${cells}`);
     return out;
   }
-  return fail(`unsupported ground encoding ${JSON.stringify(value[0])}`);
+  return fail(`unsupported ${label} encoding ${JSON.stringify(value[0])}`);
 }
 
-function decodeSparseTiles(value: unknown, cells: number): [number, TileId][] {
-  if (!Array.isArray(value) || typeof value[0] !== "string") fail("upper encoding is malformed");
+function decodeSparseTiles(value: unknown, cells: number, label = "upper"): [number, TileId][] {
+  if (!Array.isArray(value) || typeof value[0] !== "string") fail(`${label} encoding is malformed`);
   if (value[0] === "j") {
-    if (value.length !== 2 || !Array.isArray(value[1])) fail("raw upper layer must be an array");
+    if (value.length !== 2 || !Array.isArray(value[1])) fail(`raw ${label} layer must be an array`);
     const out: [number, TileId][] = [];
     for (let cursor = 0; cursor < value[1].length; cursor++) {
       const pair = value[1][cursor];
-      if (!Array.isArray(pair) || pair.length !== 2) fail(`raw upper entry ${cursor} must be a pair`);
-      const index = integer(pair[0], `raw upper entry ${cursor} index`);
-      if (index >= cells) fail("upper index is out of range");
+      if (!Array.isArray(pair) || pair.length !== 2) fail(`raw ${label} entry ${cursor} must be a pair`);
+      const index = integer(pair[0], `raw ${label} entry ${cursor} index`);
+      if (index >= cells) fail(`${label} index is out of range`);
       if (pair[1] !== null && typeof pair[1] !== "string") {
-        fail(`raw upper entry ${cursor} tile must be a string or null`);
+        fail(`raw ${label} entry ${cursor} tile must be a string or null`);
       }
       out.push([index, pair[1] as TileId]);
     }
     return out;
   }
-  if (value[0] !== "d" || value.length !== 3) fail(`unsupported upper encoding ${JSON.stringify(value[0])}`);
-  const palette = tilePalette(value[1], "upper");
-  const encoded = numbers(value[2], "upper entries");
-  if (encoded.length % 2 !== 0) fail("upper entries must be delta/index pairs");
+  if (value[0] !== "d" || value.length !== 3) fail(`unsupported ${label} encoding ${JSON.stringify(value[0])}`);
+  const palette = tilePalette(value[1], label);
+  const encoded = numbers(value[2], `${label} entries`);
+  if (encoded.length % 2 !== 0) fail(`${label} entries must be delta/index pairs`);
   const out: [number, TileId][] = [];
   let index = -1;
   for (let cursor = 0; cursor < encoded.length; cursor += 2) {
     const delta = encoded[cursor]!;
     const paletteIndex = encoded[cursor + 1]!;
-    if (delta < 1) fail("upper deltas must be positive");
+    if (delta < 1) fail(`${label} deltas must be positive`);
     index += delta;
-    if (index >= cells) fail("upper index is out of range");
-    if (paletteIndex >= palette.length) fail("upper palette index is out of range");
+    if (index >= cells) fail(`${label} index is out of range`);
+    if (paletteIndex >= palette.length) fail(`${label} palette index is out of range`);
     out.push([index, palette[paletteIndex]!]);
   }
   return out;
@@ -217,25 +225,25 @@ function rangeDecode(values: number[], label: string, cells: number): number[] {
   return out;
 }
 
-function decodePassage(value: unknown, cells: number): [number, "pass" | "block"][] {
-  if (!Array.isArray(value) || typeof value[0] !== "string") fail("passage encoding is malformed");
+function decodePassage(value: unknown, cells: number, label = "passage"): [number, "pass" | "block"][] {
+  if (!Array.isArray(value) || typeof value[0] !== "string") fail(`${label} encoding is malformed`);
   if (value[0] === "j") {
-    if (value.length !== 2 || !Array.isArray(value[1])) fail("raw passage must be an array");
+    if (value.length !== 2 || !Array.isArray(value[1])) fail(`raw ${label} must be an array`);
     const out: [number, "pass" | "block"][] = [];
     for (let cursor = 0; cursor < value[1].length; cursor++) {
       const pair = value[1][cursor];
-      if (!Array.isArray(pair) || pair.length !== 2) fail(`raw passage entry ${cursor} must be a pair`);
-      const index = integer(pair[0], `raw passage entry ${cursor} index`);
-      if (index >= cells) fail("passage index is out of range");
+      if (!Array.isArray(pair) || pair.length !== 2) fail(`raw ${label} entry ${cursor} must be a pair`);
+      const index = integer(pair[0], `raw ${label} entry ${cursor} index`);
+      if (index >= cells) fail(`${label} index is out of range`);
       if (pair[1] !== "pass" && pair[1] !== "block") {
-        fail(`raw passage entry ${cursor} value must be pass or block`);
+        fail(`raw ${label} entry ${cursor} value must be pass or block`);
       }
       out.push([index, pair[1]]);
     }
     return out;
   }
   if (value[0] !== "g" || value.length !== 2 || !Array.isArray(value[1])) {
-    fail(`unsupported passage encoding ${JSON.stringify(value[0])}`);
+    fail(`unsupported ${label} encoding ${JSON.stringify(value[0])}`);
   }
   const out: [number, "pass" | "block"][] = [];
   const seen = new Set<number>();
@@ -244,15 +252,15 @@ function decodePassage(value: unknown, cells: number): [number, "pass" | "block"
     if (!Array.isArray(group) || group.length !== 3 ||
       (group[0] !== "pass" && group[0] !== "block") ||
       (group[1] !== "d" && group[1] !== "r")) {
-      fail(`passage group ${groupIndex} is malformed`);
+      fail(`${label} group ${groupIndex} is malformed`);
     }
-    const encoded = numbers(group[2], `passage group ${groupIndex}`);
+    const encoded = numbers(group[2], `${label} group ${groupIndex}`);
     const indices = group[1] === "d"
-      ? deltaDecode(encoded, `passage group ${groupIndex}`)
-      : rangeDecode(encoded, `passage group ${groupIndex}`, cells);
+      ? deltaDecode(encoded, `${label} group ${groupIndex}`)
+      : rangeDecode(encoded, `${label} group ${groupIndex}`, cells);
     for (const index of indices) {
-      if (index >= cells) fail("passage index is out of range");
-      if (seen.has(index)) fail("passage index is duplicated");
+      if (index >= cells) fail(`${label} index is out of range`);
+      if (seen.has(index)) fail(`${label} index is duplicated`);
       seen.add(index);
       out.push([index, group[0]]);
     }
@@ -306,6 +314,66 @@ function decodeSparseInt(value: unknown, cells: number, label: string, min: numb
     }
   }
   out.sort((a, b) => a[0] - b[0]);
+  return out;
+}
+
+function decodeSheets(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    fail(`${label} must be an array of strings`);
+  }
+  return value;
+}
+
+function decodeVehiclePassage(value: unknown, cells: number, label: string): VehiclePassageDef {
+  if (!isObject(value)) fail(`${label} must be an object`);
+  const allowed = new Set(["boat", "ship", "airshipLand"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) fail(`unknown ${label} field ${JSON.stringify(key)}`);
+  }
+  const out: VehiclePassageDef = {};
+  for (const kind of ["boat", "ship", "airshipLand"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(value, kind)) continue;
+    const indices = numbers(value[kind], `${label} ${kind}`);
+    for (const index of indices) {
+      if (index >= cells) fail(`${label} ${kind} index is out of range`);
+    }
+    out[kind] = indices;
+  }
+  return out;
+}
+
+function defineOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function decodeTilesetVariants(value: unknown, cells: number): Record<string, MapTilesetVariant> {
+  if (!isObject(value)) fail("tileset variants must be an object");
+  const out: Record<string, MapTilesetVariant> = {};
+  for (const id of Object.keys(value)) {
+    if (id.length === 0) fail("tileset variant id must not be empty");
+    const raw = value[id];
+    if (!isObject(raw)) fail(`tileset variant ${JSON.stringify(id)} must be an object`);
+    for (const key of Object.keys(raw)) {
+      if (!isCompactTilesetVariantField(key)) {
+        fail(`unknown tileset variant ${JSON.stringify(id)} field ${JSON.stringify(key)}`);
+      }
+    }
+    const label = `tileset variant ${JSON.stringify(id)}`;
+    const variant: MapTilesetVariant = {
+      ground: decodeDense(raw.g, cells, `${label} ground`),
+    };
+    if (raw.s !== undefined) variant.sheets = decodeSheets(raw.s, `${label} sheets`);
+    if (raw.u !== undefined) variant.upper = decodeSparseTiles(raw.u, cells, `${label} upper`);
+    if (raw.p !== undefined) variant.passage = decodePassage(raw.p, cells, `${label} passage`);
+    if (raw.q !== undefined) variant.vehiclePassage = decodeVehiclePassage(raw.q, cells, `${label} vehicle passage`);
+    if (raw.t !== undefined) variant.terrain = decodeSparseInt(raw.t, cells, `${label} terrain`, 1, 7);
+    defineOwn(out as unknown as Record<string, unknown>, id, variant);
+  }
   return out;
 }
 
@@ -449,8 +517,8 @@ export function decodeCompactMap(value: unknown): MapDef {
   if (width > 256 || height > 256) fail("map dimensions exceed the v1 256x256 limit");
   const cells = width * height;
   if (!Number.isSafeInteger(cells)) fail("map dimensions are too large");
-  if (value.s !== undefined && (!Array.isArray(value.s) || value.s.some((item) => typeof item !== "string"))) {
-    fail("sheets must be an array of strings");
+  if (value.x !== undefined && (typeof value.x !== "string" || value.x.length === 0)) {
+    fail("tileset id must be a non-empty string");
   }
   const out: MapDef = {
     id: value.i,
@@ -459,9 +527,12 @@ export function decodeCompactMap(value: unknown): MapDef {
     height,
     ground: decodeDense(value.g, cells),
   };
-  if (value.s !== undefined) out.sheets = value.s;
+  if (value.s !== undefined) out.sheets = decodeSheets(value.s, "sheets");
+  if (value.x !== undefined) out.tileset = value.x;
+  if (value.v !== undefined) out.tilesetVariants = decodeTilesetVariants(value.v, cells);
   if (value.u !== undefined) out.upper = decodeSparseTiles(value.u, cells);
   if (value.p !== undefined) out.passage = decodePassage(value.p, cells);
+  if (value.q !== undefined) out.vehiclePassage = decodeVehiclePassage(value.q, cells, "vehicle passage");
   if (value.r !== undefined) out.regions = decodeSparseInt(value.r, cells, "regions", 1, 255);
   if (value.t !== undefined) out.terrain = decodeSparseInt(value.t, cells, "terrain", 1, 7);
   if (value.l !== undefined) out.tiles = decodeTiles(value.l, cells);

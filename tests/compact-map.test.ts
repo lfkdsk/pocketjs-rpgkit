@@ -9,6 +9,7 @@ import {
   canonicalMapJson,
   createJsonMapRepository,
   sha256Text,
+  validateMapDefStructure,
 } from "../src/engine/map-repository.ts";
 import { canonicalJson } from "../src/engine/save.ts";
 import type { Command, MapDef, Project } from "../src/engine/types.ts";
@@ -237,6 +238,105 @@ describe("compact map codec", () => {
     expect(decoded.tiles).toEqual(map.tiles);
   });
 
+  test("round-trips tileset variants and base/variant vehicle passage without flattening optional fields", () => {
+    const map: MapDef = {
+      id: "tilesets",
+      name: "Tilesets",
+      width: 3,
+      height: 2,
+      sheets: ["field"],
+      tileset: "field",
+      ground: ["field.0", "field.1", null, "field.0", "field.1", "field.0"],
+      upper: [[1, "field.2"]],
+      passage: [[2, "block"]],
+      vehiclePassage: { boat: [0, 1], ship: [], airshipLand: [4] },
+      terrain: [[0, 1]],
+      tilesetVariants: {
+        dungeon: {
+          sheets: ["dungeon"],
+          ground: ["dungeon.0", "dungeon.0", "dungeon.1", null, "dungeon.0", "dungeon.1"],
+          upper: [[2, "dungeon.2"], [5, null]],
+          passage: [[0, "block"], [3, "pass"]],
+          vehiclePassage: { boat: [3], ship: [4, 5], airshipLand: [] },
+          terrain: [[1, 7], [5, 3]],
+        },
+        emptyOptionals: {
+          sheets: [],
+          ground: new Array(6).fill(null),
+          upper: [],
+          passage: [],
+          vehiclePassage: { boat: [] },
+          terrain: [],
+        },
+      },
+      events: [],
+    };
+
+    const encoded = encodeCompactMap(map);
+    const value = JSON.parse(encoded.text) as Record<string, unknown>;
+    const decoded = decodeCompactMap(value);
+    expect(value.x).toBe("field");
+    expect(value.q).toEqual(map.vehiclePassage);
+    expect(hasOwn(value, "v")).toBe(true);
+    expect(canonicalJson(decoded)).toBe(canonicalJson(map));
+    expect(decoded.vehiclePassage).toEqual(map.vehiclePassage);
+    expect(decoded.tilesetVariants?.dungeon).toEqual(map.tilesetVariants?.dungeon);
+    expect(decoded.tilesetVariants?.emptyOptionals).toEqual(map.tilesetVariants?.emptyOptionals);
+  });
+
+  test("repository structure validation recursively checks tileset layers, indices, values and ids", () => {
+    const valid: MapDef = {
+      id: "validated-tilesets",
+      name: "Validated tilesets",
+      width: 2,
+      height: 2,
+      sheets: ["base"],
+      tileset: "base",
+      ground: new Array(4).fill("base.0"),
+      vehiclePassage: { boat: [0], ship: [1], airshipLand: [2] },
+      tilesetVariants: {
+        alternate: {
+          sheets: ["alternate"],
+          ground: new Array(4).fill("alternate.0"),
+          upper: [[0, "alternate.1"]],
+          passage: [[1, "block"]],
+          vehiclePassage: { boat: [2], ship: [3], airshipLand: [] },
+          terrain: [[3, 7]],
+        },
+      },
+      events: [],
+    };
+    expect(() => validateMapDefStructure(valid)).not.toThrow();
+
+    const variant = (map: Record<string, unknown>): Record<string, unknown> =>
+      (map.tilesetVariants as Record<string, Record<string, unknown>>).alternate!;
+    const cases: [string, (map: Record<string, unknown>) => void, RegExp][] = [
+      ["tileset id", (map) => { map.tileset = ""; }, /tileset id must be a non-empty string/],
+      ["base vehicle index", (map) => {
+        (map.vehiclePassage as Record<string, unknown>).boat = [4];
+      }, /vehiclePassage boat index 4 out of range/],
+      ["variant record", (map) => { map.tilesetVariants = []; }, /tilesetVariants must be an object/],
+      ["variant id", (map) => {
+        map.tilesetVariants = { "": structuredClone(variant(map)) };
+      }, /tileset variant id must not be empty/],
+      ["variant sheets", (map) => { variant(map).sheets = [1]; }, /sheets must be an array of strings/],
+      ["variant ground length", (map) => {
+        (variant(map).ground as unknown[]).pop();
+      }, /ground has 3 cells, expected 4/],
+      ["variant upper index", (map) => { variant(map).upper = [[4, "alternate.1"]]; }, /upper index 4 out of range/],
+      ["variant passage value", (map) => { variant(map).passage = [[0, "open"]]; }, /passage entry 0 has an invalid value/],
+      ["variant vehicle index", (map) => {
+        (variant(map).vehiclePassage as Record<string, unknown>).ship = [-1];
+      }, /vehiclePassage ship index -1 out of range/],
+      ["variant terrain tag", (map) => { variant(map).terrain = [[0, 8]]; }, /terrain tag 8 out of range/],
+    ];
+    for (const [name, mutate, error] of cases) {
+      const map = structuredClone(valid) as unknown as Record<string, unknown>;
+      mutate(map);
+      expect(() => validateMapDefStructure(map), name).toThrow(error);
+    }
+  });
+
   test("a map without the new planes encodes exactly as before", () => {
     const map: MapDef = {
       id: "no-planes",
@@ -311,6 +411,34 @@ describe("compact map codec", () => {
         $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 1, h: 1,
         g: ["j", ["tiles.0"], "extra"],
       }, /raw ground encoding must have two fields/],
+      ["empty tileset id", {
+        $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 1, h: 1,
+        g: ["j", ["tiles.0"]], x: "",
+      }, /tileset id must be a non-empty string/],
+      ["short variant ground", {
+        $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 2, h: 1,
+        g: ["j", ["tiles.0", "tiles.0"]], v: { next: { g: ["j", ["tiles.1"]] } },
+      }, /tileset variant "next" ground has 1 cells, expected 2/],
+      ["variant upper index", {
+        $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 1, h: 1,
+        g: ["j", ["tiles.0"]], v: { next: { g: ["j", ["tiles.1"]], u: ["j", [[1, "tiles.2"]]] } },
+      }, /tileset variant "next" upper index is out of range/],
+      ["base vehicle index", {
+        $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 1, h: 1,
+        g: ["j", ["tiles.0"]], q: { boat: [1] },
+      }, /vehicle passage boat index is out of range/],
+      ["variant vehicle index", {
+        $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 1, h: 1,
+        g: ["j", ["tiles.0"]], v: { next: { g: ["j", ["tiles.1"]], q: { ship: [-1] } } },
+      }, /vehicle passage ship 0 must be an integer >= 0/],
+      ["variant terrain tag", {
+        $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 1, h: 1,
+        g: ["j", ["tiles.0"]], v: { next: { g: ["j", ["tiles.1"]], t: ["j", [[0, 8]]] } },
+      }, /terrain entry 0 value must be an integer in 1\.\.7/],
+      ["empty variant id", {
+        $: COMPACT_MAP_MAGIC, i: "m", n: "m", w: 1, h: 1,
+        g: ["j", ["tiles.0"]], v: { "": { g: ["j", ["tiles.1"]] } },
+      }, /tileset variant id must not be empty/],
     ];
 
     for (const [name, value, error] of malformed) {

@@ -264,60 +264,94 @@ export function validateMapDefStructure(map: unknown): asserts map is MapDef {
   if (!Number.isInteger(value.height) || (value.height as number) < 1) {
     mapStructureError(`${value.id} height must be a positive integer`);
   }
-  const ground = value.ground;
-  if (!Array.isArray(ground)) mapStructureError(`${value.id} ground must be an array`);
   const cells = (value.width as number) * (value.height as number);
-  if (ground.length !== cells) {
-    throw new Error(`map repository: ${value.id} ground has ${ground.length} cells, expected ${cells}`);
-  }
-  for (let index = 0; index < ground.length; index++) {
-    const tile = ground[index];
-    if (tile !== null && typeof tile !== "string") {
-      mapStructureError(`${value.id} ground cell ${index} must be a string or null`);
+  const sheets = (layer: unknown, label: string): void => {
+    if (!Array.isArray(layer) || layer.some((id) => typeof id !== "string")) {
+      mapStructureError(`${value.id} ${label} must be an array of strings`);
     }
+  };
+  if (value.sheets !== undefined) sheets(value.sheets, "sheets");
+  if (value.tileset !== undefined && (typeof value.tileset !== "string" || value.tileset.length === 0)) {
+    mapStructureError(`${value.id} tileset id must be a non-empty string`);
   }
-  const sparseLayer = (name: "upper" | "passage"): void => {
-    const layer = value[name];
-    if (layer === undefined) return;
-    if (!Array.isArray(layer)) mapStructureError(`${value.id} ${name} must be an array`);
-    for (const item of layer) {
-      if (!Array.isArray(item) || item.length !== 2 || !Number.isInteger(item[0])) {
-        mapStructureError(`${value.id} ${name} entries must be [integer, value] pairs`);
-      }
-      const index = item[0] as number;
-      if (index < 0 || index >= cells) {
-        throw new Error(`map repository: ${value.id} ${name} index ${index} out of range`);
+  const denseLayer = (layer: unknown, label: string): void => {
+    if (!Array.isArray(layer)) mapStructureError(`${value.id} ${label} must be an array`);
+    if (layer.length !== cells) {
+      throw new Error(`map repository: ${value.id} ${label} has ${layer.length} cells, expected ${cells}`);
+    }
+    for (let index = 0; index < layer.length; index++) {
+      const tile = layer[index];
+      if (tile !== null && typeof tile !== "string") {
+        mapStructureError(`${value.id} ${label} cell ${index} must be a string or null`);
       }
     }
   };
-  sparseLayer("upper");
-  sparseLayer("passage");
+  denseLayer(value.ground, "ground");
+  const sparseLayer = (layer: unknown, label: string, kind: "tile" | "passage"): void => {
+    if (layer === undefined) return;
+    if (!Array.isArray(layer)) mapStructureError(`${value.id} ${label} must be an array`);
+    for (const item of layer) {
+      if (!Array.isArray(item) || item.length !== 2 || !Number.isInteger(item[0])) {
+        mapStructureError(`${value.id} ${label} entries must be [integer, value] pairs`);
+      }
+      const index = item[0] as number;
+      if (index < 0 || index >= cells) {
+        throw new Error(`map repository: ${value.id} ${label} index ${index} out of range`);
+      }
+      if (kind === "tile" ? item[1] !== null && typeof item[1] !== "string"
+        : item[1] !== "pass" && item[1] !== "block") {
+        mapStructureError(`${value.id} ${label} entry ${index} has an invalid value`);
+      }
+    }
+  };
+  sparseLayer(value.upper, "upper", "tile");
+  sparseLayer(value.passage, "passage", "passage");
+  const vehiclePassage = (layer: unknown, label: string): void => {
+    if (layer === undefined) return;
+    if (!isObject(layer)) mapStructureError(`${value.id} ${label} must be an object`);
+    const allowed = new Set(["boat", "ship", "airshipLand"]);
+    for (const key of Object.keys(layer)) {
+      if (!allowed.has(key)) mapStructureError(`${value.id} ${label} has unknown field ${key}`);
+    }
+    for (const kind of ["boat", "ship", "airshipLand"] as const) {
+      const indices = layer[kind];
+      if (indices === undefined) continue;
+      if (!Array.isArray(indices) || indices.some((index) => !Number.isInteger(index))) {
+        mapStructureError(`${value.id} ${label} ${kind} must be an array of integers`);
+      }
+      for (const index of indices as number[]) {
+        if (index < 0 || index >= cells) {
+          throw new Error(`map repository: ${value.id} ${label} ${kind} index ${index} out of range`);
+        }
+      }
+    }
+  };
+  vehiclePassage(value.vehiclePassage, "vehiclePassage");
   // Sparse cell planes the compiler reads through sparseCellMap/sparseTileMap:
   // regions/terrain are [index, tag] pairs with a bounded tag, tiles is an
   // [index, [l0..l3]] quad. A malformed entry (the review's `[1]`, `[2]`,
   // `[3]` payloads) would otherwise reach `new Map(entries)` in createWorld
   // and die there with a context-less TypeError.
-  const sparseCellLayer = (name: "regions" | "terrain", maxTag: number): void => {
-    const layer = value[name];
+  const sparseCellLayer = (layer: unknown, label: string, maxTag: number): void => {
     if (layer === undefined) return;
-    if (!Array.isArray(layer)) mapStructureError(`${value.id} ${name} must be an array`);
+    if (!Array.isArray(layer)) mapStructureError(`${value.id} ${label} must be an array`);
     for (const item of layer) {
       if (!Array.isArray(item) || item.length !== 2 ||
         !Number.isInteger(item[0]) || !Number.isInteger(item[1])) {
-        mapStructureError(`${value.id} ${name} entries must be [integer, integer] pairs`);
+        mapStructureError(`${value.id} ${label} entries must be [integer, integer] pairs`);
       }
       const index = item[0] as number;
       if (index < 0 || index >= cells) {
-        throw new Error(`map repository: ${value.id} ${name} index ${index} out of range`);
+        throw new Error(`map repository: ${value.id} ${label} index ${index} out of range`);
       }
       const tag = item[1] as number;
       if (tag < 1 || tag > maxTag) {
-        throw new Error(`map repository: ${value.id} ${name} tag ${tag} out of range 1..${maxTag}`);
+        throw new Error(`map repository: ${value.id} ${label} tag ${tag} out of range 1..${maxTag}`);
       }
     }
   };
-  sparseCellLayer("regions", 255);
-  sparseCellLayer("terrain", 7);
+  sparseCellLayer(value.regions, "regions", 255);
+  sparseCellLayer(value.terrain, "terrain", 7);
   const tiles = value.tiles;
   if (tiles !== undefined) {
     if (!Array.isArray(tiles)) mapStructureError(`${value.id} tiles must be an array`);
@@ -331,6 +365,21 @@ export function validateMapDefStructure(map: unknown): asserts map is MapDef {
       if (index < 0 || index >= cells) {
         throw new Error(`map repository: ${value.id} tiles index ${index} out of range`);
       }
+    }
+  }
+  const variants = value.tilesetVariants;
+  if (variants !== undefined) {
+    if (!isObject(variants)) mapStructureError(`${value.id} tilesetVariants must be an object`);
+    for (const [tilesetId, raw] of Object.entries(variants)) {
+      if (tilesetId.length === 0) mapStructureError(`${value.id} tileset variant id must not be empty`);
+      if (!isObject(raw)) mapStructureError(`${value.id} tileset variant ${JSON.stringify(tilesetId)} must be an object`);
+      const label = `tileset variant ${JSON.stringify(tilesetId)}`;
+      if (raw.sheets !== undefined) sheets(raw.sheets, `${label} sheets`);
+      denseLayer(raw.ground, `${label} ground`);
+      sparseLayer(raw.upper, `${label} upper`, "tile");
+      sparseLayer(raw.passage, `${label} passage`, "passage");
+      vehiclePassage(raw.vehiclePassage, `${label} vehiclePassage`);
+      sparseCellLayer(raw.terrain, `${label} terrain`, 7);
     }
   }
   const events = value.events;
