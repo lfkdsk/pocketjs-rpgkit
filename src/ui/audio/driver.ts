@@ -140,6 +140,10 @@ export class AudioDriver {
   private suspendedBgmFrame: number | undefined;
   private readonly assetCache = new Map<string, AudioAsset | null>();
   private lastState: AudioDriverState | undefined;
+  /** Unprojected reducer identity. A presentation adapter may replace `state`
+   * at the same timeline position (for example to change player volume)
+   * without turning that gain-only update into a load/refold. */
+  private lastTimelineState: AudioDriverState | undefined;
   private lastFrame: number | undefined;
   private nextSerial = 1;
 
@@ -155,18 +159,23 @@ export class AudioDriver {
   }
 
   /** Reconcile one reducer frame, then fill every credited ring. */
-  sync(state: AudioDriverState): void {
+  sync(state: AudioDriverState, timelineState: AudioDriverState = state): void {
     this.drainEvents();
 
     // Solid returns the same immutable state object until the game advances.
     // A different object at the same (or an older) frame is a refold/load and
     // must rebuild durable voices without replaying historical one-shot cues.
-    const repeated = this.lastState === state;
-    const refolded = !repeated && this.lastFrame !== undefined && state.frame !== this.lastFrame + 1;
+    // Presentation-only projections pass their original reducer object as
+    // timelineState: a changed projection on that same object reconciles gain
+    // in place, while a real same-frame restore still follows the refold path.
+    const timelineRepeated = this.lastTimelineState === timelineState;
+    const repeated = this.lastState === state && timelineRepeated;
+    const presentationChanged = !repeated && timelineRepeated;
+    const refolded = !timelineRepeated && this.lastFrame !== undefined && state.frame !== this.lastFrame + 1;
     // A fatal reducer can stop partway through a low-Hz batch. Rebuild once at
     // its canonical position; on later fatal frames the reducer advances one
     // tick while the presentation is deliberately allowed to keep playing.
-    const enteredFatal = !repeated && state.interp.error !== undefined &&
+    const enteredFatal = !timelineRepeated && state.interp.error !== undefined &&
       this.lastState !== undefined && this.lastState.interp.error === undefined;
     if (refolded || enteredFatal) this.destroyAll();
 
@@ -177,13 +186,14 @@ export class AudioDriver {
       this.reconcilePersistent(state.interp.audio, state.frame, elapsedTicksPerFrame);
       // A refold ends on historical cues. Rebuild persistent tracks at their
       // restored positions, but never replay those one-shot side effects.
-      if (!refolded) {
+      if (!refolded && !presentationChanged) {
         for (const cue of state.interp.cues) {
           if ("stop" in cue) this.stopAllSe();
           else this.startSe(cue);
         }
       }
       this.lastState = state;
+      this.lastTimelineState = timelineState;
       this.lastFrame = state.frame;
     }
 
@@ -193,6 +203,7 @@ export class AudioDriver {
   dispose(): void {
     this.destroyAll();
     this.lastState = undefined;
+    this.lastTimelineState = undefined;
     this.lastFrame = undefined;
   }
 

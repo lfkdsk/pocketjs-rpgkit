@@ -353,6 +353,43 @@ describe("opt-in audio host", () => {
     expect(ops.streams.size).toBe(1);
   });
 
+  test("same-timeline presentation gain updates keep streams and PCM position", () => {
+    const ops = new MockAudioOps();
+    const music = Array.from({ length: AUDIO_RING_FRAMES + 64 }, (_, index) => index + 1);
+    const resources = { field: "audio:wav.field", click: "audio:wav.click" };
+    const driver = new AudioDriver(ops, resources, (key) =>
+      key === resources.field ? wav(music) : wav([7, 8, 9]));
+    const timeline = frame(10, {
+      bgm: { id: "field", volume: 80, pitch: 100, positionTicks: 0 },
+    }, [{ name: "click", volume: 50, pitch: 100 }]);
+    const projected = (musicVolume: number, soundVolume: number) => frame(10, {
+      bgm: { id: "field", volume: musicVolume, pitch: 100, positionTicks: 0 },
+    }, [{ name: "click", volume: soundVolume, pitch: 100 }]);
+
+    driver.sync(projected(40, 10), timeline);
+    expect(ops.created.map(({ handle }) => handle)).toEqual([1, 2]);
+    expect(ops.plays).toEqual([1, 2]);
+    expect(ops.writes.find(({ handle }) => handle === 1)?.frames).toBe(AUDIO_RING_FRAMES);
+
+    ops.credit(1, 32);
+    driver.sync(projected(72, 20), timeline);
+
+    expect(ops.created.map(({ handle }) => handle)).toEqual([1, 2]);
+    expect(ops.destroyed).toEqual([]);
+    expect(ops.plays).toEqual([1, 2]);
+    expect(ops.volumes).toContainEqual({ handle: 1, volume: 0.72 });
+    const musicWrites = ops.writes.filter(({ handle }) => handle === 1);
+    expect(musicWrites).toHaveLength(2);
+    expect(musicWrites[1]!.samples).toEqual(music.slice(AUDIO_RING_FRAMES, AUDIO_RING_FRAMES + 32));
+
+    // A genuinely different reducer object at the same frame remains a
+    // refold: rebuild persistent audio and suppress its historical cue.
+    const restoredTimeline = structuredClone(timeline);
+    driver.sync(projected(72, 20), restoredTimeline);
+    expect(ops.destroyed).toEqual([1, 2]);
+    expect(ops.created.map(({ handle }) => handle)).toEqual([1, 2, 3]);
+  });
+
   test("the virtual-clock host consumes the exact PCM budget and sees a monotonic fade", () => {
     const sink = createSimAudioSink();
     const driver = new AudioDriver(
