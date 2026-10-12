@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fallbackCharacters, parseFontFile } from "../tools/lib/cjk-font.ts";
 import { appTextInventory } from "../tools/lib/text-inventory.ts";
@@ -15,6 +15,23 @@ describe("RPG Maker GameView font inventory", () => {
     });
     const charset = readFileSync(join(APP, "fonts", "cjk-charset.txt"), "utf8");
     expect(codepoints(charset)).toEqual(fallbackCharacters(inventory));
+  });
+
+  test("explicit generated project files contribute text outside the entry module graph", () => {
+    const root = mkdtempSync(join(import.meta.dir, ".rmi-font-inventory-"));
+    try {
+      const entry = join(root, "entry.ts");
+      const imported = join(root, "imported-project.ts");
+      writeFileSync(entry, `export const chrome = "entry only";\n`);
+      writeFileSync(imported, `export const project = { dialogue: "七" };\n`);
+
+      const entryOnly = appTextInventory({ entries: [entry] });
+      expect(entryOnly.some((text) => text.includes("七"))).toBe(false);
+      const withImportedProject = appTextInventory({ entries: [entry], files: [imported] });
+      expect(withImportedProject.some((text) => text.includes("七"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("a broad fallback covers imported characters beyond the small fixture subset", () => {
