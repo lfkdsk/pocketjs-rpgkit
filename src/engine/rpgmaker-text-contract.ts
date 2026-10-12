@@ -23,6 +23,7 @@ export interface RpgMakerTextState {
   readonly playerName?: string;
   readonly partyOrder?: readonly number[];
   readonly actorIds?: readonly string[];
+  readonly formationAccess?: boolean;
 }
 
 export interface RpgMakerTextContext {
@@ -66,6 +67,13 @@ export interface ParsedRpgMakerText {
   readonly unsupported: readonly [];
 }
 
+export interface ParsedRpgMakerChoices {
+  readonly prompt: string;
+  readonly promptColours?: readonly RpgMakerTextColourSpan[];
+  readonly options: string[];
+  readonly optionColours?: (readonly RpgMakerTextColourSpan[] | null)[];
+}
+
 /** Parser supplied only by applications that enable `system.rpgMakerText`. */
 export interface RpgMakerTextRuntime {
   parse(input: string, context: RpgMakerTextContext): ParsedRpgMakerText;
@@ -74,8 +82,20 @@ export interface RpgMakerTextRuntime {
     state: Readonly<RpgMakerTextState>,
     config: Readonly<RpgMakerTextConfig>,
   ): ParsedRpgMakerText;
+  parseChoices(
+    prompt: string,
+    options: readonly string[],
+    state: Readonly<RpgMakerTextState>,
+    config: Readonly<RpgMakerTextConfig>,
+  ): ParsedRpgMakerChoices;
   partyOrder(
     state: Readonly<RpgMakerTextState>,
     config: Readonly<RpgMakerTextConfig>,
   ): number[];
+  swapParty(
+    state: Readonly<RpgMakerTextState>,
+    config: Readonly<RpgMakerTextConfig>,
+    first: number,
+    second: number,
+  ): number[] | null;
 }

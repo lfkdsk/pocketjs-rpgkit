@@ -1,5 +1,6 @@
 import type {
   ParsedRpgMakerText,
+  ParsedRpgMakerChoices,
   RpgMakerTextActor,
   RpgMakerTextColourSpan,
   RpgMakerTextConfig,
@@ -10,6 +11,7 @@ import type {
 } from "./rpgmaker-text-contract.ts";
 
 export type {
+  ParsedRpgMakerChoices,
   ParsedRpgMakerText,
   RpgMakerTextActor,
   RpgMakerTextColourSpan,
@@ -205,6 +207,23 @@ export function parseRpgMakerMessage(
   });
 }
 
+export function parseRpgMakerChoices(
+  prompt: string,
+  options: readonly string[],
+  state: Readonly<RpgMakerTextState>,
+  config: Readonly<RpgMakerTextConfig>,
+): ParsedRpgMakerChoices {
+  const parsedPrompt = parseRpgMakerMessage(prompt, state, config);
+  const parsedOptions = options.map((option) => parseRpgMakerMessage(option, state, config));
+  const optionColours = parsedOptions.map((option) => option.spans ?? null);
+  return {
+    prompt: parsedPrompt.text,
+    ...(parsedPrompt.spans ? { promptColours: parsedPrompt.spans } : {}),
+    options: parsedOptions.map((option) => option.text),
+    ...(optionColours.some((spans) => spans !== null) ? { optionColours } : {}),
+  };
+}
+
 function numericActorId(id: string): number | null {
   const match = /(\d+)$/.exec(id);
   if (!match) return null;
@@ -236,9 +255,25 @@ export function resolveRpgMakerPartyOrder(
   return ordered;
 }
 
+export function swapRpgMakerParty(
+  state: Readonly<RpgMakerTextState>,
+  config: Readonly<RpgMakerTextConfig>,
+  first: number,
+  second: number,
+): number[] | null {
+  if (state.formationAccess === false || first === second || !Number.isInteger(first) ||
+      !Number.isInteger(second) || first < 0 || second < 0) return null;
+  const party = resolveRpgMakerPartyOrder(state, config);
+  if (first >= party.length || second >= party.length) return null;
+  [party[first], party[second]] = [party[second]!, party[first]!];
+  return party;
+}
+
 /** Explicit capability passed to sessions that opt into RPG Maker text. */
 export const rpgMakerTextRuntime: RpgMakerTextRuntime = Object.freeze({
   parse: parseRpgMakerText,
   parseMessage: parseRpgMakerMessage,
+  parseChoices: parseRpgMakerChoices,
   partyOrder: resolveRpgMakerPartyOrder,
+  swapParty: swapRpgMakerParty,
 });

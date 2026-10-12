@@ -5569,14 +5569,17 @@ function expandedChoiceText(
   ext: JsonValue,
   fiber: string,
 ): Pick<ChoiceModal, "prompt" | "promptColours" | "options" | "optionColours"> {
+  if (w.rpgMakerText) {
+    return w.rpgMakerText.runtime.parseChoices(prompt, options, {
+      variables: s.sw.variables,
+      ...(s.sw.playerName !== undefined ? { playerName: s.sw.playerName } : {}),
+    }, w.rpgMakerText);
+  }
   const expandedPrompt = boxText(s, w, prompt, ext, fiber);
   const expandedOptions = options.map((option) => boxText(s, w, option, ext, fiber));
-  const optionColours = expandedOptions.map((option) => option.colours ?? null);
   return {
     prompt: expandedPrompt.text,
-    ...(expandedPrompt.colours ? { promptColours: expandedPrompt.colours } : {}),
     options: expandedOptions.map((option) => option.text),
-    ...(optionColours.some((spans) => spans !== null) ? { optionColours } : {}),
   };
 }
 
@@ -6400,20 +6403,14 @@ function runFiber(
         top.pc++;
         break;
       case "formationSwap": {
-        const party = w.rpgMakerText?.runtime.partyOrder({
+        const party = w.rpgMakerText?.runtime.swapParty({
           variables: s.sw.variables,
           switches: s.sw.switches,
           ...(s.sw.partyOrder ? { partyOrder: s.sw.partyOrder } : {}),
           actorIds: [...(w.actors?.keys() ?? [])],
-        }, w.rpgMakerText) ?? [];
-        if (
-          s.sw.formationAccess !== false && ins.first !== ins.second &&
-          Number.isInteger(ins.first) && Number.isInteger(ins.second) &&
-          ins.first >= 0 && ins.second >= 0 && ins.first < party.length && ins.second < party.length
-        ) {
-          [party[ins.first], party[ins.second]] = [party[ins.second]!, party[ins.first]!];
-          s.sw.partyOrder = party;
-        }
+          ...(s.sw.formationAccess !== undefined ? { formationAccess: s.sw.formationAccess } : {}),
+        }, w.rpgMakerText, ins.first, ins.second) ?? null;
+        if (party) s.sw.partyOrder = party;
         top.pc++;
         break;
       }
