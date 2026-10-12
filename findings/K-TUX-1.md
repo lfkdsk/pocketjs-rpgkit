@@ -1,7 +1,9 @@
 # Immediate scripted motion and modal backdrop stacks
 
-Base: `49b19d5a6e8948e951c52fd231e7aa7072707724`  
-Pinned PocketJS: `862040bd77edc49b1f815beff63952b6616a14c6`  
+Base: `2a37b9aa5c6f464087cc5d97a815a38d2000acbd`
+
+Pinned PocketJS: `862040bd77edc49b1f815beff63952b6616a14c6`
+
 Schema identity: `a59ec3e0a1ee74fe08fb75dff938e56b01b8b6b66ccfd102cb9dbb2866d23444`
 
 ## Verdict
@@ -38,7 +40,7 @@ compared 35 opt-out scenarios and 11,414 reducer states byte-for-byte.
 | Mutation strength | PASS | all four required isolated regressions turn focused tests red |
 | Opt-out behavior and consumers | PASS | 35-scenario equivalence, Tuxemon tapes and Wander suite |
 | QuickJS dormant cost | PASS | every accepted median is below the +3% limit |
-| Cold gates | PASS | clean Wasm/example builds, TypeScript, and 4,543 complete-suite tests |
+| Cold gates | PASS | clean Wasm/example builds, TypeScript, and 4,549 complete-suite tests |
 
 ## Pinned Tuxemon semantics
 
@@ -144,8 +146,8 @@ is first in the compatible list. Its committed project shell and save were
 generated with the predecessor runtime rather than hand-authored; the current
 runtime validates, restores and advances both.
 
-`tools/pr1-equivalence.sh` compared base `49b19d5a` with candidate
-`71190492`: all 35 scenarios and 11,414 produced/retained states matched.
+`tools/pr1-equivalence.sh` compared base `2a37b9aa` with candidate
+`4913bd01`: all 35 scenarios and 11,414 produced/retained states matched.
 This includes Sunstone at 60/30/20/4 Hz, attract mode, Grow, Meadow, streamed
 maps, inline/sharded repositories, battles, shop save/restore and modal
 freeze. The opt-out path is therefore behaviorally unchanged.
@@ -189,52 +191,59 @@ The implementation worktree was never modified by a mutation.
 ## Consumer behavior and size
 
 The consumer checkouts changed only their component revision from base to the
-candidate. Tuxemon's tape-focused suite passed 38/38. Its 20 chapters cover
+candidate. Tuxemon's tape-focused suite passed 39/39. Its 20 chapters cover
 206,822 combined frames; snapshots and thumbnails remained byte-identical and
 the terminal pin remained `4c7b0a028336`. Wander's built-consumer suite passed
 508/508 with no skips.
 
 | Output | Base | Candidate | Delta | Attribution |
 | --- | ---: | ---: | ---: | --- |
-| Tuxemon JavaScript | 2,231,388 B | 2,240,329 B | +8,941 B | shared command/interpreter/save support |
-| Tuxemon PAK | 80,655,760 B | 80,655,760 B | 0 | assets unchanged |
-| Wander JavaScript | 945,496 B | 955,634 B | +10,138 B | shared command/interpreter/save support |
+| Tuxemon JavaScript | 2,191,492 B | 2,199,636 B | +8,144 B | shared command/interpreter/save support after consumer tree shaking |
+| Tuxemon PAK | 80,655,760 B | 80,655,760 B | 0 | same payload size; resource index regenerated with the JS graph |
+| Wander JavaScript | 890,187 B | 899,087 B | +8,900 B | shared command/interpreter/save support |
 | Wander PAK | 1,132,768 B | 1,132,768 B | 0 | assets unchanged |
-| Meadow JavaScript | 722,929 B | 733,064 B | +10,135 B | same shared runtime path |
-| Sunstone JavaScript | 1,161,185 B | 1,172,907 B | +11,722 B | shared runtime plus its existing audio/demo graph |
-| WAV fixture JavaScript | 925,393 B | 935,528 B | +10,135 B | same shared runtime path; decoder boundary unchanged |
+| Wander Online JavaScript | 1,115,908 B | 1,124,808 B | +8,900 B | same shared runtime path |
+| Wander Online PAK | 2,543,120 B | 2,543,120 B | 0 | assets unchanged |
+| Meadow JavaScript | 667,866 B | 676,764 B | +8,898 B | same shared runtime path |
+| Sunstone JavaScript | 1,101,055 B | 1,111,540 B | +10,485 B | shared runtime plus its existing save/demo graph |
+| WAV fixture JavaScript | 865,008 B | 873,906 B | +8,898 B | same shared runtime path; decoder boundary unchanged |
+| RPG Maker opt-in fixture | 1,278,531 B | 1,289,432 B | +10,901 B | positive graph includes the capability registrations |
 
 The candidate Tuxemon PAK hash is
-`ef2c405448ca7a5868312ec403c7cde1461d4d7aad56a5c636a032b6893f0d5e`;
-the Wander PAK hash is
-`583955c2b34b16b1c7f85f81faac2a6d89ba8a99aebd3d14c95e09b73ca472e8`.
+`17221b4672fae4e7b1374fe8e9b716c2c6440df268245dc0c05fc5353b7932e4`;
+the candidate rebuild reproduced both that hash and the 2,199,636-byte JS
+size. The Wander and Wander Online PAK hashes are respectively
+`b7ec486759acc56253a22744128a16d74696519d9de33a90481f77eb48cdfc9d`
+and `4b9a072aa0e42da692d227a01832b70bd013a964c9c7289671d00cab617c92bc`,
+identical to base. Both Wander input manifests are also byte-identical.
 The bundle-isolation needles still prove that unrelated audio, battle,
 name-input, editor and proposal-review modules do not enter ordinary games.
 
 ## QuickJS performance
 
-The full interleaved run used five
+The final interleaved run used five
 main -> candidate -> candidate -> main windows, 2,000 iterations per slot,
-on logical CPU 10. Candidate `1110fde0` differs from the final implementation
-tip only by bundle pins and tests.
+on logical CPU 10. Its preflight samples averaged 97.5% idle with no I/O wait.
+The measured candidate was the final implementation commit `4913bd01`; the
+main and candidate benchmark bundles were respectively
+`3ed9a31853ab351b15411e0a8622bb3500cede76193210b5077bab0a1b812526`
+and `94e1ecf2fc287cac6f25d9fee647e0fef5a62128a921776e35f632b8892931d6`.
 
 | Workload | Median candidate delta |
 | --- | ---: |
-| `battleScene` | -2.93% |
-| `battleSceneImmutable` | +1.32% |
-| `streamedRoam` | -4.03% |
-| `sunstoneControlWalk` | -0.03% |
-| `sunstoneControlWalkImmutable` | +0.53% |
-| `sunstoneIdleImmutable` | -2.09% |
-| `sunstoneWalk` | +1.66% |
-| `sunstoneIdle` | +3.25% in the noisy full table |
+| `battleScene` | -0.50% |
+| `battleSceneImmutable` | -0.77% |
+| `streamedRoam` | -0.60% |
+| `sunstoneControlWalk` | -0.67% |
+| `sunstoneControlWalkImmutable` | +1.42% |
+| `sunstoneIdle` | +1.00% |
+| `sunstoneIdleImmutable` | +0.96% |
+| `sunstoneWalk` | -0.30% |
 
-The full-table idle result was dominated by its extreme first window. A
-focused nine-window run with 3,000 iterations per slot (18
-direction-balanced pairs) measured `sunstoneIdle` at -0.05% median and +0.34%
-mean. That accepted rerun is below the +3% limit. The sparse request gate,
-cold touch-scan helper and absent-by-default fold-local facing cell keep
-projects which do not author the new fields off the additive work path.
+Each workload therefore stayed below the +3% dormant-cost limit; the worst
+median was +1.42%. The sparse request gate, cold touch-scan helper and
+absent-by-default fold-local facing cell keep projects which do not author the
+new fields off the additive work path.
 
 ## Tuxemon importer handoff
 
@@ -285,9 +294,9 @@ The cold sequence began after deleting `dist/`:
 | `bun run build:wasm` | exit 0; web Wasm 359,675 bytes |
 | `bun run build:example` | exit 0 |
 | `bunx tsc --noEmit` | exit 0, no diagnostics |
-| `bun run test` | 4,543 pass, 0 fail, 0 skip; 730,312 assertions in 295 files, 497.63 s |
+| `bun run test` | 4,549 pass, 0 fail, 0 skip; 730,351 assertions in 296 files, 502.15 s |
 
-The final fetch left `origin/main` at `49b19d5a`, which is an ancestor of the
+The final fetch left `origin/main` at `2a37b9aa`, which is an ancestor of the
 branch; the required rebase is current. There are no merge commits,
 `bun.lock` is unchanged, and the PocketJS submodule remains at `862040bd`.
 
