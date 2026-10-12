@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `f3a5eb5da11bb5eed3fcad2f7e04409883b06f68addeeb48f64d2b3e6afd7db1` | optional per-map tileset identity/variants; `screenTone`, `weather`, `changeTileset`, `windowTone`, `formationAccess` and `formationSwap` commands. Documents that omit these additions retain their previous presentation, terrain and party order | additive |
 | `c394541ca7c28bd85899f944e3d57e506a66cd3d221d14cb5d3d56b4a21cdc13` | `scrollText` and `stopMe` commands; optional audio pan; optional initial actor class/skill/equipment/state facts and actor condition. Documents that omit the additions retain the previous text, centred-audio and actor behavior | additive |
 | `4f6e1e734edff23e4fbf0fb1bd18708fb56c7ce4d8fca99c01773b65d60efab8` | optional per-vehicle BGM (a track or explicit silence) and `setVehicleBgm` command. Documents that omit vehicle BGM retain the previous no-audio-change boarding path | additive |
 | `6c9b447c5ded9beabeaf9a6814edf76ed3c9d742c1d21cc7f3cd267b67fd3010` | optional follower-chain and persistent boat/ship/airship catalogs; optional per-map vehicle passage; follower visibility/gather, vehicle toggle/location/image commands and vehicle page condition. Documents without them retain the single-player reducer, movement, render and save shape | additive |

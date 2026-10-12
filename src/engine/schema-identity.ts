@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "c394541ca7c28bd85899f944e3d57e506a66cd3d221d14cb5d3d56b4a21cdc13";
+export const MAP_SCHEMA_HASH = "f3a5eb5da11bb5eed3fcad2f7e04409883b06f68addeeb48f64d2b3e6afd7db1";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -62,6 +62,10 @@ export const MAP_SCHEMA_HASH = "c394541ca7c28bd85899f944e3d57e506a66cd3d221d14cb
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: optional tileset variants and the K-RPGM5 screen,
+  // weather, tileset, window-tone and formation commands; older documents
+  // omit every addition and retain their previous rendering and system state
+  "c394541ca7c28bd85899f944e3d57e506a66cd3d221d14cb5d3d56b4a21cdc13",
   // superseded by: the scrollText and stopMe commands, optional audio pan,
   // optional initial actor facts and the actor condition; older documents
   // use none of them and retain their prior message/audio/actor behavior

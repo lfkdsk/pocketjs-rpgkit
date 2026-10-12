@@ -657,6 +657,62 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "pan": { "type": "integer", "minimum": -100, "maximum": 100 }
       }
     },
+    "mapTilesetVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ground"],
+      "properties": {
+        "sheets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "ground": {
+          "type": "array",
+          "description": "Row-major ground plane composed against this alternate tileset; length width*height.",
+          "items": { "$ref": "#/$defs/cellOrNull" }
+        },
+        "upper": {
+          "type": "array",
+          "description": "Sparse star layer composed against this alternate tileset.",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/tileId" }]
+          },
+          "uniqueItems": true
+        },
+        "passage": {
+          "type": "array",
+          "description": "Alternate per-cell passage overrides.",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [{ "type": "integer", "minimum": 0 }, { "enum": ["pass", "block"] }]
+          },
+          "uniqueItems": true
+        },
+        "vehiclePassage": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "boat": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } },
+            "ship": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } },
+            "airshipLand": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }
+          }
+        },
+        "terrain": {
+          "type": "array",
+          "description": "Alternate sparse RPG Maker terrain tags.",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [{ "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 1, "maximum": 7 }]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
     "map": {
       "type": "object",
       "additionalProperties": false,
@@ -667,6 +723,13 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         "width": { "type": "integer", "minimum": 1, "maximum": 256 },
         "height": { "type": "integer", "minimum": 1, "maximum": 256 },
         "sheets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "tileset": { "type": "string", "minLength": 1, "description": "Authored tileset identity; changing back to it clears the runtime override." },
+        "tilesetVariants": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/mapTilesetVariant" },
+          "description": "Alternate precomposed art, passage and terrain selected atomically by changeTileset."
+        },
         "ground": {
           "type": "array",
           "description": "Row-major, length width*height; null is a blocking void.",
@@ -1189,6 +1252,31 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["op", "tone", "duration"],
+          "properties": {
+            "op": { "const": "screenTone" },
+            "tone": { "$ref": "#/$defs/pictureTone" },
+            "duration": { "type": "number", "minimum": 0 },
+            "wait": { "type": "boolean" }
+          },
+          "description": "Tween RPG Maker signed RGB offsets and gray/desaturation on the map or battle scene."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "kind", "power", "duration"],
+          "properties": {
+            "op": { "const": "weather" },
+            "kind": { "enum": ["none", "rain", "storm", "snow"] },
+            "power": { "type": "number", "minimum": 0, "maximum": 9 },
+            "duration": { "type": "number", "minimum": 0 },
+            "wait": { "type": "boolean" }
+          },
+          "description": "Tween deterministic RPG Maker weather power; none fades the current kind to zero."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["op", "color", "intensity", "duration"],
           "properties": {
             "op": { "const": "screenFlash" },
@@ -1425,6 +1513,47 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
           "properties": {
             "op": { "const": "menuAccess" },
             "enabled": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "enabled"],
+          "description": "Enable or disable formation swaps. Default enabled.",
+          "properties": {
+            "op": { "const": "formationAccess" },
+            "enabled": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "first", "second"],
+          "description": "Swap two zero-based positions in the active party order.",
+          "properties": {
+            "op": { "const": "formationSwap" },
+            "first": { "type": "integer", "minimum": 0 },
+            "second": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id"],
+          "description": "Select one of the current map's authored/precomposed tilesets.",
+          "properties": {
+            "op": { "const": "changeTileset" },
+            "id": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "tone"],
+          "description": "Set the saved global window tone used by messages, choices and menus.",
+          "properties": {
+            "op": { "const": "windowTone" },
+            "tone": { "$ref": "#/$defs/pictureTone" }
           }
         },
         {
