@@ -181,7 +181,9 @@ import {
 } from "./move-control.ts";
 import { MOTION_HZ, motionTicksPerFrame } from "./motion-clock.ts";
 import {
+  advanceRpgMakerGameScreen,
   advanceScreenEffects,
+  cloneScreenEffects,
   screenEffectsAfterTransfer,
   startMapNameBanner,
 } from "./screen.ts";
@@ -1957,6 +1959,60 @@ function startNextGameScene(sess: Session, s: SessionState): void {
   }
 }
 
+function rpgMakerGameScreenRuntime(
+  sess: Session,
+  scene: Readonly<SceneSlot> | null,
+): RpgMakerTextRuntime | null {
+  if (scene?.kind !== "battle") return null;
+  return sess.worldOptions.rpgMakerText?.runtime ?? null;
+}
+
+/** True when this parked screen wait belongs to a stock Game_Screen clock.
+ * Named kit tints, map camera/scroll and balloons are map-owned even in an
+ * RPG Maker project, so their relative waits receive the ordinary pause
+ * compensation after a frozen battle. */
+function rpgMakerScreenWaitAdvances(
+  sess: Session,
+  scene: Readonly<SceneSlot>,
+  fiber: SessionState["interp"]["main"],
+): boolean {
+  if (fiber?.mode !== "screenWait" || rpgMakerGameScreenRuntime(sess, scene) === null) {
+    return false;
+  }
+  const frame = fiber.stack[0];
+  const op = frame?.prog[frame.pc]?.op;
+  return op === "screenFade" || op === "screenTone" || op === "weather" ||
+    op === "screenFlash" || op === "screenShake" || op === "movePicture" ||
+    op === "tintPicture";
+}
+
+function shiftFrozenWorldClocks(
+  sess: Session,
+  s: SessionState,
+  scene: Readonly<SceneSlot>,
+): void {
+  if (scene.pausedTicks <= 0) return;
+  const shift = (fiber: SessionState["interp"]["main"]): void => {
+    if (
+      fiber?.mode === "wait" ||
+      fiber?.mode === "text" ||
+      fiber?.mode === "animWait" ||
+      (fiber?.mode === "screenWait" && !rpgMakerScreenWaitAdvances(sess, scene, fiber))
+    ) {
+      fiber.since += scene.pausedTicks;
+    }
+  };
+  shift(s.interp.main);
+  for (const fiber of Object.values(s.interp.parallels)) shift(fiber);
+  // Map animation clocks are absolute (instance.start against interp.frame).
+  // A default-frozen scene advances the reference clock but not the world,
+  // so shift every live start by the pause. The array is copy-on-write.
+  const anims = s.interp.anims;
+  if (anims !== undefined) {
+    s.interp.anims = anims.map((a) => ({ ...a, start: a.start + scene.pausedTicks }));
+  }
+}
+
 /** KG1: advance the game-owned scene reducer once for this host frame, then
  *  atomically commit a terminal result. The commit body mirrors
  *  advanceBattleScene (ext/writes/switches/items/gold/transfer plus the
@@ -2071,26 +2127,7 @@ function advanceGameScene(
   if (items !== undefined) s.interp.sw.items = items;
   if (gold !== undefined) s.interp.sw.gold = gold;
   if (playerName !== undefined) s.interp.sw.playerName = playerName;
-  if (scene.pausedTicks > 0) {
-    const shift = (fiber: SessionState["interp"]["main"]): void => {
-      if (
-        fiber?.mode === "wait" ||
-        fiber?.mode === "text" ||
-        fiber?.mode === "animWait"
-      ) {
-        fiber.since += scene.pausedTicks;
-      }
-    };
-    shift(s.interp.main);
-    for (const fiber of Object.values(s.interp.parallels)) shift(fiber);
-    // Same clock-shift rationale as advanceBattleScene: absolute map
-    // animation starts move by the paused duration so playback resumes from
-    // the same visual frame.
-    const anims = s.interp.anims;
-    if (anims !== undefined) {
-      s.interp.anims = anims.map((a) => ({ ...a, start: a.start + scene.pausedTicks }));
-    }
-  }
+  shiftFrozenWorldClocks(sess, s, scene);
   s.interp = continueScene(s.interp, scene.fiber, cancelled, transfer);
   s.sw = s.interp.sw;
   s.scene = null;
@@ -2105,14 +2142,22 @@ function advanceSessionScreenEffects(sess: Session, s: SessionState): void {
   s.interp.screen = advanceScreenEffects(s.interp.screen, advanceOptional);
 }
 
+function advanceFrozenRpgMakerGameScreen(sess: Session, s: SessionState): void {
+  const runtime = rpgMakerGameScreenRuntime(sess, s.scene);
+  if (!runtime || !s.interp.screen) return;
+  s.interp.screen = advanceRpgMakerGameScreen(
+    s.interp.screen,
+    runtime.advanceScreenEffects,
+  );
+}
+
 function tickFrozenWorld(sess: Session, s: SessionState): void {
   advanceInterpAudioInPlace(s.interp);
-  // Stock RPG Maker advances $gameScreen while Scene_Battle owns the
-  // foreground, but ordinary menu scenes do not. The kit deliberately keeps
-  // global tone/weather advancing for every frozen battle/menu scene so the
-  // same presentation can span either; map physics and page programs remain
-  // frozen.
-  advanceSessionScreenEffects(sess, s);
+  // The pinned MV/MZ Scene_Battle advances Game_Screen, while MenuBase and
+  // other frozen scenes do not. This project-bound capability advances only
+  // the matching Game_Screen clocks; the parked map and kit-native effects
+  // remain frozen.
+  advanceFrozenRpgMakerGameScreen(sess, s);
   s.interp.frame++;
   if (s.scene) s.scene.pausedTicks++;
   s.interp.cues = [];
@@ -2267,31 +2312,7 @@ function advanceBattleScene(
   for (const [id, value] of switches) switchBank![id] = value;
   if (items !== undefined) s.interp.sw.items = items;
   if (gold !== undefined) s.interp.sw.gold = gold;
-  if (scene.pausedTicks > 0) {
-    const shift = (fiber: SessionState["interp"]["main"]): void => {
-      if (
-        fiber?.mode === "wait" ||
-        fiber?.mode === "text" ||
-        fiber?.mode === "animWait"
-      ) {
-        fiber.since += scene.pausedTicks;
-      }
-    };
-    shift(s.interp.main);
-    for (const fiber of Object.values(s.interp.parallels)) shift(fiber);
-    // Map animation clocks are absolute (instance.start against interp.frame).
-    // A default-frozen scene advances the reference clock but not the world,
-    // so without this shift a hidden animation would burn frames (and a
-    // looping one could finish) behind the battle. Shift every live start by
-    // the paused duration so playback resumes from the same visual frame.
-    // The array is copy-on-write (shared with the previous state), so the
-    // shift writes a fresh array of fresh instances. An explicit
-    // worldContinues scene never freezes the world and needs no shift.
-    const anims = s.interp.anims;
-    if (anims !== undefined) {
-      s.interp.anims = anims.map((a) => ({ ...a, start: a.start + scene.pausedTicks }));
-    }
-  }
+  shiftFrozenWorldClocks(sess, s, scene);
   // Battle-owned audio is a presentation scene resource, but its intent is
   // reducer state. Restore it before resuming the parked branch so the
   // completion is one atomic state transition (including instant battles).
@@ -2351,6 +2372,9 @@ function foldSession(
   // One working copy per frame. The reference ticks below advance it in
   // place; characters and switch records stay shared with s0 until written.
   const frozen = s0.scene !== null && !sess.sceneOptions.worldContinues;
+  const frozenRpgMakerScreen = frozen &&
+    rpgMakerGameScreenRuntime(sess, s0.scene) !== null &&
+    s0.interp.screen !== undefined;
   const interp = frozen
     ? {
         ...s0.interp,
@@ -2359,6 +2383,10 @@ function foldSession(
         // immutable records by identity.
         sw: { ...s0.interp.sw },
         ...(s0.interp.audio ? { audio: cloneAudioState(s0.interp.audio) } : {}),
+        // A frozen RPG Maker battle advances Game_Screen. Detach it once per
+        // host fold so low-rate reference ticks cannot mutate the published
+        // predecessor or a rewind keyframe.
+        ...(frozenRpgMakerScreen ? { screen: cloneScreenEffects(s0.interp.screen)! } : {}),
       }
     : shareInterp(s0.interp, sess.immutableState);
   // Host requests are one-frame outputs. A frozen scene or transfer fade

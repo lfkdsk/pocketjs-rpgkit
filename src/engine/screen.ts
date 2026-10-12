@@ -450,6 +450,54 @@ export function startMapNameBanner(screen: ScreenEffectsState, text: string, fra
   screen.mapNameBanner = { text, total: frames, left: frames };
 }
 
+function advanceFade(screen: ScreenEffectsState): void {
+  const fade = screen.fade;
+  if (!fade) return;
+  if (fade.left > 0) fade.left--;
+  if (fade.left === 0) {
+    if (fade.clear) delete screen.fade;
+    else screen.fade = { ...tween(fade.to, fade.to, 0), clear: false };
+  }
+}
+
+function advanceFlash(screen: ScreenEffectsState): void {
+  const flash = screen.flash;
+  if (!flash) return;
+  if (flash.left > 0) flash.left--;
+  if (flash.left === 0) delete screen.flash;
+}
+
+function advanceShake(screen: ScreenEffectsState): void {
+  const shake = screen.shake;
+  if (!shake) return;
+  if (shake.left > 0) shake.left--;
+  if (shake.left === 0) delete screen.shake;
+}
+
+function advancePictures(screen: ScreenEffectsState): void {
+  if (!screen.pictures) return;
+  for (const id of Object.keys(screen.pictures)) {
+    const picture = screen.pictures[id]!;
+    if (picture.move) {
+      if (picture.move.left > 0) picture.move.left--;
+      if (picture.move.left === 0) {
+        picture.transform = { ...picture.move.to };
+        delete picture.move;
+      }
+    }
+    if (picture.tint) {
+      if (picture.tint.left > 0) picture.tint.left--;
+      if (picture.tint.left === 0) {
+        picture.tone = { ...picture.tint.to };
+        delete picture.tint;
+      }
+    }
+    if (picture.rotationSpeed !== 0) {
+      picture.rotation = ((picture.rotation + picture.rotationSpeed) % 360 + 360) % 360;
+    }
+  }
+}
+
 /** Advance one visible map-presentation reference tick. */
 export function advanceScreenEffects(
   screen: ScreenEffectsState | undefined,
@@ -461,13 +509,7 @@ export function advanceScreenEffects(
     if (value.left > 0) value.left--;
   };
 
-  if (screen.fade) {
-    advanceTween(screen.fade);
-    if (screen.fade.left === 0) {
-      if (screen.fade.clear) delete screen.fade;
-      else screen.fade = { ...tween(screen.fade.to, screen.fade.to, 0), clear: false };
-    }
-  }
+  advanceFade(screen);
 
   if (screen.tints) {
     for (const id of Object.keys(screen.tints)) {
@@ -481,14 +523,8 @@ export function advanceScreenEffects(
     if (Object.keys(screen.tints).length === 0) delete screen.tints;
   }
 
-  if (screen.flash) {
-    advanceTween(screen.flash);
-    if (screen.flash.left === 0) delete screen.flash;
-  }
-  if (screen.shake) {
-    if (screen.shake.left > 0) screen.shake.left--;
-    if (screen.shake.left === 0) delete screen.shake;
-  }
+  advanceFlash(screen);
+  advanceShake(screen);
   if (screen.camera) {
     if (screen.camera.left > 0) screen.camera.left--;
     if (screen.camera.left === 0) {
@@ -518,33 +554,30 @@ export function advanceScreenEffects(
     }
     if (Object.keys(screen.balloons).length === 0) delete screen.balloons;
   }
-  if (screen.pictures) {
-    for (const id of Object.keys(screen.pictures)) {
-      const picture = screen.pictures[id]!;
-      if (picture.move) {
-        if (picture.move.left > 0) picture.move.left--;
-        if (picture.move.left === 0) {
-          picture.transform = { ...picture.move.to };
-          delete picture.move;
-        }
-      }
-      if (picture.tint) {
-        if (picture.tint.left > 0) picture.tint.left--;
-        if (picture.tint.left === 0) {
-          picture.tone = { ...picture.tint.to };
-          delete picture.tint;
-        }
-      }
-      if (picture.rotationSpeed !== 0) {
-        picture.rotation = ((picture.rotation + picture.rotationSpeed) % 360 + 360) % 360;
-      }
-    }
-  }
+  advancePictures(screen);
   if (screen.mapNameBanner) {
     if (screen.mapNameBanner.left > 0) screen.mapNameBanner.left--;
     if (screen.mapNameBanner.left === 0) delete screen.mapNameBanner;
   }
   advanceOptional?.(screen);
+  return screenEffectsEmpty(screen) ? undefined : screen;
+}
+
+/** Advance exactly the Game_Screen clocks shared by the pinned RPG Maker
+ * MV/MZ corescripts while a battle scene owns the foreground. Kit-native
+ * named tints, camera scroll, balloons and map-name banners belong to the
+ * parked map and therefore remain frozen. Tone/weather stay behind the
+ * optional RPG Maker capability supplied by the importing application. */
+export function advanceRpgMakerGameScreen(
+  screen: ScreenEffectsState | undefined,
+  advanceOptional: (screen: ScreenEffectsState) => void,
+): ScreenEffectsState | undefined {
+  if (!screen) return undefined;
+  advanceFade(screen);
+  advanceFlash(screen);
+  advanceShake(screen);
+  advancePictures(screen);
+  advanceOptional(screen);
   return screenEffectsEmpty(screen) ? undefined : screen;
 }
 

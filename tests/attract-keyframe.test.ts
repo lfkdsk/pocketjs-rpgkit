@@ -9,11 +9,13 @@ import {
 } from "../src/engine/attract.ts";
 import type { BattleRules } from "../src/engine/battle.ts";
 import { createJsonMapRepository } from "../src/engine/map-repository.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { canonicalJson } from "../src/engine/save.ts";
+import type { SceneRules } from "../src/engine/scene.ts";
 import { releaseSessionMapsExcept } from "../src/engine/session.ts";
 import { expandTapeRuns } from "../src/engine/tape.ts";
 import { splitProjectMaps } from "../tools/lib/map-project.ts";
-import type { GameEvent, JsonValue, MapDef, MapRepository, Project } from "../src/engine/types.ts";
+import type { Command, GameEvent, JsonValue, MapDef, MapRepository, Project } from "../src/engine/types.ts";
 
 const BTN_SELECT = 0x0001;
 const BTN_UP = 0x0010;
@@ -158,6 +160,177 @@ function rewindPairTo(
   stepPair(keyed, fromZero, BTN_LTRIGGER);
   return { keyed, fromZero };
 }
+
+const TIMED_SCENE_ID = "test.timed-scene";
+const FROZEN_TICKS = 12;
+
+const timedSceneRules: SceneRules = {
+  start: (ext) => ({ ext, state: { left: FROZEN_TICKS } }),
+  step: (state, _input, ticks) => ({
+    left: Math.max(0, (state as { left: number }).left - ticks),
+  }),
+  done: (state) => (state as { left: number }).left === 0 ? {} : null,
+};
+
+const timedBattleRules: BattleRules = {
+  start: (ext) => ({ ext, state: { left: FROZEN_TICKS } }),
+  step: (state, _input, ticks) => ({
+    left: Math.max(0, (state as { left: number }).left - ticks),
+  }),
+  done: (state) => (state as { left: number }).left === 0
+    ? { ext: null, result: "win" }
+    : null,
+};
+
+function frozenEffectProject(effect: Command, opener: Command): Project {
+  const effectEvent: GameEvent = {
+    id: "effect",
+    x: 0,
+    y: 0,
+    pages: [
+      {
+        trigger: "autorun",
+        commands: [effect, { op: "switch", id: "effect.done", value: true }],
+      },
+      { condition: { switch: "effect.done" }, trigger: "action", commands: [] },
+    ],
+  };
+  const openerEvent: GameEvent = {
+    id: "opener",
+    x: 0,
+    y: 0,
+    pages: [
+      {
+        trigger: "parallel",
+        commands: [opener, { op: "switch", id: "scene.done", value: true }],
+      },
+      { condition: { switch: "scene.done" }, trigger: "action", commands: [] },
+    ],
+  };
+  return { ...emptyProject(), maps: [map("a", [effectEvent, openerEvent])] };
+}
+
+function screenTimelineControllers(
+  project: Project,
+  options: Partial<AttractOptions>,
+): { live: AttractController; keyed: AttractController; fromZero: AttractController } {
+  const tape = new Array<number>(120).fill(0);
+  const common = {
+    immutableState: true,
+    keyframeIntervalFrames: 100_000,
+    rewindSeconds: 6 / 60,
+    ...options,
+  } satisfies Partial<AttractOptions>;
+  const live = create(project, tape, 60, common);
+  const keyed = create(project, tape, 60, common);
+  const fromZero = create(project, tape, 60, { ...common, keyframeMaxBytes: 0 });
+  for (const controller of [live, keyed, fromZero]) controller.startAttract();
+  return { live, keyed, fromZero };
+}
+
+function stepScreenTimelines(
+  controllers: ReturnType<typeof screenTimelineControllers>,
+  mask = 0,
+): void {
+  controllers.live.step(mask);
+  controllers.keyed.step(mask);
+  controllers.fromZero.step(mask);
+}
+
+function enterScreenScene(controllers: ReturnType<typeof screenTimelineControllers>): void {
+  for (let frame = 0; frame < 10 && controllers.live.state.scene === null; frame++) {
+    stepScreenTimelines(controllers);
+  }
+  expect(controllers.live.state.scene).not.toBeNull();
+  expectEquivalent(controllers.keyed, controllers.fromZero, "scene entry");
+}
+
+function rewindAndReplayFrozenSuffix(
+  controllers: ReturnType<typeof screenTimelineControllers>,
+  expected: string,
+  label: string,
+): void {
+  stepPair(controllers.keyed, controllers.fromZero, BTN_LTRIGGER);
+  expect(controllers.keyed.state.scene, `${label} rewind target`).not.toBeNull();
+  expectEquivalent(controllers.keyed, controllers.fromZero, `${label} rewind`);
+  expect(controllers.keyed.keyframeStats().lastRefoldStart, `${label} used scene boundary`)
+    .toBeGreaterThan(0);
+  for (let frame = 0; frame < 6; frame++) stepPair(controllers.keyed, controllers.fromZero, 0);
+  expectEquivalent(controllers.keyed, controllers.fromZero, `${label} replay`);
+  expect(canonicalJson(controllers.keyed.state as unknown as JsonValue), `${label} live replay`)
+    .toBe(expected);
+}
+
+describe("frozen-scene screen keyframes", () => {
+  test("ordinary scenes freeze native effects, preserve rewind bytes and compensate their waits", () => {
+    const project = frozenEffectProject(
+      {
+        op: "screenTint",
+        layer: "slow",
+        color: { r: 20, g: 40, b: 80, a: 160 },
+        duration: 0.1,
+        wait: true,
+      },
+      { op: "scene", id: TIMED_SCENE_ID },
+    );
+    const controllers = screenTimelineControllers(project, {
+      scenes: { [TIMED_SCENE_ID]: timedSceneRules },
+    });
+    enterScreenScene(controllers);
+    expect(controllers.live.state.scene?.kind).toBe("scene");
+    const opened = controllers.live.state.interp.screen?.tints?.slow?.left;
+    const waitSince = controllers.live.state.interp.main?.since;
+    expect(opened).toBe(6);
+
+    for (let frame = 0; frame < 8; frame++) stepScreenTimelines(controllers);
+    expect(controllers.live.state.scene).not.toBeNull();
+    expect(controllers.live.state.interp.screen?.tints?.slow?.left).toBe(opened);
+    const liveMidScene = canonicalJson(controllers.live.state as unknown as JsonValue);
+    rewindAndReplayFrozenSuffix(controllers, liveMidScene, "ordinary scene");
+
+    while (controllers.live.state.scene !== null) stepScreenTimelines(controllers);
+    expect(controllers.live.state.interp.main?.mode).toBe("screenWait");
+    expect(controllers.live.state.interp.main?.since).toBeGreaterThan(waitSince!);
+    stepScreenTimelines(controllers);
+    expect(controllers.live.state.sw.switches["effect.done"]).toBeUndefined();
+    for (let frame = 0; frame < 10; frame++) stepScreenTimelines(controllers);
+    expect(controllers.live.state.sw.switches["effect.done"]).toBe(true);
+    expect(canonicalJson(controllers.keyed.state as unknown as JsonValue))
+      .toBe(canonicalJson(controllers.live.state as unknown as JsonValue));
+    expectEquivalent(controllers.keyed, controllers.fromZero, "ordinary scene settled");
+  });
+
+  test("declared RPG Maker battles advance Game_Screen, preserve rewind bytes and keep live waits", () => {
+    const project = frozenEffectProject(
+      { op: "screenFade", direction: "out", duration: 0.1, wait: true },
+      { op: "battle", setup: null },
+    );
+    project.system = { rpgMakerText: { party: [], currencyUnit: "G" } };
+    const controllers = screenTimelineControllers(project, {
+      battle: timedBattleRules,
+      rpgMakerText: rpgMakerTextRuntime,
+    });
+    enterScreenScene(controllers);
+    expect(controllers.live.state.scene?.kind).toBe("battle");
+    const waitSince = controllers.live.state.interp.main?.since;
+    expect(controllers.live.state.interp.screen?.fade?.left).toBe(6);
+
+    for (let frame = 0; frame < 8; frame++) stepScreenTimelines(controllers);
+    expect(controllers.live.state.scene).not.toBeNull();
+    expect(controllers.live.state.interp.screen?.fade?.left).toBe(0);
+    const liveMidScene = canonicalJson(controllers.live.state as unknown as JsonValue);
+    rewindAndReplayFrozenSuffix(controllers, liveMidScene, "RPG Maker battle");
+
+    while (controllers.live.state.scene !== null) stepScreenTimelines(controllers);
+    expect(controllers.live.state.interp.main?.mode).toBe("screenWait");
+    expect(controllers.live.state.interp.main?.since).toBe(waitSince);
+    stepScreenTimelines(controllers);
+    expect(controllers.live.state.sw.switches["effect.done"]).toBe(true);
+    expect(canonicalJson(controllers.keyed.state as unknown as JsonValue))
+      .toBe(canonicalJson(controllers.live.state as unknown as JsonValue));
+    expectEquivalent(controllers.keyed, controllers.fromZero, "RPG Maker battle settled");
+  });
+});
 
 describe("KR2 rewind keyframes", () => {
   test("default and configured periodic captures use source frames, independent of host hz", () => {
