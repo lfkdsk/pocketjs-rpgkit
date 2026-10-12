@@ -152,7 +152,11 @@ function FrontViewScene(
             ? clampPosition(member()!.x / db.screen.width * props.width - size() / 2, 8, props.width - size() - 8)
             : (index() + 1) * props.width / (state().enemies.length + 1) - size() / 2;
           const y = () => member()
-            ? clampPosition(member()!.y / db.screen.height * props.height - size() / 2, 20, props.height * 0.48)
+            ? clampPosition(
+                member()!.y / db.screen.height * props.height - size() / 2,
+                20,
+                Math.min(props.height * 0.48, props.height - 104 - size()),
+              )
             : 32;
           const source = () => enemy.image ? options.enemyImages?.[enemy.image] : undefined;
           return (

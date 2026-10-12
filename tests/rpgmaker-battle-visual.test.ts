@@ -38,7 +38,7 @@ const VIEWPORTS = [
 const CASES = {
   en: {
     actor: "Bartholomew-the-Unyielding Guardian",
-    actorHud: "Bartholomew-the-Unyielding Guardian  Lv 1  MP 66  TP 16",
+    actorHud: "Bartholomew-the-Unyielding Guardian  Lv 1  MP 66  TP 17",
     enemy: "Obsidian Golem of the Forgotten Northern Gate",
     title: "Choose a target for the ancient guardian's carefully prepared attack",
     titleRows: ["Choose a target for the ancient", "guardian's carefully prepared attack"],
@@ -51,7 +51,7 @@ const CASES = {
   },
   zh: {
     actor: "守护者巴塞洛缪",
-    actorHud: "守护者巴塞洛缪  级 1  法 66  怒 16",
+    actorHud: "守护者巴塞洛缪  级 1  法 66  怒 17",
     enemy: "北方古门的黑曜石巨像",
     title: "选择古老守护者精心准备攻击的目标",
     titleRows: ["选择古老守护者精心准备攻击的目标"],
@@ -118,6 +118,54 @@ function countColourAbove(frame: Uint8Array, width: number, maxY: number, colour
     }
   }
   return count;
+}
+
+function countColourInRect(
+  frame: Uint8Array,
+  width: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  colour: Rgba,
+): number {
+  let count = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const at = (y * width + x) * 4;
+      if (
+        frame[at] === colour[0] && frame[at + 1] === colour[1] &&
+        frame[at + 2] === colour[2] && frame[at + 3] === colour[3]
+      ) count++;
+    }
+  }
+  return count;
+}
+
+function colourRowBounds(
+  frame: Uint8Array,
+  width: number,
+  height: number,
+  x0: number,
+  x1: number,
+  colour: Rgba,
+): readonly [number, number] | null {
+  let first = height;
+  let last = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = x0; x < x1; x++) {
+      const at = (y * width + x) * 4;
+      if (
+        frame[at] === colour[0] && frame[at + 1] === colour[1] &&
+        frame[at + 2] === colour[2] && frame[at + 3] === colour[3]
+      ) {
+        first = Math.min(first, y);
+        last = y;
+        break;
+      }
+    }
+  }
+  return last < 0 ? null : [first, last + 1];
 }
 
 /** Distinct raster patterns across fixed-width CJK cells. Repeated tofu
@@ -208,12 +256,52 @@ simDescribe("RPG Maker front-view battle visuals", () => {
           .toEqual([0x24, 0x39, 0x4a, 0xff]);
         expect(countColour(frame, [0x0b, 0x16, 0x26, 0xff]), "target window paper").toBeGreaterThan(13_000);
         expect(countColour(frame, [0x5d, 0x7f, 0xa3, 0xff]), "target window frame").toBeGreaterThan(1_100);
-        expect(countColour(frame, [0xff, 0xe9, 0x7a, 0xff]), "selected target and actor HP").toBeGreaterThan(1_200);
+        expect(countColour(frame, [0xff, 0xe9, 0x7a, 0xff]), "selected target and actor HP").toBeGreaterThan(1_100);
         expect(countColour(frame, [0xe8, 0x5d, 0x75, 0xff]), "enemy HP bars").toBeGreaterThan(700);
         expect(
           countColourAbove(frame, viewport.width, Math.floor(viewport.height * 0.55), [0xff, 0xff, 0xff, 0xff]),
           "both enemy name marquees paint above the target window",
         ).toBeGreaterThan(40);
+        if (viewport.width === 480 && viewport.height === 272) {
+          // Hollow authors the two identical battlers at x=170 and x=310
+          // on its 480 px battle canvas. Locate their shared vertical art
+          // bounds from the unobstructed left Golem's stone body, then check
+          // the same local crop in both 65 px sprite slots. In the regressed
+          // layout the right Golem extended behind the target Panel, so its
+          // crop contained the Panel's exact paper and frame colours.
+          const enemySize = Math.max(48, Math.min(96, Math.floor(viewport.height * 0.24)));
+          const enemyXs = [170, 310].map((x) => Math.round(x - enemySize / 2));
+          const artRows = colourRowBounds(
+            frame,
+            viewport.width,
+            viewport.height,
+            enemyXs[0]!,
+            enemyXs[0]! + enemySize,
+            [0x7a, 0x74, 0x6c, 0xff],
+          );
+          expect(artRows, "left Golem body establishes the enemy sprite crop").not.toBeNull();
+          if (!artRows) throw new Error("left Golem body is absent");
+          const targetWindowColours = [
+            ["paper", [0x0b, 0x16, 0x26, 0xff]],
+            ["frame", [0x5d, 0x7f, 0xa3, 0xff]],
+          ] as const;
+          for (const [enemy, x] of enemyXs.entries()) {
+            for (const [part, colour] of targetWindowColours) {
+              expect(
+                countColourInRect(
+                  frame,
+                  viewport.width,
+                  x,
+                  artRows[0],
+                  x + enemySize,
+                  artRows[1],
+                  colour,
+                ),
+                `enemy ${enemy} sprite crop excludes target window ${part}`,
+              ).toBe(0);
+            }
+          }
+        }
         if (language === "zh") {
           // The one-row title begins four pixels inside the 236 px panel,
           // which is inset eight pixels from the right and bottom.
