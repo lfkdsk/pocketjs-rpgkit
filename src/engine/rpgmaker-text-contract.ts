@@ -74,14 +74,57 @@ export interface ParsedRpgMakerChoices {
   readonly optionColours?: (readonly RpgMakerTextColourSpan[] | null)[];
 }
 
+export interface ExpandedRpgMakerMessage {
+  readonly text: string;
+  readonly colours?: readonly RpgMakerTextColourSpan[];
+  readonly rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
+}
+
+export interface ExpandedRpgMakerLines {
+  readonly lines: string[];
+  readonly colours?: readonly RpgMakerTextColourSpan[];
+  readonly rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
+}
+
+export interface RpgMakerTextSourceActor {
+  readonly id: string;
+  readonly name: string;
+  readonly databaseId?: number;
+}
+
+export interface RpgMakerTextProjectConfig {
+  readonly party: readonly number[];
+  readonly currencyUnit: string;
+  readonly colours?: readonly string[];
+}
+
+export interface PreparedRpgMakerText {
+  readonly config: RpgMakerTextConfig;
+  readonly playerActor?: string;
+}
+
 /** Parser supplied only by applications that enable `system.rpgMakerText`. */
 export interface RpgMakerTextRuntime {
+  prepare(
+    actors: readonly RpgMakerTextSourceActor[],
+    config: Readonly<RpgMakerTextProjectConfig>,
+  ): PreparedRpgMakerText;
   parse(input: string, context: RpgMakerTextContext): ParsedRpgMakerText;
   parseMessage(
     input: string,
     state: Readonly<RpgMakerTextState>,
     config: Readonly<RpgMakerTextConfig>,
   ): ParsedRpgMakerText;
+  expandMessage(
+    input: string,
+    state: Readonly<RpgMakerTextState>,
+    config: Readonly<RpgMakerTextConfig>,
+  ): ExpandedRpgMakerMessage;
+  expandLines(
+    lines: readonly string[],
+    state: Readonly<RpgMakerTextState>,
+    config: Readonly<RpgMakerTextConfig>,
+  ): ExpandedRpgMakerLines;
   parseChoices(
     prompt: string,
     options: readonly string[],

@@ -934,24 +934,21 @@ export function createSession(
   const vehiclePassages = (project.vehicles?.length ?? 0) > 0
     ? new Map<string, VehiclePassageTable | undefined>()
     : null;
-  const playerActor = project.actors?.find((actor) =>
-    actor.databaseId === project.system?.rpgMakerText?.party[0])?.id;
+  const preparedRpgMakerText = project.system?.rpgMakerText
+    ? options.rpgMakerText!.prepare(project.actors ?? [], project.system.rpgMakerText)
+    : undefined;
   const worldOptions: WorldOptions = {
     messageBlocksPlayer: project.system?.messageBlocksPlayer === true,
     textVariables: project.system?.textVariables === true,
     characterNames: project.system?.characterNames === true,
     actors: project.actors,
-    ...(playerActor !== undefined ? { playerActor } : {}),
-    ...(project.system?.rpgMakerText ? {
+    ...(preparedRpgMakerText?.playerActor !== undefined
+      ? { playerActor: preparedRpgMakerText.playerActor }
+      : {}),
+    ...(preparedRpgMakerText ? {
       rpgMakerText: {
         runtime: options.rpgMakerText!,
-        actors: (project.actors ?? []).flatMap((actor) =>
-          actor.databaseId === undefined ? [] : [{ databaseId: actor.databaseId, name: actor.name }]),
-        partyActorIds: [...project.system.rpgMakerText.party],
-        currencyUnit: project.system.rpgMakerText.currencyUnit,
-        ...(project.system.rpgMakerText.colours
-          ? { colours: [...project.system.rpgMakerText.colours] }
-          : {}),
+        ...preparedRpgMakerText.config,
       },
     } : {}),
     ...(travelRuntime ? { travelRuntime } : {}),
@@ -3294,17 +3291,16 @@ function stepReferenceTick(
   const busy = isBusy(s.interp);
   const capturesDpad = s.interp.modal?.kind === "choices" || s.interp.modal?.kind === "shop";
   const held = messageHoldsPlayer(world, s.interp);
-  const vehicleAction = input.confirmEdge === true && !handoffAtStart && !busy &&
-    !capturesDpad && !held && s.playerRoute === null && !s.interp.inputLocked &&
-    s.interp.screen?.backdrop === undefined && travel !== undefined &&
+  const playerFree = !handoffAtStart && !busy && !capturesDpad && !held &&
+    s.playerRoute === null && !s.interp.inputLocked && s.interp.screen?.backdrop === undefined;
+  const vehicleAction = input.confirmEdge === true && playerFree && travel !== undefined &&
     sess.travelRuntime!.tryToggleVehicle(s, map, passage, sess.cfg, sess.vehiclePassages);
   if (vehicleAction) travel = s.travel;
   let finishedWaiters: string[];
   let playerRouteSettings = DEFAULT_MOVE_SETTINGS as ResolvedMoveSettings;
   let playerRouteEventSettings: Readonly<Record<string, ResolvedMoveSettings>> | undefined;
   if (!needsMovementControlPath) {
-    if (!vehicleAction && !handoffAtStart && !busy && !capturesDpad && !held && s.playerRoute === null &&
-        !s.interp.inputLocked && s.interp.screen?.backdrop === undefined) {
+    if (!vehicleAction && playerFree) {
       // stepMovement consults the table only for a held direction.
       const table = dirFromButtons(input.buttons) === null
         ? passage
@@ -3366,8 +3362,7 @@ function stepReferenceTick(
     const playerPassage = travelMovement?.passage ?? passage;
     playerRouteSettings = playerSettings;
 
-    if (!vehicleAction && !vehicleTransition && !handoffAtStart && !busy && !capturesDpad && !held && s.playerRoute === null &&
-        !s.interp.inputLocked && s.interp.screen?.backdrop === undefined) {
+    if (!vehicleAction && !vehicleTransition && playerFree) {
       if (playerSettings.runtimeWander) {
         if (s.interp.modal === null) {
           stepPlayerWander(s, playerPassage, sess.cfg, playerSettings, eventSettings);
@@ -3461,14 +3456,13 @@ function stepReferenceTick(
     });
     travel = s.travel;
   }
-  if (sess.stepCounter &&
-      (s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY)) {
+  const playerMoved = s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY;
+  if (sess.stepCounter && playerMoved) {
     incrementStepCounter(s);
   }
   const stepPageChanged = stepsBeforeMovement !== undefined && (s.sw.steps ?? 0) !== stepsBeforeMovement;
   const playerStep = sess.extensions.playerStep;
-  if (playerStep !== null &&
-      (s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY)) {
+  if (playerStep !== null && playerMoved) {
     runPlayerStepHook(
       sess,
       s,

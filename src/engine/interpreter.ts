@@ -4604,12 +4604,9 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
           !audioTrackIsFadingOut(audio.bgm)
         ? audio.bgm
         : undefined;
-      audio.bgm = {
-        ...freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0),
-        ...(held ? { positionTicks: held.positionTicks } : {}),
-        ...(held?.paused ? { paused: true as const } : {}),
-        ...(held?.fade ? { fade: { ...held.fade } } : {}),
-      };
+      audio.bgm = retainAudioCursor(
+        freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0), held, true,
+      );
       break;
     }
     case "fadeoutBgm":
@@ -4640,11 +4637,9 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
           !audioTrackIsFadingOut(audio.bgs)
         ? audio.bgs
         : undefined;
-      audio.bgs = {
-        ...freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0),
-        ...(held ? { positionTicks: held.positionTicks } : {}),
-        ...(held?.fade ? { fade: { ...held.fade } } : {}),
-      };
+      audio.bgs = retainAudioCursor(
+        freshAudioTrack(ins.id, ins.volume, ins.pitch, ins.pan ?? 0), held, false,
+      );
       break;
     }
     case "fadeoutBgs":
@@ -4701,12 +4696,7 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
           ? s.audio.bgm
           : undefined;
         if (current) {
-          s.audio.bgm = {
-            ...saved,
-            positionTicks: current.positionTicks,
-            ...(current.paused ? { paused: true as const } : {}),
-            ...(current.fade ? { fade: { ...current.fade } } : {}),
-          };
+          s.audio.bgm = retainAudioCursor({ ...saved }, current, true);
         } else {
           s.audio.bgm = {
             ...saved,
@@ -4724,6 +4714,18 @@ function runInstant(s: InterpState, f: Fiber, ins: InstantInstr): void {
 
 function freshAudioTrack(id: string, volume: number, pitch: number, pan: number): AudioTrackState {
   return { id, volume, pitch, ...(pan !== 0 ? { pan } : {}), positionTicks: 0 };
+}
+
+function retainAudioCursor(
+  next: AudioTrackState,
+  current: Readonly<AudioTrackState> | undefined,
+  retainPause: boolean,
+): AudioTrackState {
+  if (!current) return next;
+  next.positionTicks = current.positionTicks;
+  if (retainPause && current.paused) next.paused = true;
+  if (current.fade) next.fade = { ...current.fade };
+  return next;
 }
 
 function soundCue(name: string, volume: number, pitch: number, pan: number): SoundCue {
@@ -5503,20 +5505,16 @@ interface ExpandedBoxText {
   rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
 }
 
+function rpgMakerTextState(s: Readonly<InterpState>) {
+  return { variables: s.sw.variables, playerName: s.sw.playerName };
+}
+
 function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: string): ExpandedBoxText {
   // RPG Maker mode is its own one-pass grammar. It deliberately does not
   // run kit brace tokens before or after parsing: a replacement containing
   // another escape/token must print literally, matching MV/MZ.
   if (w.rpgMakerText) {
-    const parsed = w.rpgMakerText.runtime.parseMessage(text, {
-      variables: s.sw.variables,
-      ...(s.sw.playerName !== undefined ? { playerName: s.sw.playerName } : {}),
-    }, w.rpgMakerText);
-    return {
-      text: parsed.text,
-      ...(parsed.spans ? { colours: parsed.spans } : {}),
-      ...(parsed.layout ? { rpgMakerLayout: parsed.layout } : {}),
-    };
+    return w.rpgMakerText.runtime.expandMessage(text, rpgMakerTextState(s), w.rpgMakerText);
   }
   const xEnabled = w.textTokensEnabled === true;
   const resolver = xEnabled ? (w.textTokens ?? null) : null;
@@ -5541,10 +5539,9 @@ function expandedChoiceText(
   fiber: string,
 ): Pick<ChoiceModal, "prompt" | "promptColours" | "options" | "optionColours"> {
   if (w.rpgMakerText) {
-    return w.rpgMakerText.runtime.parseChoices(prompt, options, {
-      variables: s.sw.variables,
-      ...(s.sw.playerName !== undefined ? { playerName: s.sw.playerName } : {}),
-    }, w.rpgMakerText);
+    return w.rpgMakerText.runtime.parseChoices(
+      prompt, options, rpgMakerTextState(s), w.rpgMakerText,
+    );
   }
   const expandedPrompt = boxText(s, w, prompt, ext, fiber);
   const expandedOptions = options.map((option) => boxText(s, w, option, ext, fiber));
@@ -5566,15 +5563,7 @@ function boxLines(
   rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
 } {
   if (w.rpgMakerText) {
-    const parsed = w.rpgMakerText.runtime.parseMessage(lines.join("\n"), {
-      variables: s.sw.variables,
-      ...(s.sw.playerName !== undefined ? { playerName: s.sw.playerName } : {}),
-    }, w.rpgMakerText);
-    return {
-      lines: parsed.text.split("\n"),
-      ...(parsed.spans ? { colours: parsed.spans } : {}),
-      ...(parsed.layout ? { rpgMakerLayout: parsed.layout } : {}),
-    };
+    return w.rpgMakerText.runtime.expandLines(lines, rpgMakerTextState(s), w.rpgMakerText);
   }
   const xEnabled = w.textTokensEnabled === true;
   const resolver = xEnabled ? (w.textTokens ?? null) : null;

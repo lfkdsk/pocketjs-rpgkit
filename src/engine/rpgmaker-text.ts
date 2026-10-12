@@ -1,26 +1,52 @@
 import type {
+  ExpandedRpgMakerLines,
+  ExpandedRpgMakerMessage,
   ParsedRpgMakerText,
   ParsedRpgMakerChoices,
+  PreparedRpgMakerText,
   RpgMakerTextActor,
   RpgMakerTextColourSpan,
   RpgMakerTextConfig,
   RpgMakerTextContext,
   RpgMakerTextLayoutControl,
+  RpgMakerTextProjectConfig,
   RpgMakerTextRuntime,
+  RpgMakerTextSourceActor,
   RpgMakerTextState,
 } from "./rpgmaker-text-contract.ts";
 
 export type {
+  ExpandedRpgMakerLines,
+  ExpandedRpgMakerMessage,
   ParsedRpgMakerChoices,
   ParsedRpgMakerText,
+  PreparedRpgMakerText,
   RpgMakerTextActor,
   RpgMakerTextColourSpan,
   RpgMakerTextConfig,
   RpgMakerTextContext,
   RpgMakerTextLayoutControl,
+  RpgMakerTextProjectConfig,
   RpgMakerTextRuntime,
+  RpgMakerTextSourceActor,
   RpgMakerTextState,
 } from "./rpgmaker-text-contract.ts";
+
+export function prepareRpgMakerText(
+  actors: readonly RpgMakerTextSourceActor[],
+  source: Readonly<RpgMakerTextProjectConfig>,
+): PreparedRpgMakerText {
+  const config: RpgMakerTextConfig = {
+    actors: actors.flatMap((actor) => actor.databaseId === undefined
+      ? []
+      : [{ databaseId: actor.databaseId, name: actor.name }]),
+    partyActorIds: [...source.party],
+    currencyUnit: source.currencyUnit,
+    ...(source.colours ? { colours: [...source.colours] } : {}),
+  };
+  const playerActor = actors.find((actor) => actor.databaseId === source.party[0])?.id;
+  return playerActor === undefined ? { config } : { config, playerActor };
+}
 
 /** The 32 text colours in RPG Maker MV's stock Window.png palette. */
 export const DEFAULT_MV_COLOURS: readonly string[] = Object.freeze([
@@ -207,6 +233,32 @@ export function parseRpgMakerMessage(
   });
 }
 
+export function expandRpgMakerMessage(
+  input: string,
+  state: Readonly<RpgMakerTextState>,
+  config: Readonly<RpgMakerTextConfig>,
+): ExpandedRpgMakerMessage {
+  const parsed = parseRpgMakerMessage(input, state, config);
+  return {
+    text: parsed.text,
+    ...(parsed.spans ? { colours: parsed.spans } : {}),
+    ...(parsed.layout ? { rpgMakerLayout: parsed.layout } : {}),
+  };
+}
+
+export function expandRpgMakerLines(
+  lines: readonly string[],
+  state: Readonly<RpgMakerTextState>,
+  config: Readonly<RpgMakerTextConfig>,
+): ExpandedRpgMakerLines {
+  const expanded = expandRpgMakerMessage(lines.join("\n"), state, config);
+  return {
+    lines: expanded.text.split("\n"),
+    ...(expanded.colours ? { colours: expanded.colours } : {}),
+    ...(expanded.rpgMakerLayout ? { rpgMakerLayout: expanded.rpgMakerLayout } : {}),
+  };
+}
+
 export function parseRpgMakerChoices(
   prompt: string,
   options: readonly string[],
@@ -271,8 +323,11 @@ export function swapRpgMakerParty(
 
 /** Explicit capability passed to sessions that opt into RPG Maker text. */
 export const rpgMakerTextRuntime: RpgMakerTextRuntime = Object.freeze({
+  prepare: prepareRpgMakerText,
   parse: parseRpgMakerText,
   parseMessage: parseRpgMakerMessage,
+  expandMessage: expandRpgMakerMessage,
+  expandLines: expandRpgMakerLines,
   parseChoices: parseRpgMakerChoices,
   partyOrder: resolveRpgMakerPartyOrder,
   swapParty: swapRpgMakerParty,
