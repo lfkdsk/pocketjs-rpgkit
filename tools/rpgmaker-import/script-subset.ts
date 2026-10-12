@@ -775,6 +775,11 @@ function comparison(node: Expression): { left: Expression; op: ScriptCompareOp; 
     : node.kind === "group" ? comparison(node.value) : null;
 }
 
+function ungroup(node: Expression): Expression {
+  while (node.kind === "group") node = node.value;
+  return node;
+}
+
 function reverseComparison(op: ScriptCompareOp): ScriptCompareOp {
   switch (op) {
     case "<": return ">";
@@ -797,6 +802,7 @@ function comparedReader(
 }
 
 function condition(node: Expression): SafeScriptCondition | ScriptRejection {
+  node = ungroup(node);
   const compared = comparedReader(node);
   if (compared) {
     const variable = variableValueCall(compared.reader);
@@ -829,7 +835,7 @@ function condition(node: Expression): SafeScriptCondition | ScriptRejection {
     }
   }
   const negated = node.kind === "unary" && node.op === "!";
-  const call = negated ? node.value : node;
+  const call = negated ? ungroup(node.value) : node;
   let args = directCall(call, "$gameParty", "hasItem");
   if (args) {
     const shape = "$gameParty.hasItem(dataItem, includeEquipment?)";

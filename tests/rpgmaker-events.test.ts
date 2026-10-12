@@ -1546,7 +1546,7 @@ describe("battle, shop, name input", () => {
     const thenCommand: Command = { op: "switch", id: "s001", value: true };
     const elseCommand: Command = { op: "switch", id: "s002", value: true };
     const cases = [
-      ["$gameParty.hasItem($dataItems[1])", { kind: "item", id: "item001", count: 1 }, false],
+      ["($gameParty.hasItem($dataItems[1]))", { kind: "item", id: "item001", count: 1 }, false],
       ["!$gameParty.hasItem($dataItems[1])", { kind: "item", id: "item001", count: 1 }, true],
       ["$gameVariables.value(2) > 4", { kind: "variable", id: "v002", op: ">=", value: 5 }, false],
       ["$gamePlayer.direction() !== 8", { kind: "facing", dir: "up" }, true],

@@ -62,7 +62,7 @@ describe("RPG Maker safe Script condition subset", () => {
   test.each([
     ["$gameVariables.value(3) >= 9", { kind: "variable", id: 3, op: ">=", value: 9 }],
     ["9 < $gameVariables.value(3)", { kind: "variable", id: 3, op: ">", value: 9 }],
-    ["$gameParty.hasItem($dataItems[2])", { kind: "item", itemKind: "item", id: 2, negate: false }],
+    ["($gameParty.hasItem($dataItems[2]))", { kind: "item", itemKind: "item", id: 2, negate: false }],
     ["!$gameParty.hasItem($dataArmors[7], true)", { kind: "item", itemKind: "armor", id: 7, includeEquipment: true, negate: true }],
     ["$gameSwitches.value(6)", { kind: "switch", id: 6, negate: false }],
     ["!$gameSwitches.value(6)", { kind: "switch", id: 6, negate: true }],
