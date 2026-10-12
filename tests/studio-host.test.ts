@@ -59,7 +59,16 @@ const HOST_ONLY: [string, RegExp][] = [
 
 /** The hosts: the only files that may use HOST_ONLY APIs. The desktop host
  * runs in the desktop app's page and reuses the browser's preview iframe. */
-const HOST_IMPLEMENTATIONS = new Set(["host-browser.ts", "host-browser-boot.ts", "host-desktop.ts", "host-desktop-boot.ts"]);
+const HOST_IMPLEMENTATIONS = new Set([
+  "host-browser.ts",
+  "host-browser-boot.ts",
+  "host-desktop.ts",
+  "host-desktop-boot.ts",
+  "rpgmaker-import-browser.ts",
+  "rpgmaker-import-browser-io.ts",
+  "rpgmaker-import-browser-pack.ts",
+  "rpgmaker-import-browser-source.ts",
+]);
 const SCANNED = /\.(?:ts|tsx|js|html)$/;
 
 /** Source without comments, so prose may name the APIs it avoids. An .html
@@ -98,7 +107,16 @@ describe("Studio host boundary", () => {
   test("no Studio file outside the hosts calls host-only browser APIs", () => {
     expect(files.length).toBeGreaterThanOrEqual(18);
     expect(files).toContain("index.html");
-    expect(files.filter(isHost).sort()).toEqual(["host-browser-boot.ts", "host-browser.ts", "host-desktop-boot.ts", "host-desktop.ts"]);
+    expect(files.filter(isHost).sort()).toEqual([
+      "host-browser-boot.ts",
+      "host-browser.ts",
+      "host-desktop-boot.ts",
+      "host-desktop.ts",
+      "rpgmaker-import-browser-io.ts",
+      "rpgmaker-import-browser-pack.ts",
+      "rpgmaker-import-browser-source.ts",
+      "rpgmaker-import-browser.ts",
+    ]);
     const found = Object.fromEntries(files
       .filter((path) => !isHost(path))
       .map((path) => [path, scan(path)])
@@ -212,7 +230,7 @@ function looseSunstone(): MemoryDirectory {
 
 describe("Studio on the memory host", () => {
   test("capabilities cover every feature, each with a reason", () => {
-    const features: HostFeature[] = ["openFile", "openDirectory", "saveInPlace", "storage", "export", "localArt", "checks", "dynamicChecks", "agent", "preview"];
+    const features: HostFeature[] = ["openFile", "openDirectory", "rpgMakerImport", "saveInPlace", "storage", "export", "localArt", "checks", "dynamicChecks", "agent", "preview"];
     const caps = new MemoryHost().capabilities();
     expect(Object.keys(caps).sort()).toEqual([...features].sort());
     for (const feature of features) expect(caps[feature].reason.length).toBeGreaterThan(5);

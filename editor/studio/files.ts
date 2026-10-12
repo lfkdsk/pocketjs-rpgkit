@@ -6,7 +6,14 @@
 import { EditSession } from "../api/session.ts";
 import type { StudioApp } from "./app.ts";
 import type { ArtRegistry } from "./art.ts";
-import type { OpenedProject, SaveTarget, StudioExample, StudioHost } from "./host.ts";
+import type {
+  OpenedProject,
+  RpgMakerImportOutcome,
+  RpgMakerImportProgress,
+  SaveTarget,
+  StudioExample,
+  StudioHost,
+} from "./host.ts";
 import { projectArtRefs, resolveProjectArt } from "./project-art.ts";
 import { flattenCommands } from "../engine/commands.ts";
 
@@ -36,6 +43,9 @@ export class StudioFiles {
    * pressed, which need not be the one open now. Null for storage saves. */
   savingTo: string | null = null;
   private saveQueue: Promise<unknown> = Promise.resolve();
+  private importSequence = 0;
+  private activeImportToken: string | null = null;
+  private stopImportProgress: (() => void) | null = null;
   /** Resource ids drawn with the open document's own art. */
   projectArt = 0;
 
@@ -166,6 +176,14 @@ export class StudioFiles {
       return false;
     }
     if (!(await this.confirmDiscard())) return false;
+    return this.openPickedProject(opened);
+  }
+
+  /** Open a host result after discard has already been confirmed. This is
+   * shared by ordinary picks and the explicit second step of RPG Maker
+   * import, so completing an expensive import never triggers a second
+   * confirmation prompt. */
+  private openPickedProject(opened: OpenedProject): boolean {
     const ok = this.openText(opened.text, opened.label, opened.fileName, opened.target ?? null);
     if (ok) {
       const kind = this.app.session?.kind === "pack" ? "sharded pack" : "project";
@@ -190,6 +208,78 @@ export class StudioFiles {
     await this.host.pickProjectDirectory();
   }
 
+  /** Pick and convert an RPG Maker MV/MZ folder without opening the result.
+   * The caller shows progress/coverage, then calls openRpgMakerResult only
+   * after the user chooses the explicit Open result action. */
+  async importRpgMaker(
+    placeholders: "visible" | "silent",
+    onProgress: (progress: RpgMakerImportProgress) => void,
+    discardMessage = "The open document has unsaved changes. Discard them?",
+  ): Promise<RpgMakerImportOutcome | null> {
+    const status = this.host.capabilities().rpgMakerImport;
+    if (!status.available) {
+      this.app.notify("error", status.reason);
+      return null;
+    }
+    if (this.activeImportToken) {
+      return { ok: false, token: this.activeImportToken, code: "BUSY", message: "An RPG Maker import is already running." };
+    }
+    if (!(await this.confirmDiscard(discardMessage))) return null;
+
+    const token = `studio-rpgmaker-${++this.importSequence}`;
+    this.activeImportToken = token;
+    const stopProgress = this.host.onRpgMakerImportProgress((progress) => {
+      if (progress.token === token && this.activeImportToken === token) onProgress(progress);
+    });
+    this.stopImportProgress = stopProgress;
+    let outcome: RpgMakerImportOutcome;
+    try {
+      outcome = await this.host.importRpgMaker({ token, placeholders });
+    } catch (error) {
+      outcome = {
+        ok: false,
+        token,
+        code: "IMPORT_FAILED",
+        message: `The host could not import this RPG Maker project: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    } finally {
+      stopProgress();
+      if (this.stopImportProgress === stopProgress) this.stopImportProgress = null;
+    }
+
+    // cancelRpgMakerImport invalidates first; a host may finish before it
+    // reaches its next cooperative cancellation checkpoint.
+    if (this.activeImportToken !== token) {
+      return { ok: false, token, code: "CANCELLED", message: "RPG Maker import cancelled." };
+    }
+    this.activeImportToken = null;
+    if (outcome.token !== token) {
+      return { ok: false, token, code: "IMPORT_FAILED", message: "The host returned an RPG Maker import result for the wrong request." };
+    }
+    return outcome;
+  }
+
+  /** Immediately detach the UI from a running import, then ask the host to
+   * stop it. Late events/results carry the invalidated token and are ignored. */
+  async cancelRpgMakerImport(): Promise<void> {
+    const token = this.activeImportToken;
+    if (!token) return;
+    this.activeImportToken = null;
+    this.stopImportProgress?.();
+    this.stopImportProgress = null;
+    try {
+      await this.host.cancelRpgMakerImport(token);
+    } catch (error) {
+      this.app.notify("error", `Could not cancel RPG Maker import: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** The deliberate second half of import: coverage has been reviewed and
+   * the user chose to replace the current document with the staged result. */
+  openRpgMakerResult(outcome: RpgMakerImportOutcome): boolean {
+    return outcome.ok ? this.openPickedProject(outcome.opened) : false;
+  }
+
   async openExample(id: string): Promise<boolean> {
     const example = this.examples.find((item) => item.id === id);
     if (!example) {
@@ -208,9 +298,9 @@ export class StudioFiles {
     }
   }
 
-  async confirmDiscard(): Promise<boolean> {
+  async confirmDiscard(message = "The open document has unsaved changes. Discard them?"): Promise<boolean> {
     if (!this.app.session?.isDirty()) return true;
-    return this.host.confirm("The open document has unsaved changes. Discard them?");
+    return this.host.confirm(message);
   }
 
   /** Validate, then save: into the folder it came from, else host storage.

@@ -124,7 +124,7 @@ describe("projectArtRefs", () => {
       animations: [{ id: "splash", sheet: "fx/splash.png", frameDuration: 4 }],
     });
     expect(refs).toEqual([
-      { kind: "sheet", id: "town", candidates: ["art/sheets/town.png", "sheets/town.png"] },
+      { kind: "sheet", id: "town", candidates: ["art/sheets/town.png", "sheets/town.png", "tiles/town.png"] },
       { kind: "sprite", id: "wiz", candidates: ["assets/npc/wiz.png", "art/sprites/wiz.png"] },
       { kind: "sprite", id: "hero", candidates: ["sprites/adventurer.png", "art/sprites/hero.png"] },
       { kind: "animation", id: "splash", candidates: ["fx/splash.png"] },
@@ -148,7 +148,7 @@ describe("projectArtRefs", () => {
     });
     expect(refs.map((ref) => ref.candidates)).toEqual([
       [],
-      ["art/sheets/a b.png", "sheets/a b.png"],
+      ["art/sheets/a b.png", "sheets/a b.png", "tiles/a b.png"],
       ["art/sprites/abs.png"],
       ["art/sprites/back.png"],
       ["art/sprites/dot.png"],
@@ -168,6 +168,14 @@ describe("projectArtRefs", () => {
       ["town", "art/sheets/town.png"],
       ["wiz", "art/sprites/wiz.png"],
     ]);
+  });
+
+  test("an imported tile sheet falls back to tiles/<id>.png without overriding authored sheet paths", () => {
+    const [sheet] = projectArtRefs({ sheets: [{ id: "ts1", cols: 4, rows: 4 }] });
+    expect(sheet!.candidates).toEqual(["art/sheets/ts1.png", "sheets/ts1.png", "tiles/ts1.png"]);
+    expect(resolveProjectArt([sheet!], (path) => path === "tiles/ts1.png")[0]?.path).toBe("tiles/ts1.png");
+    expect(resolveProjectArt([sheet!], (path) => path === "art/sheets/ts1.png" || path === "tiles/ts1.png")[0]?.path)
+      .toBe("art/sheets/ts1.png");
   });
 });
 

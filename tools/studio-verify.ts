@@ -28,6 +28,9 @@
 //             exactly that shard (plus the shell's index entry)
 //   host      the page runs on the browser host; capability probing enables
 //             Open folder and disables the agent and engine checks with reasons
+//   import    a read-only browser directory pick converts the self-authored
+//             RPG Maker fixture, shows bilingual progress and exact coverage
+//             limitations, and opens only after the explicit Open result step
 //   folder    a loose sharded project in the origin-private file system opens
 //             through the browser host's directory path; Ctrl+S writes back
 //             exactly the edited shard and the shell and leaves no temporary
@@ -59,7 +62,8 @@
 //             shown; a document over the protocol's message limit is refused
 //             with its reason and never sent
 //   shots     dark, light, map editing, command tree, problems, narrow,
-//             and the play-test panel (light, dark, running, edited dialogue);
+//             RPG Maker import at wide 1x and compact 2x, and the play-test
+//             panel (light, dark, running, edited dialogue);
 //             the main light/dark shots pass layout, style and pixel checks
 //
 //   --double  optional capture-stability gate: every documentation shot is
@@ -171,6 +175,24 @@ function largeProject(): string {
   project.maps.push({ id: "large", name: "Large 100×100", width: W, height: H, sheets: village.sheets, ground, upper, events: [] } as unknown as Project["maps"][number]);
   project.start = { ...project.start, map: "large", x: 10, y: 10 };
   return `${JSON.stringify(project, null, 2)}\n`;
+}
+
+/** Base64 fixture files for a real FileSystemDirectoryHandle-shaped browser
+ * import. The fixture is authored in this repository; no external project
+ * content is embedded in the verifier or its screenshots. */
+function rpgMakerFixtureFiles(): Record<string, string> {
+  const root = join(ROOT, "tests", "fixtures", "rpgmaker", "stage-mv");
+  const out: Record<string, string> = {};
+  const walk = (directory: string, prefix: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = join(directory, entry.name);
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path, rel);
+      else out[rel] = readFileSync(path).toString("base64");
+    }
+  };
+  walk(root, "");
+  return out;
 }
 
 async function main(): Promise<void> {
@@ -1734,6 +1756,207 @@ async function main(): Promise<void> {
     const engine = await evaluate<{ disabled: boolean; title: string } | null>(`(() => { const b = document.querySelector("#studio-engine-checks"); return b ? { disabled: b.disabled, title: b.title } : null; })()`);
     await clickSelector("#status-problems");
     expect("host: engine checks are disabled with a reason", !!engine && engine.disabled && engine.title.length > 20, JSON.stringify(engine));
+
+    // ---- browser RPG Maker import: real directory handle and shared UI ----
+    phase = "rpgmaker-import";
+    await navigate(`${base}?example=sunstone`);
+    const rpgMakerFiles = rpgMakerFixtureFiles();
+    await evaluate(`(async () => {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry("rpgmaker-stage", { recursive: true }).catch(() => {});
+      const dir = await root.getDirectoryHandle("rpgmaker-stage", { create: true });
+      for (const [path, base64] of Object.entries(${JSON.stringify(rpgMakerFiles)})) {
+        const parts = path.split("/");
+        let parent = dir;
+        for (const part of parts.slice(0, -1)) parent = await parent.getDirectoryHandle(part, { create: true });
+        const file = await parent.getFileHandle(parts.at(-1), { create: true });
+        const writable = await file.createWritable();
+        await writable.write(Uint8Array.from(atob(base64), (character) => character.charCodeAt(0)));
+        await writable.close();
+      }
+      window.__studioRpgMakerPickerMode = null;
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: async (options) => {
+          window.__studioRpgMakerPickerMode = options?.mode ?? null;
+          return dir;
+        },
+      });
+    })()`);
+    await clickSelector("#studio-open");
+    const importMenu = await evaluate<{ disabled: boolean; title: string; text: string } | null>(`(() => {
+      const item = document.querySelector('[data-menu="Import RPG Maker MV/MZ…"]');
+      return item ? { disabled: item.disabled, title: item.title, text: item.textContent } : null;
+    })()`);
+    expect("import: browser Open menu exposes the RPG Maker entry", !!importMenu && !importMenu.disabled, JSON.stringify(importMenu));
+    await evaluate(`document.querySelector('[data-menu="Import RPG Maker MV/MZ…"]').click()`);
+    await waitFor("RPG Maker import dialog", `!!document.querySelector('[data-role="rpgmaker-import"]')`);
+    const importEnglish = await evaluate<{ title: string; intro: string; choose: string; language: string }>(`(() => ({
+      title: document.querySelector(".import-rpgmaker-dialog h2").textContent,
+      intro: document.querySelector(".import-lead p").textContent,
+      choose: document.querySelector('[data-action="choose-rpgmaker-source"]').textContent,
+      language: document.querySelector('[data-action="import-language"]').value,
+    }))()`);
+    expect(
+      "import: English controls explain source conversion and folder selection",
+      importEnglish.title === "Import RPG Maker MV/MZ" && importEnglish.language === "en" &&
+        /maps, events, database/.test(importEnglish.intro) && importEnglish.choose === "Choose source folder…",
+      JSON.stringify(importEnglish),
+    );
+    await evaluate(`(() => {
+      const select = document.querySelector('[data-action="import-language"]');
+      select.value = "zh";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    const importChinese = await evaluate<{ title: string; choose: string; placeholder: string }>(`({
+      title: document.querySelector(".import-rpgmaker-dialog h2").textContent,
+      choose: document.querySelector('[data-action="choose-rpgmaker-source"]').textContent,
+      placeholder: document.querySelector(".import-placeholder-mode legend").textContent,
+    })`);
+    expect(
+      "import: the same browser flow has complete Chinese controls",
+      importChinese.title === "导入 RPG Maker MV/MZ" && importChinese.choose === "选择源文件夹…" && importChinese.placeholder === "不支持的脚本和插件",
+      JSON.stringify(importChinese),
+    );
+    await evaluate(`(() => {
+      const select = document.querySelector('[data-action="import-language"]');
+      select.value = "en";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      document.querySelector('[data-action="choose-rpgmaker-source"]').click();
+    })()`);
+    await waitFor("RPG Maker coverage result", `!!document.querySelector(".import-callout.ready")`, 30_000);
+    const importedCoverage = await evaluate<{
+      pickerMode: string | null;
+      titleBeforeOpen: string;
+      labels: string[];
+      counts: number[];
+      limitations: { head: string; reason: string }[];
+      warnings: string;
+      open: string;
+    }>(`(() => ({
+      pickerMode: window.__studioRpgMakerPickerMode,
+      titleBeforeOpen: __studio.app.session.title(),
+      labels: [...document.querySelectorAll(".import-metric dt")].map((node) => node.textContent),
+      counts: [...document.querySelectorAll(".import-metric dd")].map((node) => Number(node.textContent)),
+      limitations: [...document.querySelectorAll(".import-limitations li")].map((node) => ({
+        head: node.querySelector(".import-limitation-head").textContent,
+        reason: node.querySelector("p").textContent,
+      })),
+      warnings: document.querySelector(".import-warnings")?.textContent ?? "",
+      open: document.querySelector('[data-action="open-rpgmaker-result"]').textContent,
+    }))()`);
+    results.rpgMakerImport = importedCoverage;
+    expect(
+      "import: source access is read-only and coverage waits before replacing the document",
+      importedCoverage.pickerMode === "read" && importedCoverage.titleBeforeOpen === "The Sunstone of Bramble Hollow" && importedCoverage.open === "Open result",
+      JSON.stringify({ pickerMode: importedCoverage.pickerMode, title: importedCoverage.titleBeforeOpen, open: importedCoverage.open }),
+    );
+    expect(
+      "import: coverage shows all four dispositions and concrete Placeholder/Dropped reasons",
+      JSON.stringify(importedCoverage.labels) === JSON.stringify(["Native", "Degraded", "Placeholder", "Dropped"]) &&
+        importedCoverage.counts[0]! > 0 && importedCoverage.counts[1]! > 0 && importedCoverage.counts[2]! > 0 &&
+        importedCoverage.limitations.some((row) => row.head.includes("Placeholder")) &&
+        importedCoverage.limitations.some((row) => row.head.includes("Dropped")) &&
+        importedCoverage.limitations.every((row) => row.reason.startsWith("Reasons: ")) &&
+        importedCoverage.warnings.includes("browser import cannot convert"),
+      JSON.stringify(importedCoverage),
+    );
+
+    // Wide 1x capture plus screenshot-pixel checks for the green ready state
+    // and red Placeholder count. These catch a semantically blank or
+    // incorrectly themed dialog even when its DOM text still exists.
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+    const importPixels = await evaluate<{
+      ready: { x: number; y: number; w: number; h: number; color: number[] };
+      placeholder: { x: number; y: number; w: number; h: number; color: number[] };
+      metricColumns: number;
+    }>(`(() => {
+      const rgba = (css) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        context.fillStyle = css;
+        context.fillRect(0, 0, 1, 1);
+        return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+      };
+      const box = (element, property) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, w: rect.width, h: rect.height, color: rgba(getComputedStyle(element)[property]) };
+      };
+      const metrics = [...document.querySelectorAll(".import-metric")];
+      return {
+        ready: box(document.querySelector(".import-callout.ready"), "backgroundColor"),
+        placeholder: box(document.querySelector(".import-metric.placeholder dd"), "color"),
+        metricColumns: new Set(metrics.map((node) => Math.round(node.getBoundingClientRect().x))).size,
+      };
+    })()`);
+    await shot("studio-rpgmaker-import-web-wide");
+    const wideImport = decodePng(new Uint8Array(readFileSync(join(SHOTS, "studio-rpgmaker-import-web-wide.png"))));
+    const pixel = (x: number, y: number): number[] => {
+      const offset = (Math.max(0, Math.min(wideImport.height - 1, y)) * wideImport.width + Math.max(0, Math.min(wideImport.width - 1, x))) * 4;
+      return [...wideImport.rgba.subarray(offset, offset + 3)];
+    };
+    const readyPixel = pixel(
+      Math.round(importPixels.ready.x + importPixels.ready.w - 12),
+      Math.round(importPixels.ready.y + importPixels.ready.h - 10),
+    );
+    const readyDelta = Math.max(...readyPixel.map((value, index) => Math.abs(value - importPixels.ready.color[index]!)));
+    let placeholderPixels = 0;
+    for (let y = Math.floor(importPixels.placeholder.y); y < Math.ceil(importPixels.placeholder.y + importPixels.placeholder.h); y++) {
+      for (let x = Math.floor(importPixels.placeholder.x); x < Math.ceil(importPixels.placeholder.x + importPixels.placeholder.w); x++) {
+        const seen = pixel(x, y);
+        if (Math.max(...seen.map((value, index) => Math.abs(value - importPixels.placeholder.color[index]!))) <= 24) placeholderPixels++;
+      }
+    }
+    results.rpgMakerImportPixels = { readyPixel, readyColor: importPixels.ready.color, readyDelta, placeholderPixels };
+    expect(
+      "import: screenshot pixels contain the ready card and Placeholder emphasis",
+      wideImport.width === 1440 && wideImport.height === 900 && importPixels.metricColumns === 4 && readyDelta <= 6 && placeholderPixels >= 4,
+      JSON.stringify(results.rpgMakerImportPixels),
+    );
+
+    // The compact tier deliberately crosses the CSS breakpoint and captures
+    // at 2x device density, after switching the completed result to Chinese.
+    await evaluate(`(() => {
+      const select = document.querySelector('[data-action="import-language"]');
+      select.value = "zh";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 600, height: 900, deviceScaleFactor: 2, mobile: false });
+    await sleep(250);
+    const compactImport = await evaluate<{ title: string; open: string; columns: number; clipped: boolean }>(`(() => {
+      const dialog = document.querySelector(".import-rpgmaker-dialog");
+      const metrics = [...document.querySelectorAll(".import-metric")];
+      const box = dialog.getBoundingClientRect();
+      return {
+        title: dialog.querySelector("h2").textContent,
+        open: dialog.querySelector('[data-action="open-rpgmaker-result"]').textContent,
+        columns: new Set(metrics.map((node) => Math.round(node.getBoundingClientRect().x))).size,
+        clipped: box.left < 0 || box.right > innerWidth || dialog.scrollWidth > dialog.clientWidth + 1,
+      };
+    })()`);
+    await shot("studio-rpgmaker-import-web-compact-2x");
+    const compactPng = decodePng(new Uint8Array(readFileSync(join(SHOTS, "studio-rpgmaker-import-web-compact-2x.png"))));
+    expect(
+      "import: compact 2x Chinese result uses two metric columns without horizontal clipping",
+      compactImport.title === "导入 RPG Maker MV/MZ" && compactImport.open === "打开结果" && compactImport.columns === 2 &&
+        !compactImport.clipped && compactPng.width === 1200 && compactPng.height === 1800,
+      JSON.stringify({ ...compactImport, png: [compactPng.width, compactPng.height] }),
+    );
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+    await clickSelector('[data-action="open-rpgmaker-result"]');
+    const openedImport = await waitFor<{ title: string; kind: string; sheet: string }>("explicit imported result open", `(() => {
+      const title = __studio.app.session?.title();
+      if (title !== "Lantern Stage") return null;
+      return { title, kind: __studio.app.session.kind, sheet: __studio.art.sheetStatus("ts1").source };
+    })()`);
+    expect(
+      "import: Open result loads the staged sharded project and its imported tile art",
+      openedImport.title === "Lantern Stage" && openedImport.kind === "pack" && openedImport.sheet === "project",
+      JSON.stringify(openedImport),
+    );
 
     // ---- folder: a loose sharded project saved in place ----
     phase = "folder";

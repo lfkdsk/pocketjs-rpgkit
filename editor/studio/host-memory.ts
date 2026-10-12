@@ -13,6 +13,9 @@ import {
   type HostCapabilities,
   type LocalArt,
   type OpenedProject,
+  type RpgMakerImportOutcome,
+  type RpgMakerImportProgress,
+  type RpgMakerImportRequest,
   type SaveOutcome,
   type SaveTarget,
   type StoredProject,
@@ -310,7 +313,14 @@ export class MemoryHost implements StudioHost {
   agentReply: ((request: AgentRequest) => Promise<AgentOutcome>) | null = null;
   /** Every agent request received, in order. */
   agentRequests: AgentRequest[] = [];
+  /** Answers RPG Maker imports when set (and makes the feature available).
+   * Tests use `progress` to drive the same tokenized events as browser and
+   * desktop hosts. */
+  rpgMakerImportReply: ((request: RpgMakerImportRequest, progress: (event: RpgMakerImportProgress) => void) => Promise<RpgMakerImportOutcome>) | null = null;
+  rpgMakerImportRequests: RpgMakerImportRequest[] = [];
+  rpgMakerImportCancels: string[] = [];
   private listeners = new Set<OpenListener>();
+  private rpgMakerImportListeners = new Set<(progress: RpgMakerImportProgress) => void>();
   private themeListeners = new Set<() => void>();
   private motionListeners = new Set<() => void>();
 
@@ -318,6 +328,9 @@ export class MemoryHost implements StudioHost {
     return {
       openFile: available("Files come from MemoryHost.filePicks."),
       openDirectory: available("Folders come from MemoryHost.directoryPicks."),
+      rpgMakerImport: this.rpgMakerImportReply
+        ? available("RPG Maker imports are answered by MemoryHost.rpgMakerImportReply.")
+        : unavailable("No RPG Maker import reply is configured in this memory host."),
       saveInPlace: available("Folders save back into their MemoryDirectory."),
       storage: this.storageFails ? unavailable("Storage is switched off.") : available("One document in MemoryHost.stored."),
       export: available("Exports collect in MemoryHost.exports."),
@@ -357,6 +370,25 @@ export class MemoryHost implements StudioHost {
   async pickProjectDirectory(): Promise<void> {
     const dir = this.directoryPicks.shift();
     if (dir) this.emit(await openDirectoryProject(dir));
+  }
+
+  async importRpgMaker(request: RpgMakerImportRequest): Promise<RpgMakerImportOutcome> {
+    this.rpgMakerImportRequests.push({ ...request });
+    if (!this.rpgMakerImportReply) {
+      return { ok: false, token: request.token, code: "IMPORT_FAILED", message: "RPG Maker import is not configured in this memory host." };
+    }
+    return this.rpgMakerImportReply(request, (progress) => {
+      for (const listener of this.rpgMakerImportListeners) listener(progress);
+    });
+  }
+
+  async cancelRpgMakerImport(token: string): Promise<void> {
+    this.rpgMakerImportCancels.push(token);
+  }
+
+  onRpgMakerImportProgress(listener: (progress: RpgMakerImportProgress) => void): () => void {
+    this.rpgMakerImportListeners.add(listener);
+    return () => this.rpgMakerImportListeners.delete(listener);
   }
 
   async listExamples(): Promise<StudioExample[]> {

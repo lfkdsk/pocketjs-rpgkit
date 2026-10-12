@@ -14,8 +14,17 @@ import { MapCanvas, isTyping } from "./canvas.ts";
 import { CommandPalette, type StudioCommand } from "./command-palette.ts";
 import { emptyState, h, icon, iconButton, MOD, replace } from "./dom.ts";
 import { StudioFiles } from "./files.ts";
-import type { HostCommand, HostFeature, StudioHost, ThemeChoice } from "./host.ts";
+import type {
+  HostCommand,
+  HostFeature,
+  RpgMakerImportDisposition,
+  RpgMakerImportOutcome,
+  RpgMakerImportProgress,
+  StudioHost,
+  ThemeChoice,
+} from "./host.ts";
 import { BrowserHost } from "./host-browser.ts";
+import { rpgMakerImportLocale, rpgMakerImportText, type RpgMakerImportLocale } from "./import-i18n.ts";
 import { mountInspector } from "./inspector.ts";
 import { eventCopyOp, insertionAddress, insertCommandOp, opLabel, PICKER_ENTRIES } from "./inspector-model.ts";
 import { defaultCommand, flattenCommands } from "../engine/commands.ts";
@@ -37,6 +46,9 @@ const app = new StudioApp();
 const art = new ArtRegistry();
 const files = new StudioFiles(app, art, host);
 const can = (feature: HostFeature) => host.capabilities()[feature];
+let importLocale: RpgMakerImportLocale = rpgMakerImportLocale(
+  typeof navigator === "undefined" ? undefined : navigator.languages.length > 0 ? navigator.languages : navigator.language,
+);
 app.loadPreferences(host.preferences(), host.systemPrefersReducedMotion());
 document.documentElement.dataset.motion = app.reducedMotion ? "reduced" : "full";
 host.onSystemMotionChange(() => {
@@ -261,9 +273,11 @@ function renderToolbar(): void {
   const session = app.session;
   const openButton = iconButton("open", "Open", () => {
     const folder = can("openDirectory");
+    const importer = can("rpgMakerImport");
     openMenu(openButton, [
       ["Open file…", () => files.openFile(), `${MOD}+O`],
       ["Open folder…", () => void files.openDirectory(), undefined, folder.available ? undefined : folder.reason],
+      [rpgMakerImportText(importLocale).menu, () => openRpgMakerImportDialog(), undefined, importer.available ? undefined : importer.reason],
       ...files.examples.map((example): MenuItem => [`Example: ${example.title}`, () => void files.openExample(example.id)]),
     ]);
   }, { shortcut: `${MOD}+O`, id: "studio-open", text: true });
@@ -579,6 +593,174 @@ function dialog(title: string, ...content: (Node | null)[]): HTMLDialogElement {
   document.body.appendChild(element);
   element.showModal();
   return element;
+}
+
+const IMPORT_DISPOSITIONS: readonly RpgMakerImportDisposition[] = ["Native", "Degraded", "Placeholder", "Dropped"];
+
+/** Source folder -> visible progress -> coverage review -> explicit open.
+ * The host owns both pickers and conversion; this dialog only renders plain
+ * progress/result data from host.ts. */
+function openRpgMakerImportDialog(): void {
+  let placeholders: "visible" | "silent" = "visible";
+  let progress: RpgMakerImportProgress | null = null;
+  let outcome: RpgMakerImportOutcome | null = null;
+  let running = false;
+  const body = h("div", { class: "import-rpgmaker", dataset: { role: "rpgmaker-import" } });
+  let element: HTMLDialogElement;
+
+  const localizedDisposition = (disposition: RpgMakerImportDisposition): string => {
+    const translated = rpgMakerImportText(importLocale)[disposition];
+    return importLocale === "zh" ? `${translated} / ${disposition}` : translated;
+  };
+
+  const start = async (): Promise<void> => {
+    running = true;
+    outcome = null;
+    progress = { token: "pending", phase: "selecting" };
+    render();
+    const result = await files.importRpgMaker(placeholders, (next) => {
+      if (!element.isConnected) return;
+      progress = next;
+      render();
+    }, rpgMakerImportText(importLocale).discardChanges);
+    if (!element.isConnected) return;
+    running = false;
+    progress = null;
+    if (result === null) {
+      element.close();
+      return;
+    }
+    outcome = result;
+    render();
+  };
+
+  const cancel = (): void => {
+    void files.cancelRpgMakerImport();
+    element.close();
+  };
+
+  const languageControl = () => {
+    const t = rpgMakerImportText(importLocale);
+    return h("label", { class: "import-language" },
+      h("span", null, t.language),
+      h("select", {
+        dataset: { action: "import-language" },
+        value: importLocale,
+        onchange: (event: Event) => {
+          importLocale = (event.currentTarget as HTMLSelectElement).value as RpgMakerImportLocale;
+          renderToolbar();
+          render();
+        },
+      },
+      h("option", { value: "en", selected: importLocale === "en" }, "English"),
+      h("option", { value: "zh", selected: importLocale === "zh" }, "中文")));
+  };
+
+  const initialView = () => {
+    const t = rpgMakerImportText(importLocale);
+    return h("div", { class: "import-start" },
+      h("div", { class: "import-lead" }, icon("open"),
+        h("div", null, h("p", null, t.intro), h("p", { class: "muted" }, t.destination))),
+      h("fieldset", { class: "import-placeholder-mode" },
+        h("legend", null, t.placeholderMode),
+        h("label", null,
+          h("input", {
+            type: "radio", name: "rpgmaker-placeholders", value: "visible", checked: placeholders === "visible",
+            onchange: () => { placeholders = "visible"; render(); },
+          }),
+          h("span", null, h("strong", null, t.visiblePlaceholders), h("small", null, t.visiblePlaceholdersHint))),
+        h("label", null,
+          h("input", {
+            type: "radio", name: "rpgmaker-placeholders", value: "silent", checked: placeholders === "silent",
+            onchange: () => { placeholders = "silent"; render(); },
+          }),
+          h("span", null, h("strong", null, t.silentPlaceholders), h("small", null, t.silentPlaceholdersHint)))),
+      h("div", { class: "dialog-actions" },
+        h("button", { type: "button", class: "text-button", onclick: () => element.close() }, t.close),
+        h("button", { type: "button", class: "primary-button", dataset: { action: "choose-rpgmaker-source" }, onclick: () => void start() }, t.chooseSource)));
+  };
+
+  const progressView = () => {
+    const t = rpgMakerImportText(importLocale);
+    const phase = progress?.phase ?? "selecting";
+    const determinate = progress?.completed !== undefined && progress.total !== undefined && progress.total > 0;
+    const value = determinate ? Math.max(0, Math.min(progress!.completed!, progress!.total!)) : undefined;
+    return h("div", { class: "import-running", "aria-live": "polite" },
+      h("div", { class: "import-running-mark" }, h("span", { class: "import-spinner", "aria-hidden": "true" }), icon("open")),
+      h("h3", null, t.importing),
+      h("p", { class: "import-phase" }, t.phase[phase]),
+      progress?.message ? h("p", { class: "import-detail" }, progress.message) : null,
+      determinate
+        ? h("progress", { max: progress!.total!, value, "aria-label": t.phase[phase] })
+        : h("div", { class: "import-progress-indeterminate", "aria-hidden": "true" }, h("span", null)),
+      determinate ? h("p", { class: "import-progress-count" }, `${value} / ${progress!.total}`) : null,
+      h("div", { class: "dialog-actions" },
+        h("button", { type: "button", class: "text-button", dataset: { action: "cancel-rpgmaker-import" }, onclick: cancel }, t.cancel)));
+  };
+
+  const resultView = (result: RpgMakerImportOutcome) => {
+    const t = rpgMakerImportText(importLocale);
+    if (!result.ok) {
+      const cancelled = result.code === "CANCELLED";
+      return h("div", { class: "import-result" },
+        h("div", { class: `import-callout ${cancelled ? "cancelled" : "error"}`, role: cancelled ? "status" : "alert" },
+          icon(cancelled ? "stop" : "warn"),
+          h("div", null, h("strong", null, cancelled ? t.cancelled : t.failure),
+            cancelled ? null : h("p", null, result.message))),
+        h("div", { class: "dialog-actions" },
+          h("button", { type: "button", class: "text-button", onclick: () => element.close() }, t.close),
+          h("button", { type: "button", class: "primary-button", dataset: { action: "retry-rpgmaker-import" }, onclick: () => void start() }, t.retry)));
+    }
+
+    const limitations = result.coverage.rows.filter((row) => row.counts.Placeholder > 0 || row.counts.Dropped > 0);
+    return h("div", { class: "import-result" },
+      h("div", { class: "import-callout ready", role: "status" }, icon("check"), h("strong", null, t.ready)),
+      h("section", { class: "import-coverage", "aria-label": t.coverage },
+        h("div", { class: "import-section-heading" }, h("h3", null, t.coverage), h("p", null, t.coverageHint)),
+        h("dl", { class: "import-metrics" }, IMPORT_DISPOSITIONS.map((disposition) =>
+          h("div", { class: `import-metric ${disposition.toLowerCase()}` },
+            h("dt", null, localizedDisposition(disposition)),
+            h("dd", null, result.coverage.totals[disposition]),
+            h("small", null, t.uses))))),
+      h("section", { class: "import-limitations" },
+        h("div", { class: "import-section-heading" }, h("h3", null, t.limitations), h("p", null, t.limitationHint)),
+        limitations.length === 0
+          ? h("p", { class: "import-none" }, t.noLimitations)
+          : h("ul", null, limitations.map((row) => h("li", null,
+              h("div", { class: "import-limitation-head" },
+                h("code", null, `${row.section} · ${row.key}`),
+                h("span", { class: "import-limitation-counts" },
+                  row.counts.Placeholder > 0 ? `${localizedDisposition("Placeholder")} ${row.counts.Placeholder}` : null,
+                  row.counts.Placeholder > 0 && row.counts.Dropped > 0 ? " · " : null,
+                  row.counts.Dropped > 0 ? `${localizedDisposition("Dropped")} ${row.counts.Dropped}` : null)),
+              h("p", null, h("strong", null, `${t.reasons}: `), row.reasons.length > 0 ? row.reasons.join("; ") : "—"))))),
+      result.warnings.length > 0
+        ? h("details", { class: "import-warnings" },
+            h("summary", null, `${t.warnings} (${result.warnings.length})`),
+            h("ul", null, result.warnings.map((warning) => h("li", null, warning))))
+        : null,
+      h("div", { class: "dialog-actions" },
+        h("button", { type: "button", class: "text-button", onclick: () => element.close() }, t.close),
+        h("button", {
+          type: "button", class: "primary-button", dataset: { action: "open-rpgmaker-result" },
+          onclick: () => { if (files.openRpgMakerResult(result)) element.close(); },
+        }, t.openResult)));
+  };
+
+  const render = (): void => {
+    const t = rpgMakerImportText(importLocale);
+    element.lang = importLocale === "zh" ? "zh-CN" : "en";
+    const title = element.querySelector(".dialog-header h2");
+    if (title) title.textContent = t.title;
+    const close = element.querySelector<HTMLButtonElement>(".dialog-header button");
+    if (close) close.setAttribute("aria-label", t.close);
+    replace(body, languageControl(), running ? progressView() : outcome ? resultView(outcome) : initialView());
+  };
+
+  element = dialog(rpgMakerImportText(importLocale).title, body);
+  element.classList.add("import-rpgmaker-dialog");
+  element.addEventListener("close", () => { if (running) void files.cancelRpgMakerImport(); });
+  render();
 }
 
 function openViewSettings(): void {

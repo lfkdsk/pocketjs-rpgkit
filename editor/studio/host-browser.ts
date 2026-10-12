@@ -29,6 +29,9 @@ import {
   type HostCapabilities,
   type LocalArt,
   type OpenedProject,
+  type RpgMakerImportOutcome,
+  type RpgMakerImportProgress,
+  type RpgMakerImportRequest,
   type SaveOutcome,
   type SaveTarget,
   type StoredProject,
@@ -53,6 +56,7 @@ import {
   type StudioPreview,
 } from "./preview.ts";
 import { PREVIEW_VERSION } from "../../tools/preview/protocol.ts";
+import { BrowserRpgMakerImporter } from "./rpgmaker-import-browser.ts";
 
 export const STORAGE_KEY = "pocket-rpgkit:studio:document:v1";
 export { THEME_KEY };
@@ -68,13 +72,15 @@ type OpenListener = (opened: OpenedProject | { error: string }) => void;
 interface DirectoryHandle {
   readonly kind: "directory";
   readonly name: string;
-  values(): AsyncIterable<{ kind: "file" | "directory"; name: string }>;
+  values(): AsyncIterable<FileHandle | DirectoryHandle>;
   getDirectoryHandle(name: string): Promise<DirectoryHandle>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandle>;
   removeEntry(name: string): Promise<void>;
 }
 
 interface FileHandle {
+  readonly kind: "file";
+  readonly name: string;
   getFile(): Promise<File>;
   createWritable(): Promise<{ write(data: string): Promise<void>; close(): Promise<void> }>;
   /** Rename within the same directory; newer Chromium only. */
@@ -398,6 +404,7 @@ export class BrowserHost implements StudioHost {
   private fileInput: HTMLInputElement;
   private systemDark = window.matchMedia("(prefers-color-scheme: dark)");
   private systemMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  private rpgMakerImporter = new BrowserRpgMakerImporter(() => this.directoryPicker());
 
   constructor() {
     // A persistent input: the toolbar opens it, and automation can set its
@@ -434,8 +441,8 @@ export class BrowserHost implements StudioHost {
     }
   }
 
-  private directoryPicker(): ((options: { mode: "readwrite" }) => Promise<DirectoryHandle>) | null {
-    const picker = (window as unknown as { showDirectoryPicker?: (options: { mode: "readwrite" }) => Promise<DirectoryHandle> }).showDirectoryPicker;
+  private directoryPicker(): ((options: { mode: "read" | "readwrite" }) => Promise<DirectoryHandle>) | null {
+    const picker = (window as unknown as { showDirectoryPicker?: (options: { mode: "read" | "readwrite" }) => Promise<DirectoryHandle> }).showDirectoryPicker;
     return typeof picker === "function" ? picker.bind(window) : null;
   }
 
@@ -445,6 +452,9 @@ export class BrowserHost implements StudioHost {
     return {
       openFile: available("Open a project JSON or a sharded pack from your computer."),
       openDirectory: directories ? available("Open a folder holding project.json and its map files; Save writes back into it.") : unavailable(noDirectories),
+      rpgMakerImport: directories
+        ? available("Import an RPG Maker MV/MZ folder in this browser; maps and PNG art are embedded in the staged result, while source audio is reported as unavailable.")
+        : unavailable(noDirectories),
       saveInPlace: directories
         ? available("Projects opened from a folder save back into that folder. A failed write puts back the files already replaced; the save is not crash-proof, so a crash or closed tab mid-save can leave a mix of old and new files.")
         : unavailable(`Single files cannot be saved in place by a web page. ${noDirectories}`),
@@ -500,6 +510,18 @@ export class BrowserHost implements StudioHost {
    * origin-private file system). */
   async openDirectoryHandle(handle: DirectoryHandle): Promise<void> {
     this.emit(await openDirectoryProject(handleDirectory(handle)));
+  }
+
+  importRpgMaker(request: RpgMakerImportRequest): Promise<RpgMakerImportOutcome> {
+    return this.rpgMakerImporter.import(request);
+  }
+
+  async cancelRpgMakerImport(token: string): Promise<void> {
+    this.rpgMakerImporter.cancel(token);
+  }
+
+  onRpgMakerImportProgress(listener: (progress: RpgMakerImportProgress) => void): () => void {
+    return this.rpgMakerImporter.onProgress(listener);
   }
 
   async listExamples(): Promise<StudioExample[]> {

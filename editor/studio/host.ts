@@ -22,6 +22,8 @@ export type HostFeature =
   | "openFile"
   /** Open a directory holding a ProjectShell and its loose shard files. */
   | "openDirectory"
+  /** Import an RPG Maker MV/MZ source folder into a Studio document. */
+  | "rpgMakerImport"
   /** Save back to the file or directory a project was opened from. */
   | "saveInPlace"
   /** Keep one document in host storage and restore it on the next start. */
@@ -96,6 +98,83 @@ export interface StudioExample {
    * example's title. */
   chapters?: PreviewChapter[];
 }
+
+// ---- RPG Maker import --------------------------------------------------------------
+
+/** Importer vocabulary is kept in its original title case so coverage from
+ * tools/rpgmaker-import can cross browser and desktop host boundaries without
+ * translation or loss. */
+export type RpgMakerImportDisposition = "Native" | "Degraded" | "Placeholder" | "Dropped";
+
+export interface RpgMakerImportCounts extends Record<RpgMakerImportDisposition, number> {
+  total: number;
+}
+
+/** One source construct from the importer's coverage report. `section` and
+ * `key` are intentionally strings: adding an importer section must not break
+ * an older Studio host. */
+export interface RpgMakerImportCoverageRow {
+  section: string;
+  key: string;
+  counts: Record<RpgMakerImportDisposition, number>;
+  /** Distinct importer explanations, in stable first-seen order. */
+  reasons: string[];
+}
+
+export interface RpgMakerImportCoverage {
+  /** Event-command headline counts, matching the importer's CLI summary. */
+  totals: RpgMakerImportCounts;
+  /** Exact rows used by the Placeholder / Dropped reason list in Studio.
+   * Hosts must include every row with either of those dispositions and may
+   * include Native/Degraded-only rows when payload size is not a concern. */
+  rows: RpgMakerImportCoverageRow[];
+}
+
+export interface RpgMakerImportRequest {
+  /** Chosen by Studio. Progress and cancellation carry the same token so a
+   * late IPC event from an abandoned run cannot update a newer dialog. */
+  token: string;
+  /** Visible placeholders make unsupported script/plugin commands apparent
+   * in play; silent placeholders omit their text but retain coverage. */
+  placeholders: "visible" | "silent";
+}
+
+export type RpgMakerImportPhase =
+  | "selecting"
+  | "reading"
+  | "converting"
+  | "packing"
+  | "writing"
+  | "complete";
+
+export interface RpgMakerImportProgress {
+  token: string;
+  phase: RpgMakerImportPhase;
+  /** Host detail such as the file or output folder currently handled. */
+  message?: string;
+  /** Optional determinate progress. Omit both for a busy indicator. */
+  completed?: number;
+  total?: number;
+}
+
+export type RpgMakerImportOutcome =
+  | {
+      ok: true;
+      token: string;
+      /** The result is staged until the user explicitly chooses Open result.
+       * Browser hosts normally return an in-memory pack without a target;
+       * desktop hosts return a directory-backed document. */
+      opened: OpenedProject;
+      coverage: RpgMakerImportCoverage;
+      warnings: string[];
+    }
+  | {
+      ok: false;
+      token: string;
+      code: "CANCELLED" | "BUSY" | "INVALID_SOURCE" | "IMPORT_FAILED";
+      /** A readable, host-specific explanation. Studio shows it verbatim. */
+      message: string;
+    };
 
 // ---- art, checks, agent ------------------------------------------------------------
 
@@ -185,6 +264,17 @@ export interface StudioHost {
   /** Documents opened by a picker, a drop, an OS "open with"… Errors (an
    * unreadable file, a directory without a shell) arrive as `error`. */
   onOpen(listener: (opened: OpenedProject | { error: string }) => void): () => void;
+
+  /** Pick an RPG Maker MV/MZ source folder and import it. Unlike ordinary
+   * open pickers, the result is returned and remains staged until Studio
+   * explicitly opens it. Desktop hosts may ask for a destination after the
+   * source and must not overwrite an existing output directory. */
+  importRpgMaker(request: RpgMakerImportRequest): Promise<RpgMakerImportOutcome>;
+  /** Ask the host to stop a run. Cancellation may be cooperative; Studio
+   * invalidates the token immediately and ignores late progress or results. */
+  cancelRpgMakerImport(token: string): Promise<void>;
+  /** Progress for all runs on this host. Consumers must match `token`. */
+  onRpgMakerImportProgress(listener: (progress: RpgMakerImportProgress) => void): () => void;
 
   /** Bundled examples, then one example's document text. */
   listExamples(): Promise<StudioExample[]>;

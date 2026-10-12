@@ -33,7 +33,8 @@ function ref(kind: ProjectArtKind, id: string, paths: readonly (string | undefin
 
 /** Where a project's art lives, by convention, in project order (sheets,
  * sprites, animations, parallaxes):
- * - tile sheet S: "art/sheets/S.png", then "sheets/S.png";
+ * - tile sheet S: "art/sheets/S.png", then "sheets/S.png", then the RPG
+ *   Maker importer's "tiles/S.png";
  * - image sprite: its `src`, then "art/sprites/<id>.png";
  * - walker sheet sprite: its `sheet`, then "art/sprites/<id>.png";
  * - animation: its `sheet`;
@@ -52,7 +53,7 @@ export function projectArtRefs(globals: {
 }): ProjectArtRef[] {
   const refs: ProjectArtRef[] = [];
   for (const sheet of globals.sheets ?? []) {
-    refs.push(ref("sheet", sheet.id, [`art/sheets/${sheet.id}.png`, `sheets/${sheet.id}.png`]));
+    refs.push(ref("sheet", sheet.id, [`art/sheets/${sheet.id}.png`, `sheets/${sheet.id}.png`, `tiles/${sheet.id}.png`]));
   }
   for (const [id, sprite] of Object.entries(globals.sprites ?? {})) {
     if (sprite.kind === "image") refs.push(ref("sprite", id, [sprite.src, `art/sprites/${id}.png`]));
