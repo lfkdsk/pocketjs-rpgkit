@@ -336,6 +336,44 @@ describe("frozen-scene screen keyframes", () => {
     expectEquivalent(controllers.keyed, controllers.fromZero, "RPG Maker battle settled");
   });
 
+  test("RPG Maker battle-entry cleanup rewinds identically at 60/30/20 Hz", () => {
+    const project = frozenEffectProject(
+      { op: "screenFade", direction: "out", duration: 0.1, wait: true },
+      { op: "battle", setup: null },
+    );
+    project.system = { rpgMakerText: { party: [], currencyUnit: "G" } };
+    const signatures: string[] = [];
+
+    for (const hz of [60, 30, 20] as const) {
+      const tape = new Array<number>(60).fill(0);
+      const options = {
+        battle: timedBattleRules,
+        rpgMakerText: rpgMakerTextRuntime,
+        immutableState: true,
+        keyframeIntervalFrames: 100_000,
+        rewindSeconds: 6 / 60,
+      } satisfies Partial<AttractOptions>;
+      const keyed = create(project, tape, hz, options);
+      const fromZero = create(project, tape, hz, { ...options, keyframeMaxBytes: 0 });
+      keyed.startAttract();
+      fromZero.startAttract();
+      while (keyed.status().demoFrame < 6) stepPair(keyed, fromZero, 0);
+
+      expect(keyed.state.scene?.kind, `${hz} Hz entered battle`).toBe("battle");
+      expect(keyed.state.interp.screen?.fade, `${hz} Hz cleared fade`).toBeUndefined();
+      const expected = canonicalJson(keyed.state as unknown as JsonValue);
+      stepPair(keyed, fromZero, BTN_LTRIGGER);
+      expectEquivalent(keyed, fromZero, `${hz} Hz cleanup rewind`);
+      while (keyed.status().demoFrame < 6) stepPair(keyed, fromZero, 0);
+      expect(canonicalJson(keyed.state as unknown as JsonValue), `${hz} Hz cleanup replay`)
+        .toBe(expected);
+      expectEquivalent(keyed, fromZero, `${hz} Hz cleanup replay source`);
+      signatures.push(canonicalJson(keyed.state as unknown as JsonValue));
+    }
+
+    for (const signature of signatures) expect(signature).toBe(signatures[0]);
+  });
+
   test("frozen RPG Maker battles preserve immediate motion and backdrop history across rewind", () => {
     const director: GameEvent = {
       id: "director",
