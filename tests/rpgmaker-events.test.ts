@@ -1274,7 +1274,8 @@ describe("screen and audio", () => {
       { op: "changeTileset", id: "ts7" },
     ]);
     expect(counts(cov, "command", "236").Native).toBe(4);
-    for (const code of [137, 138, 282]) expect(counts(cov, "command", String(code)).Degraded).toBeGreaterThan(0);
+    for (const code of [137, 138]) expect(counts(cov, "command", String(code)).Degraded).toBeGreaterThan(0);
+    expect(counts(cov, "command", "282").Native).toBe(1);
     for (const code of [137, 138, 236, 282]) expect(counts(cov, "command", String(code)).Dropped).toBe(0);
   });
 

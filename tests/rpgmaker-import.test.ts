@@ -828,11 +828,11 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(101)!.disposition).toBe("Native");
     expect(by.get(112)!.disposition).toBe("Native");
     expect(by.get(113)!.disposition).toBe("Native");
-    for (const code of [103, 104, 124, 134, 135, 202, 204, 206, 212, 216, 217, 231, 232, 233, 234, 235, 236, 251, 281, 284, 285, 323, 351, 352, 353, 354]) {
+    for (const code of [103, 104, 124, 134, 135, 202, 204, 206, 212, 216, 217, 231, 232, 233, 234, 235, 236, 251, 281, 282, 284, 285, 323, 351, 352, 353, 354]) {
       expect(by.get(code)!.disposition).toBe("Native");
       expect(by.get(code)!.needsKit).toBe("");
     }
-    for (const code of [137, 138, 223, 282]) {
+    for (const code of [137, 138, 223]) {
       expect(by.get(code)!.disposition).toBe("Degraded");
       expect(by.get(code)!.needsKit).toBe("");
     }

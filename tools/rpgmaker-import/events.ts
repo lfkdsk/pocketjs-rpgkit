@@ -829,7 +829,7 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
         rec(st, 282, "Dropped", `tileset ${p[0]} does not exist`);
         return [];
       }
-      rec(st, 282, "Degraded", "map art and passage switch together; tile-image event sprites keep their imported art");
+      rec(st, 282, "Native");
       return [{ op: "changeTileset", id: `ts${p[0]}` }];
     case 283:
       return emitBattleSetting(code, p, st);
