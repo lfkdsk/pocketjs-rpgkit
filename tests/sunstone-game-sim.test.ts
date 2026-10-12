@@ -535,8 +535,10 @@ simDescribe("sunstone — render budget", () => {
     // Generic battle completion and active-battle save/restore integration add
     // 3,783 B, measuring 1,115,970 B. The RPG Maker rules and renderer remain
     // separate opt-in entries and are absent from Sunstone's source graph.
+    // Optional result-music projection and full map-mix restoration add a
+    // measured 3,453 B, producing the 1,119,423 B bundle pinned separately.
     // Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_117_000);
+    expect(jsBytes).toBeLessThan(1_121_000);
   });
 });
 

@@ -240,8 +240,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Generic battle completion and active-battle save/restore integration add
 // 3,783 B to battle-using Sunstone. The concrete RPG Maker reducer and UI
 // still remain absent, as the source-graph and identifier checks below prove.
+// Optional result-music projection and complete map-mix restoration add a
+// measured 3,453 B on that merged baseline; no decoder, battle view, or
+// authored audio asset is pulled in.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_115_970;
+const EXPECTED_BYTES = 1_119_423;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
