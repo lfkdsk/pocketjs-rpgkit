@@ -223,7 +223,7 @@ QuickJS was pinned to CPU 17, 2,000 iterations per slot, three ABBA windows
 | sunstoneWalk | −0.44% |
 
 All medians are below the +3% regression limit. The window began at load
-9.45/8.58/7.60 and ended at 6.30/7.63/7.36; the pinned guest itself was the
+14.60/9.09/7.69 and ended at 6.30/7.63/7.36; the pinned guest itself was the
 only task started for the measurement.
 
 Cold gate, after deleting `dist/`:
