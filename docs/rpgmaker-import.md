@@ -403,6 +403,14 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   BGM/ME records and per-map battleback names persist, but the current battle
   presentation does not consume them. Encounter Disable works; vehicle
   suppression and Encounter Half are not modelled.
+- **Trait execution is intentionally bounded.** The battle reducer consumes
+  parameter, element, state, hit/evasion/critical, recovery/cost/damage,
+  targeting, attack-element/state/speed/times/skill, added-skill, Guard and
+  reward-multiplier traits. Other normalized trait records remain Degraded:
+  debuff rates; skill-type add/seal and skill seal; equipment lock and slot
+  type changes after import; Action Times+; Auto Battle, Substitute and
+  Preserve TP special flags; and collapse types. They stay in `battle.json`
+  for a later reducer extension rather than being guessed.
 - **Damage formulas use a safe subset, never `eval`.** Battler parameters
   (`a.atk`, `b.def`, and the other basic parameters), literal `v[n]`, arithmetic,
   comparisons, boolean operators, ternaries and common `Math` functions are
@@ -420,10 +428,10 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
 - **Maps are capped at 256 × 256**, the kit's limit.
 - Region ids and terrain tags are carried over as sparse per-cell map data
   (Get Location Info, the `region` condition and authored region-crossing
-  pages read them); damage floors, encounter region sets and map encounters
-  are not. RPG Maker has no stock region-enter/leave event trigger for the
-  importer to synthesize. Ladders, bushes and counters keep their passage but
-  not their special behaviour.
+  pages read them). The opt-in battle module consumes encounter region sets
+  and map encounters; damage floors are not modelled. RPG Maker has no stock
+  region-enter/leave event trigger for the importer to synthesize. Ladders,
+  bushes and counters keep their passage but not their special behaviour.
 - Import-time message wrapping protects complete escape spellings but still
   budgets the raw source length, not the final visible pixel width after
   expansion. Runtime pagination then wraps the expanded visible text safely.
