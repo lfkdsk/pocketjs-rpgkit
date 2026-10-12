@@ -264,10 +264,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 669 B to Meadow and the WAV fixture, and 3,783 B to battle-using Sunstone.
 // The concrete RPG Maker rules and renderer stay outside all three graphs;
 // tests/rpgmaker-battle-isolation.test.ts pins that source-level boundary.
-// Re-measure after every shared-path change.
-const EXPECTED_MEADOW_BYTES = 701_801;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_115_970;
-const EXPECTED_WAV_FIXTURE_BYTES = 886_407;
+// Re-measure after every shared-path change. Projecting battle and result
+// music into session state adds 846 B to Meadow; with the suspended map-stream
+// reuse and in-place staged-resource retry, each audio bundle grows 3,453 B.
+const EXPECTED_MEADOW_BYTES = 702_647;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_119_423;
+const EXPECTED_WAV_FIXTURE_BYTES = 889_860;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
