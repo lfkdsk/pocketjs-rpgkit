@@ -954,6 +954,7 @@ export function createSession(
           : {}),
       },
     } : {}),
+    ...(travelRuntime ? { travelRuntime } : {}),
     // Declaring system.textTokens (the key allowlist) is the explicit {x:}
     // opt-in: a document without it keeps the pre-{x:} literal behavior.
     textTokensEnabled: Array.isArray(project.system?.textTokens),

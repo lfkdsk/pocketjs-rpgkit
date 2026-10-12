@@ -12,6 +12,8 @@ import { mapForTileset } from "./tiles.ts";
 import * as travel from "./travel.ts";
 import type {
   MapDimensionsResolver,
+  TravelInstruction,
+  TravelPublishResult,
   TravelMovementContext,
 } from "./travel-contract.ts";
 import type { TravelState, VehiclePassageTable } from "./travel-types.ts";
@@ -24,6 +26,56 @@ const vehicleMovementTables = new WeakMap<
   VehiclePassageTable,
   { boat?: PassageTable; ship?: PassageTable }
 >();
+
+function coordinateValue(
+  value: number | string | { readonly variable: string },
+  variables: Readonly<Record<string, number | string>>,
+): number | string | undefined {
+  return typeof value === "object" ? variables[value.variable] : value;
+}
+
+/** Compile the one-frame interpreter request inside the opt-in module. */
+export function publishTravelRequest(
+  instruction: TravelInstruction,
+  variables: Readonly<Record<string, number | string>>,
+  fiber: string,
+): TravelPublishResult {
+  switch (instruction.op) {
+    case "followers":
+      return { request: { op: "followers", visible: instruction.visible }, wait: false };
+    case "gatherFollowers":
+      return { request: { op: "gatherFollowers", fiber }, wait: true };
+    case "vehicle":
+      return { request: { op: "vehicle", action: instruction.action }, wait: false };
+    case "setVehicleImage":
+      return { request: { op: "setVehicleImage", id: instruction.id, sprite: instruction.sprite }, wait: false };
+    case "setVehicleBgm":
+      return {
+        request: {
+          op: "setVehicleBgm",
+          id: instruction.id,
+          bgm: instruction.bgm === null ? null : { ...instruction.bgm },
+        },
+        wait: false,
+      };
+    case "setVehicleLocation": {
+      const map = coordinateValue(instruction.map, variables);
+      const x = coordinateValue(instruction.x, variables);
+      const y = coordinateValue(instruction.y, variables);
+      if (typeof map !== "string" || map.length === 0) {
+        return { error: `vehicle location in ${fiber}: map variable must hold a non-empty string` };
+      }
+      if (typeof x !== "number" || !Number.isInteger(x) || x < 0 ||
+          typeof y !== "number" || !Number.isInteger(y) || y < 0) {
+        return { error: `vehicle location in ${fiber}: coordinate variables must hold non-negative integers` };
+      }
+      return {
+        request: { op: "setVehicleLocation", id: instruction.id, map, x, y },
+        wait: false,
+      };
+    }
+  }
+}
 const blockedVehicleTables = new WeakMap<PassageTable, PassageTable>();
 
 function blockedVehicleTable(base: PassageTable): PassageTable {

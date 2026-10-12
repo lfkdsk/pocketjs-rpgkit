@@ -65,6 +65,7 @@ import type {
   RpgMakerTextLayoutControl,
   RpgMakerTextRuntime,
 } from "./rpgmaker-text-contract.ts";
+import type { PendingTravelRequest, TravelRuntime } from "./travel-contract.ts";
 import {
   cloneMoveControlState,
   type MoveControlState,
@@ -2187,14 +2188,6 @@ export type PendingMoveOperation = PendingMoveRoute | PendingMoveControl;
 /** Travel commands are published by the interpreter and consumed by the
  * Session after the fold. The optional queue is absent until content uses
  * this additive subsystem. Gather alone parks its issuing fiber. */
-export type PendingTravelRequest =
-  | { op: "followers"; visible: boolean }
-  | { op: "gatherFollowers"; fiber: string }
-  | { op: "vehicle"; action: "toggle" }
-  | { op: "setVehicleLocation"; id: string; map: string; x: number; y: number }
-  | { op: "setVehicleImage"; id: string; sprite: string }
-  | { op: "setVehicleBgm"; id: string; bgm: VehicleBgm | null };
-
 /** Battle Processing request published on the tick that parks its fiber. */
 export interface PendingBattle {
   fiber: string;
@@ -2520,6 +2513,8 @@ export interface World {
   rpgMakerText?: RpgMakerTextConfig & {
     runtime: RpgMakerTextRuntime;
   };
+  /** Optional command publisher paired with a follower/vehicle Session. */
+  travelRuntime?: TravelRuntime;
   /** Actor database facts used by imported actor conditions. */
   actors?: ReadonlyMap<string, Readonly<ActorDef>>;
   playerActor?: string;
@@ -2558,6 +2553,7 @@ export interface WorldOptions {
   rpgMakerText?: RpgMakerTextConfig & {
     runtime: RpgMakerTextRuntime;
   };
+  travelRuntime?: TravelRuntime;
   actors?: readonly ActorDef[];
   playerActor?: string;
   /** Project.system.textTokens is declared: switches {x:<key>} expansion on.
@@ -3140,6 +3136,7 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     textVariables: options.textVariables === true,
     characterNames: options.characterNames === true,
     ...(options.rpgMakerText ? { rpgMakerText: options.rpgMakerText } : {}),
+    ...(options.travelRuntime ? { travelRuntime: options.travelRuntime } : {}),
     ...(actorsById ? { actors: actorsById } : {}),
     ...(options.playerActor !== undefined ? { playerActor: options.playerActor } : {}),
     textTokensEnabled: options.textTokensEnabled === true,
@@ -5212,32 +5209,6 @@ function resolveTransfer(
   };
 }
 
-function resolveVehicleLocation(
-  s: InterpState,
-  ins: Extract<Instr, { op: "setVehicleLocation" }>,
-  fiber: string,
-): { map: string; x: number; y: number } | null {
-  const map = variableRef(ins.map) ? s.sw.variables[ins.map.variable] : ins.map;
-  const x = variableRef(ins.x) ? s.sw.variables[ins.x.variable] : ins.x;
-  const y = variableRef(ins.y) ? s.sw.variables[ins.y.variable] : ins.y;
-  if (typeof map !== "string" || map.length === 0) {
-    s.error = {
-      kind: "content",
-      message: `vehicle location in ${fiber}: map variable must hold a non-empty string`,
-    };
-    return null;
-  }
-  if (typeof x !== "number" || !Number.isInteger(x) || x < 0 ||
-      typeof y !== "number" || !Number.isInteger(y) || y < 0) {
-    s.error = {
-      kind: "content",
-      message: `vehicle location in ${fiber}: coordinate variables must hold non-negative integers`,
-    };
-    return null;
-  }
-  return { map, x, y };
-}
-
 function emptyRecord(record: object): boolean {
   return Object.keys(record).length === 0;
 }
@@ -6723,40 +6694,27 @@ function runFiber(
         break;
       }
       case "followers":
-        (s.pendingTravel ??= []).push({ op: "followers", visible: ins.visible });
-        top.pc++;
-        break;
       case "gatherFollowers":
-        f.mode = "external";
-        (s.pendingTravel ??= []).push({ op: "gatherFollowers", fiber: f.key });
-        return;
       case "vehicle":
-        (s.pendingTravel ??= []).push({ op: "vehicle", action: ins.action });
-        top.pc++;
-        break;
-      case "setVehicleLocation": {
-        const location = resolveVehicleLocation(s, ins, f.key);
-        if (location === null) return;
-        (s.pendingTravel ??= []).push({
-          op: "setVehicleLocation",
-          id: ins.id,
-          ...location,
-        });
+      case "setVehicleLocation":
+      case "setVehicleImage":
+      case "setVehicleBgm": {
+        const published = w.travelRuntime?.publishTravelRequest(ins, s.sw.variables, f.key);
+        if (!published || "error" in published) {
+          s.error = {
+            kind: "content",
+            message: published?.error ?? `travel command ${ins.op} requires the optional travel runtime`,
+          };
+          return;
+        }
+        (s.pendingTravel ??= []).push(published.request);
+        if (published.wait) {
+          f.mode = "external";
+          return;
+        }
         top.pc++;
         break;
       }
-      case "setVehicleImage":
-        (s.pendingTravel ??= []).push({ op: "setVehicleImage", id: ins.id, sprite: ins.sprite });
-        top.pc++;
-        break;
-      case "setVehicleBgm":
-        (s.pendingTravel ??= []).push({
-          op: "setVehicleBgm",
-          id: ins.id,
-          bgm: ins.bgm === null ? null : { ...ins.bgm },
-        });
-        top.pc++;
-        break;
       case "common": {
         const prog = w.commonPrograms.get(ins.id);
         if (!prog) {

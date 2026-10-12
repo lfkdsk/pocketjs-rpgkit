@@ -18,6 +18,38 @@ export type MapDimensionsResolver = (
   mapId: string,
 ) => Readonly<{ width: number; height: number }> | null;
 
+type TravelCoordinate = number | { readonly variable: string };
+type TravelMap = string | { readonly variable: string };
+
+/** Compiled travel instructions are kept structural here so the ordinary
+ * interpreter can delegate their authored-value rules without importing the
+ * concrete follower/vehicle reducer. */
+export type TravelInstruction =
+  | { readonly op: "followers"; readonly visible: boolean }
+  | { readonly op: "gatherFollowers" }
+  | { readonly op: "vehicle"; readonly action: "toggle" }
+  | {
+      readonly op: "setVehicleLocation";
+      readonly id: string;
+      readonly map: TravelMap;
+      readonly x: TravelCoordinate;
+      readonly y: TravelCoordinate;
+    }
+  | { readonly op: "setVehicleImage"; readonly id: string; readonly sprite: string }
+  | { readonly op: "setVehicleBgm"; readonly id: string; readonly bgm: Readonly<VehicleBgm> | null };
+
+export type PendingTravelRequest =
+  | { op: "followers"; visible: boolean }
+  | { op: "gatherFollowers"; fiber: string }
+  | { op: "vehicle"; action: "toggle" }
+  | { op: "setVehicleLocation"; id: string; map: string; x: number; y: number }
+  | { op: "setVehicleImage"; id: string; sprite: string }
+  | { op: "setVehicleBgm"; id: string; bgm: VehicleBgm | null };
+
+export type TravelPublishResult =
+  | { readonly request: PendingTravelRequest; readonly wait: boolean }
+  | { readonly error: string };
+
 export interface TravelMovementContext {
   riding: Readonly<VehicleTravelState> | null;
   settings: ResolvedMoveSettings;
@@ -26,6 +58,11 @@ export interface TravelMovementContext {
 }
 
 export interface TravelRuntime {
+  publishTravelRequest(
+    instruction: TravelInstruction,
+    variables: Readonly<Record<string, number | string>>,
+    fiber: string,
+  ): TravelPublishResult;
   activeVehiclePassage(
     cache: Map<string, VehiclePassageTable | undefined> | null,
     state: Readonly<SessionState>,
