@@ -6,6 +6,11 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { encodeQoa } from "../lib/qoa.ts";
+import {
+  encryptedRpgMakerAudioFormat,
+  readRpgMakerMedia,
+  type RpgMakerMediaEncryption,
+} from "./media.ts";
 
 export const RPGMAKER_AUDIO_KINDS = ["bgm", "bgs", "me", "se"] as const;
 export type RpgMakerAudioKind = typeof RPGMAKER_AUDIO_KINDS[number];
@@ -62,6 +67,8 @@ export interface AudioMediaOptions {
   sampleRate?: AudioMediaSampleRate;
   /** Deterministic decoder output channels. Defaults to stereo. */
   channels?: AudioMediaChannels;
+  /** Validated System.json deployment-media settings. */
+  encryption?: RpgMakerMediaEncryption;
 }
 
 interface Candidate {
@@ -69,6 +76,7 @@ interface Candidate {
   format: "ogg" | "m4a";
   path: string;
   relativePath: string;
+  encrypted: boolean;
 }
 
 const KIND_ORDER = new Map<RpgMakerAudioKind, number>(
@@ -97,25 +105,32 @@ function compareCandidates(a: Candidate, b: Candidate): number {
     compareText(a.filename, b.filename);
 }
 
-function candidatesIn(projectRoot: string, kind: RpgMakerAudioKind): Map<string, Candidate[]> {
+function candidatesIn(
+  projectRoot: string,
+  kind: RpgMakerAudioKind,
+  encryption?: RpgMakerMediaEncryption,
+): Map<string, Candidate[]> {
   const directory = join(projectRoot, "audio", kind);
   const byName = new Map<string, Candidate[]>();
   if (!existsSync(directory)) return byName;
 
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
-    const dot = entry.name.lastIndexOf(".");
-    if (dot <= 0) continue;
-    const extension = entry.name.slice(dot + 1).toLowerCase();
-    if (extension !== "ogg" && extension !== "m4a") continue;
-    const name = entry.name.slice(0, dot);
+    const lower = entry.name.toLowerCase();
+    const encryptedFormat = encryption?.audio ? encryptedRpgMakerAudioFormat(entry.name) : null;
+    const plainFormat = lower.endsWith(".ogg") ? "ogg" : lower.endsWith(".m4a") ? "m4a" : null;
+    const format = plainFormat ?? encryptedFormat;
+    if (!format) continue;
+    const suffixLength = plainFormat ? 4 : lower.endsWith(".rpgmvo") || lower.endsWith(".rpgmvm") ? 7 : 5;
+    const name = entry.name.slice(0, -suffixLength);
     const key = name.toLowerCase();
     const candidates = byName.get(key) ?? [];
     candidates.push({
       filename: entry.name,
-      format: extension,
+      format,
       path: join(directory, entry.name),
       relativePath: `audio/${kind}/${entry.name}`,
+      encrypted: encryptedFormat !== null,
     });
     byName.set(key, candidates);
   }
@@ -145,15 +160,17 @@ function convertCandidate(
   ffmpeg: string,
   sampleRate: AudioMediaSampleRate,
   channels: AudioMediaChannels,
+  encryption?: RpgMakerMediaEncryption,
 ): AudioMediaRecord {
   let decoded: ReturnType<typeof Bun.spawnSync>;
   try {
+    const input = candidate.encrypted ? readRpgMakerMedia(candidate.path, encryption, "audio") : null;
     decoded = Bun.spawnSync({
       cmd: [
         ffmpeg,
         "-v", "error",
         "-nostdin",
-        "-i", candidate.path,
+        "-i", input ? "pipe:0" : candidate.path,
         "-map", "0:a:0",
         "-vn", "-sn", "-dn",
         "-ac", String(channels),
@@ -162,7 +179,7 @@ function convertCandidate(
         "-f", "s16le",
         "pipe:1",
       ],
-      stdin: "ignore",
+      stdin: input ?? "ignore",
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -224,6 +241,7 @@ export function convertRpgMakerAudioMedia(
   const sampleRate = options.sampleRate ?? 44_100;
   const channels = options.channels ?? 2;
   const ffmpeg = options.ffmpeg ?? "ffmpeg";
+  const encryption = options.encryption;
   if (sampleRate !== 11_025 && sampleRate !== 22_050 && sampleRate !== 44_100) {
     throw new Error(`rpgmaker audio: unsupported sample rate ${sampleRate}`);
   }
@@ -246,7 +264,7 @@ export function convertRpgMakerAudioMedia(
   }
 
   const indexes = new Map(
-    RPGMAKER_AUDIO_KINDS.map((kind) => [kind, candidatesIn(projectRoot, kind)]),
+    RPGMAKER_AUDIO_KINDS.map((kind) => [kind, candidatesIn(projectRoot, kind, encryption)]),
   );
   return unique.map((request): AudioMediaRecord => {
     const candidate = indexes.get(request.kind)!.get(request.name.toLowerCase())?.[0];
@@ -261,7 +279,7 @@ export function convertRpgMakerAudioMedia(
       };
     }
     const sourceBytes = statSync(candidate.path).size;
-    return convertCandidate(request, candidate, sourceBytes, ffmpeg, sampleRate, channels);
+    return convertCandidate(request, candidate, sourceBytes, ffmpeg, sampleRate, channels, encryption);
   });
 }
 

@@ -11,7 +11,6 @@
 // Maker shows at animationFrame = step.
 
 import { join } from "node:path";
-import { existsSync } from "node:fs";
 import {
   autotileKind,
   autotileShape,
@@ -29,6 +28,7 @@ import {
   type QuarterTable,
 } from "./autotile.ts";
 import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
+import { findRpgMakerPng, type RpgMakerMediaEncryption } from "./media.ts";
 
 /** The nine tileset sheets in RPG Maker order: A1, A2, A3, A4, A5, B, C, D,
  *  E. A null sheet has no image (unset in the tileset or missing on disk). */
@@ -56,12 +56,13 @@ export async function loadTilesetImages(
   projectRoot: string,
   tilesetNames: string[],
   tileSize: number,
+  encryption?: RpgMakerMediaEncryption,
 ): Promise<TilesetImages> {
   const sheets: (RgbaImage | null)[] = [];
   for (let i = 0; i < 9; i++) {
     const name = tilesetNames[i] ?? "";
-    const path = join(projectRoot, "img", "tilesets", `${name}.png`);
-    sheets.push(name !== "" && existsSync(path) ? await readPng(path) : null);
+    const path = name === "" ? null : findRpgMakerPng(join(projectRoot, "img", "tilesets", `${name}.png`), encryption);
+    sheets.push(path ? await readPng(path, encryption) : null);
   }
   return { tileSize, sheets };
 }

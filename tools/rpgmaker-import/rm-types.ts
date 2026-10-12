@@ -425,6 +425,11 @@ export interface RmSystem {
   /** MV/MZ store the editor version as a number; MZ files carry
    *  `versionId` and an `advanced` block. */
   versionId?: number;
+  /** Deployment media flags and XOR key. The importer consumes these at
+   *  build time; they are never copied into the kit project. */
+  hasEncryptedImages?: boolean;
+  hasEncryptedAudio?: boolean;
+  encryptionKey?: string;
 }
 
 /** Everything the importer reads from one project's `data/` directory.
@@ -435,6 +440,8 @@ export interface RmProject {
   root: string;
   /** "MZ" when System.json has the MZ-only fields, else "MV". */
   flavor: "MV" | "MZ";
+  /** Validated deployment-media settings, absent for ordinary projects. */
+  mediaEncryption?: import("./media.ts").RpgMakerMediaEncryption;
   system: RmSystem;
   mapInfos: (RmMapInfo | null)[];
   maps: Map<number, RmMap>;

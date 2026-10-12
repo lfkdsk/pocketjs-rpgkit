@@ -63,6 +63,7 @@ import {
 import { rmParallaxSpeed, rmTileSize } from "./load.ts";
 import { passes, RM_FLAG } from "./passage.ts";
 import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
+import { findRpgMakerPng, type RpgMakerMediaEncryption } from "./media.ts";
 import type { RmActor, RmCommand, RmItem, RmPageImage, RmProject, RmTrait, RmVehicle } from "./rm-types.ts";
 import { downscale, drawTile, loadTilesetImages, type TilesetImages } from "./tile-render.ts";
 
@@ -401,7 +402,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     throw new Error(`rpgmaker-import: tile size ${tileSize} is not a multiple of ${KIT_TILE}`);
   }
   const scale = tileSize / KIT_TILE;
-  const rpgMakerTextColours = await readWindowColours(rm.root);
+  const rpgMakerTextColours = await readWindowColours(rm);
   const assets: ImportAssets = {
     format: "rpgkit-rpgmaker-assets/v1",
     sheets: {},
@@ -418,13 +419,13 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   const enemyImages = new Map<number, string>();
   for (const enemy of rm.enemies) {
     if (!enemy?.battlerName) continue;
-    const front = findNamedPng(join(rm.root, "img", "enemies"), enemy.battlerName);
-    const side = findNamedPng(join(rm.root, "img", "sv_enemies"), enemy.battlerName);
+    const front = findNamedPng(join(rm.root, "img", "enemies"), enemy.battlerName, rm.mediaEncryption);
+    const side = findNamedPng(join(rm.root, "img", "sv_enemies"), enemy.battlerName, rm.mediaEncryption);
     const path = front ?? side;
     if (!path) continue;
     const id = `enemy${String(enemy.id).padStart(3, "0")}`;
     const png = `battlers/${id}.png`;
-    const image = await readPng(path);
+    const image = await readPng(path, rm.mediaEncryption);
     images.set(png, image);
     assets.battlers[id] = { png, w: image.width, h: image.height };
     enemyImages.set(enemy.id, id);
@@ -444,7 +445,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     if (!atlas) {
       atlas = new TileAtlas(`ts${tilesetId}`);
       atlases.set(tilesetId, atlas);
-      tilesetImages.set(tilesetId, await loadTilesetImages(rm.root, tileset.tilesetNames, tileSize));
+      tilesetImages.set(tilesetId, await loadTilesetImages(rm.root, tileset.tilesetNames, tileSize, rm.mediaEncryption));
     }
     return { atlas, images: tilesetImages.get(tilesetId)! };
   };
@@ -455,8 +456,8 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   let currentTilesetId = 0;
   const loadCharacterSheet = async (name: string): Promise<RgbaImage | null> => {
     if (!characterSheets.has(name)) {
-      const path = join(rm.root, "img", "characters", `${name}.png`);
-      characterSheets.set(name, existsSync(path) ? await readPng(path) : null);
+      const path = findNamedPng(join(rm.root, "img", "characters"), name, rm.mediaEncryption);
+      characterSheets.set(name, path ? await readPng(path, rm.mediaEncryption) : null);
     }
     return characterSheets.get(name)!;
   };
@@ -504,8 +505,8 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     parallaxRequests.set(raw, request);
     return request;
   };
-  const balloonPath = join(rm.root, "img", "system", "Balloon.png");
-  const hasBalloon = existsSync(balloonPath);
+  const balloonPath = findNamedPng(join(rm.root, "img", "system"), "Balloon", rm.mediaEncryption);
+  const hasBalloon = balloonPath !== null;
   const balloonsUsed = new Set<number>();
   const balloonFor = (n: number): string | null => {
     if (!hasBalloon || n < 1 || n > 15) return null;
@@ -553,8 +554,8 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     try {
       const image = async (name: string) => {
         if (!name) return null;
-        const path = findNamedPng(join(rm.root, "img", "animations"), name);
-        return path ? readPng(path) : null;
+        const path = findNamedPng(join(rm.root, "img", "animations"), name, rm.mediaEncryption);
+        return path ? readPng(path, rm.mediaEncryption) : null;
       };
       const cooked = cookMvAnimation(source, {
         animation1: await image(source.animation1Name),
@@ -941,12 +942,12 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
 
   // --- parallax images ----------------------------------------------------
   for (const [name, request] of [...parallaxRequests].sort((a, b) => a[1].image.localeCompare(b[1].image))) {
-    const path = findNamedPng(join(rm.root, "img", "parallaxes"), name);
+    const path = findNamedPng(join(rm.root, "img", "parallaxes"), name, rm.mediaEncryption);
     if (!path) {
       warnings.push(`parallax ${name}: img/parallaxes/${name}.png not found`);
       continue;
     }
-    const source = await readPng(path);
+    const source = await readPng(path, rm.mediaEncryption);
     if (source.width % scale !== 0 || source.height % scale !== 0) {
       warnings.push(`parallax ${name}: ${source.width}x${source.height} is not divisible by map scale ${scale}`);
       continue;
@@ -958,10 +959,10 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   }
 
   // --- item icons ---------------------------------------------------------
-  const iconSetPath = findNamedPng(join(rm.root, "img", "system"), "IconSet");
+  const iconSetPath = findNamedPng(join(rm.root, "img", "system"), "IconSet", rm.mediaEncryption);
   let iconSheet: { id: string; cols: number; rows: number; count: number } | null = null;
   if (iconSetPath) {
-    const source = await readPng(iconSetPath);
+    const source = await readPng(iconSetPath, rm.mediaEncryption);
     if (source.width > 0 && source.height > 0 && source.width % 32 === 0 && source.height % 32 === 0) {
       const id = "iconset";
       const image = downscale(source, 2);
@@ -1021,7 +1022,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
 
   // --- balloons -----------------------------------------------------------
   if (balloonsUsed.size > 0) {
-    const sheet = await readPng(balloonPath);
+    const sheet = await readPng(balloonPath!, rm.mediaEncryption);
     images.set("system/balloon.png", scale === 1 ? sheet : downscale(sheet, scale));
     assets.balloon = "system/balloon.png";
     for (const n of [...balloonsUsed].sort((a, b) => a - b)) {
@@ -1100,7 +1101,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     maps,
   };
   invertInitialParty(project, rm.system.partyMembers ?? []);
-  const audioMedia = convertRpgMakerAudioMedia(rm.root, audioRequests.values());
+  const audioMedia = convertRpgMakerAudioMedia(rm.root, audioRequests.values(), { encryption: rm.mediaEncryption });
   const audioFiles = new Map<string, Uint8Array>();
   const successfulById = new Map<string, AudioMediaSuccess>();
   for (const media of audioMedia) {
@@ -1125,13 +1126,13 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
 /** Read the 8 x 4 text-colour grid from the bottom-right of MV/MZ's standard
  *  192 px Window.png. Missing art deliberately leaves the runtime's stock
  *  palette in effect; a present but unusable windowskin is an import error. */
-async function readWindowColours(root: string): Promise<string[] | undefined> {
-  const path = findNamedPng(join(root, "img", "system"), "Window");
+async function readWindowColours(rm: RmProject): Promise<string[] | undefined> {
+  const path = findNamedPng(join(rm.root, "img", "system"), "Window", rm.mediaEncryption);
   if (!path) return undefined;
 
   let image: RgbaImage;
   try {
-    image = await readPng(path);
+    image = await readPng(path, rm.mediaEncryption);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`rpgmaker-import: img/system/Window.png cannot be decoded: ${detail}`);
@@ -1166,12 +1167,17 @@ function containsStepRead(value: unknown): boolean {
 
 /** Find an RPG Maker PNG by basename without depending on host filesystem
  * case rules. Direct lookup keeps the common path allocation-free. */
-function findNamedPng(dir: string, name: string): string | null {
+function findNamedPng(dir: string, name: string, encryption?: RpgMakerMediaEncryption): string | null {
   const direct = join(dir, `${name}.png`);
-  if (existsSync(direct)) return direct;
+  const resolved = findRpgMakerPng(direct, encryption);
+  if (resolved) return resolved;
   if (!existsSync(dir)) return null;
-  const wanted = `${name}.png`.toLowerCase();
-  const file = readdirSync(dir).sort().find((candidate) => candidate.toLowerCase() === wanted);
+  const wanted = new Set([`${name}.png`.toLowerCase()]);
+  if (encryption?.images) {
+    wanted.add(`${name}.png_`.toLowerCase());
+    wanted.add(`${name}.rpgmvp`.toLowerCase());
+  }
+  const file = readdirSync(dir).sort().find((candidate) => wanted.has(candidate.toLowerCase()));
   return file ? join(dir, file) : null;
 }
 

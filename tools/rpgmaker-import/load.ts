@@ -1,11 +1,11 @@
 // tools/rpgmaker-import/load.ts — read one RPG Maker MV/MZ project's
-// `data/*.json` into an RmProject. Only plain (unencrypted) JSON is read;
-// a deployed game whose data or images were encrypted by the editor's
-// deployment option is refused, never decrypted.
+// `data/*.json` into an RmProject. JSON remains plain in MV/MZ deployments;
+// encrypted images/audio are decoded lazily by the media readers.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RmMap, RmProject, RmSystem } from "./rm-types.ts";
+import { rpgMakerMediaEncryption } from "./media.ts";
 
 export class RmLoadError extends Error {}
 
@@ -39,15 +39,14 @@ export function loadRmProject(rootArg: string): RmProject {
   const root = resolve(rootArg);
   const dataDir = findDataDir(root);
   const projectRoot = resolve(dataDir, "..");
-  const system = readJson<RmSystem & { hasEncryptedImages?: boolean; hasEncryptedAudio?: boolean }>(
+  const system = readJson<RmSystem>(
     join(dataDir, "System.json"),
   );
-  if (system.hasEncryptedImages || system.hasEncryptedAudio) {
-    // The importer only reads plain files; it does not decrypt deployed
-    // games. Images are only needed for art, so refuse up front.
-    throw new RmLoadError(
-      `${root}: System.json marks encrypted images/audio; the importer reads unencrypted projects only`,
-    );
+  let mediaEncryption;
+  try {
+    mediaEncryption = rpgMakerMediaEncryption(system, root);
+  } catch (error) {
+    throw new RmLoadError((error as Error).message);
   }
   const files = new Set(readdirSync(dataDir));
   const mapInfos = readOptional<RmProject["mapInfos"][number] & object>(dataDir, "MapInfos.json");
@@ -67,6 +66,7 @@ export function loadRmProject(rootArg: string): RmProject {
   return {
     root: projectRoot,
     flavor: mz ? "MZ" : "MV",
+    ...(mediaEncryption ? { mediaEncryption } : {}),
     system,
     mapInfos,
     maps,

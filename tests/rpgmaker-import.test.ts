@@ -60,6 +60,21 @@ function pixel(image: { width: number; data: Uint8Array }, x: number, y: number)
   return [...image.data.subarray(offset, offset + 4)];
 }
 
+const DEPLOYMENT_HEADER = Uint8Array.of(
+  0x52, 0x50, 0x47, 0x4d, 0x56, 0x00, 0x00, 0x00,
+  0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+);
+
+function encryptDeploymentMedia(bytes: Uint8Array, keyHex: string): Uint8Array {
+  const out = new Uint8Array(DEPLOYMENT_HEADER.length + bytes.length);
+  out.set(DEPLOYMENT_HEADER);
+  out.set(bytes, DEPLOYMENT_HEADER.length);
+  for (let index = 0; index < Math.min(16, bytes.length); index++) {
+    out[DEPLOYMENT_HEADER.length + index] ^= Number.parseInt(keyHex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return out;
+}
+
 function tilePixels(result: ImportResult, id: string): Buffer {
   const { sheet, cell } = parseTileId(id);
   const meta = result.assets.sheets[sheet]!;
@@ -825,13 +840,50 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(301)!.needsKit).toBe("");
   });
 
-  test("an encrypted deployment is refused", () => {
+  test("an encrypted deployment requires a valid embedded key", () => {
     const dir = mkdtempSync(join(SCRATCH_ROOT, "rmi-enc-"));
     try {
       const data = join(dir, "data");
       mkdirSync(data);
-      writeFileSync(join(data, "System.json"), JSON.stringify({ hasEncryptedImages: true, partyMembers: [] }));
+      writeFileSync(join(data, "System.json"), JSON.stringify({ hasEncryptedImages: true, encryptionKey: "bad", partyMembers: [] }));
       expect(() => loadRmProject(dir)).toThrow(RmLoadError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an MZ deployment decrypts its windowskin without modifying the source", async () => {
+    const dir = mkdtempSync(join(SCRATCH_ROOT, "rmi-enc-ok-"));
+    try {
+      const key = "00112233445566778899aabbccddeeff";
+      const data = join(dir, "data");
+      const system = join(dir, "img", "system");
+      mkdirSync(data);
+      mkdirSync(system, { recursive: true });
+      writeFileSync(join(data, "System.json"), JSON.stringify({
+        gameTitle: "Encrypted fixture",
+        currencyUnit: "G",
+        partyMembers: [],
+        startMapId: 0,
+        startX: 0,
+        startY: 0,
+        switches: [],
+        variables: [],
+        advanced: {},
+        hasEncryptedImages: true,
+        hasEncryptedAudio: false,
+        encryptionKey: key,
+      }));
+      const plain = new Uint8Array(readFileSync(WINDOW_PALETTE));
+      const encryptedPath = join(system, "Window.png_");
+      const encrypted = encryptDeploymentMedia(plain, key);
+      writeFileSync(encryptedPath, encrypted);
+
+      const loaded = loadRmProject(dir);
+      expect(loaded.mediaEncryption).toMatchObject({ images: true, audio: false });
+      const result = await importRmProject(loaded);
+      expect(result.project.system?.rpgMakerText?.colours).toEqual(CUSTOM_WINDOW_COLOURS);
+      expect(readFileSync(encryptedPath).equals(Buffer.from(encrypted))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -18,6 +19,19 @@ const FFMPEG = Bun.which("ffmpeg");
 if (!FFMPEG) throw new Error("rpgmaker-audio-media tests require ffmpeg on PATH");
 const SCRATCH_ROOT = "/var/tmp/fleet/4306";
 mkdirSync(SCRATCH_ROOT, { recursive: true });
+
+const DEPLOYMENT_HEADER = Uint8Array.of(
+  0x52, 0x50, 0x47, 0x4d, 0x56, 0x00, 0x00, 0x00,
+  0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+);
+
+function encryptedMedia(bytes: Uint8Array, key: Uint8Array): Uint8Array {
+  const out = new Uint8Array(DEPLOYMENT_HEADER.length + bytes.length);
+  out.set(DEPLOYMENT_HEADER);
+  out.set(bytes, DEPLOYMENT_HEADER.length);
+  for (let index = 0; index < Math.min(16, bytes.length); index++) out[DEPLOYMENT_HEADER.length + index] ^= key[index]!;
+  return out;
+}
 
 function pcm(frames: number, frequency: number, sampleRate = 22_050): Uint8Array {
   const bytes = new Uint8Array(frames * 2);
@@ -68,6 +82,31 @@ function success(record: ReturnType<typeof convertRpgMakerAudioMedia>[number]): 
 }
 
 describe("RPG Maker audio media conversion", () => {
+  test("decrypts MZ deployment audio before deterministic conversion", () => {
+    const root = mkdtempSync(join(SCRATCH_ROOT, "rpgmaker-audio-encrypted-"));
+    try {
+      const plainPath = generateMedia(root, "se", "Bell.ogg", 550);
+      const plain = new Uint8Array(readFileSync(plainPath));
+      const key = Uint8Array.from({ length: 16 }, (_, index) => index * 11);
+      const encryptedPath = `${plainPath}_`;
+      writeFileSync(encryptedPath, encryptedMedia(plain, key));
+      rmSync(plainPath);
+
+      const records = convertRpgMakerAudioMedia(root, [{ kind: "se", name: "bell" }], {
+        sampleRate: 11_025,
+        channels: 1,
+        encryption: { key, images: false, audio: true },
+      });
+      const bell = success(records[0]!);
+      expect(bell.sourcePath).toBe("audio/se/Bell.ogg_");
+      expect(bell.sourceFormat).toBe("ogg");
+      expect(bell.sourceBytes).toBe(statSync(encryptedPath).size);
+      expect(new QoaFile(bell.qoaBytes)).toMatchObject({ channels: 1, sampleRate: 11_025 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   test("matches names case-insensitively, prefers Ogg, deduplicates, and is byte-stable", () => {
     const root = mkdtempSync(join(SCRATCH_ROOT, "rpgmaker-audio-media-"));
     try {

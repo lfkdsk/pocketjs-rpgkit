@@ -19,7 +19,7 @@
 // The output is byte-stable: importing the same project twice writes the
 // same bytes. Nothing here is imported by the runtime.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { splitProjectMaps } from "../lib/map-project.ts";
 import { slug } from "./ids.ts";
@@ -27,6 +27,8 @@ import { loadRmProject } from "./load.ts";
 import { writePngBytes } from "./png.ts";
 import { importRmProject, type ImportOptions, type ImportResult } from "./project.ts";
 import { coverageMarkdown } from "./report.ts";
+import { readRpgMakerMedia } from "./media.ts";
+import type { RmProject } from "./rm-types.ts";
 
 export { importRmProject, loadRmProject };
 
@@ -59,10 +61,9 @@ export async function importToDirectory(projectDir: string, outDir: string, opti
   }
   for (const [variant, rel] of Object.entries(result.assets.pictures)) {
     // Pictures keep their source file (the screen layer scales them).
-    const src = findPicture(rm.root, variant);
+    const src = findPicture(rm, variant);
     if (src) {
-      mkdirSync(dirname(join(out, rel)), { recursive: true });
-      copyFileSync(src, join(out, rel));
+      write(rel, readRpgMakerMedia(src, rm.mediaEncryption, "image"));
     } else {
       result.warnings.push(`picture ${variant}: img/pictures file not found`);
     }
@@ -82,12 +83,16 @@ export async function importToDirectory(projectDir: string, outDir: string, opti
 }
 
 /** Pictures are registered by slug; find the source file case-insensitively. */
-function findPicture(root: string, variant: string): string | null {
-  const dir = join(root, "img", "pictures");
+function findPicture(rm: RmProject, variant: string): string | null {
+  const dir = join(rm.root, "img", "pictures");
   if (!existsSync(dir)) return null;
   for (const f of readdirSync(dir).sort()) {
-    if (!f.toLowerCase().endsWith(".png")) continue;
-    if (slug(f.slice(0, -4)) === variant) return join(dir, f);
+    const lower = f.toLowerCase();
+    const suffix = lower.endsWith(".png") ? 4
+      : rm.mediaEncryption?.images && lower.endsWith(".png_") ? 5
+      : rm.mediaEncryption?.images && lower.endsWith(".rpgmvp") ? 8
+      : 0;
+    if (suffix > 0 && slug(f.slice(0, -suffix)) === variant) return join(dir, f);
   }
   return null;
 }

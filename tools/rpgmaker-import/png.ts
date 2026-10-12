@@ -10,6 +10,7 @@
 import { inflateSync } from "node:zlib";
 import { decodePng } from "../../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../../vendor/pocketjs/tests/png.ts";
+import { readRpgMakerMedia, type RpgMakerMediaEncryption } from "./media.ts";
 
 export interface RgbaImage {
   width: number;
@@ -23,8 +24,8 @@ export function blankImage(w: number, h: number): RgbaImage {
   return { width: w, height: h, data: new Uint8Array(w * h * 4) };
 }
 
-export async function readPng(path: string): Promise<RgbaImage> {
-  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+export async function readPng(path: string, encryption?: RpgMakerMediaEncryption): Promise<RgbaImage> {
+  const bytes = readRpgMakerMedia(path, encryption, "image");
   return decodePngBytes(bytes);
 }
 
