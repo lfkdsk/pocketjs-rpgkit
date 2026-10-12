@@ -371,6 +371,138 @@ describe("RPG Maker battle rules", () => {
     expect(state(current).queue.some((action) => action.side === "enemy")).toBe(true);
   });
 
+  test("escape uses the average agility of every battle member", () => {
+    const db = cloneDb();
+    db.classes[0]!.params[6]![1] = 20;
+    db.enemies[0]!.params[6] = 20;
+    const rules = createRpgMakerBattleRules(db);
+    const seedFor = (lo: number, hi: number): number => {
+      for (let seed = 0; seed < 100_000; seed++) {
+        const value = rngNext(seed).value;
+        if (value > lo && value < hi) return seed;
+      }
+      throw new Error("no deterministic escape seed in requested interval");
+    };
+    const attempt = (actors: RpgMakerBattleState["actors"], seed: number): RpgMakerBattleState => {
+      const begun = mutable(rules.start({}, setup(db), 1, CONTEXT)!.state);
+      begun.phase = "party";
+      begun.actors = actors;
+      begun.rng = seed;
+      begun.menuIndex = 1;
+      return state(confirm(rules, json(begun))) as RpgMakerBattleState;
+    };
+
+    const template = mutable(rules.start({}, setup(db), 1, CONTEXT)!.state).actors[0]!;
+    const fourEqual = Array.from({ length: 4 }, (_, index) => ({
+      ...structuredClone(template), key: `actor${index + 1}`,
+    }));
+    // Correct ratio is 0.5. The old sum-based ratio is clamped to 1.
+    expect(attempt(fourEqual, seedFor(0.6, 0.9)).afterMessage).toBe("turnStart");
+
+    const withKnockouts = Array.from({ length: 4 }, (_, index) => ({
+      ...structuredClone(template),
+      key: `actor${index + 1}`,
+      hp: index === 0 ? template.hp : 0,
+      params: [
+        ...template.params.slice(0, 6),
+        index === 0 ? 1 : 100,
+        template.params[7],
+      ] as RpgMakerBattleState["actors"][number]["params"],
+    }));
+    db.enemies[0]!.params[6] = 100;
+    // Correct all-member ratio is about 0.376; filtering to the sole living
+    // member would make it 0.005 and fail this draw.
+    expect(attempt(withKnockouts, seedFor(0.15, 0.3)).afterMessage).toBe("escape");
+  });
+
+  test("applies recovery rate and Guard special-flag traits in the damage pipeline", () => {
+    const db = cloneDb();
+    const fixed = structuredClone(db.skills[0]!);
+    Object.assign(fixed, {
+      id: 2,
+      name: "Fixed Recovery",
+      scope: 7,
+      hitType: 0,
+      successRate: 100,
+      repeats: 1,
+      damage: {
+        ...fixed.damage,
+        type: 3,
+        critical: false,
+        variance: 0,
+        source: "100",
+        formula: { kind: "number", value: 100 },
+      },
+      effects: [],
+    });
+    db.skills.push(fixed);
+    db.actors[0]!.traits.push({ code: 23, dataId: 2, value: 0.5 });
+    let rules = createRpgMakerBattleRules(db);
+    let begun = mutable(rules.start({}, setup(db), 71, CONTEXT)!.state);
+    begun.actors[0]!.hp = 100;
+    let current = forceAction(rules, json(begun), {
+      side: "actor", user: 0, kind: "skill", id: 2, target: 0, speed: 0,
+    });
+    expect(state(current).actors[0]!.hp).toBe(150);
+
+    const attack = db.skills[0]!;
+    Object.assign(attack, {
+      hitType: 0,
+      successRate: 100,
+      repeats: 1,
+      damage: {
+        ...attack.damage,
+        type: 1,
+        critical: false,
+        variance: 0,
+        source: "100",
+        formula: { kind: "number", value: 100 },
+      },
+      effects: [],
+    });
+    db.classes[0]!.traits.push({ code: 62, dataId: 1, value: 1 });
+    rules = createRpgMakerBattleRules(db);
+    begun = mutable(rules.start({}, setup(db), 72, CONTEXT)!.state);
+    begun.actors[0]!.hp = 400;
+    expect(begun.actors[0]!.guarding).toBe(false);
+    current = forceAction(rules, json(begun), {
+      side: "enemy", user: 0, kind: "skill", id: 1, target: 0, speed: 0,
+    });
+    expect(state(current).actors[0]!.hp).toBe(350);
+  });
+
+  test("applies Attack Speed and Attack Times only to normal attacks", () => {
+    const db = cloneDb();
+    db.classes[0]!.params[6]![1] = 1;
+    db.enemies[0]!.params[6] = 50;
+    db.enemies[0]!.params[0] = 200;
+    db.classes[0]!.traits.push(
+      { code: 33, dataId: 0, value: 100 },
+      { code: 34, dataId: 0, value: 1 },
+    );
+    Object.assign(db.skills[0]!, {
+      hitType: 0,
+      successRate: 100,
+      repeats: 1,
+      damage: {
+        ...db.skills[0]!.damage,
+        type: 1,
+        critical: false,
+        variance: 0,
+        source: "10",
+        formula: { kind: "number", value: 10 },
+      },
+      effects: [],
+    });
+    const rules = createRpgMakerBattleRules(db);
+    let current = rules.start({}, setup(db), 73, CONTEXT)!.state;
+    current = confirm(rules, current); // intro -> party
+    current = confirm(rules, current); // Fight -> command
+    current = confirm(rules, current); // Attack -> sorted action queue
+    expect(state(current).queue[0]?.side).toBe("actor");
+    expect(state(current).enemies[0]!.hp).toBe(180);
+  });
+
   test("initializes, charges, regenerates, clears, and preserves TP deterministically", () => {
     const db = cloneDb();
     db.actors[0]!.traits.push(

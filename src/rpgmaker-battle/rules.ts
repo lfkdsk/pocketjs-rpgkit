@@ -125,6 +125,11 @@ function combatantTraits(db: RpgMakerBattleDatabase, battler: RpgMakerBattleComb
       ]
     : [...(findById(db.enemies, battler.databaseId)?.traits ?? [])];
   for (const state of battler.states) base.push(...(stateDef(db, state.id)?.traits ?? []));
+  // Guard is a special-flag trait in RPG Maker, not a separate damage-path
+  // switch. Keep the saved `guarding` bit as the compact lifetime marker for
+  // a chosen Guard command, but project it through FLAG_ID_GUARD so authored
+  // class/equipment/state flags and the command use the same predicate.
+  if (battler.guarding) base.push({ code: 62, dataId: 1, value: 1 });
   return base;
 }
 
@@ -710,7 +715,10 @@ function actionSpeed(
   if (!user) return 0;
   const usable = usableForAction(db, action);
   const agi = rpgMakerCombatantParam(db, user, 6);
-  return agi + (usable?.speed ?? 0) + drawInt(state, Math.floor(5 + agi / 4));
+  const attackSpeed = action.kind === "skill" && action.id === attackSkillId(db, user)
+    ? traitSum(db, user, 33, 0)
+    : 0;
+  return agi + (usable?.speed ?? 0) + attackSpeed + drawInt(state, Math.floor(5 + agi / 4));
 }
 
 function enemyActionValid(
@@ -1141,12 +1149,16 @@ function applyDamage(
     b: formulaBattler(db, target),
     variables: numericVariables(state.variables),
   });
+  const recovery = value < 0;
   value *= elementRate(db, user, target, usable.damage.elementId);
   if (usable.hitType === 1) value *= traitProduct(db, target, 23, 6);
   if (usable.hitType === 2) value *= traitProduct(db, target, 23, 7);
+  if (recovery) value *= traitProduct(db, target, 23, 2);
   if (critical) value *= 3;
   value = applyVariance(state, value, usable.damage.variance);
-  if (value > 0 && target.guarding) value /= Math.max(1, 2 * traitProduct(db, target, 23, 1));
+  if (value > 0 && hasTrait(db, target, 62, 1) && restriction(db, target) < 4) {
+    value /= 2 * traitProduct(db, target, 23, 1);
+  }
   value = Math.round(value);
 
   let text = used;
@@ -1231,7 +1243,10 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
   }
   const messages: string[] = [];
   state.effect = null;
-  for (let repeat = 0; repeat < usable.repeats; repeat++) {
+  const repeats = usable.repeats + (action.kind === "skill" && action.id === attackSkillId(db, user)
+    ? Math.max(0, Math.floor(traitSum(db, user, 34, 0)))
+    : 0);
+  for (let repeat = 0; repeat < repeats; repeat++) {
     for (const ref of targets) {
       const target = ref.side === "actor" ? state.actors[ref.index] : state.enemies[ref.index];
       if (!target) continue;
@@ -1403,8 +1418,14 @@ function resolveNextAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleStat
 function tryEscape(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
   if (!state.canEscape) return;
   state.escapeAttempts++;
-  const actorAgi = state.actors.filter(alive).reduce((sum, actor) => sum + rpgMakerCombatantParam(db, actor, 6), 0);
-  const enemyAgi = state.enemies.filter(alive).reduce((sum, enemy) => sum + rpgMakerCombatantParam(db, enemy, 6), 0);
+  // Game_Unit.agility averages every battle member, including knocked-out
+  // and hidden members; it does not use aliveMembers().
+  const actors = state.actors;
+  const enemies = state.enemies;
+  const actorAgi = actors.reduce((sum, actor) => sum + rpgMakerCombatantParam(db, actor, 6), 0) /
+    Math.max(1, actors.length);
+  const enemyAgi = enemies.reduce((sum, enemy) => sum + rpgMakerCombatantParam(db, enemy, 6), 0) /
+    Math.max(1, enemies.length);
   const ratio = clamp(0.5 * actorAgi / Math.max(1, enemyAgi) + 0.1 * (state.escapeAttempts - 1), 0, 1);
   const start = formatTerm(db, db.terms.messages.escapeStart, state.actors[0]?.name ?? "");
   if (draw(state) < ratio) showMessage(state, start, "escape");
