@@ -58,7 +58,7 @@ function sampleContext(cov: Coverage): EventContext {
     },
     mapInfos: [null, { id: 1, name: "Map", order: 1, parentId: 0 }, { id: 2, name: "Map2", order: 2, parentId: 0 }],
     maps: new Map(),
-    tilesets: [null],
+    tilesets: [null, { id: 1, name: "Sample", mode: 0, tilesetNames: [], flags: [], note: "" }],
     commonEvents: [null, { id: 1, name: "Common", trigger: 0, switchId: 1, list: [{ code: 0, indent: 0, parameters: [] }] }],
     items: [null, { id: 1, name: "Potion", description: "", iconIndex: 0, price: 10, note: "" }],
     weapons: [null, { id: 1, name: "Sword", description: "", iconIndex: 0, price: 10, note: "" }],

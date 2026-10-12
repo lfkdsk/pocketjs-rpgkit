@@ -75,6 +75,8 @@ function rmProject(): RmProject {
     id, name, nickname: "", characterName: "", characterIndex: 0, faceName: "", faceIndex: 0,
     classId: 1, initialLevel: 1, equips: [1, 1], traits: [], note: "",
   });
+  const tilesets: RmProject["tilesets"] = [null];
+  tilesets[7] = { id: 7, name: "Alternate", mode: 0, tilesetNames: [], flags: [], note: "" };
   return {
     root: "",
     flavor: "MV",
@@ -83,7 +85,7 @@ function rmProject(): RmProject {
     },
     mapInfos: [null],
     maps: new Map([[1, map1]]),
-    tilesets: [null],
+    tilesets,
     commonEvents: [null, { id: 1, name: "Shared", trigger: 0, switchId: 0, list: [END(0)] }],
     items: [null],
     weapons: [null, { id: 1, name: "Sword", description: "", iconIndex: 0, price: 0, etypeId: 1, traits: [], note: "" }],
@@ -1284,6 +1286,7 @@ describe("screen and audio", () => {
     [236, ["rain", 5, -1, false], "weather duration must be a non-negative frame count"],
     [236, ["rain", 5, 60, 1], "weather wait flag must be boolean"],
     [282, [0], "tileset id must be a positive integer"],
+    [282, [999], "tileset 999 does not exist"],
   ] as const)("malformed command %i is dropped with a diagnostic", (code, parameters, reason) => {
     const ctx = makeCtx();
     const cmds = convertCommands([C(code, 0, [...parameters]), END(0)], ctx);

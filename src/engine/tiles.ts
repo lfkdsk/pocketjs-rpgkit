@@ -53,9 +53,9 @@ export function mapForTileset(map: MapDef, tileset: string | undefined): MapDef 
     ...map,
     sheets: variant.sheets ?? map.sheets,
     ground: variant.ground,
-    upper: variant.upper,
+    upper: variant.upper ?? map.upper,
     passage: variant.passage ?? map.passage,
-    vehiclePassage: variant.vehiclePassage,
-    terrain: variant.terrain,
+    vehiclePassage: variant.vehiclePassage ?? map.vehiclePassage,
+    terrain: variant.terrain ?? map.terrain,
   };
 }

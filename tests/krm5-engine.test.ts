@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { mapForTileset } from "../src/engine/tiles.ts";
 import { createSwitchState } from "../src/engine/interpreter.ts";
 import { isStandable } from "../src/engine/passability.ts";
 import { loadSession, restoreSessionEnvelope, saveSession } from "../src/engine/save-restore.ts";
@@ -307,6 +308,23 @@ describe("KRM5 formation and window state", () => {
 });
 
 describe("KRM5 tileset variants", () => {
+  test("partial variants inherit every omitted visual and movement plane", () => {
+    const source = stage([], {
+      upper: [[1, "plain.0"]],
+      passage: [[2, "block"]],
+      vehiclePassage: { boat: [3], ship: [4], airshipLand: [5] },
+      terrain: [[6, 9]],
+      tilesetVariants: {
+        alternate: { ground: Array(W * H).fill("plain.0") },
+      },
+    });
+    const resolved = mapForTileset(source, "alternate")!;
+    expect(resolved.upper).toBe(source.upper);
+    expect(resolved.passage).toBe(source.passage);
+    expect(resolved.vehiclePassage).toBe(source.vehiclePassage);
+    expect(resolved.terrain).toBe(source.terrain);
+  });
+
   test("changes terrain and collision in the command fold, switches back, and resets on transfer", () => {
     const target = cell(2, 1);
     const source = project([

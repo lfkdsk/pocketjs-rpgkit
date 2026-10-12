@@ -693,6 +693,11 @@ describe("rpgmaker-import: output", () => {
       expect(imported.images.has("tiles/ts3.png")).toBe(true);
       expect(imported.assets.sheets.ts3).toBeDefined();
       expect(map.tilesetVariants).not.toHaveProperty("ts999");
+      expect(allCommands(imported.project)).not.toContainEqual({ op: "changeTileset", id: "ts999" });
+      expect(imported.cov.list("command").find((row) => row.key === "282")?.counts.Dropped)
+        .toBeGreaterThanOrEqual(1);
+      expect(imported.cov.list("command").find((row) => row.key === "282")?.reasons)
+        .toContain("tileset 999 does not exist");
       expect(imported.warnings).toContain("Change Tileset references missing tileset 999; no variant was emitted");
       const animatedVariants = imported.assets.animatedVariants!.map001!;
       expect(Object.keys(animatedVariants)).toEqual(["ts1", "ts2", "ts3"]);
