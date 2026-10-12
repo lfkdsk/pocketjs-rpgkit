@@ -6875,7 +6875,7 @@ export function stepInterpWithExtensionsInPlace(
   // host can consume them without overwriting another parked fiber.
   s.pendingTransfer = null;
   s.pendingMoveRoutes = [];
-  delete s.pendingTravel;
+  if (w.travelRuntime !== undefined) delete s.pendingTravel;
   s.pendingPlacements = [];
   s.abortedRoutes = [];
   // Step-local scratch: a `place` run this step must beat the tick-start

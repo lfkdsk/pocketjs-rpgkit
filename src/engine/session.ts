@@ -2288,7 +2288,9 @@ function tickFrozenWorld(sess: Session, s: SessionState): void {
   // other frozen scenes do not. This project-bound capability advances only
   // the matching Game_Screen clocks; the parked map and kit-native effects
   // remain frozen.
-  advanceFrozenRpgMakerGameScreen(sess, s);
+  if (s.interp.screen !== undefined && sess.worldOptions.rpgMakerScreen !== undefined) {
+    advanceFrozenRpgMakerGameScreen(sess, s);
+  }
   s.interp.frame++;
   if (s.scene) s.scene.pausedTicks++;
   s.interp.cues = [];
@@ -2504,8 +2506,8 @@ function foldSession(
   // place; characters and switch records stay shared with s0 until written.
   const frozen = s0.scene !== null && !sess.sceneOptions.worldContinues;
   const frozenRpgMakerScreen = frozen &&
-    rpgMakerGameScreenRuntime(sess, s0.scene) !== null &&
-    s0.interp.screen !== undefined;
+    s0.interp.screen !== undefined &&
+    rpgMakerGameScreenRuntime(sess, s0.scene) !== null;
   const interp = frozen
     ? {
         ...s0.interp,
@@ -3258,7 +3260,7 @@ function stepReferenceTick(
   // movement and event waits. Transfer fades and default-frozen scenes take
   // the early-return paths above, so hidden map presentation pauses with the
   // map; worldContinues scenes deliberately reach this path.
-  advanceSessionScreenEffects(sess, s);
+  if (s.interp.screen !== undefined) advanceSessionScreenEffects(sess, s);
 
   // 1. Reconcile NPC pages. A page switch (or an event that went away)
   //    aborts any forced route parked on it; resume the waiter so the
@@ -3628,7 +3630,6 @@ function stepReferenceTick(
     cancelEdge: handoffAtStart ? false : input.cancelEdge,
     upEdge: handoffAtStart ? false : input.upEdge,
     downEdge: handoffAtStart ? false : input.downEdge,
-    scrollFastHeld: (input.buttons & 0x2000) !== 0,
     playerCell: { x: s.move.tx, y: s.move.ty },
     prevCell: prevCellIn,
     facing: s.move.facing,
@@ -3642,6 +3643,7 @@ function stepReferenceTick(
     worldIdleBlockers: sessionWorldIdleBlockers(s),
     liveChars: s.chars.chars,
   };
+  if ((input.buttons & 0x2000) !== 0) interpInput.scrollFastHeld = true;
   if (travel !== undefined) interpInput.vehicle = travel.vehicles?.riding ?? null;
   if (contacts !== undefined && contacts.length > 0) interpInput.touchContacts = contacts;
   s.ext = stepInterpWithExtensionsInPlace(
