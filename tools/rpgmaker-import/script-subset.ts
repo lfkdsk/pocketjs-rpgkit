@@ -834,8 +834,9 @@ function condition(node: Expression): SafeScriptCondition | ScriptRejection {
         : reject(shape, "requires a database item and numeric literal comparison");
     }
   }
-  const negated = node.kind === "unary" && node.op === "!";
-  const call = negated ? ungroup(node.value) : node;
+  const negatedNode = node.kind === "unary" && node.op === "!" ? node : null;
+  const negated = negatedNode !== null;
+  const call = negatedNode ? ungroup(negatedNode.value) : node;
   let args = directCall(call, "$gameParty", "hasItem");
   if (args) {
     const shape = "$gameParty.hasItem(dataItem, includeEquipment?)";
