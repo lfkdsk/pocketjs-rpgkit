@@ -243,8 +243,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Optional result-music projection and complete map-mix restoration add a
 // measured 3,453 B on that merged baseline; no decoder, battle view, or
 // authored audio asset is pulled in.
+// Built-in RPG Maker screen tone/weather presentation plus sparse system and
+// tileset state adds 30,611 B of shared GameView/engine code. The optional
+// RPG Maker battle and formation renderers remain outside this graph.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_119_423;
+const EXPECTED_BYTES = 1_150_034;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

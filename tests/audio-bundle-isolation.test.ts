@@ -267,9 +267,13 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Re-measure after every shared-path change. Projecting battle and result
 // music into session state adds 846 B to Meadow; with the suspended map-stream
 // reuse and in-place staged-resource retry, each audio bundle grows 3,453 B.
-const EXPECTED_MEADOW_BYTES = 702_647;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_119_423;
-const EXPECTED_WAV_FIXTURE_BYTES = 889_860;
+// RPG Maker screen/system state, validation and the built-in GameView
+// tone/weather projection add 11,390 B to Meadow, 30,611 B to Sunstone and
+// 25,862 B to the WAV fixture. The differing save/UI paths were already
+// reachable in each graph; the optional formation overlay remains isolated.
+const EXPECTED_MEADOW_BYTES = 714_037;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_150_034;
+const EXPECTED_WAV_FIXTURE_BYTES = 915_722;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
