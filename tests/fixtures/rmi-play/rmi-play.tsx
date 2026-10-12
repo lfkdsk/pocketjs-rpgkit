@@ -34,16 +34,20 @@ declare global {
   var __rmiBattleScreenEffects: boolean | undefined;
   // eslint-disable-next-line no-var
   var __rmiScreenPreview: "weather" | "weather-base" | "tone" | "tone-base" | undefined;
+  // eslint-disable-next-line no-var
+  var __rmiWeatherPower: number | undefined;
 }
 
 const game = RMI_GAMES[globalThis.__rmiGame ?? "hollow"];
 const preview = globalThis.__rmiBattlePreview;
 const battleScreenEffects = globalThis.__rmiBattleScreenEffects === true;
 const screenPreview = globalThis.__rmiScreenPreview;
+const weatherPower = globalThis.__rmiWeatherPower;
 globalThis.__rmiGame = undefined;
 globalThis.__rmiBattlePreview = undefined;
 globalThis.__rmiBattleScreenEffects = undefined;
 globalThis.__rmiScreenPreview = undefined;
+globalThis.__rmiWeatherPower = undefined;
 
 function command(
   commands: readonly Command[],
@@ -53,6 +57,15 @@ function command(
   const found = commands.filter((candidate) => candidate.op === op)[occurrence];
   if (!found) throw new Error(`rmi-play: imported command ${op}[${occurrence}] is absent`);
   return found;
+}
+
+function previewWeatherCommand(commands: readonly Command[], occurrence: number): Command {
+  const found = command(commands, "weather", occurrence);
+  if (weatherPower === undefined) return found;
+  if (!Number.isInteger(weatherPower) || weatherPower < 0 || weatherPower > 9) {
+    throw new Error(`rmi-play: invalid weather preview power ${weatherPower}`);
+  }
+  return found.op === "weather" ? { ...found, power: weatherPower } : found;
 }
 
 /** Keep these review scenes coupled to the imported fixture: the shortened
@@ -73,7 +86,7 @@ function screenPreviewProject(
   const textCommands = imported.filter((candidate) => candidate.op === "text");
   const commands: Command[] = kind === "weather"
     ? [
-        command(imported, "weather", 0),
+        previewWeatherCommand(imported, 0),
         textCommands[2]!,
         command(imported, "weather", 1),
         command(imported, "changeTileset", 0),
