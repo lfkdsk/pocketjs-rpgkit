@@ -210,24 +210,56 @@ In short:
   skill, weapon, armour and state tests execute against imported initial
   database facts and are reported Degraded because later actor mutations are
   not modelled.
-- Control Variables can read Game Data → Other → Steps, and a script
-  condition consisting only of `$gameParty.steps()` compared with a safe
-  integer maps to the native Steps condition. Arbitrary JavaScript remains a
-  visible placeholder.
+- Control Variables can read Game Data → Other → Steps. Conditional Branch
+  Script can also lower exact comparisons over variables, inventory counts,
+  player direction and Steps, plus exact switch and item-presence tests.
+  Player-coordinate comparisons are recognized but remain Placeholder because
+  the event condition vocabulary has no live-coordinate predicate.
 - Commands map to kit commands where one exists; where the kit has a
   narrower command the importer lowers it (for example a comparison
   between two variables goes through a scratch variable; a transfer to a
   map held in a variable becomes a chain of `if` branches over the map
   ids).
-- Plugin commands (356, 357) and Script (355) are never ported: each
-  becomes a visible text box naming it (or nothing with
-  `--placeholders silent`) and is counted as Placeholder.
+- Plugin commands (356, 357) remain placeholders. Script (355/655) uses the
+  bounded import-time subset below; a block outside that subset becomes a
+  visible text box (or nothing with `--placeholders silent`) and is counted
+  as Placeholder.
 - Battle Processing becomes the kit's `battle` command with
   `{ troop, name, canEscape, canLose }`, a hash binding it to `battle.json`,
   and real If Win / If Escape / If Lose branches. Fixed troops, variable troop
   ids and random map encounters all resolve through the opt-in module. A win
   grants deterministic experience, levels, gold and drops; a disallowed loss
   follows the ordinary Game Over path.
+
+### Import-time safe Script subset
+
+RPG Maker stores Script fields as JavaScript. The importer never evaluates
+that source. It joins a 355 command and its 655 continuation lines as RPG
+Maker does, tokenizes at most 2,048 characters / 512 tokens into a bounded
+AST, and accepts only the exact shapes below. Every statement in a block must
+be accepted; one extra call or expression rejects the whole block. Rejection
+reasons and coverage use source-free shape names rather than copying project
+Script into the report.
+
+| Accepted shape | Import result and limits |
+|---|---|
+| `$gameMap.requestRefresh()` | Native no-op: kit pages already re-evaluate from live state every reducer tick |
+| `$gameVariables.setValue(id, expression)` | Native when the literal target id exists and the safe numeric formula lowers to variable commands; live division/modulo is Degraded because native variable arithmetic floors intermediate values |
+| `$gameSwitches.setValue(id, boolean)` | Native for an existing literal switch id and a boolean literal |
+| `$gameSelfSwitches.setValue([map,event,key], boolean)` | Native only for the issuing event's own map/event and one of A–D; kit's single active letter makes multi-letter event use Degraded |
+| `$gameParty.gainItem/loseItem`, `gainGold/loseGold` | Literal database references plus safe numeric amounts lower to ordinary inventory/gold commands; inventory caps, equipped-copy removal and unguarded flooring differences are reported Degraded |
+| `$gamePlayer.locate`, `reserveTransfer` | Transfer is Native when its operands and direction are representable; `locate` is Degraded because it does not reproduce stock camera, follower, vehicle and encounter-reset side effects |
+| `$gameMap.event(id).setPosition/setDirection` | Literal event targets lower to placement or movement commands; direction is Degraded because stock direction-fix/stop-count details differ |
+| `AudioManager.playSe/playBgm` | A literal object containing only `name`, `volume`, `pitch` and `pan`; omitted numeric fields remain zero as in the Script API |
+| `$gameMessage.add(string)` | A bounded string literal becomes native message text |
+| Exact variable/item-count/direction/Steps comparisons and switch/item-presence tests | Native when the referenced project data and integer comparison are representable; item equipment inclusion is Degraded, and live player x/y comparisons remain Placeholder |
+
+Numeric expressions reuse the safe formula AST: finite literals,
+`$gameVariables.value(id)`, arithmetic, selected `Math` constants and
+functions. Constant expressions fold during import; no runtime JavaScript
+interpreter is emitted. Prototype access, `constructor`, `globalThis`,
+`require`, dynamic import, declarations/control flow, unknown calls,
+over-budget input and mixed safe/unsafe statements all fail closed.
 
 ## Screen and system commands
 
@@ -265,9 +297,10 @@ In short:
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 94 of the 107 commands map natively, 9 run degraded, 3 become
-placeholders (Script and the two plugin commands) and 1 is dropped. "Needs
-kit" names the remaining or presentation-only runtime capability. The
+use of it: 95 of the 107 commands map natively, 9 run degraded, 2 become
+placeholders (the two plugin commands) and 1 is dropped. Script's minimal
+entry is the exact native refresh no-op above; other shapes are classified
+per use. "Needs kit" names the remaining or presentation-only runtime capability. The
 static table sends troop-only commands through the same troop converter as a
 real import, rather than treating them as map commands.
 `tests/rpgmaker-import.test.ts` keeps this table in step with the
@@ -289,7 +322,7 @@ file, asset or dialogue from them is committed here.
 
 | Project | Engine and pinned source | Local-use terms | Event command uses | Native | Degraded | Placeholder | Dropped |
 |---|---|---|---:|---:|---:|---:|---:|
-| GameDev: The Beginning | MV 1.6.2, [`a3c3ec7`](https://github.com/yancharkin/game_jams/tree/a3c3ec739071ca285045025f9b619d17877a7193/%5Bigmc_2017%5D_gamedev_the_beginning) | MIT code, CC BY-SA 4.0 assets | 1,718 | 1,383 | 112 | 167 | 56 |
+| GameDev: The Beginning | MV 1.6.2, [`a3c3ec7`](https://github.com/yancharkin/game_jams/tree/a3c3ec739071ca285045025f9b619d17877a7193/%5Bigmc_2017%5D_gamedev_the_beginning) | MIT code, CC BY-SA 4.0 assets | 1,718 | 1,395 | 106 | 161 | 56 |
 | The Basement | MV 1.5.2, [`0aea825`](https://github.com/fluxrider/The_Basement/tree/0aea82564bf84299441c6b285e04977f5f11a68a) | MIT repository license | 31 | 20 | 11 | 0 | 0 |
 | Strange Sea: Before | MZ 1.0.0, [`103d87c`](https://github.com/ShrLeeKNsword/strange_sea_before/tree/103d87c00c8903db841b9aad23dea30e26d6b1a8/ver_0.0.1) | Apache-2.0 file; README additionally limits use to study/education and forbids copying or republication, so validation was local only | 197 | 151 | 46 | 0 | 0 |
 
@@ -400,7 +433,7 @@ file, asset or dialogue from them is committed here.
 | 352 | Open Save Screen | MV/MZ | Native |  |  |
 | 353 | Game Over | MV/MZ | Native |  |  |
 | 354 | Return to Title Screen | MV/MZ | Native |  |  |
-| 355 | Script | MV/MZ | Placeholder | script not ported | hand-porting: arbitrary JavaScript has no kit equivalent |
+| 355 | Script | MV/MZ | Native |  | hand-porting for JavaScript outside the import-time safe subset |
 | 356 | Plugin Command (MV) | MV | Placeholder | plugin command not ported | a per-plugin port (an ext handler) |
 | 357 | Plugin Command (MZ) | MZ | Placeholder | plugin command not ported | a per-plugin port (an ext handler) |
 <!-- rpgmaker-commands:end -->
@@ -486,9 +519,11 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
 
 ## Known limitations
 
-- **Plugins and scripts are not ported.** Plugin commands, Script
-  commands, script conditions and script variable operands become
-  placeholders. Plugin parameters in `js/plugins.js` are not read.
+- **Plugins and arbitrary scripts are not ported.** The exact import-time
+  Script subset above lowers without executing source. Everything else in
+  Script commands, Script conditions and script variable operands becomes a
+  placeholder; plugin commands always do. Plugin parameters in
+  `js/plugins.js` are not read.
 - **RTP assets.** The RPG Maker runtime package (RTP) art and audio is
   licensed for use in RPG Maker games only. The importer reads whatever
   images a project folder holds and does not ship or fetch any; do not
