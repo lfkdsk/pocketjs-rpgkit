@@ -20,6 +20,8 @@ const bridge: StudioDesktopBridge = {
   pickFile: () => ipcRenderer.invoke("studio:pick-file"),
   pickDirectory: () => ipcRenderer.invoke("studio:pick-directory"),
   openRecent: (id) => ipcRenderer.invoke("studio:open-recent", id),
+  importRpgMaker: (request) => ipcRenderer.invoke("studio:rpgmaker-import", request),
+  cancelRpgMakerImport: (token) => ipcRenderer.invoke("studio:rpgmaker-import-cancel", token),
   pickImage: () => ipcRenderer.invoke("studio:pick-image"),
   save: (request) => ipcRenderer.invoke("studio:save", request),
   exportFile: (fileName, text) => ipcRenderer.invoke("studio:export", fileName, text),
@@ -31,6 +33,7 @@ const bridge: StudioDesktopBridge = {
   onOpened: (listener) => subscribe("studio:opened", listener),
   onMenu: (listener) => subscribe("studio:menu", listener),
   onAgentState: (listener) => subscribe("studio:agent-state", listener),
+  onRpgMakerImportProgress: (listener) => subscribe("studio:rpgmaker-import-progress", listener),
 };
 
 contextBridge.exposeInMainWorld("studioDesktop", bridge);

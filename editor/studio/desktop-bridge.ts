@@ -9,6 +9,10 @@ import type {
   CheckOutcome,
   HostCapabilities,
   HostCommand,
+  RpgMakerImportCoverage,
+  RpgMakerImportOutcome,
+  RpgMakerImportProgress,
+  RpgMakerImportRequest,
   SaveOutcome,
   StoredProject,
 } from "./host.ts";
@@ -19,6 +23,20 @@ import type { Project } from "../../src/engine/types.ts";
 export type OpenReply =
   | { text: string; label: string; fileName: string; target?: { kind: "file" | "directory"; name: string; token: string }; notes?: string[] }
   | { error: string };
+
+type SuccessfulOpenReply = Extract<OpenReply, { text: string }>;
+
+/** The main process still represents an opened directory with a path token;
+ * DesktopHost turns that token into the host-private SaveTarget ref. */
+export type DesktopRpgMakerImportOutcome =
+  | {
+      ok: true;
+      token: string;
+      opened: SuccessfulOpenReply;
+      coverage: RpgMakerImportCoverage;
+      warnings: string[];
+    }
+  | Extract<RpgMakerImportOutcome, { ok: false }>;
 
 export interface RecentEntry {
   id: string;
@@ -64,6 +82,8 @@ export interface StudioDesktopBridge {
   pickFile(): Promise<OpenReply | null>;
   pickDirectory(): Promise<OpenReply | null>;
   openRecent(id: string): Promise<OpenReply | null>;
+  importRpgMaker(request: RpgMakerImportRequest): Promise<DesktopRpgMakerImportOutcome>;
+  cancelRpgMakerImport(token: string): Promise<void>;
   pickImage(): Promise<{ name: string; bytes: Uint8Array } | { error: string } | null>;
   save(request: SaveRequest): Promise<SaveOutcome>;
   exportFile(fileName: string, text: string): Promise<{ ok: boolean; message: string }>;
@@ -75,4 +95,5 @@ export interface StudioDesktopBridge {
   onOpened(listener: (opened: OpenReply) => void): () => void;
   onMenu(listener: (command: MenuCommand) => void): () => void;
   onAgentState(listener: (state: AgentStateEvent) => void): () => void;
+  onRpgMakerImportProgress(listener: (progress: RpgMakerImportProgress) => void): () => void;
 }

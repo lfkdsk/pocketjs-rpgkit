@@ -1,6 +1,7 @@
 // studio-desktop/src/helper.ts — the Bun helper the Studio desktop shell
 // spawns for everything that needs the kit's Bun-side tools: rpgkit-check's
-// engine checks and the local agent (tools/lib/editor-agent-companion.ts).
+// engine checks, RPG Maker imports and the local agent
+// (tools/lib/editor-agent-companion.ts).
 // It is compiled with `bun build --compile`, so it must not read kit files
 // at run time; everything it needs is bundled into the executable.
 //
@@ -13,6 +14,8 @@
 //                                        {problems} or {error} JSON on stdout
 //                                        (a child of `serve`, so a check can be
 //                                        killed on timeout or cancel)
+//   rpgkit-studio-helper import-once     one staged RPG Maker import: JSON
+//                                        parameters on stdin, summary on stdout
 
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -38,6 +41,7 @@ import { checkReach } from "../../tools/rpgkit-check/src/dynamic/reach.ts";
 import type { Finding } from "../../tools/rpgkit-check/src/finding.ts";
 import { validateSchema } from "../../src/engine/schema-validate.ts";
 import type { Project } from "../../src/engine/types.ts";
+import { importToDirectory } from "../../tools/rpgmaker-import/index.ts";
 import {
   HELPER_EXIT_BAD_TOKEN,
   HELPER_PROTOCOL_VERSION,
@@ -48,6 +52,7 @@ import {
   type CancelResult,
   type CheckParams,
   type CheckResult,
+  type ImportResult,
   type HelperErrorCode,
   type HelperOutput,
   type ProbeParams,
@@ -58,6 +63,7 @@ const DEFAULT_CHECK_TIMEOUT_MS = 60_000;
 const MAX_CHECK_TIMEOUT_MS = 30 * 60_000;
 const SHUTDOWN_GRACE_MS = 5_000;
 const MAX_DETAIL_CHARS = 800;
+const MAX_IMPORT_WARNINGS = 24;
 const TERMINAL_STATES = new Set<LocalAgentState["status"]>(["completed", "failed", "cancelled", "timed-out"]);
 
 /** A tiny valid project the probe hands to the agent controller, which needs
@@ -213,6 +219,11 @@ interface CheckRun {
   stop: "cancelled" | "timed-out" | null;
 }
 
+interface ImportRun {
+  child: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  stop: "cancelled" | null;
+}
+
 // ---------------------------------------------------------------- agent
 
 interface AgentRun {
@@ -225,6 +236,7 @@ interface AgentRun {
 
 class HelperServer {
   private readonly checks = new Map<string, CheckRun>();
+  private readonly imports = new Map<string, ImportRun>();
   private readonly agents = new Map<string, AgentRun>();
   private readonly pending = new Set<Promise<void>>();
   private closing = false;
@@ -261,6 +273,7 @@ class HelperServer {
     switch (method) {
       case "probe": return this.probe(params as ProbeParams & Record<string, unknown>);
       case "check": return await this.check(params);
+      case "import": return await this.importProject(params);
       case "agent": return await this.agent(params);
       case "cancel": return this.cancel(stringParam(params, "runId")!);
       default: throw new HelperFailure("BAD_REQUEST", `unknown method ${JSON.stringify(method)}`);
@@ -269,7 +282,7 @@ class HelperServer {
 
   private claimRunId(params: Record<string, unknown>): string {
     const runId = stringParam(params, "runId")!;
-    if (this.checks.has(runId) || this.agents.has(runId)) {
+    if (this.checks.has(runId) || this.imports.has(runId) || this.agents.has(runId)) {
       throw new HelperFailure("BAD_REQUEST", `run ${JSON.stringify(runId)} is already active`);
     }
     return runId;
@@ -350,6 +363,66 @@ class HelperServer {
     if (run.stop) return;
     run.stop = reason;
     run.child.kill("SIGKILL");
+  }
+
+  private async importProject(params: Record<string, unknown>): Promise<ImportResult> {
+    const runId = this.claimRunId(params);
+    const sourceDir = stringParam(params, "sourceDir")!;
+    const outputDir = stringParam(params, "outputDir")!;
+    const placeholders = params.placeholders;
+    if (!isAbsolute(sourceDir)) throw new HelperFailure("BAD_REQUEST", "params.sourceDir must be an absolute path");
+    if (!isAbsolute(outputDir)) throw new HelperFailure("BAD_REQUEST", "params.outputDir must be an absolute path");
+    if (placeholders !== "visible" && placeholders !== "silent") {
+      throw new HelperFailure("BAD_REQUEST", "params.placeholders must be visible or silent");
+    }
+    try {
+      if (!statSync(sourceDir).isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new HelperFailure("BAD_REQUEST", "params.sourceDir must be an existing directory");
+    }
+    try {
+      if (!statSync(outputDir).isDirectory() || readdirSync(outputDir).length > 0) throw new Error("not empty");
+    } catch {
+      throw new HelperFailure("BAD_REQUEST", "params.outputDir must be an existing empty directory");
+    }
+
+    this.write({
+      event: "import-progress",
+      runId,
+      phase: "converting",
+      message: "Converting maps, events, art and audio / 正在转换地图、事件、美术和音频",
+    });
+    const child = Bun.spawn({
+      cmd: selfCommand("import-once"),
+      stdin: new Blob([JSON.stringify({ sourceDir, outputDir, placeholders })]),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env },
+    });
+    const run: ImportRun = { child, stop: null };
+    this.imports.set(runId, run);
+    try {
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      if (run.stop === "cancelled") throw new HelperFailure("CANCELLED", "Import cancelled / 已取消导入");
+      const reply = record(parseHelperLine(stdout.trim().split("\n").pop() ?? ""));
+      if (exitCode !== 0 || !reply) {
+        throw new HelperFailure("FAILED", `RPG Maker import failed / RPG Maker 导入失败: ${compact(stderr) || `exit ${exitCode}`}`);
+      }
+      const error = record(reply.error);
+      if (error) throw new HelperFailure("FAILED", String(error.message));
+      const result = record(reply.result);
+      const coverage = record(result?.coverage);
+      if (!result || !coverage || !record(coverage.totals) || !Array.isArray(coverage.rows) || !Array.isArray(result.warnings)) {
+        throw new HelperFailure("FAILED", "RPG Maker importer returned an invalid summary / RPG Maker 导入器返回了无效摘要");
+      }
+      return result as unknown as ImportResult;
+    } finally {
+      this.imports.delete(runId);
+    }
   }
 
   private async agent(params: Record<string, unknown>): Promise<AgentResult> {
@@ -438,6 +511,12 @@ class HelperServer {
       this.stopCheck(check, "cancelled");
       return { cancelled: true };
     }
+    const importing = this.imports.get(runId);
+    if (importing && !importing.stop) {
+      importing.stop = "cancelled";
+      importing.child.kill("SIGKILL");
+      return { cancelled: true };
+    }
     const agent = this.agents.get(runId);
     if (agent && !agent.settled) {
       agent.controller.cancel(agent.requestId);
@@ -450,11 +529,57 @@ class HelperServer {
   async close(): Promise<void> {
     this.closing = true;
     for (const run of this.checks.values()) this.stopCheck(run, "cancelled");
+    for (const run of this.imports.values()) {
+      if (!run.stop) {
+        run.stop = "cancelled";
+        run.child.kill("SIGKILL");
+      }
+    }
     for (const run of this.agents.values()) {
       if (!run.settled) run.controller.cancel(run.requestId);
     }
     await Promise.race([Promise.allSettled([...this.pending]), Bun.sleep(SHUTDOWN_GRACE_MS)]);
   }
+}
+
+async function importOnce(): Promise<void> {
+  let output: unknown;
+  try {
+    const input = record(JSON.parse(await Bun.stdin.text()));
+    if (!input) throw new Error("request must be a JSON object");
+    const sourceDir = input.sourceDir;
+    const outputDir = input.outputDir;
+    const placeholders = input.placeholders;
+    if (typeof sourceDir !== "string" || typeof outputDir !== "string" ||
+      (placeholders !== "visible" && placeholders !== "silent")) {
+      throw new Error("request needs sourceDir, outputDir and placeholders");
+    }
+    if (!isAbsolute(sourceDir) || !statSync(sourceDir).isDirectory()) {
+      throw new Error("sourceDir must be an existing absolute directory");
+    }
+    if (!isAbsolute(outputDir) || !statSync(outputDir).isDirectory() || readdirSync(outputDir).length > 0) {
+      throw new Error("outputDir must be an existing empty absolute directory");
+    }
+    const imported = await importToDirectory(sourceDir, outputDir, { shard: true, placeholders });
+    const limitationRows = imported.cov.list()
+      .filter((row) => row.counts.Placeholder > 0 || row.counts.Dropped > 0);
+    const warnings = imported.warnings.slice(0, MAX_IMPORT_WARNINGS);
+    if (imported.warnings.length > warnings.length) {
+      warnings.push(`… ${imported.warnings.length - warnings.length} more warnings; see coverage.md / 另有 ${imported.warnings.length - warnings.length} 条警告，请查看 coverage.md`);
+    }
+    output = {
+      result: {
+        coverage: {
+          totals: imported.cov.totals("command"),
+          rows: limitationRows,
+        },
+        warnings,
+      } satisfies ImportResult,
+    };
+  } catch (error) {
+    output = { error: { message: `RPG Maker import failed / RPG Maker 导入失败: ${errorText(error)}` } };
+  }
+  process.stdout.write(`${JSON.stringify(output)}\n`);
 }
 
 function tokensMatch(given: string, expected: string): boolean {
@@ -509,7 +634,7 @@ async function serve(): Promise<void> {
 }
 
 function usage(): never {
-  process.stderr.write("usage: rpgkit-studio-helper serve | mcp --root <project-directory> | check-once\n");
+  process.stderr.write("usage: rpgkit-studio-helper serve | mcp --root <project-directory> | check-once | import-once\n");
   process.exit(1);
 }
 
@@ -517,6 +642,7 @@ async function main(argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
   if (command === "serve" && rest.length === 0) return await serve();
   if (command === "check-once" && rest.length === 0) return await checkOnce();
+  if (command === "import-once" && rest.length === 0) return await importOnce();
   if (command === "mcp") {
     let root: string | undefined;
     if (rest[0] === "--root" && rest.length === 2) root = rest[1];

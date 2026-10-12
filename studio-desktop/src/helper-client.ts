@@ -1,7 +1,7 @@
 // studio-desktop/src/helper-client.ts — the main process's side of the helper
 // (helper.ts): one child process, started on first use, that runs local
-// agents and rpgkit-check's engine checks. It is a Bun program (compiled to
-// one executable for the app), because the agent launcher and the checks are
+// agents, rpgkit-check's engine checks and RPG Maker imports. It is a Bun
+// program (compiled to one executable for the app), because those tools are
 // shared with the kit's command-line tools.
 //
 // The child gets a fixed argv, no shell and an allowlisted environment, plus a
@@ -11,6 +11,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
+import { HELPER_PROTOCOL_VERSION, HELPER_TOKEN_ENV, parseHelperLine } from "./helper-protocol.ts";
 
 /** What the helper may inherit; everything else (credentials, proxies,
  * NODE_OPTIONS, ELECTRON_*) stays behind. The agent launcher narrows it
@@ -78,7 +79,7 @@ export class HelperClient {
     const token = randomBytes(32).toString("hex");
     const env: Record<string, string> = {};
     for (const key of HELPER_ENV) if (process.env[key] !== undefined) env[key] = process.env[key]!;
-    env.RPGKIT_HELPER_TOKEN = token;
+    env[HELPER_TOKEN_ENV] = token;
     const child = spawn(command.command, command.args, { env, stdio: ["pipe", "pipe", "pipe"], shell: false, windowsHide: true });
     this.child = child;
     this.buffer = "";
@@ -111,14 +112,15 @@ export class HelperClient {
         while ((newline = this.buffer.indexOf("\n")) >= 0) {
           const line = this.buffer.slice(0, newline);
           this.buffer = this.buffer.slice(newline + 1);
-          let message: Record<string, unknown>;
-          try {
-            message = JSON.parse(line) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
+          const message = parseHelperLine(line);
+          if (!message) continue;
           if (!greeted) {
             if (message.hello === "ok") {
+              if (message.version !== HELPER_PROTOCOL_VERSION) {
+                child.kill("SIGKILL");
+                fail(`the Studio helper uses protocol ${String(message.version)}; this app needs ${HELPER_PROTOCOL_VERSION}`);
+                continue;
+              }
               greeted = true;
               resolve();
             }

@@ -22,6 +22,7 @@ import { decodePng } from "../../vendor/pocketjs/framework/compiler/pak.ts";
 const HERE = resolve(import.meta.dir, "..");
 const KIT = resolve(HERE, "..");
 const WORK = join(HERE, ".e2e");
+const RPG_MAKER = join(KIT, "tests", "fixtures", "rpgmaker", "hollow-mz");
 
 if (!existsSync(join(HERE, "app", "main.cjs"))) {
   console.error("studio-desktop e2e: app/ is not built; run `bun run build` first");
@@ -30,6 +31,8 @@ if (!existsSync(join(HERE, "app", "main.cjs"))) {
 
 rmSync(WORK, { recursive: true, force: true });
 mkdirSync(WORK, { recursive: true });
+const importParent = join(WORK, "imports");
+mkdirSync(importParent, { recursive: true });
 
 // Sunstone as a project folder: project.json plus one file per map.
 const sunstone = JSON.parse(readFileSync(join(KIT, "examples", "sunstone", "data", "sunstone.json"), "utf8")) as Project;
@@ -112,6 +115,8 @@ try {
       STUDIO_E2E_ART_FOLDER: artFolder,
       STUDIO_E2E_BROKEN: broken,
       STUDIO_E2E_AGENT_CONFIG: agentConfig,
+      STUDIO_E2E_RPG_MAKER: RPG_MAKER,
+      STUDIO_E2E_IMPORT_PARENT: importParent,
       STUDIO_E2E_SHOTS: join(KIT, "docs", "screenshots", "studio-desktop"),
     },
   });

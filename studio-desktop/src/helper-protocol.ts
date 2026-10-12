@@ -4,13 +4,14 @@
 // for Node, so nothing here may touch Bun or the file system.
 //
 //   main -> helper   {"hello": "<token>"} first, then HelperRequest lines
-//   helper -> main   {"hello": "ok", "version": 1}, then HelperResponse and
+//   helper -> main   {"hello": "ok", "version": 2}, then HelperResponse and
 //                    HelperEvent lines (events carry no id)
 
 import type { StudioProblem } from "../../editor/studio/problems.ts";
 import type { LocalAgentEditorContext, LocalAgentRunStatus } from "../../editor/agent/types.ts";
+import type { RpgMakerImportCoverage } from "../../editor/studio/host.ts";
 
-export const HELPER_PROTOCOL_VERSION = 1;
+export const HELPER_PROTOCOL_VERSION = 2;
 
 /** Environment variable carrying the per-launch hello token. */
 export const HELPER_TOKEN_ENV = "RPGKIT_HELPER_TOKEN";
@@ -69,6 +70,24 @@ export interface AgentResult {
   proposals: string[];
 }
 
+export type ImportPlaceholders = "visible" | "silent";
+
+export interface ImportParams {
+  runId: string;
+  /** Absolute RPG Maker MV/MZ project directory selected by the user. */
+  sourceDir: string;
+  /** Absolute, existing and empty staging directory owned by the main process. */
+  outputDir: string;
+  placeholders: ImportPlaceholders;
+}
+
+/** Deliberately small: the complete reports remain in coverage.json/.md. */
+export interface ImportResult {
+  /** Command headline totals plus every Placeholder/Dropped row. */
+  coverage: RpgMakerImportCoverage;
+  warnings: string[];
+}
+
 export interface CancelParams {
   runId: string;
 }
@@ -80,6 +99,7 @@ export interface CancelResult {
 export interface HelperMethods {
   probe: { params: ProbeParams; result: ProbeResult };
   check: { params: CheckParams; result: CheckResult };
+  import: { params: ImportParams; result: ImportResult };
   agent: { params: AgentParams; result: AgentResult };
   cancel: { params: CancelParams; result: CancelResult };
 }
@@ -113,7 +133,14 @@ export interface AgentStateEvent {
   message: string;
 }
 
-export type HelperEvent = AgentStateEvent;
+export interface ImportProgressEvent {
+  event: "import-progress";
+  runId: string;
+  phase: "converting";
+  message: string;
+}
+
+export type HelperEvent = AgentStateEvent | ImportProgressEvent;
 
 /** Anything the helper may write after its hello reply. */
 export type HelperOutput = HelperHelloReply | HelperResponse | HelperEvent;

@@ -32,6 +32,9 @@ import {
   type HostCapabilities,
   type LocalArt,
   type OpenedProject,
+  type RpgMakerImportOutcome,
+  type RpgMakerImportProgress,
+  type RpgMakerImportRequest,
   type SaveOutcome,
   type SaveTarget,
   type StoredProject,
@@ -121,6 +124,33 @@ export class DesktopHost implements StudioHost {
     } catch (error) {
       this.emit({ error: `Could not open the folder: ${message(error)}` });
     }
+  }
+
+  async importRpgMaker(request: RpgMakerImportRequest): Promise<RpgMakerImportOutcome> {
+    try {
+      const outcome = await this.bridge.importRpgMaker(request);
+      if (!outcome.ok) return outcome;
+      const opened = toOpened(outcome.opened);
+      if ("error" in opened) {
+        return { ok: false, token: request.token, code: "IMPORT_FAILED", message: opened.error };
+      }
+      return { ...outcome, opened };
+    } catch (error) {
+      return {
+        ok: false,
+        token: request.token,
+        code: "IMPORT_FAILED",
+        message: `RPG Maker import could not start / 无法开始 RPG Maker 导入: ${message(error)}`,
+      };
+    }
+  }
+
+  cancelRpgMakerImport(token: string): Promise<void> {
+    return this.bridge.cancelRpgMakerImport(token);
+  }
+
+  onRpgMakerImportProgress(listener: (progress: RpgMakerImportProgress) => void): () => void {
+    return this.bridge.onRpgMakerImportProgress(listener);
   }
 
   async listExamples(): Promise<StudioExample[]> {

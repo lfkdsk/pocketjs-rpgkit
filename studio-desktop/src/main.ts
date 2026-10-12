@@ -10,6 +10,8 @@
 //   agent     a local agent process (the kit's agent launcher, in the helper)
 //             whose edits come back as proposals for review
 //   checks    rpgkit-check's engine checks (locks, freeze, reach), in the helper
+//   import    native source/destination pickers; the Bun helper converts into
+//             a staged sibling which is atomically published and then opened
 //   window    menus, shortcuts, recent projects, a prompt before closing with
 //             unsaved changes
 //
@@ -36,17 +38,18 @@ import {
   type MenuItemConstructorOptions,
 } from "electron";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { atomicWriteProjectFile, withProjectFileLock } from "../../editor/api/file.ts";
 import { openFileProblem, PNG_HEADER_BYTES, pngProblem } from "../../editor/api/limits.ts";
-import type { BootReply, MenuCommand, OpenReply, RecentEntry, SaveRequest } from "../../editor/studio/desktop-bridge.ts";
-import type { AgentOutcome, CheckOutcome, HostCapabilities, SaveOutcome, SaveTarget, StoredProject } from "../../editor/studio/host.ts";
+import type { BootReply, DesktopRpgMakerImportOutcome, MenuCommand, OpenReply, RecentEntry, SaveRequest } from "../../editor/studio/desktop-bridge.ts";
+import type { AgentOutcome, CheckOutcome, HostCapabilities, RpgMakerImportProgress, RpgMakerImportRequest, SaveOutcome, SaveTarget, StoredProject } from "../../editor/studio/host.ts";
 import { openDirectoryProject, saveDirectoryTarget } from "../../editor/studio/project-directory.ts";
 import type { StudioProblem } from "../../editor/studio/problems.ts";
 import { FsDirectory } from "./fs-directory.ts";
 import { HelperClient, locateHelper } from "./helper-client.ts";
+import type { ImportResult as HelperImportResult } from "./helper-protocol.ts";
 
 const SCHEME = "app";
 const ORIGIN = `${SCHEME}://studio`;
@@ -347,6 +350,9 @@ async function capabilities(): Promise<HostCapabilities> {
   return {
     openFile: { available: true, reason: "Open a project JSON or a sharded pack; Save writes back to the same file." },
     openDirectory: { available: true, reason: "Open a folder holding project.json and its map files; Save writes the changed files back into it." },
+    rpgMakerImport: helper.available
+      ? { available: true, reason: "Imports an RPG Maker MV/MZ folder into a new Pocket RPG Kit project folder on this computer." }
+      : { available: false, reason: "RPG Maker import needs the Studio helper, which is missing from this build." },
     saveInPlace: {
       available: true,
       reason: "Files and folders save where they came from. A folder save stages every changed file, checks nothing changed on disk, then replaces the map files and the shell last, putting back the replaced ones if a step fails.",
@@ -377,6 +383,190 @@ async function runChecks(request: { project: unknown; mode: string }): Promise<C
     return { ok: false, code: reply.error.code === "UNAVAILABLE" ? "UNAVAILABLE" : "FAILED", message: `Engine checks did not finish: ${reply.error.message}` };
   }
   return { ok: true, problems: (reply.result as { problems: StudioProblem[] }).problems };
+}
+
+// ---- RPG Maker import ----------------------------------------------------------------------
+
+interface ActiveImport {
+  token: string;
+  runId: string | null;
+  cancelled: boolean;
+}
+
+let activeImport: ActiveImport | null = null;
+
+function importFailure(
+  token: string,
+  code: Extract<DesktopRpgMakerImportOutcome, { ok: false }>["code"],
+  detail: string,
+): DesktopRpgMakerImportOutcome {
+  return { ok: false, token, code, message: detail };
+}
+
+function importProgress(sender: Electron.WebContents, progress: RpgMakerImportProgress): void {
+  if (!sender.isDestroyed()) sender.send("studio:rpgmaker-import-progress", progress);
+}
+
+async function chooseDirectory(title: string, defaultPath?: string, create = false): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    title,
+    properties: create ? ["openDirectory", "createDirectory"] : ["openDirectory"],
+    ...(defaultPath ? { defaultPath } : {}),
+  };
+  const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  return picked.canceled || picked.filePaths.length === 0 ? null : picked.filePaths[0]!;
+}
+
+async function importRpgMaker(
+  request: RpgMakerImportRequest,
+  sender: Electron.WebContents,
+): Promise<DesktopRpgMakerImportOutcome> {
+  if (activeImport) {
+    return importFailure(request.token, "BUSY", "Another RPG Maker import is already running. / 另一个 RPG Maker 导入正在进行中。");
+  }
+  const active: ActiveImport = { token: request.token, runId: null, cancelled: false };
+  activeImport = active;
+  let staging: string | null = null;
+  try {
+    importProgress(sender, {
+      token: request.token,
+      phase: "selecting",
+      message: "Choose the RPG Maker project folder / 选择 RPG Maker 项目文件夹",
+    });
+    const pickedSource = await chooseDirectory("Select RPG Maker project folder / 选择 RPG Maker 项目文件夹");
+    if (active.cancelled || !pickedSource) {
+      return importFailure(request.token, "CANCELLED", "RPG Maker import cancelled. / 已取消 RPG Maker 导入。");
+    }
+
+    let sourceDir: string;
+    try {
+      sourceDir = realpathSync(pickedSource);
+      if (!statSync(sourceDir).isDirectory()) throw new Error("not a directory");
+    } catch (error) {
+      return importFailure(request.token, "INVALID_SOURCE", `The selected source folder cannot be read / 无法读取所选源文件夹: ${message(error)}`);
+    }
+
+    importProgress(sender, {
+      token: request.token,
+      phase: "selecting",
+      message: "Choose where to create the imported project / 选择导入项目的创建位置",
+    });
+    const pickedParent = await chooseDirectory(
+      "Select destination parent folder / 选择导入位置",
+      dirname(sourceDir),
+      true,
+    );
+    if (active.cancelled || !pickedParent) {
+      return importFailure(request.token, "CANCELLED", "RPG Maker import cancelled. / 已取消 RPG Maker 导入。");
+    }
+
+    let parent: string;
+    try {
+      parent = realpathSync(pickedParent);
+      if (!statSync(parent).isDirectory()) throw new Error("not a directory");
+    } catch (error) {
+      return importFailure(request.token, "IMPORT_FAILED", `The selected destination folder cannot be used / 无法使用所选目标文件夹: ${message(error)}`);
+    }
+    const sourceName = basename(sourceDir) || "rpgmaker-project";
+    const outputName = `${sourceName}-rpgkit`;
+    const outputDir = join(parent, outputName);
+    if (existsSync(outputDir)) {
+      return importFailure(
+        request.token,
+        "IMPORT_FAILED",
+        `A folder named ${outputName} already exists. Nothing was overwritten; choose another destination. / 已存在名为 ${outputName} 的文件夹。未覆盖任何内容，请选择其他位置。`,
+      );
+    }
+
+    try {
+      staging = mkdtempSync(join(parent, `.${outputName}.import-`));
+    } catch (error) {
+      return importFailure(request.token, "IMPORT_FAILED", `Could not create a staging folder / 无法创建暂存文件夹: ${message(error)}`);
+    }
+
+    importProgress(sender, {
+      token: request.token,
+      phase: "reading",
+      message: "Reading the RPG Maker project / 正在读取 RPG Maker 项目",
+    });
+    const runId = randomUUID();
+    active.runId = runId;
+    const unsubscribe = helper.onEvent((event) => {
+      if (event.event === "import-progress" && event.runId === runId && !active.cancelled) {
+        importProgress(sender, { token: request.token, phase: "converting", message: String(event.message ?? "") });
+      }
+    });
+    let reply;
+    try {
+      reply = await helper.request("import", {
+        runId,
+        sourceDir,
+        outputDir: staging,
+        placeholders: request.placeholders,
+      });
+    } finally {
+      unsubscribe();
+      active.runId = null;
+    }
+    if (active.cancelled || (!reply.ok && reply.error.code === "CANCELLED")) {
+      return importFailure(request.token, "CANCELLED", "RPG Maker import cancelled. / 已取消 RPG Maker 导入。");
+    }
+    if (!reply.ok) {
+      const code = reply.error.code === "BAD_REQUEST" ? "INVALID_SOURCE" : "IMPORT_FAILED";
+      return importFailure(request.token, code, reply.error.message);
+    }
+    const summary = reply.result as HelperImportResult;
+
+    importProgress(sender, {
+      token: request.token,
+      phase: "writing",
+      message: `Publishing ${outputName} without overwriting files / 正在发布 ${outputName}（不会覆盖文件）`,
+    });
+    if (existsSync(outputDir)) {
+      return importFailure(
+        request.token,
+        "IMPORT_FAILED",
+        `A folder named ${outputName} appeared while importing. Nothing was overwritten. / 导入过程中出现了名为 ${outputName} 的文件夹，未覆盖任何内容。`,
+      );
+    }
+    try {
+      renameSync(staging, outputDir);
+      staging = null;
+    } catch (error) {
+      return importFailure(request.token, "IMPORT_FAILED", `Could not publish ${outputName}; nothing was overwritten / 无法发布 ${outputName}，未覆盖任何内容: ${message(error)}`);
+    }
+
+    const opened = await openDirectory(outputDir);
+    if ("error" in opened) {
+      return importFailure(
+        request.token,
+        "IMPORT_FAILED",
+        `Imported to ${outputName}, but Studio could not open it / 已导入到 ${outputName}，但 Studio 无法打开它: ${opened.error}`,
+      );
+    }
+    importProgress(sender, {
+      token: request.token,
+      phase: "complete",
+      message: `Imported ${outputName} / 已导入 ${outputName}`,
+    });
+    return { ok: true, token: request.token, opened, coverage: summary.coverage, warnings: summary.warnings };
+  } finally {
+    if (staging) {
+      try {
+        rmSync(staging, { recursive: true, force: true });
+      } catch (error) {
+        console.error(`Could not remove RPG Maker import staging folder: ${message(error)}`);
+      }
+    }
+    if (activeImport === active) activeImport = null;
+  }
+}
+
+async function cancelRpgMakerImport(token: string): Promise<void> {
+  const active = activeImport;
+  if (!active || active.token !== token) return;
+  active.cancelled = true;
+  if (active.runId) await helper.request("cancel", { runId: active.runId });
 }
 
 let agentRun: string | null = null;
@@ -595,6 +785,14 @@ function registerIpc(): void {
   handle("studio:pick-file", () => pickAndOpen("file"));
   handle("studio:pick-directory", () => pickAndOpen("directory"));
   handle("studio:open-recent", (_event, id) => openRecent(text(id, "id", 64)));
+  handle("studio:rpgmaker-import", (event, value) => {
+    const raw = value as Partial<RpgMakerImportRequest> | null;
+    const requestToken = text(raw?.token, "import token", 160);
+    if (requestToken.length === 0) throw new Error("bad import token");
+    if (raw?.placeholders !== "visible" && raw?.placeholders !== "silent") throw new Error("bad placeholder mode");
+    return importRpgMaker({ token: requestToken, placeholders: raw.placeholders }, event.sender);
+  });
+  handle("studio:rpgmaker-import-cancel", (_event, value) => cancelRpgMakerImport(text(value, "import token", 160)));
   handle("studio:pick-image", async () => {
     const options: Electron.OpenDialogOptions = { title: "Choose a PNG", properties: ["openFile"], filters: [{ name: "PNG image", extensions: ["png"] }] };
     const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);

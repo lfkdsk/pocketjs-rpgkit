@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { proposalSemanticHash } from "../editor/proposals/model.ts";
@@ -8,6 +8,8 @@ import {
   parseHelperLine,
   type AgentStateEvent,
   type HelperResponse,
+  type ImportProgressEvent,
+  type ImportResult,
 } from "../studio-desktop/src/helper-protocol.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -15,6 +17,7 @@ const TEMP = join(import.meta.dir, `.studio-desktop-helper-${process.pid}`);
 const HELPER = join(ROOT, "studio-desktop", "src", "helper.ts");
 const SOURCE = join(ROOT, "examples", "sunstone", "data", "sunstone.json");
 const FAKE = join(import.meta.dir, "fixtures", "fake-local-agent.ts");
+const RPG_MAKER = join(import.meta.dir, "fixtures", "rpgmaker", "hollow-mz");
 const TOKEN = "ab".repeat(32);
 const PROJECT_TEXT = readFileSync(SOURCE, "utf8");
 const CONTEXT = {
@@ -141,6 +144,10 @@ class HelperProcess {
 
   events(runId: string): AgentStateEvent[] {
     return this.lines.filter((message) => message.event === "agent-state" && message.runId === runId) as unknown as AgentStateEvent[];
+  }
+
+  importEvents(runId: string): ImportProgressEvent[] {
+    return this.lines.filter((message) => message.event === "import-progress" && message.runId === runId) as unknown as ImportProgressEvent[];
   }
 
   async close(): Promise<number> {
@@ -275,6 +282,87 @@ describe("studio desktop helper", () => {
     }
   }, 30_000);
 
+  test("imports an RPG Maker folder into an empty staging directory and returns a small exact summary", async () => {
+    const helper = await started();
+    const outputDir = scratch();
+    const runId = "import-hollow";
+    try {
+      const imported = result<ImportResult>(await helper.request("import", {
+        runId,
+        sourceDir: RPG_MAKER,
+        outputDir,
+        placeholders: "visible",
+      }));
+      expect(existsSync(join(outputDir, "project.json"))).toBe(true);
+      expect(existsSync(join(outputDir, "coverage.json"))).toBe(true);
+      expect(imported.coverage.totals).toEqual({
+        Native: 110,
+        Degraded: 12,
+        Placeholder: 2,
+        Dropped: 0,
+        total: 124,
+      });
+      expect(imported.coverage.rows.map((row) => [row.section, row.key, row.counts.Placeholder, row.counts.Dropped])).toEqual([
+        ["audio", "se/hollow-chest", 0, 1],
+        ["audio", "se/hollow-chime", 0, 1],
+        ["audio", "se/hollow-door", 0, 1],
+        ["audio", "se/hollow-drip", 0, 1],
+        ["audio", "se/hollow-gate", 0, 1],
+        ["audio", "se/hollow-steps", 0, 1],
+        ["command", "355", 1, 0],
+        ["command", "357", 1, 0],
+      ]);
+      expect(imported.warnings.length).toBeLessThanOrEqual(25);
+      expect(helper.importEvents(runId)).toEqual([{
+        event: "import-progress",
+        runId,
+        phase: "converting",
+        message: "Converting maps, events, art and audio / 正在转换地图、事件、美术和音频",
+      }]);
+    } finally {
+      await helper.close();
+    }
+  }, 60_000);
+
+  test("refuses a non-empty import staging directory before writing it", async () => {
+    const helper = await started();
+    const outputDir = scratch();
+    const keep = join(outputDir, "keep.txt");
+    writeFileSync(keep, "untouched\n");
+    try {
+      const response = await helper.request("import", {
+        runId: "unsafe-output",
+        sourceDir: RPG_MAKER,
+        outputDir,
+        placeholders: "silent",
+      });
+      expect(errorCode(response)).toBe("BAD_REQUEST");
+      expect(readFileSync(keep, "utf8")).toBe("untouched\n");
+      expect(readdirSync(outputDir)).toEqual(["keep.txt"]);
+    } finally {
+      await helper.close();
+    }
+  });
+
+  test("cancels an active import child", async () => {
+    const helper = await started();
+    const runId = "cancel-import";
+    try {
+      const run = helper.call("import", {
+        runId,
+        sourceDir: RPG_MAKER,
+        outputDir: scratch(),
+        placeholders: "visible",
+      });
+      await helper.waitFor((message) => message.event === "import-progress" && message.runId === runId);
+      expect(result<{ cancelled: boolean }>(await helper.request("cancel", { runId }))).toEqual({ cancelled: true });
+      expect(errorCode(await run.response)).toBe("CANCELLED");
+      expect(result<{ cancelled: boolean }>(await helper.request("cancel", { runId }))).toEqual({ cancelled: false });
+    } finally {
+      await helper.close();
+    }
+  });
+
   test("runs the agent and returns the proposal it created", async () => {
     const helper = await started();
     try {
@@ -353,6 +441,13 @@ describe("studio desktop helper", () => {
         await helper.request("check", { runId: "compiled", projectText: brokenProject() }),
       );
       expect(broken.problems.some((problem) => problem.code === "lint/transfer-target-missing")).toBe(true);
+      const imported = result<ImportResult>(await helper.request("import", {
+        runId: "compiled-import",
+        sourceDir: RPG_MAKER,
+        outputDir: scratch(),
+        placeholders: "silent",
+      }));
+      expect(imported.coverage.totals.total).toBeGreaterThan(0);
     } finally {
       expect(await helper.close()).toBe(0);
     }

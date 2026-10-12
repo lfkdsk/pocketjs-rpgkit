@@ -23,8 +23,10 @@ const FOLDER = process.env.STUDIO_E2E_FOLDER;
 const ART_FOLDER = process.env.STUDIO_E2E_ART_FOLDER;
 const BROKEN = process.env.STUDIO_E2E_BROKEN;
 const AGENT_CONFIG = process.env.STUDIO_E2E_AGENT_CONFIG;
+const RPG_MAKER = process.env.STUDIO_E2E_RPG_MAKER;
+const IMPORT_PARENT = process.env.STUDIO_E2E_IMPORT_PARENT;
 const SHOTS = process.env.STUDIO_E2E_SHOTS;
-if (!WORK || !FOLDER || !ART_FOLDER || !BROKEN || !AGENT_CONFIG || !SHOTS) throw new Error("run this through e2e/run.ts");
+if (!WORK || !FOLDER || !ART_FOLDER || !BROKEN || !AGENT_CONFIG || !RPG_MAKER || !IMPORT_PARENT || !SHOTS) throw new Error("run this through e2e/run.ts");
 const PROFILE = join(WORK, "profile");
 mkdirSync(SHOTS, { recursive: true });
 
@@ -48,10 +50,14 @@ let page;
 async function answerDialogs(answers) {
   await electronApp.evaluate(({ dialog }, answers) => {
     globalThis.__dialogCalls ??= [];
-    if (answers.open !== undefined) dialog.showOpenDialog = async (...args) => {
-      globalThis.__dialogCalls.push(["open", args.at(-1)?.title]);
-      return { canceled: answers.open === null, filePaths: answers.open === null ? [] : [answers.open] };
-    };
+    if (answers.open !== undefined || answers.opens !== undefined) {
+      const queue = answers.opens ? [...answers.opens] : [answers.open];
+      dialog.showOpenDialog = async (...args) => {
+        globalThis.__dialogCalls.push(["open", args.at(-1)?.title]);
+        const answer = queue.shift() ?? null;
+        return { canceled: answer === null, filePaths: answer === null ? [] : [answer] };
+      };
+    }
     if (answers.box !== undefined) dialog.showMessageBox = async (...args) => {
       globalThis.__dialogCalls.push(["box", args.at(-1)?.message]);
       return { response: answers.box, checkboxChecked: false };
@@ -158,7 +164,7 @@ describe("Studio desktop", () => {
     assert.equal(page_.require, "undefined");
     assert.equal(page_.process, "undefined");
     assert.equal(page_.bridgeHasIpc, false);
-    assert.deepEqual(page_.bridge, ["agent", "boot", "cancelAgent", "check", "confirm", "exportFile", "onAgentState", "onMenu", "onOpened", "openRecent", "pickDirectory", "pickFile", "pickImage", "save", "setDirty"]);
+    assert.deepEqual(page_.bridge, ["agent", "boot", "cancelAgent", "cancelRpgMakerImport", "check", "confirm", "exportFile", "importRpgMaker", "onAgentState", "onMenu", "onOpened", "onRpgMakerImportProgress", "openRecent", "pickDirectory", "pickFile", "pickImage", "save", "setDirty"]);
     assert.match(page_.csp, /script-src 'self'(;|$)/);
     assert.match(page_.csp, /frame-ancestors 'none'/);
     assert.equal(page_.inlineRan, false, "an inline script ran despite the CSP");
@@ -166,6 +172,45 @@ describe("Studio desktop", () => {
     assert.notEqual(page_.traversal, 200);
     assert.equal(page_.host, "desktop");
   });
+
+  test("imports through native source/destination dialogs, publishes once, and opens through a directory token", async () => {
+    await answerDialogs({ opens: [RPG_MAKER, IMPORT_PARENT] });
+    const imported = await studio(async () => {
+      const progress = [];
+      const outcome = await window.__studio.files.importRpgMaker("visible", (event) => progress.push(event));
+      const opened = outcome?.ok ? window.__studio.files.openRpgMakerResult(outcome) : false;
+      return { outcome, progress, opened };
+    });
+    assert.equal(imported.outcome.ok, true, JSON.stringify(imported.outcome));
+    assert.equal(imported.opened, true);
+    assert.deepEqual(imported.progress.map((event) => event.phase), ["selecting", "selecting", "reading", "converting", "writing", "complete"]);
+    assert.equal(imported.outcome.coverage.totals.total > 0, true);
+    assert.equal(imported.outcome.coverage.rows.every((row) => row.counts.Placeholder > 0 || row.counts.Dropped > 0), true);
+    assert.equal(await studio(() => window.__studio.files.target?.kind), "directory");
+    assert.equal(await studio(() => window.__studio.app.session?.kind), "pack");
+
+    const output = join(IMPORT_PARENT, "hollow-mz-rpgkit");
+    assert.equal(existsSync(join(output, "project.json")), true);
+    assert.equal(existsSync(join(output, "coverage.md")), true);
+    assert.equal(readdirSync(IMPORT_PARENT).some((name) => name.includes(".import-")), false, "staging directory was left behind");
+    const before = snapshot(output);
+
+    await answerDialogs({ opens: [RPG_MAKER, IMPORT_PARENT] });
+    const refused = await studio(() => window.__studio.files.importRpgMaker("silent", () => {}));
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, "IMPORT_FAILED");
+    assert.match(refused.message, /already exists.*Nothing was overwritten|已存在.*未覆盖/);
+    assert.deepEqual(snapshot(output), before);
+    assert.equal(readdirSync(IMPORT_PARENT).some((name) => name.includes(".import-")), false, "refused import created staging output");
+
+    const calls = await dialogCalls();
+    assert.deepEqual(calls.slice(-4).map((call) => call[1]), [
+      "Select RPG Maker project folder / 选择 RPG Maker 项目文件夹",
+      "Select destination parent folder / 选择导入位置",
+      "Select RPG Maker project folder / 选择 RPG Maker 项目文件夹",
+      "Select destination parent folder / 选择导入位置",
+    ]);
+  }, 60_000);
 
   test("open the Sunstone folder, paint one cell, save: only that map file (and the shell) change on disk", async () => {
     await answerDialogs({ open: FOLDER, box: 0 });
