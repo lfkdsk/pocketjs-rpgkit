@@ -263,7 +263,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Re-measure after every shared-path change.
 // Presentation-only audio gain projection adds 312 B to the already audio-
 // enabled graph without reaching any battle presentation implementation.
-const EXPECTED_BYTES = 1_101_915;
+// Applying a freshly latched speed to the first immediate event-route step
+// adds 161 B on the shared session path; the isolation checks below continue
+// to prove that no optional battle code became reachable.
+const EXPECTED_BYTES = 1_102_076;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

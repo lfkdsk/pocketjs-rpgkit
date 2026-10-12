@@ -59,9 +59,11 @@ const EXPECTED_BYTES = {
   // removes about 11.1 KiB from GameView-only Sunstone; rmi-play retains it.
   // The implementation-graph and bundle needles below still prove that the
   // optional RPG Maker and travel implementations stay out of both controls.
-  meadow: 677_949,
-  sunstone: 1_101_915,
-  "rmi-play": 1_291_030,
+  // Effective first-step config for immediate event routes adds 161 B to each
+  // shared session graph without admitting an optional capability module.
+  meadow: 678_110,
+  sunstone: 1_102_076,
+  "rmi-play": 1_291_191,
 } as const;
 
 function implementationModules(app: string): string[] {

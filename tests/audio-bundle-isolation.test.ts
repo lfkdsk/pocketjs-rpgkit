@@ -293,9 +293,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Separating presentation-only gain changes from reducer timeline identity adds
 // 312 B to each audio-enabled graph; Meadow does not reach that settings
 // projection path.
-const EXPECTED_MEADOW_BYTES = 677_949;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_101_915;
-const EXPECTED_WAV_FIXTURE_BYTES = 864_281;
+// Deriving an immediate event route's first-step config from its freshly
+// latched route speed adds 161 B to every shared session graph. It reaches no
+// audio decoder or optional presentation implementation.
+const EXPECTED_MEADOW_BYTES = 678_110;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_102_076;
+const EXPECTED_WAV_FIXTURE_BYTES = 864_442;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
