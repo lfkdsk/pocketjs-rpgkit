@@ -1,8 +1,10 @@
 # Importing RPG Maker MV/MZ projects
 
 `tools/rpgmaker-import` converts an RPG Maker MV or MZ project's
-`data/*.json` files, referenced images and unencrypted Ogg/M4A media into an
-`rpgkit-project/v1` document plus generated art and QOA audio. It is a
+`data/*.json` files, referenced images and Ogg/M4A media into an
+`rpgkit-project/v1` document plus generated art and QOA audio. Plain projects
+and deployments using RPG Maker's standard encrypted-media format are both
+supported. It is a
 prototype: it shows how much of an
 RPG Maker game maps onto the kit directly, and lists what is still missing.
 
@@ -89,6 +91,29 @@ plugin and script commands (they still count as Placeholder).
 
 Importing the same project twice writes the same bytes.
 
+### Importing in Studio
+
+Studio exposes the same conversion as **Open → Import RPG Maker MV/MZ…** in
+English and Chinese. It asks for a project folder, shows progress, then shows
+the exact Native / Degraded / Placeholder / Dropped totals, every
+Placeholder/Dropped reason and warnings. The converted project is not opened
+until **Open result** is pressed, so the current document remains available
+while the report is reviewed. A failed import keeps the current document and
+shows a readable error.
+
+- In Chrome and Edge, the browser directory picker requests read-only access.
+  Conversion stays in the page and the result is a self-contained sharded
+  pack. Maps and images, including standard encrypted deployment images, are
+  imported; referenced Ogg/M4A is reported Dropped because a browser page has
+  no ffmpeg/QOA conversion host. The ordinary Studio pack and image limits
+  are checked before the result can be opened.
+- The desktop app uses native dialogs for the source folder and destination
+  parent. A helper runs the full importer, including audio conversion. It
+  writes a hidden sibling staging folder, refuses an existing destination,
+  removes staging on failure or cancellation, and publishes the completed
+  folder with one rename before opening it through Studio's opaque folder
+  token. It never overwrites an existing project.
+
 ### Running an imported project
 
 `project.json` runs on the kit's engine like any other project; the art has
@@ -165,7 +190,10 @@ ground, upper, passage, vehicle-passage, terrain and animated-cell variants.
 The reducer selects the complete variant atomically. In a connected world the
 selection is scoped to the active map, so visible neighbours keep their own
 art. A transfer clears the visit-local selection and uses the destination's
-authored tileset.
+authored tileset. A tile-image event keeps its page and reducer state, while a
+render-only lookup selects the cell cut from the active tileset. Thus changing
+the tileset repaints both the map and those events; switching back restores the
+original pixels.
 
 ## Events
 
@@ -218,9 +246,8 @@ In short:
   at 60/30/20 Hz. Existing weather remains visible when a battle opens.
 - **Change Tileset (282)** selects the precomposed variant described above,
   changing ground, upper layer, passage, vehicle passage, terrain and animated
-  cells together. The active visit is saved and rewound. Tile-image event
-  sprites keep the art imported for their authored tileset, so the command is
-  reported Degraded rather than Native.
+  cells together. Tile-image events resolve their art against that same active
+  tileset. The active visit is saved and rewound.
 - **Change Window Color (138)** accepts the editor's three-channel RGB tone
   (and four-channel data from compatible tools), defaulting an omitted gray
   channel to zero. Like RPG Maker, presentation consumes RGB only; the kit
@@ -238,7 +265,7 @@ In short:
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 93 of the 107 commands map natively, 10 run degraded, 3 become
+use of it: 94 of the 107 commands map natively, 9 run degraded, 3 become
 placeholders (Script and the two plugin commands) and 1 is dropped. "Needs
 kit" names the remaining or presentation-only runtime capability. The
 static table sends troop-only commands through the same troop converter as a
@@ -252,9 +279,19 @@ uses, not the 107-row capability catalogue:
 
 | Fixture | Command uses | Native | Degraded | Placeholder | Dropped | Native |
 |---|---:|---:|---:|---:|---:|---:|
-| Hollow MZ | 124 | 110 | 12 | 2 | 0 | 88.7% |
+| Hollow MZ | 124 | 112 | 10 | 2 | 0 | 90.3% |
 | Stage MV | 61 | 51 | 9 | 1 | 0 | 83.6% |
-| Combined | 185 | 161 | 21 | 3 | 0 | 87.0% |
+| Combined | 185 | 163 | 19 | 3 | 0 | 88.1% |
+
+The importer is also exercised against three complete public games at pinned
+revisions. They are fetched only into a temporary test directory; no project
+file, asset or dialogue from them is committed here.
+
+| Project | Engine and pinned source | Local-use terms | Event command uses | Native | Degraded | Placeholder | Dropped |
+|---|---|---|---:|---:|---:|---:|---:|
+| GameDev: The Beginning | MV 1.6.2, [`a3c3ec7`](https://github.com/yancharkin/game_jams/tree/a3c3ec739071ca285045025f9b619d17877a7193/%5Bigmc_2017%5D_gamedev_the_beginning) | MIT code, CC BY-SA 4.0 assets | 1,718 | 1,383 | 112 | 167 | 56 |
+| The Basement | MV 1.5.2, [`0aea825`](https://github.com/fluxrider/The_Basement/tree/0aea82564bf84299441c6b285e04977f5f11a68a) | MIT repository license | 31 | 20 | 11 | 0 | 0 |
+| Strange Sea: Before | MZ 1.0.0, [`103d87c`](https://github.com/ShrLeeKNsword/strange_sea_before/tree/103d87c00c8903db841b9aad23dea30e26d6b1a8/ver_0.0.1) | Apache-2.0 file; README additionally limits use to study/education and forbids copying or republication, so validation was local only | 197 | 151 | 46 | 0 | 0 |
 
 <!-- rpgmaker-commands:begin -->
 | Code | Command | Flavor | Handling | Notes | Needs kit |
@@ -326,7 +363,7 @@ uses, not the 107-row capability catalogue:
 | 251 | Stop SE | MV/MZ | Native |  |  |
 | 261 | Play Movie | MV/MZ | Dropped |  | video playback |
 | 281 | Change Map Name Display | MV/MZ | Native |  |  |
-| 282 | Change Tileset | MV/MZ | Degraded | map art and passage switch together; tile-image event sprites keep their imported art |  |
+| 282 | Change Tileset | MV/MZ | Native |  |  |
 | 283 | Change Battle Background | MV/MZ | Degraded | battle background names persist, but battle backgrounds are not presented | battle backgrounds in the battle setup |
 | 284 | Change Parallax | MV/MZ | Native |  |  |
 | 285 | Get Location Info | MV/MZ | Native |  |  |
@@ -403,11 +440,14 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   the runtime expand `\N[n]`, `\P[n]`, `\V[n]`, `\G` and `\\`, and apply
   `\C[n]` colour spans when the box opens. Expansion is one left-to-right
   pass; replacement values containing another escape are not rescanned.
-  `\P[n]` follows the imported initial party order. MZ `\PX`/`\PY`/`\FS`,
-  inline icons, font-size shorthands, timing controls and the gold-window
-  control remain byte-for-byte present and are reported Degraded, but their
-  visual effects are not interpreted. Unknown/plugin escapes also remain
-  visible instead of being silently deleted.
+  `\P[n]` follows the imported party order. In Show Text, MZ `\PX` and `\PY`
+  set a cursor position scaled into the kit's message content box, and `\FS`
+  selects the nearest baked font slot. Those three remain Degraded because the
+  coordinate/font metrics are an approximation and choice-list layout does not
+  consume them. Inline icons, font-size shorthands, timing controls and the
+  gold-window control remain byte-for-byte present without a visual effect.
+  Unknown/plugin escapes also remain visible instead of being silently
+  deleted.
 - **Parallaxes**: `parallaxName`, both loop flags, signed `parallaxSx/Sy`,
   editor visibility and the leading-`!` zero-camera convention become the
   map's authored parallax. Change Parallax (284) replaces or clears the same
@@ -453,8 +493,13 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   licensed for use in RPG Maker games only. The importer reads whatever
   images a project folder holds and does not ship or fetch any; do not
   redistribute RTP art in a kit game unless your license allows it.
-- **Encrypted projects are refused.** A deployed game with encrypted images
-  or audio (`hasEncryptedImages` / `hasEncryptedAudio`) is not decrypted.
+- **Standard encrypted deployment media is supported.** When `System.json`
+  enables encrypted images or audio and carries a valid 32-hex-digit key, the
+  importer strips the RPG Maker deployment header and decrypts the encrypted
+  prefix before decoding PNG/Ogg/M4A bytes. A missing/malformed key, invalid
+  header or encrypted suffix that disagrees with `System.json` fails with a
+  specific error. This is media decryption only; plugins and arbitrary scripts
+  are still not ported.
 - **Missing or corrupt audio is omitted.** The reference remains in event
   intent but no `project.audio` entry or QOA file is emitted; `coverage.md`,
   `coverage.json`, `audio-media.json` and the CLI warning carry the reason.
@@ -467,8 +512,9 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   projects intentionally render in front view. Numeric Show Battle Animation
   ids are retained but cannot paint without a cooked animation id. Battle
   BGM/ME records and per-map battleback names persist, but the current battle
-  presentation does not consume them. Encounter Disable works; vehicle
-  suppression and Encounter Half are not modelled.
+  presentation does not consume them. Encounter Disable works; Encounter Half
+  halves progress, ships halve it again, boats keep the walking rate and
+  airships freeze the saved countdown. Stock bush doubling is not modelled.
 - **Trait execution is intentionally bounded.** The battle reducer consumes
   parameter, element, state, hit/evasion/critical, recovery/cost/damage,
   targeting, attack-element/state/speed/times/skill, added-skill, Guard and

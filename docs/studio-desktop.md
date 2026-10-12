@@ -11,6 +11,10 @@ the same web build; the desktop app adds what a web page cannot do:
   accept or reject in the Agent panel.
 - **Engine checks.** Run `rpgkit-check`'s engine checks (`locks`, `freeze`,
   `reach`) on your computer. Their findings join the problems list.
+- **RPG Maker import.** Pick an MV/MZ source folder and destination with
+  native dialogs, review bilingual coverage and warnings, then open the
+  published kit project. Conversion is staged, cancellable and never
+  overwrites an existing destination.
 - **A desktop window.** File, Edit, View and Help menus, Open Recent, a
   prompt before closing with unsaved changes, and files handed over by the
   operating system ("Open With", the Dock, the command line).
@@ -84,6 +88,14 @@ file), `recent.json` and the optional `agent.json`.
 sharded pack; **File → Open Folder…** (Ctrl/⌘+Shift+O) opens a project
 folder. The folder rules are those of the web page's folders (see
 [Studio: Project folders](studio.md#project-folders)).
+
+**Open → Import RPG Maker MV/MZ…** asks for a source folder and then a
+destination parent with native dialogs. The app proposes a new
+`<source>-rpgkit` child and refuses to replace one that already exists. The
+helper imports into a hidden sibling directory, reports progress, exact
+Native/Degraded/Placeholder/Dropped totals and reasons in English and Chinese,
+then publishes with a rename. Cancelling or failing removes the staging
+directory; **Open result** opens the completed folder through an opaque token.
 
 Save writes back where the document came from:
 
