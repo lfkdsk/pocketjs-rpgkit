@@ -254,8 +254,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // behind the same capability removes another 1,314 B. Choice colouring and
 // formation validation remove 180 B more, without admitting battle code.
 // Moving tone/weather reducer rules behind the opt-in removes another 7,857 B.
+// Same-tick scripted facing/route startup and the bounded backdrop stack add
+// 10,485 B of shared interpreter/session/save code. Sunstone authors neither
+// additive behavior, and the isolation needles below still exclude battle,
+// editor and the optional RPG Maker runtime implementations.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_101_055;
+const EXPECTED_BYTES = 1_111_540;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

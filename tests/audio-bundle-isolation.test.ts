@@ -283,9 +283,13 @@ const maybeTest = preflight.ok ? test : test.skip;
 // The opted-in fixture pins the corresponding positive graph.
 // Moving tone/weather reducer rules behind the same opt-in removes a further
 // 8,639 B from Meadow, 7,857 B from Sunstone and 7,834 B from the WAV fixture.
-const EXPECTED_MEADOW_BYTES = 667_866;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_101_055;
-const EXPECTED_WAV_FIXTURE_BYTES = 865_008;
+// Same-tick scripted facing/route startup and the bounded backdrop stack add
+// 8,898 B to Meadow and the WAV fixture and 10,485 B to Sunstone's already
+// reachable save/demo graph. Neither audio decoder becomes reachable from
+// Meadow, and neither optional RPG Maker capability re-enters these graphs.
+const EXPECTED_MEADOW_BYTES = 676_764;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_111_540;
+const EXPECTED_WAV_FIXTURE_BYTES = 873_906;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

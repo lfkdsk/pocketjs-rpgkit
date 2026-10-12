@@ -544,11 +544,12 @@ simDescribe("sunstone — render budget", () => {
     // Reducer-owned MZ message layout runs, sparse encounter-rate state and
     // the conditional tile-event art resolver add a measured 11,151 B,
     // producing 1,161,185 B. Import and Studio code remain outside this game.
-    // Same-tick scripted facing/route startup and the bounded backdrop stack
-    // add 11,373 B of shared interpreter/session/save code, producing
-    // 1,172,558 B; this fixture authors neither opt-in.
+    // Explicit optional-runtime isolation later reduced this same bundle to
+    // 1,101,055 B. Same-tick scripted facing/route startup and the bounded
+    // backdrop stack add 10,485 B of shared interpreter/session/save code,
+    // producing 1,111,540 B; this fixture authors neither additive behavior.
     // Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_174_500);
+    expect(jsBytes).toBeLessThan(1_113_500);
   });
 });
 
