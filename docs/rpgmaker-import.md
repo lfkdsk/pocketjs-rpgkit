@@ -27,6 +27,26 @@ The mappings are checked against the official MV core at commit
   Its ME path pauses BGM, resumes it when the decoded buffer stops, and fades
   it in for 0.5 seconds; see
   [`playMe`/`stopMe`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_managers/AudioManager.js#L235-L268).
+- Formation and window colour follow
+  [`command137`/`command138`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L944-L958),
+  including the two-selection
+  [`swapOrder`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_scenes/Scene_Menu.js#L106-L127)
+  flow. RPG Maker windows consume only the saved tone's RGB channels
+  ([`Window_Base.updateTone`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_windows/Window_Base.js#L85-L88)).
+- Screen tone and weather commands, including their optional waits, follow
+  [`command223`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1149-L1156),
+  [`command236`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1236-L1245)
+  and the weighted interpolation in
+  [`Game_Screen`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Screen.js#L214-L220).
+  Particle count, stock white shapes, direction, fade and respawn ranges come
+  from
+  [`Weather`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_core/Weather.js#L64-L70)
+  and its
+  [update rules](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_core/Weather.js#L95-L108).
+- Change Tileset waits for its images and refreshes the map through
+  [`command282`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1333-L1352)
+  and
+  [`Game_Map.changeTileset`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Map.js#L692-L695).
 
 The public MZ v1.1.0 mirror at commit
 [`5ecc09ae`](https://github.com/stak/rmmz-corescript/tree/5ecc09ae5170c6aee71c7d9513e553e3dbea116b)
@@ -84,8 +104,12 @@ item-icon row, the RPG Maker battle reducer and front-view scene, and the kit's
 name-input scene. Production games use `pocket-rpgkit/rpgmaker-battle` and
 `pocket-rpgkit/ui/rpgmaker-battle` to wire the generated `battle.json` into
 `GameView`'s `extensions`, `battle` and `battleScene` props. The battle module,
-audio, parallax and item-icon renderers all have separate entry points;
-omitting one keeps its implementation out of the bundle.
+audio, parallax and item-icon renderers all have separate entry points. A game
+that wants the minimal party-order menu also passes
+`createRpgMakerFormation()` from `pocket-rpgkit/ui/rpgmaker-formation` as its
+`GameView` overlay. Formation is therefore absent from games that do not opt
+in. Omitting any of these entry points keeps its implementation out of the
+bundle.
 
 ## Ids
 
@@ -135,6 +159,14 @@ never computes it. `reshapeAutotiles` reproduces the editor's rule (eight
 neighbours, the map edge counts as joined) for hand-written maps such as the
 test projects.
 
+Change Tileset references are discovered in map, common-event and troop-event
+lists. For every referenced map/tileset pair, the importer precomposes the
+ground, upper, passage, vehicle-passage, terrain and animated-cell variants.
+The reducer selects the complete variant atomically. In a connected world the
+selection is scoped to the active map, so visible neighbours keep their own
+art. A transfer clears the visit-local selection and uses the destination's
+authored tileset.
+
 ## Events
 
 See the coverage table in [the report](#coverage) for every command code.
@@ -169,11 +201,43 @@ In short:
   grants deterministic experience, levels, gold and drops; a disallowed loss
   follows the ordinary Game Over path.
 
+## Screen and system commands
+
+- **Tint Screen (223)** retains signed red/green/blue and gray channels and
+  uses the fixed reference clock for the authored duration and optional wait.
+  The state, including an in-progress tween, survives save/load and rewind and
+  paints on maps and battles below numbered pictures and battle windows.
+  PocketJS does not expose a portable colour-matrix primitive, so the renderer
+  uses a deterministic source-over approximation: gray first, complementary
+  darkening second, positive-channel brightening last. The exact authored
+  descriptor remains in reducer state and saves.
+- **Set Weather Effect (236)** supports rain, storm and snow, power 1–9,
+  duration and wait. It draws `floor(power * 10)` stock-shaped particles and
+  the stock dimmer, with a serialized seed and clock replacing upstream's
+  ambient random calls. The result is identical after save/load, rewind and
+  at 60/30/20 Hz. Existing weather remains visible when a battle opens.
+- **Change Tileset (282)** selects the precomposed variant described above,
+  changing ground, upper layer, passage, vehicle passage, terrain and animated
+  cells together. The active visit is saved and rewound. Tile-image event
+  sprites keep the art imported for their authored tileset, so the command is
+  reported Degraded rather than Native.
+- **Change Window Color (138)** stores the exact four-channel source tone.
+  Like RPG Maker, presentation consumes RGB only; the kit projects those
+  channels onto its theme's message, choice, menu and battle-window chrome.
+  Gray remains serialized for lossless round-tripping. This palette projection
+  is reported Degraded because it is not a per-pixel windowskin tone.
+- **Change Formation Access (137)** gates the optional formation overlay.
+  Its two-confirm flow swaps any pair, including index 0, and the order drives
+  followers and front-view battle slots. The saved order is reconciled with
+  the current party before every swap. The map player's walking artwork stays
+  fixed because `GameView` has one project-level player sprite, so this command
+  is reported Degraded.
+
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 92 of the 107 commands map natively, 7 run degraded, 3 become
-placeholders (Script and the two plugin commands) and 5 are dropped. "Needs
+use of it: 93 of the 107 commands map natively, 10 run degraded, 3 become
+placeholders (Script and the two plugin commands) and 1 is dropped. "Needs
 kit" names the remaining or presentation-only runtime capability. The
 static table sends troop-only commands through the same troop converter as a
 real import, rather than treating them as map commands.
@@ -186,9 +250,9 @@ uses, not the 107-row capability catalogue:
 
 | Fixture | Command uses | Native | Degraded | Placeholder | Dropped | Native |
 |---|---:|---:|---:|---:|---:|---:|
-| Hollow MZ | 120 | 107 | 9 | 2 | 2 | 89.2% |
-| Stage MV | 58 | 52 | 5 | 1 | 0 | 89.7% |
-| Combined | 178 | 159 | 14 | 3 | 2 | 89.3% |
+| Hollow MZ | 124 | 110 | 12 | 2 | 0 | 88.7% |
+| Stage MV | 61 | 51 | 9 | 1 | 0 | 83.6% |
+| Combined | 185 | 161 | 21 | 3 | 0 | 87.0% |
 
 <!-- rpgmaker-commands:begin -->
 | Code | Command | Flavor | Handling | Notes | Needs kit |
@@ -221,8 +285,8 @@ uses, not the 107-row capability catalogue:
 | 134 | Change Save Access | MV/MZ | Native |  |  |
 | 135 | Change Menu Access | MV/MZ | Native |  |  |
 | 136 | Change Encounter | MV/MZ | Native |  | random encounters |
-| 137 | Change Formation Access | MV/MZ | Dropped |  | a party formation menu |
-| 138 | Change Window Color | MV/MZ | Dropped |  | a runtime UI theme command |
+| 137 | Change Formation Access | MV/MZ | Degraded | formation reorders followers and battle slots but keeps the walking leader fixed |  |
+| 138 | Change Window Color | MV/MZ | Degraded | window tone is retained exactly and projected onto the kit theme palette |  |
 | 139 | Change Defeat ME | MV/MZ | Degraded | defeat ME setting persists, but the current battle audio lifecycle does not play it | battle audio settings in the battle setup |
 | 140 | Change Vehicle BGM | MV/MZ | Native |  |  |
 | 201 | Transfer Player | MV/MZ | Native |  | a white transfer fade colour |
@@ -239,7 +303,7 @@ uses, not the 107-row capability catalogue:
 | 217 | Gather Followers | MV/MZ | Native |  |  |
 | 221 | Fadeout Screen | MV/MZ | Native |  |  |
 | 222 | Fadein Screen | MV/MZ | Native |  |  |
-| 223 | Tint Screen | MV/MZ | Degraded | colour tone approximated as an overlay colour | an additive colour-tone (and greyscale) screen filter |
+| 223 | Tint Screen | MV/MZ | Degraded | signed tone is retained exactly; portable rendering approximates additive colour and desaturation |  |
 | 224 | Flash Screen | MV/MZ | Native |  |  |
 | 225 | Shake Screen | MV/MZ | Native |  |  |
 | 230 | Wait | MV/MZ | Native |  |  |
@@ -248,7 +312,7 @@ uses, not the 107-row capability catalogue:
 | 233 | Rotate Picture | MV/MZ | Native |  |  |
 | 234 | Tint Picture | MV/MZ | Native |  |  |
 | 235 | Erase Picture | MV/MZ | Native |  |  |
-| 236 | Set Weather Effect | MV/MZ | Dropped |  | rain/storm/snow weather particles |
+| 236 | Set Weather Effect | MV/MZ | Native |  |  |
 | 241 | Play BGM | MV/MZ | Native |  |  |
 | 242 | Fadeout BGM | MV/MZ | Native |  |  |
 | 243 | Save BGM | MV/MZ | Native |  |  |
@@ -260,7 +324,7 @@ uses, not the 107-row capability catalogue:
 | 251 | Stop SE | MV/MZ | Native |  |  |
 | 261 | Play Movie | MV/MZ | Dropped |  | video playback |
 | 281 | Change Map Name Display | MV/MZ | Native |  |  |
-| 282 | Change Tileset | MV/MZ | Dropped |  | runtime tileset swaps (a ground/upper layer variant per tileset) |
+| 282 | Change Tileset | MV/MZ | Degraded | map art and passage switch together; tile-image event sprites keep their imported art |  |
 | 283 | Change Battle Background | MV/MZ | Degraded | battle background names persist, but battle backgrounds are not presented | battle backgrounds in the battle setup |
 | 284 | Change Parallax | MV/MZ | Native |  |  |
 | 285 | Get Location Info | MV/MZ | Native |  |  |
