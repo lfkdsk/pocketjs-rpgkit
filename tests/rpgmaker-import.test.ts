@@ -707,6 +707,17 @@ describe("rpgmaker-import: output", () => {
       expect(imported.project.sheets.map((sheet) => sheet.id)).toContain("ts3");
       expect(imported.images.has("tiles/ts3.png")).toBe(true);
       expect(imported.assets.sheets.ts3).toBeDefined();
+      expect(imported.assets.tileEventVariants?.["tile-1-4"]).toEqual({
+        ts1: "tile-1-4",
+        ts2: "tile-2-4",
+        ts3: "tile-3-4",
+      });
+      expect(imported.assets.tileEventVariants?.["tile-1-4"]).not.toHaveProperty("ts999");
+      const baseTileEvent = imported.assets.sprites["tile-1-4"]!;
+      const alternateTileEvent = imported.assets.sprites["tile-3-4"]!;
+      expect(imported.images.get(baseTileEvent.png)?.data).not.toEqual(
+        imported.images.get(alternateTileEvent.png)?.data,
+      );
       expect(map.tilesetVariants).not.toHaveProperty("ts999");
       expect(allCommands(imported.project)).not.toContainEqual({ op: "changeTileset", id: "ts999" });
       expect(imported.cov.list("command").find((row) => row.key === "282")?.counts.Dropped)

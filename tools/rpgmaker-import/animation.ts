@@ -4,7 +4,7 @@
 // about MV cells, transforms, hues, or blend modes.
 
 import { downscale } from "./tile-render.ts";
-import { blankImage, compositePixel, type RgbaImage } from "./png.ts";
+import { blankImage, compositePixel, type RgbaImage } from "./image.ts";
 import type { RmAnimation } from "./rm-types.ts";
 
 export const MV_ANIMATION_CELL = 192;

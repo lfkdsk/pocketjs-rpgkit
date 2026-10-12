@@ -6,6 +6,9 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RmMap, RmProject, RmSystem } from "./rm-types.ts";
 import { rpgMakerMediaEncryption } from "./media.ts";
+import { NODE_RPGMAKER_IMPORT_ENVIRONMENT } from "./environment-node.ts";
+
+export { rmParallaxSpeed, rmTileSize } from "./semantics.ts";
 
 export class RmLoadError extends Error {}
 
@@ -66,6 +69,7 @@ export function loadRmProject(rootArg: string): RmProject {
   return {
     root: projectRoot,
     flavor: mz ? "MZ" : "MV",
+    environment: NODE_RPGMAKER_IMPORT_ENVIRONMENT,
     ...(mediaEncryption ? { mediaEncryption } : {}),
     system,
     mapInfos,
@@ -83,17 +87,4 @@ export function loadRmProject(rootArg: string): RmProject {
     troops: readOptional(dataDir, "Troops.json"),
     animations: readOptional(dataDir, "Animations.json"),
   };
-}
-
-/** MV is always 48 px; MZ stores the tile size in System.json. */
-export function rmTileSize(rm: RmProject): number {
-  return rm.system.tileSize ?? 48;
-}
-
-/** MV/MZ scroll a looping parallax by speed/4 source pixels per frame at
- *  any tile size; the kit scrolls speed/4 kit pixels per reference tick.
- *  Converting source pixels to 16 px kit pixels keeps the on-screen rate
- *  (a third of the source speed for 48 px tiles). */
-export function rmParallaxSpeed(rm: RmProject, speed: number): number {
-  return speed * 16 / rmTileSize(rm);
 }

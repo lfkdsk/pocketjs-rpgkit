@@ -302,6 +302,7 @@ for (const source of RMI_SOURCES) {
       `  maxChunks: ${maxChunks},\n  maxActors: ${maxActors},\n  world: ${q(world)},\n` +
       `  order: ${q(project.maps.map((m) => m.id))},\n` +
       `  npcSrc: { ...WALKERS_${source.id}, ${staticSource.join(", ")} },\n` +
+      (assets.tileEventVariants ? `  tileEventVariants: ${q(assets.tileEventVariants)},\n` : "") +
       `  itemSrc: { ${itemSource.join(", ")} },\n` +
       `  player: ${player},\n  playerHeight: ${assets.player ? `${assets.sprites[assets.player]!.h}` : 16},\n` +
       `  animated: ANIMATED_${source.id},\n` +

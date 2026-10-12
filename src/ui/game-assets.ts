@@ -188,6 +188,19 @@ export interface CharacterFrames extends PlayerFrames {
  *  twelve-frame walker (optionally 16x32). */
 export type NpcArt = string | CharacterFrames;
 
+/** Resolve a tile-image event's base page sprite against Change Tileset.
+ * Character-sheet sprites and projects without a render-only variant table
+ * take the single direct return path. */
+export function tilesetEventSprite(
+  sprite: string | null,
+  tileset: string | undefined,
+  variants: GameAssets["tileEventVariants"],
+): string | null {
+  return sprite !== null && tileset !== undefined
+    ? variants?.[sprite]?.[tileset] ?? sprite
+    : sprite;
+}
+
 export interface GameAssets {
   /** Map id -> row-major baked 512x512 ground chunks. */
   ground: Readonly<Record<string, readonly string[]>>;
@@ -207,6 +220,9 @@ export interface GameAssets {
   order: readonly string[];
   /** Page.sprite key -> static 16x16 image src or a 12-frame walker. */
   npcSrc: Readonly<Record<string, NpcArt>>;
+  /** Base tile-event page sprite -> active tileset -> matching static art.
+   * Optional and render-only; reducer pages keep their authored sprite. */
+  tileEventVariants?: Readonly<Record<string, Readonly<Record<string, string>>>>;
   /** Item.sprite tile id -> cooked 16px image. Optional and presentation
    * only: inventory/shop reducer state continues to carry item ids. */
   itemSrc?: Readonly<Record<string, string>>;

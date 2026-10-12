@@ -11,18 +11,9 @@ import { inflateSync } from "node:zlib";
 import { decodePng } from "../../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../../vendor/pocketjs/tests/png.ts";
 import { readRpgMakerMedia, type RpgMakerMediaEncryption } from "./media.ts";
+import { blankImage, type RgbaImage } from "./image.ts";
 
-export interface RgbaImage {
-  width: number;
-  height: number;
-  /** RGBA, 4 bytes per pixel, row-major, straight (not premultiplied)
-   *  alpha. */
-  data: Uint8Array;
-}
-
-export function blankImage(w: number, h: number): RgbaImage {
-  return { width: w, height: h, data: new Uint8Array(w * h * 4) };
-}
+export { blankImage, blit, compositePixel, type RgbaImage } from "./image.ts";
 
 export async function readPng(path: string, encryption?: RpgMakerMediaEncryption): Promise<RgbaImage> {
   const bytes = readRpgMakerMedia(path, encryption, "image");
@@ -38,55 +29,6 @@ export function decodePngBytes(bytes: Uint8Array): RgbaImage {
 
 export function writePngBytes(img: RgbaImage): Uint8Array {
   return new Uint8Array(encodePNG(img.data, img.width, img.height));
-}
-
-/** Draw the `w` x `h` rectangle of `src` at (sx, sy) onto `dst` at (dx, dy)
- *  with source-over alpha compositing, as a canvas drawImage does (RPG
- *  Maker layers tiles over each other this way). Both rectangles are
- *  clipped to their images, so an out-of-range source draws nothing. */
-export function blit(
-  dst: RgbaImage,
-  dx: number,
-  dy: number,
-  src: RgbaImage,
-  sx: number,
-  sy: number,
-  w: number,
-  h: number,
-): void {
-  for (let y = 0; y < h; y++) {
-    const syy = sy + y;
-    const dyy = dy + y;
-    if (syy < 0 || syy >= src.height || dyy < 0 || dyy >= dst.height) continue;
-    for (let x = 0; x < w; x++) {
-      const sxx = sx + x;
-      const dxx = dx + x;
-      if (sxx < 0 || sxx >= src.width || dxx < 0 || dxx >= dst.width) continue;
-      const si = (syy * src.width + sxx) * 4;
-      const di = (dyy * dst.width + dxx) * 4;
-      compositePixel(dst.data, di, src.data[si]!, src.data[si + 1]!, src.data[si + 2]!, src.data[si + 3]!);
-    }
-  }
-}
-
-/** Source-over one straight-alpha pixel onto `d` at byte offset `i`. */
-export function compositePixel(d: Uint8Array, i: number, r: number, g: number, b: number, a: number): void {
-  if (a === 0) return;
-  if (a === 255) {
-    d[i] = r;
-    d[i + 1] = g;
-    d[i + 2] = b;
-    d[i + 3] = 255;
-    return;
-  }
-  const sa = a / 255;
-  const da = d[i + 3]! / 255;
-  const oa = sa + da * (1 - sa);
-  const mix = (s: number, t: number): number => Math.round((s * sa + t * da * (1 - sa)) / oa);
-  d[i] = mix(r, d[i]!);
-  d[i + 1] = mix(g, d[i + 1]!);
-  d[i + 2] = mix(b, d[i + 2]!);
-  d[i + 3] = Math.round(oa * 255);
 }
 
 // --- palette PNGs -------------------------------------------------------------

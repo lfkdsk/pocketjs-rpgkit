@@ -440,8 +440,12 @@ export interface RmProject {
   root: string;
   /** "MZ" when System.json has the MZ-only fields, else "MV". */
   flavor: "MV" | "MZ";
+  /** Host operations for media discovery and conversion. `loadRmProject`
+   * installs the Node/Bun adapter; the web loader installs a DirectoryHandle
+   * adapter. Synthetic unit-test projects may omit it. */
+  environment?: import("./environment.ts").RpgMakerImportEnvironment;
   /** Validated deployment-media settings, absent for ordinary projects. */
-  mediaEncryption?: import("./media.ts").RpgMakerMediaEncryption;
+  mediaEncryption?: import("./media-crypto.ts").RpgMakerMediaEncryption;
   system: RmSystem;
   mapInfos: (RmMapInfo | null)[];
   maps: Map<number, RmMap>;

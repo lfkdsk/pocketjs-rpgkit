@@ -16,6 +16,7 @@ import { windowToneTheme, type UiTheme } from "../src/ui/theme.ts";
 import {
   mapScopedAnimatedSource,
   mapScopedLayerSource,
+  tilesetEventSprite,
   tilesetLayerSource,
   type AnimatedTile,
   type EagerMapLayerVariant,
@@ -178,6 +179,17 @@ describe("atomic tileset presentation", () => {
     expect(tilesetLayerSource(undefined, "ground", generic)).toBe(generic);
     expect(tilesetLayerSource(tileset, "ground", generic)).toBe(ground);
     expect(tilesetLayerSource(tileset, "upper", generic)).toBe(upper);
+  });
+
+  test("tile-image events resolve only when their active tileset has cooked art", () => {
+    const variants = {
+      "tile-1-4": { ts1: "tile-1-4", ts3: "tile-3-4" },
+    };
+    expect(tilesetEventSprite("tile-1-4", undefined, variants)).toBe("tile-1-4");
+    expect(tilesetEventSprite("tile-1-4", "ts3", variants)).toBe("tile-3-4");
+    expect(tilesetEventSprite("tile-1-4", "ts999", variants)).toBe("tile-1-4");
+    expect(tilesetEventSprite("chr-hero", "ts3", variants)).toBe("chr-hero");
+    expect(tilesetEventSprite(null, "ts3", variants)).toBeNull();
   });
 
   test("connected-world variants replace only the active map", () => {

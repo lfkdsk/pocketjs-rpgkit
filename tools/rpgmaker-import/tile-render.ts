@@ -10,7 +10,6 @@
 // at a time: the caller asks for step 0, 1, 2 ... and gets the frame RPG
 // Maker shows at animationFrame = step.
 
-import { join } from "node:path";
 import {
   autotileKind,
   autotileShape,
@@ -27,8 +26,9 @@ import {
   WATERFALL_AUTOTILE_TABLE,
   type QuarterTable,
 } from "./autotile.ts";
-import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
-import { findRpgMakerPng, type RpgMakerMediaEncryption } from "./media.ts";
+import type { RpgMakerImportEnvironment } from "./environment.ts";
+import { blankImage, blit, type RgbaImage } from "./image.ts";
+import type { RpgMakerMediaEncryption } from "./media-crypto.ts";
 
 /** The nine tileset sheets in RPG Maker order: A1, A2, A3, A4, A5, B, C, D,
  *  E. A null sheet has no image (unset in the tileset or missing on disk). */
@@ -53,6 +53,7 @@ export const TILE_ANIM_SECONDS = 0.5;
 const WATER_SURFACE = [0, 1, 2, 1] as const;
 
 export async function loadTilesetImages(
+  environment: RpgMakerImportEnvironment,
   projectRoot: string,
   tilesetNames: string[],
   tileSize: number,
@@ -61,10 +62,20 @@ export async function loadTilesetImages(
   const sheets: (RgbaImage | null)[] = [];
   for (let i = 0; i < 9; i++) {
     const name = tilesetNames[i] ?? "";
-    const path = name === "" ? null : findRpgMakerPng(join(projectRoot, "img", "tilesets", `${name}.png`), encryption);
-    sheets.push(path ? await readPng(path, encryption) : null);
+    const path = name === "" ? null : findRpgMakerPng(environment, environment.join(projectRoot, "img", "tilesets", `${name}.png`), encryption);
+    sheets.push(path ? await environment.readPng(path, encryption) : null);
   }
   return { tileSize, sheets };
+}
+
+function findRpgMakerPng(
+  environment: RpgMakerImportEnvironment,
+  path: string,
+  encryption?: RpgMakerMediaEncryption,
+): string | null {
+  if (environment.exists(path)) return path;
+  if (!encryption?.images || !path.toLowerCase().endsWith(".png")) return null;
+  return [`${path}_`, `${path.slice(0, -4)}.rpgmvp`].find((candidate) => environment.exists(candidate)) ?? null;
 }
 
 /** MV Tilemap.isVisibleTile. */

@@ -19,9 +19,9 @@ import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import type { SessionState } from "../src/engine/session.ts";
 import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject } from "../tools/rpgmaker-import/project.ts";
-import { playHollow, playStage, type RmiDriver } from "./helpers/rmi-journey.ts";
+import { BTN_CIRCLE, playHollow, playStage, type RmiDriver } from "./helpers/rmi-journey.ts";
 import { appBundle, appPreflight } from "./helpers/boot.ts";
-import { bootGameWorld, installGameSimIsolation } from "./helpers/sim-session.ts";
+import { bootGameWorld, installGameSimIsolation, type BoundGameWorld } from "./helpers/sim-session.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const W = 480;
@@ -138,6 +138,59 @@ async function replay(game: "hollow" | "stage", d: RmiDriver): Promise<Map<strin
 const stateAt = (shots: Map<string, Uint8Array>, name: string): unknown =>
   JSON.parse(new TextDecoder().decode(shots.get(`${name}:state`)!));
 
+function pump(world: BoundGameWorld, buttons = 0): void {
+  world.frame(buttons, 0x8080);
+  for (let tick = 0; tick < world.ticksPerFrame; tick++) world.tick();
+}
+
+function tap(world: BoundGameWorld, button: number): void {
+  pump(world, button);
+  pump(world);
+}
+
+function waitForMessage(world: BoundGameWorld, text: string): void {
+  for (let frame = 0; frame < 240; frame++) {
+    const modal = world.probes().state.interp.modal;
+    if (modal?.kind === "text" && modal.lines.some((line) => line.includes(text))) return;
+    pump(world);
+  }
+  throw new Error(`rmi tileset preview did not reach message ${JSON.stringify(text)}`);
+}
+
+function dismissMessage(world: BoundGameWorld, text: string): void {
+  for (let press = 0; press < 8; press++) {
+    const modal = world.probes().state.interp.modal;
+    if (modal?.kind !== "text" || !modal.lines.some((line) => line.includes(text))) return;
+    tap(world, BTN_CIRCLE);
+  }
+  throw new Error(`rmi tileset preview did not dismiss message ${JSON.stringify(text)}`);
+}
+
+function gateCell(rgba: Uint8Array): Uint8Array {
+  // Hollow is 24x16 kit tiles and is centred in the 480x272 viewport.
+  // The imported Gate event is at (19,6), so its 16x16 image occupies this
+  // stable screen rect while the shortened autorun changes only tilesets.
+  const x0 = Math.floor((W - 24 * 16) / 2) + 19 * 16;
+  const y0 = Math.floor((H - 16 * 16) / 2) + 6 * 16;
+  const cell = new Uint8Array(16 * 16 * 4);
+  for (let y = 0; y < 16; y++) {
+    const from = ((y0 + y) * W + x0) * 4;
+    cell.set(rgba.subarray(from, from + 16 * 4), y * 16 * 4);
+  }
+  return cell;
+}
+
+function countColor(rgba: Uint8Array, color: readonly [number, number, number, number]): number {
+  let count = 0;
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (
+      rgba[i] === color[0] && rgba[i + 1] === color[1] &&
+      rgba[i + 2] === color[2] && rgba[i + 3] === color[3]
+    ) count++;
+  }
+  return count;
+}
+
 describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", () => {
   const d = playHollow(hollowProject, hollowImport.battle);
 
@@ -212,6 +265,39 @@ describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", ()
       shots.get("battle")!, 192, 40, 288, 152,
       (r, g, b) => r > 90 && g > 90 && b > 90,
     )).toBeGreaterThan(300);
+  }, 60_000);
+
+  simTest("tile-image events repaint across Change Tileset and restore with the base tileset", async () => {
+    const world = await bootGameWorld(
+      appBundle("rmi-play"),
+      60,
+      { __rmiGame: "hollow", __rmiScreenPreview: "tileset" },
+    );
+
+    waitForMessage(world, "Rain drums");
+    tap(world, BTN_CIRCLE); // finish typewriter reveal, keeping the pause
+    // Selecting the map's authored ts1 is stored canonically as no override.
+    expect(world.probes().state.interp.tileset).toBeUndefined();
+    const base = gateCell(world.render().slice());
+    expect(countColor(base, [69, 48, 26, 255])).toBe(80);
+    expect(countColor(base, [154, 106, 58, 255])).toBe(64);
+    expect(countColor(base, [111, 76, 42, 255])).toBe(64);
+
+    dismissMessage(world, "Rain drums");
+    waitForMessage(world, "frost seals");
+    tap(world, BTN_CIRCLE);
+    expect(world.probes().state.interp.tileset).toBe("ts3");
+    const frost = gateCell(world.render().slice());
+    expect(countColor(frost, [120, 168, 184, 255])).toBe(80);
+    expect(countColor(frost, [216, 244, 255, 255])).toBe(64);
+    expect(countColor(frost, [82, 120, 136, 255])).toBe(64);
+    expect(frost).not.toEqual(base);
+
+    dismissMessage(world, "frost seals");
+    waitForMessage(world, "Rain drums");
+    tap(world, BTN_CIRCLE);
+    expect(world.probes().state.interp.tileset).toBeUndefined();
+    expect(gateCell(world.render().slice())).toEqual(base);
   }, 60_000);
 });
 

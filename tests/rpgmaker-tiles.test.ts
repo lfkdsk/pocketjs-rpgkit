@@ -23,6 +23,7 @@ import {
 } from "../tools/rpgmaker-import/autotile.ts";
 import { composeMap, TileAtlas } from "../tools/rpgmaker-import/compose.ts";
 import { Coverage } from "../tools/rpgmaker-import/coverage.ts";
+import { NODE_RPGMAKER_IMPORT_ENVIRONMENT } from "../tools/rpgmaker-import/environment-node.ts";
 import { blankImage, blit, readPng, writePngBytes, type RgbaImage } from "../tools/rpgmaker-import/png.ts";
 import { blockedDirs, RM_FLAG } from "../tools/rpgmaker-import/passage.ts";
 import type { RmMap, RmTileset } from "../tools/rpgmaker-import/rm-types.ts";
@@ -797,7 +798,7 @@ describe("tileset images on disk", () => {
         join(root, "img", "tilesets", "Outside_B.png"),
         palettePng(2, 1, [0, 1], [0, 0, 0, 10, 20, 30], [0]),
       );
-      const imgs = await loadTilesetImages(root, ["", "Outside_A2", "Gone_A3", "", "", "Outside_B"], 4);
+      const imgs = await loadTilesetImages(NODE_RPGMAKER_IMPORT_ENVIRONMENT, root, ["", "Outside_A2", "Gone_A3", "", "", "Outside_B"], 4);
       expect(imgs.tileSize).toBe(4);
       expect(imgs.sheets).toHaveLength(9);
       expect(imgs.sheets.map((s) => s !== null)).toEqual([false, true, false, false, false, true, false, false, false]);

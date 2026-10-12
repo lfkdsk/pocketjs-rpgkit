@@ -9,67 +9,32 @@ import { encodeQoa } from "../lib/qoa.ts";
 import {
   encryptedRpgMakerAudioFormat,
   readRpgMakerMedia,
-  type RpgMakerMediaEncryption,
 } from "./media.ts";
+import type { RpgMakerMediaEncryption } from "./media-crypto.ts";
+import {
+  RPGMAKER_AUDIO_KINDS,
+  audioMediaKey,
+  type AudioMediaChannels,
+  type AudioMediaOptions,
+  type AudioMediaRecord,
+  type AudioMediaRequest,
+  type AudioMediaSampleRate,
+  type RpgMakerAudioKind,
+} from "./audio-types.ts";
 
-export const RPGMAKER_AUDIO_KINDS = ["bgm", "bgs", "me", "se"] as const;
-export type RpgMakerAudioKind = typeof RPGMAKER_AUDIO_KINDS[number];
-export type AudioMediaSampleRate = 11_025 | 22_050 | 44_100;
-export type AudioMediaChannels = 1 | 2;
-
-export interface AudioMediaRequest {
-  kind: RpgMakerAudioKind;
-  /** RPG Maker's extension-free audio name. Matching is case-insensitive. */
-  name: string;
-}
-
-interface AudioMediaRecordBase extends AudioMediaRequest {
-  /** Stable, case-insensitive lookup key for joining records to commands. */
-  key: string;
-  /** Compressed source byte count (zero when no source exists). */
-  sourceBytes: number;
-  /** Encoded QOA byte count (zero unless conversion succeeded). */
-  outputBytes: number;
-}
-
-export interface AudioMediaSuccess extends AudioMediaRecordBase {
-  status: "success";
-  /** Project-relative path, always written with forward slashes. */
-  sourcePath: string;
-  sourceFormat: "ogg" | "m4a";
-  channels: AudioMediaChannels;
-  sampleRate: AudioMediaSampleRate;
-  /** Decoded interleaved PCM frame count (samples / channels). */
-  frames: number;
-  /** 60 Hz reference ticks occupied at pitch 100. */
-  durationTicks: number;
-  qoaBytes: Uint8Array;
-}
-
-export interface AudioMediaMissing extends AudioMediaRecordBase {
-  status: "missing";
-  reason: string;
-}
-
-export interface AudioMediaCorrupt extends AudioMediaRecordBase {
-  status: "corrupt";
-  sourcePath: string;
-  sourceFormat: "ogg" | "m4a";
-  reason: string;
-}
-
-export type AudioMediaRecord = AudioMediaSuccess | AudioMediaMissing | AudioMediaCorrupt;
-
-export interface AudioMediaOptions {
-  /** ffmpeg executable or absolute path. Defaults to PATH lookup of ffmpeg. */
-  ffmpeg?: string;
-  /** Deterministic decoder output rate. Defaults to 44.1 kHz. */
-  sampleRate?: AudioMediaSampleRate;
-  /** Deterministic decoder output channels. Defaults to stereo. */
-  channels?: AudioMediaChannels;
-  /** Validated System.json deployment-media settings. */
-  encryption?: RpgMakerMediaEncryption;
-}
+export {
+  RPGMAKER_AUDIO_KINDS,
+  audioMediaKey,
+  type AudioMediaChannels,
+  type AudioMediaCorrupt,
+  type AudioMediaMissing,
+  type AudioMediaOptions,
+  type AudioMediaRecord,
+  type AudioMediaRequest,
+  type AudioMediaSampleRate,
+  type AudioMediaSuccess,
+  type RpgMakerAudioKind,
+} from "./audio-types.ts";
 
 interface Candidate {
   filename: string;
@@ -83,11 +48,6 @@ const KIND_ORDER = new Map<RpgMakerAudioKind, number>(
   RPGMAKER_AUDIO_KINDS.map((kind, index) => [kind, index]),
 );
 const FORMAT_ORDER: Readonly<Record<Candidate["format"], number>> = { ogg: 0, m4a: 1 };
-
-/** The key used by both requests and records. */
-export function audioMediaKey(kind: RpgMakerAudioKind, name: string): string {
-  return `${kind}/${name.toLowerCase()}`;
-}
 
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;

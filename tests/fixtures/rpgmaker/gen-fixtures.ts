@@ -1057,9 +1057,9 @@ function hollowB(): Map<number, TileDraw> {
   return t;
 }
 
-/** Frost also changes a star/upper tile. This makes upper-plane source
- * invalidation observable instead of letting a stale base B sheet pass a
- * ground-only screenshot. */
+/** Frost changes both a star/upper tile and the gate tile used by an event.
+ * The latter keeps Change Tileset coverage honest for tile-image events:
+ * refreshing only the map chunks must not leave the actor-pool art stale. */
 function hollowFrostB(): Map<number, TileDraw> {
   const tiles = hollowB();
   const ice = rgb("#d8f4ff");
@@ -1070,6 +1070,12 @@ function hollowFrostB(): Map<number, TileDraw> {
     c.rect(x + 4, y + 4, 8, 12, ice);
     c.rect(x + 3, y + 6, 10, 10, ice);
     c.rect(x + 5, y + 6, 2, 2, rgb("#ffffff"));
+  });
+  tiles.set(HB.gate, (c, x, y) => {
+    c.rect(x, y + 3, TS, 13, shadow);
+    for (let i = 0; i < 4; i++) c.rect(x + 1 + i * 4, y + 4, 2, 12, ice);
+    c.rect(x, y + 7, TS, 2, rgb("#527888"));
+    c.rect(x, y + 12, TS, 2, rgb("#527888"));
   });
   return tiles;
 }

@@ -10,8 +10,6 @@
 // animated water cells) is listed in an ImportAssets manifest so a game's
 // asset cooker can bake it; the importer itself never runs at game time.
 
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import type {
   ActorDef,
   AnimationDef,
@@ -39,12 +37,12 @@ import {
 import { cookMvAnimation, MV_ANIMATION_RATE, MvAnimationCookError } from "./animation.ts";
 import {
   audioMediaKey,
-  convertRpgMakerAudioMedia,
   type AudioMediaRecord,
   type AudioMediaSuccess,
   type RpgMakerAudioKind,
-} from "./audio-media.ts";
+} from "./audio-types.ts";
 import { Coverage } from "./coverage.ts";
+import { EMPTY_RPGMAKER_IMPORT_ENVIRONMENT, type RpgMakerImportEnvironment } from "./environment.ts";
 import { importBattleDatabase } from "./battle-data.ts";
 import { TileAtlas, composeMap } from "./compose.ts";
 import { convertCommonEvent, convertPage, type EventContext } from "./events.ts";
@@ -60,10 +58,10 @@ import {
   skillId,
   slug,
 } from "./ids.ts";
-import { rmParallaxSpeed, rmTileSize } from "./load.ts";
+import { rmParallaxSpeed, rmTileSize } from "./semantics.ts";
 import { passes, RM_FLAG } from "./passage.ts";
-import { blankImage, blit, readPng, type RgbaImage } from "./png.ts";
-import { findRpgMakerPng, type RpgMakerMediaEncryption } from "./media.ts";
+import { blankImage, blit, type RgbaImage } from "./image.ts";
+import type { RpgMakerMediaEncryption } from "./media-crypto.ts";
 import type { RmActor, RmCommand, RmItem, RmPageImage, RmProject, RmTrait, RmVehicle } from "./rm-types.ts";
 import { downscale, drawTile, loadTilesetImages, type TilesetImages } from "./tile-render.ts";
 
@@ -89,6 +87,9 @@ export interface ImportAssets {
   sheets: Record<string, { png: string; cols: number; rows: number }>;
   /** Sprite key -> PNG of a 3x4 walker block (16 px frames) or a 16x16 tile. */
   sprites: Record<string, { png: string; kind: "walker" | "image"; h: 16 | 32 }>;
+  /** Base tile-event sprite key -> active tileset id -> matching tile sprite.
+   * Render-only: Change Tileset does not rewrite event/page reducer state. */
+  tileEventVariants?: Record<string, Record<string, string>>;
   /** Picture variant id -> source picture PNG (screen-sized, not rescaled). */
   pictures: Record<string, string>;
   /** Parallax image id -> generated logical-pixel PNG and dimensions. */
@@ -120,6 +121,8 @@ export interface ImportResult {
   images: Map<string, RgbaImage>;
   /** Converted QOA files keyed by their output-relative path. */
   audioFiles: Map<string, Uint8Array>;
+  /** Source media copied into the output after any deployment decryption. */
+  mediaFiles: Map<string, Uint8Array>;
   /** Per-logical-medium conversion facts for coverage and duration checks. */
   audioMedia: AudioMediaRecord[];
   assets: ImportAssets;
@@ -394,6 +397,7 @@ function importActorDef(rm: RmProject, actor: RmActor): ActorDef {
 }
 
 export async function importRmProject(rm: RmProject, options: ImportOptions = {}): Promise<ImportResult> {
+  const environment = rm.environment ?? EMPTY_RPGMAKER_IMPORT_ENVIRONMENT;
   const cov = new Coverage();
   const warnings: string[] = [];
   const images = new Map<string, RgbaImage>();
@@ -402,7 +406,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     throw new Error(`rpgmaker-import: tile size ${tileSize} is not a multiple of ${KIT_TILE}`);
   }
   const scale = tileSize / KIT_TILE;
-  const rpgMakerTextColours = await readWindowColours(rm);
+  const rpgMakerTextColours = await readWindowColours(rm, environment);
   const assets: ImportAssets = {
     format: "rpgkit-rpgmaker-assets/v1",
     sheets: {},
@@ -419,13 +423,13 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   const enemyImages = new Map<number, string>();
   for (const enemy of rm.enemies) {
     if (!enemy?.battlerName) continue;
-    const front = findNamedPng(join(rm.root, "img", "enemies"), enemy.battlerName, rm.mediaEncryption);
-    const side = findNamedPng(join(rm.root, "img", "sv_enemies"), enemy.battlerName, rm.mediaEncryption);
+    const front = findNamedPng(environment, environment.join(rm.root, "img", "enemies"), enemy.battlerName, rm.mediaEncryption);
+    const side = findNamedPng(environment, environment.join(rm.root, "img", "sv_enemies"), enemy.battlerName, rm.mediaEncryption);
     const path = front ?? side;
     if (!path) continue;
     const id = `enemy${String(enemy.id).padStart(3, "0")}`;
     const png = `battlers/${id}.png`;
-    const image = await readPng(path, rm.mediaEncryption);
+    const image = await environment.readPng(path, rm.mediaEncryption);
     images.set(png, image);
     assets.battlers[id] = { png, w: image.width, h: image.height };
     enemyImages.set(enemy.id, id);
@@ -445,7 +449,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     if (!atlas) {
       atlas = new TileAtlas(`ts${tilesetId}`);
       atlases.set(tilesetId, atlas);
-      tilesetImages.set(tilesetId, await loadTilesetImages(rm.root, tileset.tilesetNames, tileSize, rm.mediaEncryption));
+      tilesetImages.set(tilesetId, await loadTilesetImages(environment, rm.root, tileset.tilesetNames, tileSize, rm.mediaEncryption));
     }
     return { atlas, images: tilesetImages.get(tilesetId)! };
   };
@@ -454,22 +458,36 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   const characterSheets = new Map<string, RgbaImage | null>();
   const spriteKeys = new Map<string, string | null>();
   let currentTilesetId = 0;
+  let currentTilesetVariants: readonly number[] = [];
   const loadCharacterSheet = async (name: string): Promise<RgbaImage | null> => {
     if (!characterSheets.has(name)) {
-      const path = findNamedPng(join(rm.root, "img", "characters"), name, rm.mediaEncryption);
-      characterSheets.set(name, path ? await readPng(path, rm.mediaEncryption) : null);
+      const path = findNamedPng(environment, environment.join(rm.root, "img", "characters"), name, rm.mediaEncryption);
+      characterSheets.set(name, path ? await environment.readPng(path, rm.mediaEncryption) : null);
     }
     return characterSheets.get(name)!;
   };
   // Sprites are registered synchronously from the event converter, so the
   // pixels are cut afterwards (resolveSprites) from these requests.
   const spriteRequests: { key: string; image: Pick<RmPageImage, "characterName" | "characterIndex" | "tileId">; tilesetId: number }[] = [];
+  const requestTileSprite = (
+    image: Pick<RmPageImage, "characterName" | "characterIndex" | "tileId">,
+    tilesetId: number,
+  ): string => {
+    const key = `tile-${tilesetId}-${image.tileId}`;
+    if (!spriteKeys.has(key)) {
+      spriteKeys.set(key, key);
+      spriteRequests.push({ key, image, tilesetId });
+    }
+    return key;
+  };
   const spriteFor = (image: Pick<RmPageImage, "characterName" | "characterIndex" | "tileId">): string | null => {
     if (image.tileId > 0) {
-      const key = `tile-${currentTilesetId}-${image.tileId}`;
-      if (!spriteKeys.has(key)) {
-        spriteKeys.set(key, key);
-        spriteRequests.push({ key, image, tilesetId: currentTilesetId });
+      const key = requestTileSprite(image, currentTilesetId);
+      if (currentTilesetVariants.length > 1) {
+        const variants = (assets.tileEventVariants ??= {})[key] ??= {};
+        for (const tilesetId of currentTilesetVariants) {
+          variants[`ts${tilesetId}`] = requestTileSprite(image, tilesetId);
+        }
       }
       return key;
     }
@@ -484,9 +502,13 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   };
 
   // --- pictures, balloons, audio ------------------------------------------
+  const pictureRequests = new Map<string, string>();
   const pictureFor = (name: string): string => {
     const id = slug(name);
-    if (!assets.pictures[id]) assets.pictures[id] = `pictures/${id}.png`;
+    if (!assets.pictures[id]) {
+      assets.pictures[id] = `pictures/${id}.png`;
+      pictureRequests.set(id, name);
+    }
     return id;
   };
   const parallaxRequests = new Map<string, { image: string; zero: boolean }>();
@@ -505,7 +527,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     parallaxRequests.set(raw, request);
     return request;
   };
-  const balloonPath = findNamedPng(join(rm.root, "img", "system"), "Balloon", rm.mediaEncryption);
+  const balloonPath = findNamedPng(environment, environment.join(rm.root, "img", "system"), "Balloon", rm.mediaEncryption);
   const hasBalloon = balloonPath !== null;
   const balloonsUsed = new Set<number>();
   const balloonFor = (n: number): string | null => {
@@ -554,8 +576,8 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     try {
       const image = async (name: string) => {
         if (!name) return null;
-        const path = findNamedPng(join(rm.root, "img", "animations"), name, rm.mediaEncryption);
-        return path ? readPng(path, rm.mediaEncryption) : null;
+        const path = findNamedPng(environment, environment.join(rm.root, "img", "animations"), name, rm.mediaEncryption);
+        return path ? environment.readPng(path, rm.mediaEncryption) : null;
       };
       const cooked = cookMvAnimation(source, {
         animation1: await image(source.animation1Name),
@@ -740,6 +762,12 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       throw new Error(`rpgmaker-import: map ${rmId} is ${rmMap.width}x${rmMap.height}; the kit caps maps at 256x256`);
     }
     currentTilesetId = rmMap.tilesetId;
+    currentTilesetVariants = [...new Set([
+      rmMap.tilesetId,
+      ...globalTilesetReferences,
+      ...(mapTilesetReferences.get(rmId) ?? []),
+    ])].filter((tilesetId) => rm.tilesets[tilesetId] !== null && rm.tilesets[tilesetId] !== undefined)
+      .sort((a, b) => a - b);
     const tileset = rm.tilesets[rmMap.tilesetId]!;
     const { atlas, images: tsImages } = await atlasFor(rmMap.tilesetId);
     const composed = composeMap(rmMap, tileset, tsImages, atlas, cov);
@@ -898,7 +926,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
         "tile",
         "map encounters",
         "Degraded",
-        "walking countdown, weights and regions are native; encounter-disable, vehicles and Encounter Half are not modelled",
+        "walking countdown, weights, regions, Encounter Half and vehicle rates are native; bush doubling is not modelled",
       );
     }
   }
@@ -908,6 +936,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   for (const ce of rm.commonEvents) {
     if (!ce) continue;
     currentTilesetId = 0;
+    currentTilesetVariants = [];
     let shop = 0;
     let animation = 0;
     const trigger = ce.trigger === 2 ? "parallel" : ce.trigger === 1 ? "autorun" : "none";
@@ -942,12 +971,12 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
 
   // --- parallax images ----------------------------------------------------
   for (const [name, request] of [...parallaxRequests].sort((a, b) => a[1].image.localeCompare(b[1].image))) {
-    const path = findNamedPng(join(rm.root, "img", "parallaxes"), name, rm.mediaEncryption);
+    const path = findNamedPng(environment, environment.join(rm.root, "img", "parallaxes"), name, rm.mediaEncryption);
     if (!path) {
       warnings.push(`parallax ${name}: img/parallaxes/${name}.png not found`);
       continue;
     }
-    const source = await readPng(path, rm.mediaEncryption);
+    const source = await environment.readPng(path, rm.mediaEncryption);
     if (source.width % scale !== 0 || source.height % scale !== 0) {
       warnings.push(`parallax ${name}: ${source.width}x${source.height} is not divisible by map scale ${scale}`);
       continue;
@@ -959,10 +988,10 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   }
 
   // --- item icons ---------------------------------------------------------
-  const iconSetPath = findNamedPng(join(rm.root, "img", "system"), "IconSet", rm.mediaEncryption);
+  const iconSetPath = findNamedPng(environment, environment.join(rm.root, "img", "system"), "IconSet", rm.mediaEncryption);
   let iconSheet: { id: string; cols: number; rows: number; count: number } | null = null;
   if (iconSetPath) {
-    const source = await readPng(iconSetPath, rm.mediaEncryption);
+    const source = await environment.readPng(iconSetPath, rm.mediaEncryption);
     if (source.width > 0 && source.height > 0 && source.width % 32 === 0 && source.height % 32 === 0) {
       const id = "iconset";
       const image = downscale(source, 2);
@@ -1022,7 +1051,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
 
   // --- balloons -----------------------------------------------------------
   if (balloonsUsed.size > 0) {
-    const sheet = await readPng(balloonPath!, rm.mediaEncryption);
+    const sheet = await environment.readPng(balloonPath!, rm.mediaEncryption);
     images.set("system/balloon.png", scale === 1 ? sheet : downscale(sheet, scale));
     assets.balloon = "system/balloon.png";
     for (const n of [...balloonsUsed].sort((a, b) => a - b)) {
@@ -1101,7 +1130,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     maps,
   };
   invertInitialParty(project, rm.system.partyMembers ?? []);
-  const audioMedia = convertRpgMakerAudioMedia(rm.root, audioRequests.values(), { encryption: rm.mediaEncryption });
+  const audioMedia = await environment.convertAudio(rm.root, audioRequests.values(), { encryption: rm.mediaEncryption });
   const audioFiles = new Map<string, Uint8Array>();
   const successfulById = new Map<string, AudioMediaSuccess>();
   for (const media of audioMedia) {
@@ -1120,19 +1149,29 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     }
   }
   applyImportedMeDurations(project, successfulById);
-  return { project, battle, images, audioFiles, audioMedia, assets, cov, warnings };
+  const mediaFiles = new Map<string, Uint8Array>();
+  for (const [variant, rel] of Object.entries(assets.pictures)) {
+    const name = pictureRequests.get(variant) ?? variant;
+    const path = findNamedPng(environment, environment.join(rm.root, "img", "pictures"), name, rm.mediaEncryption);
+    if (!path) {
+      warnings.push(`picture ${variant}: img/pictures file not found`);
+      continue;
+    }
+    mediaFiles.set(rel, await environment.readMedia(path, rm.mediaEncryption, "image"));
+  }
+  return { project, battle, images, audioFiles, mediaFiles, audioMedia, assets, cov, warnings };
 }
 
 /** Read the 8 x 4 text-colour grid from the bottom-right of MV/MZ's standard
  *  192 px Window.png. Missing art deliberately leaves the runtime's stock
  *  palette in effect; a present but unusable windowskin is an import error. */
-async function readWindowColours(rm: RmProject): Promise<string[] | undefined> {
-  const path = findNamedPng(join(rm.root, "img", "system"), "Window", rm.mediaEncryption);
+async function readWindowColours(rm: RmProject, environment: RpgMakerImportEnvironment): Promise<string[] | undefined> {
+  const path = findNamedPng(environment, environment.join(rm.root, "img", "system"), "Window", rm.mediaEncryption);
   if (!path) return undefined;
 
   let image: RgbaImage;
   try {
-    image = await readPng(path, rm.mediaEncryption);
+    image = await environment.readPng(path, rm.mediaEncryption);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`rpgmaker-import: img/system/Window.png cannot be decoded: ${detail}`);
@@ -1167,18 +1206,27 @@ function containsStepRead(value: unknown): boolean {
 
 /** Find an RPG Maker PNG by basename without depending on host filesystem
  * case rules. Direct lookup keeps the common path allocation-free. */
-function findNamedPng(dir: string, name: string, encryption?: RpgMakerMediaEncryption): string | null {
-  const direct = join(dir, `${name}.png`);
-  const resolved = findRpgMakerPng(direct, encryption);
-  if (resolved) return resolved;
-  if (!existsSync(dir)) return null;
+function findNamedPng(
+  environment: RpgMakerImportEnvironment,
+  dir: string,
+  name: string,
+  encryption?: RpgMakerMediaEncryption,
+): string | null {
+  const direct = environment.join(dir, `${name}.png`);
+  if (environment.exists(direct)) return direct;
+  if (encryption?.images) {
+    for (const candidate of [`${direct}_`, `${direct.slice(0, -4)}.rpgmvp`]) {
+      if (environment.exists(candidate)) return candidate;
+    }
+  }
+  if (!environment.exists(dir)) return null;
   const wanted = new Set([`${name}.png`.toLowerCase()]);
   if (encryption?.images) {
     wanted.add(`${name}.png_`.toLowerCase());
     wanted.add(`${name}.rpgmvp`.toLowerCase());
   }
-  const file = readdirSync(dir).sort().find((candidate) => wanted.has(candidate.toLowerCase()));
-  return file ? join(dir, file) : null;
+  const file = environment.list(dir).find((candidate) => wanted.has(candidate.toLowerCase()));
+  return file ? environment.join(dir, file) : null;
 }
 
 /** The kit has no initial switch values, and party membership is a switch

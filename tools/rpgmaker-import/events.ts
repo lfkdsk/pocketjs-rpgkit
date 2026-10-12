@@ -55,7 +55,7 @@ import {
   tempVariableId,
   variableId,
 } from "./ids.ts";
-import { rmParallaxSpeed } from "./load.ts";
+import { rmParallaxSpeed } from "./semantics.ts";
 import type {
   RmAudio,
   RmCommand,

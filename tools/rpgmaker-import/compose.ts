@@ -26,7 +26,7 @@ import {
   TILE_ID_A5,
 } from "./autotile.ts";
 import type { Coverage, Disposition } from "./coverage.ts";
-import { blankImage, type RgbaImage } from "./png.ts";
+import { blankImage, type RgbaImage } from "./image.ts";
 import { blockedDirs, RM_FLAG, terrainTag } from "./passage.ts";
 import type { RmMap, RmTileset } from "./rm-types.ts";
 import {

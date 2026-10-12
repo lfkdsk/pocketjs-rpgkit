@@ -121,6 +121,7 @@ import type {
 import {
   mapScopedAnimatedSource,
   mapScopedLayerSource,
+  tilesetEventSprite,
   tilesetLayerSource,
 } from "./game-assets.ts";
 import { AnimatedTiles, type AnimatedTilesStats } from "./AnimatedTiles.tsx";
@@ -215,6 +216,7 @@ function npcFrame(
   npcSrc: GameAssets["npcSrc"],
   extensions: ExtensionRuntime,
   handover?: WorldPreviewHandover,
+  tileEventVariants?: GameAssets["tileEventVariants"],
 ): NpcFrame {
   const ch = state.chars.chars[event.id];
   // An erased event has no character; without this its active page would
@@ -233,7 +235,13 @@ function npcFrame(
     { pageIndex: active?.index ?? -1, sprite: active?.page.sprite ?? null },
     state.interp.eventAppearances?.[event.id],
   );
-  const art = npcArt(appearance.sprite, sprites, npcSrc);
+  const art = npcArt(
+    tileEventVariants
+      ? tilesetEventSprite(appearance.sprite, state.interp.tileset, tileEventVariants)
+      : appearance.sprite,
+    sprites,
+    npcSrc,
+  );
   if (ch) {
     return [
       ch.px,
@@ -497,6 +505,7 @@ function CurrentMapActors(props: {
   worldWidth: number;
   sprites: Sprites;
   npcSrc: GameAssets["npcSrc"];
+  tileEventVariants?: GameAssets["tileEventVariants"];
   extensions: ExtensionRuntime;
   /** Commit-frame snapshots from the neighbour preview (world renderer). */
   handover?: WorldPreviewHandover;
@@ -529,7 +538,15 @@ function CurrentMapActors(props: {
   const newSlot = (index: number, hidden = false): NpcRenderSlot => {
     const source = hidden ? undefined : slots[index];
     const frame = source
-      ? npcFrame(initial, source, props.sprites, props.npcSrc, props.extensions, props.handover)
+      ? npcFrame(
+          initial,
+          source,
+          props.sprites,
+          props.npcSrc,
+          props.extensions,
+          props.handover,
+          props.tileEventVariants,
+        )
       : HIDDEN_NPC_FRAME;
     const node = createElement("image");
     setProp(node, "style", npcStyle(
@@ -639,6 +656,7 @@ function CurrentMapActors(props: {
 
   let previousCharacters = initial.chars.chars;
   let previousAppearances = initial.interp.eventAppearances;
+  let previousTileset = initial.interp.tileset;
   const fallbackSlots: number[] = [];
   for (let index = 0; index < slots.length; index++) {
     const source = slots[index]!;
@@ -681,7 +699,8 @@ function CurrentMapActors(props: {
     // fallback page can depend on extension state, so they are re-evaluated.
     const scanAll = transfer || !props.immutableState ||
       previousCharacters !== state.chars.chars ||
-      previousAppearances !== state.interp.eventAppearances;
+      previousAppearances !== state.interp.eventAppearances ||
+      (props.tileEventVariants !== undefined && previousTileset !== state.interp.tileset);
     const touched = transfer ? npcs.length : slots.length;
     const scanCount = scanAll ? touched : fallbackSlots.length;
     if (scanAll) fallbackSlots.length = 0;
@@ -693,11 +712,20 @@ function CurrentMapActors(props: {
       const appearance = source ? state.interp.eventAppearances?.[source.id] : undefined;
       if (scanAll && source && character === undefined) fallbackSlots.push(index);
       const cached = props.immutableState && !transfer && character !== undefined &&
-        npc.character === character && npc.appearance === appearance;
+        npc.character === character && npc.appearance === appearance &&
+        (props.tileEventVariants === undefined || previousTileset === state.interp.tileset);
       const computed: NpcFrame = cached
         ? npc.frame
         : source
-          ? npcFrame(state, source, props.sprites, props.npcSrc, props.extensions, props.handover)
+          ? npcFrame(
+              state,
+              source,
+              props.sprites,
+              props.npcSrc,
+              props.extensions,
+              props.handover,
+              props.tileEventVariants,
+            )
           : HIDDEN_NPC_FRAME;
       if (!cached && source) recomputed?.push(source.id);
       const frame = sameNpcFrame(npc.frame, computed) ? npc.frame : computed;
@@ -716,6 +744,7 @@ function CurrentMapActors(props: {
     }
     previousCharacters = state.chars.chars;
     previousAppearances = state.interp.eventAppearances;
+    previousTileset = state.interp.tileset;
     let reorder = transfer;
     if (dirty) {
       const nextOrder = depthOrder([
@@ -2244,6 +2273,7 @@ export function GameView(props: GameViewProps) {
                 worldWidth={worldWidth}
                 sprites={sprites}
                 npcSrc={assets.npcSrc}
+                tileEventVariants={assets.tileEventVariants}
                 extensions={session.extensions}
                 handover={worldHandover}
                 player={assets.player}
@@ -2309,7 +2339,15 @@ export function GameView(props: GameViewProps) {
                       if (!ch || !event) {
                         return { x: balloon.x * TILE, y: balloon.y * TILE, height: TILE };
                       }
-                      const frame = npcFrame(state, event, sprites, assets.npcSrc, session.extensions);
+                      const frame = npcFrame(
+                        state,
+                        event,
+                        sprites,
+                        assets.npcSrc,
+                        session.extensions,
+                        undefined,
+                        assets.tileEventVariants,
+                      );
                       return { x: frame[0], y: frame[1], height: frame[3] };
                     }}
                   />

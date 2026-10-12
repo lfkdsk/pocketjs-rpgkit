@@ -33,7 +33,7 @@ declare global {
   // eslint-disable-next-line no-var
   var __rmiBattleScreenEffects: boolean | undefined;
   // eslint-disable-next-line no-var
-  var __rmiScreenPreview: "weather" | "weather-base" | "tone" | "tone-base" | undefined;
+  var __rmiScreenPreview: "weather" | "weather-base" | "tone" | "tone-base" | "tileset" | undefined;
   // eslint-disable-next-line no-var
   var __rmiWeatherPower: number | undefined;
 }
@@ -74,7 +74,7 @@ function previewWeatherCommand(commands: readonly Command[], occurrence: number)
  * importer, cooked assets, GameView and renderer together. */
 function screenPreviewProject(
   source: Project,
-  kind: "weather" | "weather-base" | "tone" | "tone-base",
+  kind: "weather" | "weather-base" | "tone" | "tone-base" | "tileset",
 ): Project {
   const map = source.maps.find((candidate) => candidate.id === "map001");
   const importedEvent = map?.events?.find((candidate) => candidate.id === "ev001");
@@ -105,7 +105,19 @@ function screenPreviewProject(
         command(imported, "formationAccess", 1),
         command(imported, "selfSwitch", 0),
       ]
-      : [
+      : kind === "tileset"
+        ? [
+            // Pause on all three states so the sim can inspect the same
+            // tile-image event before, during and after the imported swap.
+            command(imported, "changeTileset", 1),
+            textCommands[2]!,
+            command(imported, "changeTileset", 0),
+            textCommands[3]!,
+            command(imported, "changeTileset", 1),
+            textCommands[2]!,
+            command(imported, "selfSwitch", 0),
+          ]
+        : [
           // Match the imported 30-frame wait so base/effect raster
           // comparisons observe identical map/parallax animation clocks.
           { op: "wait", seconds: 0.5 },
@@ -122,11 +134,14 @@ function screenPreviewProject(
       importedEvent.pages[1] ?? { trigger: "action", commands: [] },
     ],
   };
+  const events = kind === "tileset"
+    ? [previewEvent, ...map.events!.filter((event) => event.id === "ev004")]
+    : [previewEvent];
   return {
     ...source,
     start: { ...source.start, map: map.id },
     maps: source.maps.map((candidate) => candidate.id === map.id
-      ? { ...candidate, events: [previewEvent] }
+      ? { ...candidate, events }
       : candidate),
   };
 }
