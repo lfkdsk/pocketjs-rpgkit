@@ -83,7 +83,7 @@ with a `www/` folder work too). The output folder receives:
 | `assets.json` | The render manifest an asset cooker bakes: sheets (including item cells), sprites, animations, parallaxes, pictures, audio, animated water cells per map, the balloon sheet, and the player's sprite. |
 | `battle.json` | Normalized actors, classes, enemies, troops, skills, items, states, terms and map encounters for the opt-in front-view battle module. |
 | `audio-media.json` | Stable per-track source/output byte counts, source format, decoded channels/rate/frames and 60 Hz duration; missing/corrupt media includes its reason. |
-| `coverage.md` | What happened to every construct in this project, followed by the table of every MV/MZ command. |
+| `coverage.md` | What happened to every construct in this project, the code-side RPG Maker capabilities the application must register, and the table of every MV/MZ command. |
 | `coverage.json` | The machine-readable per-project construct counts (the static command table is Markdown-only). |
 
 `--placeholders silent` drops the visible text boxes that stand in for
@@ -135,6 +135,17 @@ that wants the minimal party-order menu also passes
 `GameView` overlay. Formation is therefore absent from games that do not opt
 in. Omitting any of these entry points keeps its implementation out of the
 bundle.
+
+The generated `coverage.md` has a **Required application capabilities**
+section derived from the commands this import actually uses. Tone and weather
+require the `rpgMakerText` runtime registration; tone, weather, numbered
+pictures, the timer and map-name banners also require `GameView`'s
+`screenPresentation` registration (normally `krm2ScreenPresentation`). Session
+loading scans common events and every nested branch, and repeats the check when
+a sharded map is acquired. A rendering host that omits a required registration
+gets a readable load error instead of waiting on an invisible effect. Headless
+reducers may omit the presentation policy when they intentionally inspect only
+saved state.
 
 ## Ids
 
@@ -293,6 +304,20 @@ over-budget input and mixed safe/unsafe statements all fail closed.
   the current party before every swap. The map player's walking artwork stays
   fixed because `GameView` has one project-level player sprite, so this command
   is reported Degraded.
+
+When a registered RPG Maker battle really opens, the kit applies the pinned
+`Game_Screen.onBattleStart` boundary: active fade, flash and shake are cleared,
+while tone and weather survive and continue on the stock battle clock. This is
+the exact clear list in
+[MV `Game_Screen.js:25-31`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Screen.js#L25-L31)
+and
+[MZ `rmmz_objects.js:782-788`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_objects.js#L782-L788).
+Stock also clears its zoom bank and stale battle-picture bank. The kit has
+neither: `camera` is map-owned rather than RPG Maker zoom, and numbered
+pictures use one live map bank, so both remain intact. A battle reducer that
+declines entry by returning `null` does not run this boundary. Projects that do
+not register the RPG Maker runtime retain the existing kit-native battle
+behavior byte-for-byte.
 
 ## Command table
 
