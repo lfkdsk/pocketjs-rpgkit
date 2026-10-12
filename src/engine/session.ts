@@ -3571,32 +3571,15 @@ function stepReferenceTick(
     // Keeping every read behind this sparse request marker preserves the
     // exact steady-state path for projects which do not opt in.
     if (captureAfterRequests) {
-      const postFacing = s.move.facing;
-      const postContacts = contacts && contacts.length > contactsBeforeRequests
-        ? contacts.slice(contactsBeforeRequests)
-        : undefined;
-      if (postFacing !== interpInput.facing || postContacts !== undefined) {
-        const postCell = { x: s.move.tx, y: s.move.ty };
-        captureImmediateTouchTriggersInPlace(
-          world,
-          s.interp,
-          {
-            ...interpInput,
-            confirmEdge: false,
-            cancelEdge: false,
-            upEdge: false,
-            downEdge: false,
-            playerCell: postCell,
-            prevCell: postCell,
-            facing: postFacing,
-            prevFacing: interpInput.facing,
-            eventCells: displacedCells(map, s.chars, sess.immutableState),
-            liveChars: s.chars.chars,
-            ...(postContacts === undefined ? { touchContacts: undefined } : { touchContacts: postContacts }),
-          },
-          s.ext,
-        );
-      }
+      capturePostRequestTouches(
+        sess,
+        s,
+        world,
+        map,
+        interpInput,
+        contacts,
+        contactsBeforeRequests,
+      );
     }
   }
   if (!s.interp.error && s.interp.pendingTravel !== undefined) {
@@ -3657,6 +3640,45 @@ function stepReferenceTick(
   if (tickCues) result.cues = tickCues;
   if (tickHostActions) result.hostActions = tickHostActions;
   return result;
+}
+
+/** Cold continuation for additive same-tick motion. Keeping construction of
+ * the restricted trigger input out of stepReferenceTick preserves the
+ * frozen/idle hot function's bytecode when no authored request opts in. */
+function capturePostRequestTouches(
+  sess: Session,
+  s: SessionState,
+  world: World,
+  map: MapDef,
+  interpInput: InterpInput,
+  contacts: string[] | undefined,
+  contactsBeforeRequests: number,
+): void {
+  const postFacing = s.move.facing;
+  const postContacts = contacts && contacts.length > contactsBeforeRequests
+    ? contacts.slice(contactsBeforeRequests)
+    : undefined;
+  if (postFacing === interpInput.facing && postContacts === undefined) return;
+  const postCell = { x: s.move.tx, y: s.move.ty };
+  captureImmediateTouchTriggersInPlace(
+    world,
+    s.interp,
+    {
+      ...interpInput,
+      confirmEdge: false,
+      cancelEdge: false,
+      upEdge: false,
+      downEdge: false,
+      playerCell: postCell,
+      prevCell: postCell,
+      facing: postFacing,
+      prevFacing: interpInput.facing,
+      eventCells: displacedCells(map, s.chars, sess.immutableState),
+      liveChars: s.chars.chars,
+      ...(postContacts === undefined ? { touchContacts: undefined } : { touchContacts: postContacts }),
+    },
+    s.ext,
+  );
 }
 
 /** Before a place/route/control request applies, move its target onto the
