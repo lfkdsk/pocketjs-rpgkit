@@ -29,9 +29,9 @@ const INTEGER_OPS = new Set([
   "moveRoute", "moveControl", "followers", "gatherFollowers", "vehicle",
   "setVehicleLocation", "setVehicleImage", "setVehicleBgm", "common", "lockInput", "unlockInput", "place", "shop",
   "mapAnim", "stopAnim", "appearance", "layer", "changeParallax", "tileProperty",
-  "screenFade", "screenTint", "screenFlash", "screenShake", "camera", "scrollMap", "balloon", "screenBackdrop",
+  "screenFade", "screenTint", "screenTone", "weather", "screenFlash", "screenShake", "camera", "scrollMap", "balloon", "screenBackdrop",
   "showPicture", "movePicture", "rotatePicture", "tintPicture", "erasePicture",
-  "timer", "hostAction", "changeName", "mapNameDisplay", "menuAccess", "saveAccess", "locationInfo",
+  "timer", "hostAction", "changeName", "mapNameDisplay", "menuAccess", "saveAccess", "formationAccess", "formationSwap", "changeTileset", "windowTone", "locationInfo",
   "ext", "extChoice", "battle", "scene",
 ]);
 
@@ -1050,6 +1050,23 @@ function validateProg(prog: unknown, path: string): string | null {
         if (typeof ins.wait !== "boolean") return fail(`${here}.wait`, "boolean required");
         break;
       }
+      case "screenTone": {
+        const tone = validatePictureTone(ins.tone, `${here}.tone`);
+        if (tone) return tone;
+        if (!isNonNegInt(ins.frames)) return fail(`${here}.frames`, "non-negative integer required");
+        if (typeof ins.wait !== "boolean") return fail(`${here}.wait`, "boolean required");
+        break;
+      }
+      case "weather":
+        if (!["none", "rain", "storm", "snow"].includes(ins.kind as string)) {
+          return fail(`${here}.kind`, "none|rain|storm|snow required");
+        }
+        if (!isFiniteNumber(ins.power) || ins.power < 0 || ins.power > 9) {
+          return fail(`${here}.power`, "number 0..9 required");
+        }
+        if (!isNonNegInt(ins.frames)) return fail(`${here}.frames`, "non-negative integer required");
+        if (typeof ins.wait !== "boolean") return fail(`${here}.wait`, "boolean required");
+        break;
       case "screenFlash": {
         const color = validateColor(ins.color, `${here}.color`);
         if (color) return color;
@@ -1229,8 +1246,24 @@ function validateProg(prog: unknown, path: string): string | null {
         break;
       case "menuAccess":
       case "saveAccess":
+      case "formationAccess":
         if (typeof ins.enabled !== "boolean") return fail(`${here}.enabled`, "boolean required");
         break;
+      case "formationSwap":
+        if (!isNonNegInt(ins.first) || !isNonNegInt(ins.second)) {
+          return fail(here, "non-negative first/second indices required");
+        }
+        break;
+      case "changeTileset":
+        if (typeof ins.id !== "string" || ins.id.length === 0) {
+          return fail(`${here}.id`, "non-empty string required");
+        }
+        break;
+      case "windowTone": {
+        const tone = validatePictureTone(ins.tone, `${here}.tone`);
+        if (tone) return tone;
+        break;
+      }
       case "locationInfo": {
         if (needStr("variable")) return fail(`${here}.variable`, "string required");
         const coord = (key: string): string | null => {
@@ -1514,7 +1547,7 @@ function validateFiber(
     case "screenWait": {
       const ins = top.pc < top.prog.length ? top.prog[top.pc] : undefined;
       if (!isRecord(ins) || ![
-        "screenFade", "screenTint", "screenFlash", "screenShake", "camera", "scrollMap",
+        "screenFade", "screenTint", "screenTone", "weather", "screenFlash", "screenShake", "camera", "scrollMap",
         "movePicture", "tintPicture", "balloon",
       ].includes(ins.op as string) || ins.wait !== true) {
         return fail(`${path}.mode`, "a screenWait fiber must park on a waited screen instruction");
@@ -1590,6 +1623,19 @@ function validateColorTween(v: unknown, path: string): string | null {
   return null;
 }
 
+function validateTweenTone(v: unknown, path: string): string | null {
+  if (!isRecord(v)) return fail(path, "screen tone object required");
+  for (const key of ["r", "g", "b"] as const) {
+    if (!isFiniteNumber(v[key]) || v[key] < -255 || v[key] > 255) {
+      return fail(`${path}.${key}`, "number -255..255 required");
+    }
+  }
+  if (!isFiniteNumber(v.gray) || v.gray < 0 || v.gray > 255) {
+    return fail(`${path}.gray`, "number 0..255 required");
+  }
+  return null;
+}
+
 function validatePictureMove(v: unknown, path: string): string | null {
   if (!isRecord(v)) return fail(path, "picture move tween object required");
   const from = validatePictureTransform(v.from, `${path}.from`);
@@ -1660,7 +1706,7 @@ function validatePicture(v: unknown, key: string, path: string): string | null {
 function validateScreenEffects(v: unknown, path: string): string | null {
   if (!isRecord(v)) return fail(path, "screen effects object required");
   const known = new Set([
-    "fade", "tints", "flash", "shake", "camera", "balloons", "backdrop", "pictures", "mapNameBanner",
+    "fade", "tints", "flash", "shake", "camera", "balloons", "backdrop", "pictures", "mapNameBanner", "tone", "weather",
   ]);
   for (const key of Object.keys(v)) {
     if (!known.has(key)) return fail(`${path}.${key}`, "unknown screen effect field");
@@ -1771,6 +1817,33 @@ function validateScreenEffects(v: unknown, path: string): string | null {
       return fail(`${path}.mapNameBanner`, "live banner needs positive total/left with left <= total");
     }
   }
+  if (v.tone !== undefined) {
+    if (!isRecord(v.tone)) return fail(`${path}.tone`, "tone tween object required");
+    const from = validateTweenTone(v.tone.from, `${path}.tone.from`);
+    if (from) return from;
+    const to = validateTweenTone(v.tone.to, `${path}.tone.to`);
+    if (to) return to;
+    if (!isNonNegInt(v.tone.total) || !isNonNegInt(v.tone.left) || v.tone.left > v.tone.total) {
+      return fail(`${path}.tone`, "total/left must be non-negative integers with left <= total");
+    }
+  }
+  if (v.weather !== undefined) {
+    const weather = v.weather;
+    if (!isRecord(weather)) return fail(`${path}.weather`, "weather object required");
+    if (!["rain", "storm", "snow"].includes(weather.kind as string)) {
+      return fail(`${path}.weather.kind`, "rain|storm|snow required");
+    }
+    for (const key of ["fromPower", "targetPower"] as const) {
+      if (!isFiniteNumber(weather[key]) || weather[key] < 0 || weather[key] > 9) {
+        return fail(`${path}.weather.${key}`, "number 0..9 required");
+      }
+    }
+    if (!isNonNegInt(weather.total) || !isNonNegInt(weather.left) || weather.left > weather.total) {
+      return fail(`${path}.weather`, "total/left must be non-negative integers with left <= total");
+    }
+    if (!isU32(weather.seed)) return fail(`${path}.weather.seed`, "u32 required");
+    if (!isNonNegInt(weather.clock)) return fail(`${path}.weather.clock`, "non-negative integer required");
+  }
   return null;
 }
 
@@ -1875,6 +1948,20 @@ function validateSwitchState(v: unknown, path: string): string | null {
   }
   if (v.saveAccess !== undefined && v.saveAccess !== false) {
     return fail(`${path}.saveAccess`, "false or absent required");
+  }
+  if (v.formationAccess !== undefined && v.formationAccess !== false) {
+    return fail(`${path}.formationAccess`, "false or absent required");
+  }
+  if (v.partyOrder !== undefined) {
+    if (!Array.isArray(v.partyOrder) || v.partyOrder.length === 0 ||
+        !v.partyOrder.every((id) => isNonNegInt(id) && id > 0) ||
+        new Set(v.partyOrder).size !== v.partyOrder.length) {
+      return fail(`${path}.partyOrder`, "non-empty unique positive-integer array required");
+    }
+  }
+  if (v.windowTone !== undefined) {
+    const tone = validatePictureTone(v.windowTone, `${path}.windowTone`);
+    if (tone) return tone;
   }
   if (v.playerAppearance !== undefined) {
     if (!isRecord(v.playerAppearance)) return fail(`${path}.playerAppearance`, "object required");
@@ -2917,6 +3004,9 @@ export function validateSnapshot(snap: unknown): string | null {
   if (it.tileProperties !== undefined) {
     const tiles = validateTileProperties(it.tileProperties, "state.interp.tileProperties");
     if (tiles) return tiles;
+  }
+  if (it.tileset !== undefined && (typeof it.tileset !== "string" || it.tileset.length === 0)) {
+    return "state.interp.tileset: non-empty string required";
   }
   if (it.screen !== undefined) {
     const screen = validateScreenEffects(it.screen, "state.interp.screen");

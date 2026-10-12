@@ -789,6 +789,7 @@ describe("sandbox hook isolation and the durable fingerprint", () => {
     items: (state) => withSw(state, { items: { ...state.sw.items, potion: 2 } }),
     gold: (state) => withSw(state, { gold: state.sw.gold + 10 }),
     playerName: (state) => withSw(state, { playerName: `${state.sw.playerName}!` }),
+    partyOrder: (state) => withSw(state, { partyOrder: [2, 1] }),
     mapId: "project",
     playerCell: "project",
     playerAppearance: (state) => withSw(state, {

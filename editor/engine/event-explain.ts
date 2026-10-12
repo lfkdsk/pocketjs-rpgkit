@@ -236,6 +236,8 @@ export function classifyCommand(command: Command): CommandWriteClass {
     case "tileProperty":
     case "screenFade":
     case "screenTint":
+    case "screenTone":
+    case "weather":
     case "screenFlash":
     case "screenShake":
     case "camera":
@@ -259,6 +261,10 @@ export function classifyCommand(command: Command): CommandWriteClass {
     case "mapNameDisplay":
     case "menuAccess":
     case "saveAccess":
+    case "formationAccess":
+    case "formationSwap":
+    case "changeTileset":
+    case "windowTone":
     case "wait":
     case "se":
     case "playBgm":

@@ -260,6 +260,10 @@ function collectWrites(
       case "mapNameDisplay":
       case "menuAccess":
       case "saveAccess":
+      case "formationAccess":
+      case "formationSwap":
+      case "changeTileset":
+      case "windowTone":
       // Optional travel state is outside this NPC preview. Vehicle
       // conditions are classified as runtime context below, so preserving
       // these commands cannot make a vehicle-gated page look decidable.
@@ -274,6 +278,8 @@ function collectWrites(
       case "tileProperty":
       case "screenFade":
       case "screenTint":
+      case "screenTone":
+      case "weather":
       case "screenFlash":
       case "screenShake":
       case "camera":

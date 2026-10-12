@@ -26,6 +26,7 @@ import { validateSchema, type Schema } from "../../src/engine/schema-validate.ts
 import {
   BASIC_MOVE_STEPS,
   CONDITION_KINDS,
+  commandSummary,
   defaultCondition,
   flattenCommands,
   isEditableCommand,
@@ -463,6 +464,13 @@ export function commandFields(
   resources: EventEditorResources = EMPTY_EVENT_EDITOR_RESOURCES,
 ): EditableField[] {
   switch (command.op) {
+    case "screenTone":
+    case "weather":
+    case "formationAccess":
+    case "formationSwap":
+    case "changeTileset":
+    case "windowTone":
+      return [field("imported", "IMPORTED COMMAND", commandSummary(command, { full: true }), "text", undefined, true)];
     case "text":
       return [
         field("lines", "LINES", command.lines.join("\n")),

@@ -23,7 +23,8 @@
 
 import { MAX_FIBER_STACK_DEPTH } from "./interpreter.ts";
 import type { MapDef } from "./types.ts";
-import { isStandable, withTilePropertyOverrides, type PassageTable } from "./passability.ts";
+import { buildPassage, isStandable, withTilePropertyOverrides, type PassageTable } from "./passability.ts";
+import { mapForTileset } from "./tiles.ts";
 import type { SaveErrorCode, SaveSnapshot } from "./save.ts";
 import {
   SAVE_MAX_DEPTH,
@@ -199,8 +200,17 @@ export function restoreSessionSnapshot(
   snap: SaveSnapshot,
 ): SessionState {
   const map = acquireSessionMap(session, snap.map);
-  const table = session.tables.get(snap.map)!;
-  const problem = restoreProblem(snap, map, table);
+  const effectiveMap = mapForTileset(map, snap.interp.tileset);
+  if (!effectiveMap) {
+    throw new SaveError(
+      "shape",
+      `save cannot be restored: map ${map.id} has no tileset ${JSON.stringify(snap.interp.tileset)}`,
+    );
+  }
+  const table = effectiveMap === map
+    ? session.tables.get(snap.map)!
+    : buildPassage(effectiveMap, session.sheets);
+  const problem = restoreProblem(snap, effectiveMap, table);
   if (problem) throw new SaveError("shape", `save cannot be restored: ${problem}`);
   for (const vehicle of snap.travel?.vehicles?.entries ?? []) {
     const dimensions = session.maps.get(vehicle.mapId) ?? session.mapIndex?.get(vehicle.mapId);

@@ -176,8 +176,19 @@ export const EDITABLE_COMMAND_OPS = [
 
 export type EditableCommandOp = (typeof EDITABLE_COMMAND_OPS)[number];
 export type EditableCommand = Extract<Command, { op: EditableCommandOp }>;
+/** Imported/runtime-owned commands are displayed losslessly but intentionally
+ * kept read-only until the dedicated editor widgets land. */
+export const READ_ONLY_COMMAND_OPS = [
+  "screenTone",
+  "weather",
+  "formationAccess",
+  "formationSwap",
+  "changeTileset",
+  "windowTone",
+] as const;
+export type ReadOnlyCommandOp = (typeof READ_ONLY_COMMAND_OPS)[number];
 type AssertNoMissing<T extends never> = T;
-type _EveryCommandOpIsOwned = AssertNoMissing<Exclude<Command["op"], EditableCommandOp>>;
+type _EveryCommandOpIsOwned = AssertNoMissing<Exclude<Command["op"], EditableCommandOp | ReadOnlyCommandOp>>;
 
 const EDITABLE_OP_SET: ReadonlySet<string> = new Set(EDITABLE_COMMAND_OPS);
 
@@ -608,6 +619,10 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
       return `Screen fade ${text(command.direction)} ${numberText(command.duration)}s${command.color === undefined ? "" : ` ${colorSummary(command.color)}`}`;
     case "screenTint":
       return `Screen tint ${text(command.layer)} ${colorSummary(command.color)} ${numberText(command.duration)}s`;
+    case "screenTone":
+      return `Screen tone ${jsonPreview(command.tone, 48, full)} ${numberText(command.duration)}s`;
+    case "weather":
+      return `Weather ${text(command.kind)} power ${numberText(command.power)} ${numberText(command.duration)}s`;
     case "screenFlash":
       return `Screen flash ${colorSummary(command.color)} ×${numberText(command.intensity)} ${numberText(command.duration)}s`;
     case "screenShake":
@@ -664,6 +679,14 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
       return `Menu access ${boolText(command.enabled)}`;
     case "saveAccess":
       return `Save access ${boolText(command.enabled)}`;
+    case "formationAccess":
+      return `Formation access ${boolText(command.enabled)}`;
+    case "formationSwap":
+      return `Formation swap ${numberText(command.first)} ↔ ${numberText(command.second)}`;
+    case "changeTileset":
+      return `Change tileset ${text(command.id)}`;
+    case "windowTone":
+      return `Window tone ${jsonPreview(command.tone, 48, full)}`;
     case "locationInfo":
       return `Location ${text(command.kind)} at (${operandSummary(command.x)}, ${operandSummary(command.y)}) into ${text(command.variable)}`;
     case "mapAnim": {

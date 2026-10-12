@@ -18,6 +18,9 @@ export interface ExtensionReadContext {
   /** KG1: the live player name, so a scene (name input) can prefill its
    *  edit buffer from the current value. */
   readonly playerName: string;
+  /** Optional RPG Maker actor ids in saved formation order. Scene/battle
+   * starts receive a detached copy; ordinary extension calls omit it. */
+  readonly partyOrder?: readonly number[];
   /** Current map/cell for scene starts that need authored spatial data
    * (for example an RPG Maker random-encounter table). Ordinary extension
    * command contexts may omit these fields. */

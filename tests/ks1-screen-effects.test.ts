@@ -389,7 +389,7 @@ describe("KS1 deterministic screen presentation", () => {
     expect([state.move.tx, state.move.ty, state.move.moving]).toEqual([2, 2, false]);
   });
 
-  test("a default-frozen battle pauses screen clocks while worldContinues advances them", () => {
+  test("global screen clocks advance during both frozen and world-continuing battles", () => {
     const p = project([
       { op: "screenTint", layer: "slow", color: { r: 10, g: 20, b: 30, a: 180 }, duration: 10 },
       { op: "battle", setup: { enemyHp: 99 } },
@@ -399,7 +399,7 @@ describe("KS1 deterministic screen presentation", () => {
     expect(frozen.scene).not.toBeNull();
     const frozenLeft = frozen.interp.screen!.tints!.slow!.left;
     frozen = run(frozenSession, frozen, 12);
-    expect(frozen.interp.screen!.tints!.slow!.left).toBe(frozenLeft);
+    expect(frozen.interp.screen!.tints!.slow!.left).toBe(frozenLeft - 12);
 
     const runningSession = createSession(p, 60, {
       battle: toyBattleRules,

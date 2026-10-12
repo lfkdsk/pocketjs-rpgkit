@@ -275,13 +275,23 @@ export function reconcileFollowers(
   definition: Readonly<FollowersDef>,
   switches: Readonly<Record<string, boolean>>,
   leader: Readonly<MovementState>,
+  partyOrder?: readonly number[],
 ): TravelState {
   const prior = state.followers;
   const byId = new Map(prior?.members.map((member) => [member.id, member]));
   const members: FollowerTravelState[] = [];
   let predecessor = leader;
   let changed = prior === undefined;
-  for (const definitionMember of definition.members) {
+  const orderedDefinitions = partyOrder && partyOrder.length > 0
+    ? [...definition.members].sort((a, b) => {
+        const actorId = (id: string): number => Number(/(\d+)$/.exec(id)?.[1] ?? Number.MAX_SAFE_INTEGER);
+        const ai = partyOrder.indexOf(actorId(a.id));
+        const bi = partyOrder.indexOf(actorId(b.id));
+        return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi) ||
+          definition.members.indexOf(a) - definition.members.indexOf(b);
+      })
+    : definition.members;
+  for (const definitionMember of orderedDefinitions) {
     if (!followerDefinitionActive(definitionMember, switches)) continue;
     const existing = byId.get(definitionMember.id);
     if (existing) {

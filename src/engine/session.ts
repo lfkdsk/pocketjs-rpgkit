@@ -121,6 +121,7 @@ import {
   type TravelState,
   type VehiclePassageTable,
 } from "./travel.ts";
+import { mapForTileset } from "./tiles.ts";
 import {
   assertImmutableJsonValue,
   assertJsonValue,
@@ -1370,14 +1371,51 @@ export function trimSandboxMaps(sandbox: Session, keep: ReadonlySet<string>): vo
  * remains immutable; a changed/rewound override record gets its own derived
  * typed arrays, while ordinary projects return the base table by identity. */
 export function sessionPassageTable(sess: Session, s: SessionState): PassageTable {
-  const base = sess.tables.get(s.mapId)!;
+  const variantId = s.interp.tileset;
+  const map = sess.maps.get(s.mapId)!;
+  const effective = mapForTileset(map, variantId);
+  if (!effective) throw new Error(`map ${map.id} has no tileset ${JSON.stringify(variantId)}`);
+  let base = sess.tables.get(s.mapId)!;
+  if (effective !== map) {
+    const key = `${s.mapId}\u0000${variantId}`;
+    let cooked = tilesetPassageTables.get(sess)?.get(key);
+    if (!cooked) {
+      cooked = buildPassage(effective, sess.sheets);
+      let cache = tilesetPassageTables.get(sess);
+      if (!cache) tilesetPassageTables.set(sess, cache = new Map());
+      cache.set(key, cooked);
+    }
+    base = cooked;
+  }
   const overrides = s.interp.tileProperties;
   if (!overrides || Object.keys(overrides).length === 0) return base;
-  const cached = sess.runtimeTables.get(s.mapId);
+  const runtimeKey = variantId ? `${s.mapId}\u0000${variantId}` : s.mapId;
+  const cached = sess.runtimeTables.get(runtimeKey);
   if (cached?.base === base && cached.overrides === overrides) return cached.table;
   const table = withTilePropertyOverrides(base, overrides);
-  sess.runtimeTables.set(s.mapId, { base, overrides, table });
+  sess.runtimeTables.set(runtimeKey, { base, overrides, table });
   return table;
+}
+
+/** Lazily cooked alternate passage tables live outside reducer/session JSON.
+ * A WeakMap keeps the public Session shape and legacy hot path unchanged. */
+const tilesetPassageTables = new WeakMap<Session, Map<string, PassageTable>>();
+
+function activeVehiclePassage(
+  sess: Session,
+  state: Readonly<SessionState>,
+  map: Readonly<MapDef>,
+): VehiclePassageTable | undefined {
+  const variantId = state.interp.tileset;
+  if (!variantId) return sess.vehiclePassages?.get(map.id);
+  const key = `${map.id}\u0000${variantId}`;
+  const cached = sess.vehiclePassages?.get(key);
+  if (cached !== undefined || sess.vehiclePassages?.has(key)) return cached;
+  const effective = mapForTileset(map, variantId);
+  if (!effective) throw new Error(`map ${map.id} has no tileset ${JSON.stringify(variantId)}`);
+  const cooked = buildVehiclePassage(effective);
+  sess.vehiclePassages?.set(key, cooked);
+  return cooked;
 }
 
 const vehicleMovementTables = new WeakMap<
@@ -1932,6 +1970,7 @@ function startBattleScene(sess: Session, s: SessionState, request: PendingBattle
       items: keyedRecord(s.interp.sw.items),
       gold: s.interp.sw.gold,
       playerName: s.interp.sw.playerName,
+      ...(s.interp.sw.partyOrder ? { partyOrder: [...s.interp.sw.partyOrder] } : {}),
       mapId: s.mapId,
       playerCell: { x: s.move.tx, y: s.move.ty, region: playerRegion },
       ...(s.interp.sw.playerAppearance
@@ -2186,6 +2225,10 @@ function advanceGameScene(
  * completion, leaving the fibers themselves byte-stable while frozen. */
 function tickFrozenWorld(s: SessionState): void {
   advanceInterpAudioInPlace(s.interp);
+  // RPG Maker's Game_Screen keeps advancing while a battle/menu scene owns
+  // the foreground. Map physics and page programs stay frozen, but global
+  // tone/weather transitions remain visible and finish on schedule.
+  if (s.interp.screen) s.interp.screen = advanceScreenEffects(s.interp.screen);
   s.interp.frame++;
   if (s.scene) s.scene.pausedTicks++;
   s.interp.cues = [];
@@ -2345,8 +2388,7 @@ function advanceBattleScene(
       if (
         fiber?.mode === "wait" ||
         fiber?.mode === "text" ||
-        fiber?.mode === "animWait" ||
-        fiber?.mode === "screenWait"
+        fiber?.mode === "animWait"
       ) {
         fiber.since += scene.pausedTicks;
       }
@@ -3109,6 +3151,7 @@ function stepReferenceTick(
         sess.travelProject.followers,
         s.sw.switches,
         s.move,
+        s.sw.partyOrder,
       );
     }
     if (travel.vehicles?.boarding && !travel.followers?.gathering && !s.move.moving) {
@@ -3425,7 +3468,7 @@ function stepReferenceTick(
       ? tableWithParkedVehicleBodies(
           vehicleMovementTable(
             terrainPassage,
-            sess.vehiclePassages?.get(map.id),
+            activeVehiclePassage(sess, s, map),
             ridden.kind,
           ) ?? blockedVehicleTable(terrainPassage),
           travel,
@@ -3954,7 +3997,7 @@ function tryToggleVehicle(
   const target = vehicleDisembarkTarget(
     ridden.kind,
     withBodies,
-    sess.vehiclePassages?.get(map.id),
+    activeVehiclePassage(sess, s, map),
     s.move.tx,
     s.move.ty,
     s.move.facing,

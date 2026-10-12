@@ -82,6 +82,8 @@ import {
   startScreenFlash,
   startScreenShake,
   startScreenTint,
+  startScreenTone,
+  startWeather,
   tintPicture,
   OPAQUE_BLACK,
   type ScreenEffectsState,
@@ -113,6 +115,7 @@ import type {
   PictureTone,
   RouteTarget,
   ScreenColor,
+  ScreenTone,
   ShopGood,
   TileId,
   TilePropertyOverride,
@@ -123,6 +126,7 @@ import type {
   VariableRef,
   VariableValue,
   VehicleBgm,
+  WeatherKind,
 } from "./types.ts";
 
 export type { TextTokenResolver, TextTokenView } from "./player-name.ts";
@@ -309,6 +313,13 @@ export interface SwitchState {
    *  openMenu/openSave commands honor them. */
   menuAccess?: boolean;
   saveAccess?: boolean;
+  /** RPG Maker formation access. Absent means enabled. */
+  formationAccess?: boolean;
+  /** Active RPG Maker actor ids in formation order. Omitted until the first
+   * swap so projects which never open formation preserve their old shape. */
+  partyOrder?: number[];
+  /** Global RPG Maker window tone. Omitted for the neutral/default tone. */
+  windowTone?: ScreenTone;
   /** Project-wide player walking appearance. Absent is the baked player
    *  art at full opacity. `defaultSprite` is the reset baseline while
    *  `sprite` is the current MV-style Change Image override. */
@@ -353,6 +364,9 @@ export function createSwitchState(init?: Partial<SwitchState>): SwitchState {
   // stored, so a legacy save (no field) hydrates with both enabled.
   if (init?.menuAccess === false) state.menuAccess = false;
   if (init?.saveAccess === false) state.saveAccess = false;
+  if (init?.formationAccess === false) state.formationAccess = false;
+  if (init?.partyOrder && init.partyOrder.length > 0) state.partyOrder = [...init.partyOrder];
+  if (init?.windowTone) state.windowTone = { ...init.windowTone };
   return state;
 }
 
@@ -847,6 +861,8 @@ export type Instr =
       wait: boolean;
     }
   | { op: "screenTint"; layer: string; color: ScreenColor; frames: number; wait: boolean }
+  | { op: "screenTone"; tone: ScreenTone; frames: number; wait: boolean }
+  | { op: "weather"; kind: WeatherKind; power: number; frames: number; wait: boolean }
   | { op: "screenFlash"; color: ScreenColor; intensity: number; frames: number; wait: boolean }
   | { op: "screenShake"; strength: number; speed: number; frames: number; wait: boolean }
   | { op: "camera"; target: CameraTarget; frames: number; wait: boolean }
@@ -897,6 +913,10 @@ export type Instr =
   | { op: "mapNameDisplay"; visible: boolean }
   | { op: "menuAccess"; enabled: boolean }
   | { op: "saveAccess"; enabled: boolean }
+  | { op: "formationAccess"; enabled: boolean }
+  | { op: "formationSwap"; first: number; second: number }
+  | { op: "changeTileset"; id: string }
+  | { op: "windowTone"; tone: ScreenTone }
   | {
       op: "locationInfo";
       variable: string;
@@ -1244,6 +1264,23 @@ function compileScoped(
             wait: c.wait ?? false,
           });
           break;
+        case "screenTone":
+          emit({
+            op: "screenTone",
+            tone: { ...c.tone },
+            frames: secondsToFrames(c.duration, hz),
+            wait: c.wait ?? false,
+          });
+          break;
+        case "weather":
+          emit({
+            op: "weather",
+            kind: c.kind,
+            power: c.power,
+            frames: secondsToFrames(c.duration, hz),
+            wait: c.wait ?? false,
+          });
+          break;
         case "screenFlash":
           emit({
             op: "screenFlash",
@@ -1399,6 +1436,18 @@ function compileScoped(
           break;
         case "saveAccess":
           emit({ op: "saveAccess", enabled: c.enabled });
+          break;
+        case "formationAccess":
+          emit({ op: "formationAccess", enabled: c.enabled });
+          break;
+        case "formationSwap":
+          emit({ op: "formationSwap", first: c.first, second: c.second });
+          break;
+        case "changeTileset":
+          emit({ op: "changeTileset", id: c.id });
+          break;
+        case "windowTone":
+          emit({ op: "windowTone", tone: { ...c.tone } });
           break;
         case "locationInfo":
           emit({
@@ -2628,6 +2677,9 @@ export interface InterpState {
   parallax?: ParallaxState;
   /** Row-major cell index -> runtime passage/edge replacement. */
   tileProperties?: Record<string, TilePropertyOverride>;
+  /** Active precomposed tileset for this map visit. Absent means the map's
+   * authored tileset. */
+  tileset?: string;
   /** Sparse, deterministic screen/camera/balloon presentation. Global
    * overlays are retained across map entry. An opted-in Session also retains
    * camera and the player's balloon; event balloons stay source-map-local. */
@@ -3242,6 +3294,9 @@ export function cloneInterp(s0: InterpState): InterpState {
   if (s0.sw.mapNameDisplay === true) sw.mapNameDisplay = true;
   if (s0.sw.menuAccess === false) sw.menuAccess = false;
   if (s0.sw.saveAccess === false) sw.saveAccess = false;
+  if (s0.sw.formationAccess === false) sw.formationAccess = false;
+  if (s0.sw.partyOrder) sw.partyOrder = [...s0.sw.partyOrder];
+  if (s0.sw.windowTone) sw.windowTone = { ...s0.sw.windowTone };
   return copyInterp(s0, sw, false, false);
 }
 
@@ -3273,6 +3328,9 @@ export function shareInterp(s0: InterpState, immutable = false): InterpState {
   if (s0.sw.mapNameDisplay === true) sw.mapNameDisplay = true;
   if (s0.sw.menuAccess === false) sw.menuAccess = false;
   if (s0.sw.saveAccess === false) sw.saveAccess = false;
+  if (s0.sw.formationAccess === false) sw.formationAccess = false;
+  if (s0.sw.partyOrder) sw.partyOrder = [...s0.sw.partyOrder];
+  if (s0.sw.windowTone) sw.windowTone = { ...s0.sw.windowTone };
   SHARED_RECORDS.set(sw, new Set<SwitchRecord>(["switches", "self", "items", "variables", "shopStock"]));
   if (immutable) trackStateMetadata(SHARED_RECORDS, sw);
   return copyInterp(s0, sw, true, immutable);
@@ -3363,6 +3421,7 @@ function copyInterp(
     ...(s0.tileProperties ? {
       tileProperties: shareTileProperties ? s0.tileProperties : cloneTileProperties(s0.tileProperties),
     } : {}),
+    ...(s0.tileset ? { tileset: s0.tileset } : {}),
     ...(s0.screen ? { screen: cloneScreenEffects(s0.screen) } : {}),
     cues: s0.cues.map((cue) => ({ ...cue })),
     ...(s0.hostActions && s0.hostActions.length > 0 ? { hostActions: [...s0.hostActions] } : {}),
@@ -4405,6 +4464,7 @@ function tileLayersAt(w: World, index: number): readonly [number, number, number
 /** Compute the value a `locationInfo` command writes for cell (x, y). */
 function locationInfoValue(
   w: World,
+  state: Readonly<InterpState>,
   input: InterpInput,
   ins: Extract<Instr, { op: "locationInfo" }>,
   x: number,
@@ -4416,9 +4476,12 @@ function locationInfoValue(
     return 0; // out of bounds (MV reads 0 for an off-map cell)
   }
   const index = y * w.map.width + x;
+  const variant = state.tileset ? w.map.tilesetVariants?.[state.tileset] : undefined;
   switch (ins.kind) {
     case "terrain":
-      return w.terrainCells?.get(index) ?? 0;
+      return variant
+        ? variant.terrain?.find(([cell]) => cell === index)?.[1] ?? 0
+        : w.terrainCells?.get(index) ?? 0;
     case "region":
       return w.regionCells?.get(index) ?? 0;
     case "event": {
@@ -4446,10 +4509,10 @@ function locationInfoValue(
       // A hand-authored map without raw tile data: answer layers 0/1 from
       // the composed ground/upper cells (their sheet index), 2/3 as empty.
       if (layer === 1) {
-        const upper = w.map.upper?.find(([i]) => i === index);
+        const upper = (variant?.upper ?? w.map.upper)?.find(([i]) => i === index);
         return upper ? cellNumericId(upper[1]) : 0;
       }
-      if (layer === 0) return cellNumericId(w.map.ground[index] ?? null);
+      if (layer === 0) return cellNumericId((variant?.ground ?? w.map.ground)[index] ?? null);
       return 0;
     }
   }
@@ -5350,6 +5413,38 @@ function ensureScreen(s: InterpState): ScreenEffectsState {
   return s.screen ?? (s.screen = {});
 }
 
+function numericActorId(id: string): number | null {
+  const match = /(\d+)$/.exec(id);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** Active RPG Maker party membership in the one saved formation order.
+ * Membership continues to come from Change Party Member switches; a stale
+ * saved id is filtered and a newly joined id is appended deterministically. */
+export function rpgMakerPartyOrder(
+  s: Readonly<InterpState>,
+  w: Readonly<World>,
+): number[] {
+  const initial = w.rpgMakerText?.partyActorIds ?? [];
+  const initialSet = new Set(initial);
+  const active = [
+    ...initial.filter((id) => s.sw.switches[`party-out-actor${String(id).padStart(3, "0")}`] !== true),
+    ...[...(w.actors?.keys() ?? [])]
+      .map(numericActorId)
+      .filter((id): id is number => id !== null && !initialSet.has(id) &&
+        s.sw.switches[`party-actor${String(id).padStart(3, "0")}`] === true)
+      .sort((a, b) => a - b),
+  ];
+  if (!s.sw.partyOrder) return active;
+  const live = new Set(active);
+  const ordered = s.sw.partyOrder.filter((id, at, all) => live.has(id) && all.indexOf(id) === at);
+  const held = new Set(ordered);
+  for (const id of active) if (!held.has(id)) ordered.push(id);
+  return ordered;
+}
+
 function resolvedEventTarget(
   target: "this" | { event: string },
   fiber: Fiber,
@@ -5380,7 +5475,7 @@ function liveTargetCell(
 }
 
 type TimedScreenInstr = Extract<Instr, {
-  op: "screenFade" | "screenTint" | "screenFlash" | "screenShake" | "camera" |
+  op: "screenFade" | "screenTint" | "screenTone" | "weather" | "screenFlash" | "screenShake" | "camera" |
     "scrollMap" | "movePicture" | "tintPicture" | "balloon";
 }>;
 
@@ -6041,6 +6136,23 @@ function runFiber(
         top.pc++;
         break;
       }
+      case "screenTone": {
+        const screen = ensureScreen(s);
+        startScreenTone(screen, ins.tone, ins.frames);
+        if (screenEffectsEmpty(screen)) delete s.screen;
+        if (finishOrWaitScreen(s, f, ins)) return;
+        top.pc++;
+        break;
+      }
+      case "weather": {
+        const screen = ensureScreen(s);
+        const seed = (s.sw.rng ^ Math.imul(s.frame + 1, 0x9e3779b9)) >>> 0;
+        startWeather(screen, ins.kind, ins.power, ins.frames, seed);
+        if (screenEffectsEmpty(screen)) delete s.screen;
+        if (finishOrWaitScreen(s, f, ins)) return;
+        top.pc++;
+        break;
+      }
       case "screenFlash": {
         const screen = ensureScreen(s);
         startScreenFlash(screen, ins.color, ins.intensity, ins.frames);
@@ -6304,10 +6416,48 @@ function runFiber(
         else s.sw.saveAccess = false;
         top.pc++;
         break;
+      case "formationAccess":
+        if (ins.enabled) delete s.sw.formationAccess;
+        else s.sw.formationAccess = false;
+        top.pc++;
+        break;
+      case "formationSwap": {
+        const party = rpgMakerPartyOrder(s, w);
+        if (
+          s.sw.formationAccess !== false && ins.first !== ins.second &&
+          Number.isInteger(ins.first) && Number.isInteger(ins.second) &&
+          ins.first >= 0 && ins.second >= 0 && ins.first < party.length && ins.second < party.length
+        ) {
+          [party[ins.first], party[ins.second]] = [party[ins.second]!, party[ins.first]!];
+          s.sw.partyOrder = party;
+        }
+        top.pc++;
+        break;
+      }
+      case "changeTileset":
+        if (ins.id === w.map.tileset) delete s.tileset;
+        else if (w.map.tilesetVariants?.[ins.id]) s.tileset = ins.id;
+        else {
+          s.error = {
+            kind: "content",
+            message: `changeTileset in ${f.key}: map ${w.map.id} has no tileset ${JSON.stringify(ins.id)}`,
+          };
+          return;
+        }
+        top.pc++;
+        break;
+      case "windowTone":
+        if (ins.tone.r === 0 && ins.tone.g === 0 && ins.tone.b === 0 && ins.tone.gray === 0) {
+          delete s.sw.windowTone;
+        } else {
+          s.sw.windowTone = { ...ins.tone };
+        }
+        top.pc++;
+        break;
       case "locationInfo": {
         const x = resolveLocationCoord(ins.x, s.sw);
         const y = resolveLocationCoord(ins.y, s.sw);
-        writeVariable(s.sw, ins.variable, locationInfoValue(w, input, ins, x, y, local));
+        writeVariable(s.sw, ins.variable, locationInfoValue(w, s, input, ins, x, y, local));
         top.pc++;
         break;
       }

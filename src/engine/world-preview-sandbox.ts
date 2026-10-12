@@ -652,6 +652,7 @@ export const SANDBOX_PREVIEW_STAMPED_CONTEXT: {
   items: "record",
   gold: "value",
   playerName: "value",
+  partyOrder: "record",
   mapId: "project",
   playerCell: "project",
   playerAppearance: "record",

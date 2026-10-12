@@ -2111,12 +2111,17 @@ function createInitialState(
   const { runtime } = runtimeRoot(db, ext);
   runtime.battleCount++;
   const initialParty = new Set(db.party);
-  const party = [
+  const members = [
     ...db.party.filter((actorId) => context.switches[partyOutSwitchKey(actorId)] !== true),
     ...db.actors
       .map((actor) => actor.id)
       .filter((actorId) => !initialParty.has(actorId) && context.switches[partySwitchKey(actorId)] === true)
       .sort((a, b) => a - b),
+  ];
+  const active = new Set(members);
+  const party = [
+    ...(context.partyOrder ?? []).filter((id, at, all) => active.has(id) && all.indexOf(id) === at),
+    ...members.filter((id) => !(context.partyOrder ?? []).includes(id)),
   ].slice(0, 4);
   for (const actorId of party) {
     if (!runtime.actors[String(actorId)]) {

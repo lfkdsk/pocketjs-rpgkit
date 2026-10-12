@@ -103,6 +103,13 @@ export interface PictureTone {
   gray: number;
 }
 
+/** RPG Maker-style screen/window tone. It has the same signed RGB and gray
+ * channel semantics as a picture tone; the distinct name documents where a
+ * command applies without duplicating the JSON shape. */
+export type ScreenTone = PictureTone;
+
+export type WeatherKind = "none" | "rain" | "storm" | "snow";
+
 export type PictureBlendMode = "normal" | "add" | "multiply" | "screen";
 export type PictureOrigin = "topLeft" | "center";
 export type PictureCoordinate = number | VariableRef;
@@ -526,6 +533,13 @@ export type Command =
   /** Tween one named, composable full-screen colour layer. A target with
    * alpha 0 removes the layer when the tween completes. */
   | { op: "screenTint"; layer: string; color: ScreenColor; duration: number; wait?: boolean }
+  /** Tween RPG Maker's signed RGB + gray screen tone. Renderers which cannot
+   * provide a colour matrix may project this descriptor approximately, but
+   * the reducer and save retain the authored channels exactly. */
+  | { op: "screenTone"; tone: ScreenTone; duration: number; wait?: boolean }
+  /** Deterministic RPG Maker weather. `power` is clamped to 0..9; `none`
+   * fades the current kind out before clearing it. */
+  | { op: "weather"; kind: WeatherKind; power: number; duration: number; wait?: boolean }
   /** Replace the transient flash. `intensity` scales colour alpha (0..255). */
   | { op: "screenFlash"; color: ScreenColor; intensity: number; duration: number; wait?: boolean }
   /** Deterministic horizontal shake. Strength is pixels and speed is cycles
@@ -635,6 +649,18 @@ export type Command =
    *  a disabled save makes openSave a no-op and the host shows the entry
    *  disabled. See SwitchState.saveAccess. */
   | { op: "saveAccess"; enabled: boolean }
+  /** Enable/disable the formation row in a host party menu. Absent runtime
+   * state means enabled, matching RPG Maker. */
+  | { op: "formationAccess"; enabled: boolean }
+  /** Swap two zero-based positions in the current active party order. This
+   * is the reducer operation used by the minimal formation menu. */
+  | { op: "formationSwap"; first: number; second: number }
+  /** Select one of the current map's precomposed tileset variants. The
+   * selection changes art, passage, vehicle passage and terrain atomically. */
+  | { op: "changeTileset"; id: string }
+  /** Change the global RPG Maker window tone. Only RGB affects presentation;
+   * gray is retained for lossless round-tripping. */
+  | { op: "windowTone"; tone: ScreenTone }
   /** Write a fact about one map cell to a variable (RPG Maker 285 Get
    *  Location Info). The coordinate is a literal or a variable read at
    *  execution. `kind` selects the fact:
@@ -878,6 +904,18 @@ export interface ParallaxDef {
   showInEditor?: boolean;
 }
 
+/** Tileset-dependent fields for one alternate composition of a map's raw
+ * tile planes. Regions, raw tile ids, events and dimensions remain on the
+ * parent MapDef because command 282 does not change them. */
+export interface MapTilesetVariant {
+  sheets?: string[];
+  ground: TileId[];
+  upper?: [number, TileId][];
+  passage?: [number, "pass" | "block"][];
+  vehiclePassage?: VehiclePassageDef;
+  terrain?: [number, number][];
+}
+
 export interface MapDef {
   id: string;
   name: string;
@@ -885,6 +923,11 @@ export interface MapDef {
   height: number;
   /** Sheet ids this map draws from. */
   sheets?: string[];
+  /** Authored tileset identity. Runtime changes back to this id clear the
+   * sparse per-visit override. */
+  tileset?: string;
+  /** Alternate precomposed tilesets reachable by Change Tileset. */
+  tilesetVariants?: Record<string, MapTilesetVariant>;
   /** Row-major, length width*height; null is a void (nothing baked). */
   ground: TileId[];
   /** Sparse star layer drawn above characters: [row-major index, tile id]. */

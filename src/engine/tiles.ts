@@ -39,3 +39,23 @@ export function indexAt(map: MapDef, tx: number, ty: number): number {
 export function groundAt(map: MapDef, tx: number, ty: number): TileId {
   return map.ground[indexAt(map, tx, ty)] ?? null;
 }
+
+/** Resolve the visual and movement planes selected by Change Tileset.
+ *  The authored tileset is represented by an absent reducer override; an
+ *  explicit authored id is nevertheless accepted at restore boundaries for
+ *  forward/backward save compatibility. `null` means the requested id is
+ *  not a composition this map owns. */
+export function mapForTileset(map: MapDef, tileset: string | undefined): MapDef | null {
+  if (tileset === undefined || tileset === map.tileset) return map;
+  const variant = map.tilesetVariants?.[tileset];
+  if (!variant) return null;
+  return {
+    ...map,
+    sheets: variant.sheets ?? map.sheets,
+    ground: variant.ground,
+    upper: variant.upper,
+    passage: variant.passage ?? map.passage,
+    vehiclePassage: variant.vehiclePassage,
+    terrain: variant.terrain,
+  };
+}
