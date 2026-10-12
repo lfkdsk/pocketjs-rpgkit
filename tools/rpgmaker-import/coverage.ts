@@ -21,6 +21,10 @@ export const DISPOSITIONS: readonly Disposition[] = ["Native", "Degraded", "Plac
  *  ("101"); the others use descriptive keys ("switch", "moveDown", "\\V"). */
 export type CoverageSection =
   | "command"
+  /** Import-time Script recognizer shapes. One 355 command can contain more
+   * than one statement, so this section counts statements/shapes rather than
+   * command heads. No source text is stored in its keys or reasons. */
+  | "script"
   | "condition"
   | "pageCondition"
   | "trigger"

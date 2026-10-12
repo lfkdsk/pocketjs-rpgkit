@@ -8,6 +8,7 @@ import {
 
 describe("RPG Maker safe Script action subset", () => {
   test.each([
+    ["$gameMap.requestRefresh();", { kind: "refreshMap" }],
     [
       "$gameVariables.setValue(12, $gameVariables.value(3) + 4 * 2);",
       { kind: "setVariable", id: 12, value: { kind: "binary", op: "+" } },
@@ -69,6 +70,8 @@ describe("RPG Maker safe Script condition subset", () => {
     ["4 != $gamePlayer.y", { kind: "playerCoordinate", axis: "y", op: "!=", value: 4 }],
     ["$gamePlayer.direction() == 2", { kind: "playerDirection", op: "==", value: 2 }],
     ["$gameParty.steps() < 20", { kind: "steps", op: "<", value: 20 }],
+    ["$gameParty.numItems($dataItems[4]) >= 2", { kind: "itemCount", itemKind: "item", id: 4, op: ">=", value: 2 }],
+    ["3 > $gameParty.numItems($dataArmors[1])", { kind: "itemCount", itemKind: "armor", id: 1, op: "<", value: 3 }],
   ] as const)("recognizes %s", (source, expected) => {
     const result = recognizeScriptCondition(source);
     expect(result.ok).toBe(true);
@@ -139,7 +142,7 @@ describe("RPG Maker Script subset fails closed", () => {
   test("the recognizer contains no dynamic source execution", () => {
     const source = readFileSync(join(import.meta.dir, "../tools/rpgmaker-import/script-subset.ts"), "utf8");
     expect(source).not.toMatch(/\beval\s*\(/);
-    expect(source).not.toMatch(/new\s+Function\s*\(/);
+    expect(source).not.toMatch(/\bFunction\s*\(/);
   });
 });
 

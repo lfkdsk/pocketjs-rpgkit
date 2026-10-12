@@ -149,7 +149,7 @@ export const RM_COMMANDS: readonly CommandInfo[] = [
   { code: 352, name: "Open Save Screen", flavor: "MV/MZ" },
   { code: 353, name: "Game Over", flavor: "MV/MZ" },
   { code: 354, name: "Return to Title Screen", flavor: "MV/MZ" },
-  { code: 355, name: "Script", flavor: "MV/MZ", needsKit: "hand-porting: arbitrary JavaScript has no kit equivalent" },
+  { code: 355, name: "Script", flavor: "MV/MZ", needsKit: "hand-porting for JavaScript outside the import-time safe subset" },
   { code: 655, name: "Script (line)", flavor: "MV/MZ", continuation: true },
   { code: 356, name: "Plugin Command (MV)", flavor: "MV", needsKit: "a per-plugin port (an ext handler)" },
   { code: 357, name: "Plugin Command (MZ)", flavor: "MZ", needsKit: "a per-plugin port (an ext handler)" },
@@ -369,7 +369,7 @@ function sampleBody(code: number): RmCommand[] {
     case 352: return [cmd(352, 0, [])];
     case 353: return [cmd(353, 0, [])];
     case 354: return [cmd(354, 0, [])];
-    case 355: return [cmd(355, 0, ["$gameVariables.setValue(1, 2);"]), cmd(655, 0, ["console.log(1);"])];
+    case 355: return [cmd(355, 0, ["$gameMap.requestRefresh();"])];
     case 356: return [cmd(356, 0, ["ShowMap 1"])];
     case 357: return [cmd(357, 0, ["SamplePlugin", "show", "Show", { id: "1" }]), cmd(657, 0, ["Id = 1"])];
     default: return [cmd(code, 0, [])];

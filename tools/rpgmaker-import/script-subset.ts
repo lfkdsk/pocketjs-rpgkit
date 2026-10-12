@@ -59,6 +59,7 @@ export interface ScriptAudioValue {
 }
 
 export type SafeScriptAction =
+  | { kind: "refreshMap"; shape: string }
   | { kind: "setVariable"; id: number; value: RpgMakerFormulaNode; shape: string }
   | { kind: "setSwitch"; id: number; value: boolean; shape: string }
   | {
@@ -116,6 +117,14 @@ export type SafeScriptCondition =
       id: number;
       includeEquipment: boolean;
       negate: boolean;
+      shape: string;
+    }
+  | {
+      kind: "itemCount";
+      itemKind: ScriptItemKind;
+      id: number;
+      op: ScriptCompareOp;
+      value: number;
       shape: string;
     }
   | { kind: "playerCoordinate"; axis: "x" | "y"; op: ScriptCompareOp; value: number; shape: string }
@@ -656,7 +665,12 @@ function audioValue(node: Expression): ScriptAudioValue | null {
 const reject = (shape: string, reason: string): ScriptRejection => ({ ok: false, shape, reason });
 
 function action(node: Expression): SafeScriptAction | ScriptRejection {
-  let args = directCall(node, "$gameVariables", "setValue");
+  let args = directCall(node, "$gameMap", "requestRefresh");
+  if (args) {
+    const shape = "$gameMap.requestRefresh()";
+    return args.length === 0 ? { kind: "refreshMap", shape } : reject(shape, "takes no arguments");
+  }
+  args = directCall(node, "$gameVariables", "setValue");
   if (args) {
     const shape = "$gameVariables.setValue(id, expression)";
     const id = args.length === 2 ? rmId(args[0]!) : null;
@@ -804,6 +818,14 @@ function condition(node: Expression): SafeScriptCondition | ScriptRejection {
     if (stepArgs?.length === 0) {
       const shape = "$gameParty.steps() comparison number";
       return { kind: "steps", op: compared.op, value: compared.value, shape };
+    }
+    const countArgs = directCall(compared.reader, "$gameParty", "numItems");
+    if (countArgs?.length === 1) {
+      const item = itemReference(countArgs[0]!);
+      const shape = "$gameParty.numItems(dataItem) comparison number";
+      return item
+        ? { kind: "itemCount", itemKind: item.kind, id: item.id, op: compared.op, value: compared.value, shape }
+        : reject(shape, "requires a database item and numeric literal comparison");
     }
   }
   const negated = node.kind === "unary" && node.op === "!";

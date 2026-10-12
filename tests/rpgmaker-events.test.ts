@@ -37,6 +37,11 @@ import { convertMessage } from "../tools/rpgmaker-import/text.ts";
 
 const C = (code: number, indent: number, parameters: unknown[] = []): RmCommand => ({ code, indent, parameters });
 const END = (indent: number): RmCommand => C(0, indent);
+const conditionalBranch = (params: unknown[], withElse = false): RmCommand[] => [
+  C(111, 0, params), C(121, 1, [1, 1, 0]), END(1),
+  ...(withElse ? [C(411, 0), C(121, 1, [2, 2, 0]), END(1)] : []),
+  C(412, 0),
+];
 
 const NO_CONDS: RmPageConditions = {
   actorId: 1, actorValid: false, itemId: 1, itemValid: false, selfSwitchCh: "A", selfSwitchValid: false,
@@ -81,13 +86,14 @@ function rmProject(): RmProject {
     root: "",
     flavor: "MV",
     system: {
-      gameTitle: "T", currencyUnit: "G", partyMembers: [1, 2], startMapId: 1, startX: 0, startY: 0, switches: [], variables: [],
+      gameTitle: "T", currencyUnit: "G", partyMembers: [1, 2], startMapId: 1, startX: 0, startY: 0,
+      switches: Array(20).fill(""), variables: Array(20).fill(""),
     },
     mapInfos: [null],
     maps: new Map([[1, map1]]),
     tilesets,
     commonEvents: [null, { id: 1, name: "Shared", trigger: 0, switchId: 0, list: [END(0)] }],
-    items: [null],
+    items: [null, { id: 1, name: "Potion", description: "", iconIndex: 0, price: 0, itypeId: 1, note: "" }],
     weapons: [null, { id: 1, name: "Sword", description: "", iconIndex: 0, price: 0, etypeId: 1, traits: [], note: "" }],
     armors: [null, { id: 1, name: "Coat", description: "", iconIndex: 0, price: 0, etypeId: 4, traits: [], note: "" }],
     actors: [null, actor(1, "Harold"), actor(2, "Therese")],
@@ -615,11 +621,7 @@ describe("choices cancel types", () => {
 // --- conditional branch ----------------------------------------------------------------------
 
 describe("conditional branch", () => {
-  const branch = (params: unknown[], withElse = false): RmCommand[] => [
-    C(111, 0, params), C(121, 1, [1, 1, 0]), END(1),
-    ...(withElse ? [C(411, 0), C(121, 1, [2, 2, 0]), END(1)] : []),
-    C(412, 0),
-  ];
+  const branch = conditionalBranch;
   const THEN: Command = { op: "switch", id: "s001", value: true };
   const ELSE: Command = { op: "switch", id: "s002", value: true };
   const tmp = "rmi-tmp1";
@@ -1476,6 +1478,100 @@ describe("battle, shop, name input", () => {
       { op: "switch", id: "s002", value: true },
     ]);
     expect(only(r.cov, 354)).toBe("Native");
+  });
+
+  test("observed requestRefresh Script is an exact native no-op", () => {
+    const { cmds, cov } = conv([C(355, 0, ["$gameMap.requestRefresh();"])]);
+    expect(cmds).toEqual([]);
+    expect(only(cov, 355)).toBe("Native");
+    expect(counts(cov, "script", "$gameMap.requestRefresh()")).toMatchObject({ Native: 1 });
+  });
+
+  test("safe Script actions lower to existing commands and execute state writes", () => {
+    const audioCalls: string[] = [];
+    const { cmds, cov } = conv([
+      C(355, 0, [
+        "$gameVariables.setValue(2, $gameVariables.value(1) + 3);",
+      ]),
+      C(355, 0, ["$gameSwitches.setValue(3, true);"]),
+      C(355, 0, ["$gameSelfSwitches.setValue([1, 2, 'A'], true);"]),
+      C(355, 0, ["$gameParty.gainItem($dataItems[1], 2);"]),
+      C(355, 0, ["$gameParty.gainGold(40);"]),
+    ], { audioCalls });
+    const s = runKit(cmds, { variables: { v001: 4 } });
+    expect(s.sw.variables.v002).toBe(7);
+    expect(s.sw.switches.s003).toBe(true);
+    expect(s.sw.self["m/e"]).toBe("A");
+    expect(s.sw.items.item001).toBe(2);
+    expect(s.sw.gold).toBe(40);
+    expect(counts(cov, "script", "$gameVariables.setValue(id, expression)").Native).toBe(1);
+    expect(counts(cov, "script", "$gameSwitches.setValue(id, boolean)").Native).toBe(1);
+    expect(counts(cov, "script", "$gameSelfSwitches.setValue([map,event,key], boolean)").Native).toBe(1);
+    expect(counts(cov, "script", "$gameParty.gainItem(dataItem, expression)").Degraded).toBe(1);
+    expect(counts(cov, "script", "$gameParty.gainGold(expression)").Degraded).toBe(1);
+  });
+
+  test("safe Script movement, audio and message calls retain literal operands", () => {
+    const audioCalls: string[] = [];
+    const cases = [
+      ["$gamePlayer.locate(8, 11);", "Degraded", { op: "place", target: "player", x: 8, y: 11 }],
+      ["$gamePlayer.reserveTransfer(3, 4, 5, 6, 2);", "Native", { op: "transfer", map: "map003", x: 4, y: 5, dir: "right" }],
+      ["$gameMap.event(1).setPosition(6, 7);", "Native", { op: "place", target: { event: "ev001" }, x: 6, y: 7 }],
+      ["$gameMap.event(1).setDirection(8);", "Degraded", { op: "moveRoute", target: { event: "ev001" } }],
+      ["AudioManager.playSe({name:'Bell',volume:80,pitch:110,pan:-20});", "Native", { op: "playSe", id: "se-bell", volume: 80, pitch: 110, pan: -20 }],
+      ["AudioManager.playBgm({name:'Theme'});", "Native", { op: "playBgm", id: "bgm-theme", volume: 0, pitch: 50 }],
+      ["$gameMessage.add('Hello \\\\V[2]');", "Native", { op: "text", lines: ["Hello \\V[2]"] }],
+    ] as const;
+    for (const [source, disposition, expected] of cases) {
+      const { cmds, cov } = conv([C(355, 0, [source])], { audioCalls });
+      expect(cmds[0]).toMatchObject(expected);
+      expect(only(cov, 355)).toBe(disposition);
+    }
+    expect(audioCalls).toEqual(["se:Bell", "bgm:Theme"]);
+  });
+
+  test("safe Script ids and cross-event self-switch targets fail closed", () => {
+    for (const source of [
+      "$gameVariables.setValue(99, 1);",
+      "$gameSwitches.setValue(99, true);",
+      "$gameSelfSwitches.setValue([1, 1, 'A'], true);",
+    ]) {
+      const { cmds, cov } = conv([C(355, 0, [source])]);
+      expect(cmds[0]).toMatchObject({ op: "text" });
+      expect(only(cov, 355)).toBe("Placeholder");
+    }
+  });
+
+  test("safe Script conditions lower hasItem, numItems, variables, direction and steps", () => {
+    const thenCommand: Command = { op: "switch", id: "s001", value: true };
+    const elseCommand: Command = { op: "switch", id: "s002", value: true };
+    const cases = [
+      ["$gameParty.hasItem($dataItems[1])", { kind: "item", id: "item001", count: 1 }, false],
+      ["!$gameParty.hasItem($dataItems[1])", { kind: "item", id: "item001", count: 1 }, true],
+      ["$gameVariables.value(2) > 4", { kind: "variable", id: "v002", op: ">=", value: 5 }, false],
+      ["$gamePlayer.direction() !== 8", { kind: "facing", dir: "up" }, true],
+      ["$gameParty.steps() < 3", { kind: "steps", op: "<=", value: 2 }, false],
+    ] as const;
+    for (const [source, condition, swapped] of cases) {
+      const { cmds, cov } = conv(conditionalBranch([12, source], true));
+      expect(cmds[0]).toMatchObject({ op: "if", if: condition });
+      if (cmds[0]?.op === "if") {
+        expect(cmds[0].then[0]).toEqual(swapped ? elseCommand : thenCommand);
+      }
+      expect(only(cov, 111)).toBe("Native");
+    }
+
+    const counted = conv(conditionalBranch([12, "$gameParty.numItems($dataItems[1]) >= 2"], true));
+    expect(counted.cmds.some((command) => command.op === "if" && command.if.kind === "item")).toBe(true);
+    expect(counted.cmds.at(-1)).toMatchObject({ op: "if", if: { kind: "variable", op: ">=", value: 2 } });
+    expect(counts(counted.cov, "script", "$gameParty.numItems(dataItem) comparison number").Native).toBe(1);
+  });
+
+  test("player-coordinate Script condition remains a classified placeholder", () => {
+    const { cmds, cov } = conv(conditionalBranch([12, "$gamePlayer.x === 4"], true));
+    expect(cmds[0]).toMatchObject({ op: "text" });
+    expect(only(cov, 111)).toBe("Placeholder");
+    expect(counts(cov, "script", "$gamePlayer.x comparison number").Placeholder).toBe(1);
   });
 
   test.each([

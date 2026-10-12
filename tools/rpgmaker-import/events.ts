@@ -74,6 +74,18 @@ import type {
   RpgMakerSettingCommand,
   RpgMakerValueOperand,
 } from "../../src/rpgmaker-battle/types.ts";
+import {
+  evaluateRpgMakerFormula,
+  type RpgMakerFormulaBattler,
+  type RpgMakerFormulaNode,
+} from "../../src/rpgmaker-battle/formula.ts";
+import {
+  recognizeScriptActions,
+  recognizeScriptCondition,
+  type SafeScriptAction,
+  type SafeScriptCondition,
+  type ScriptCompareOp,
+} from "./script-subset.ts";
 
 export interface EventContext {
   rm: RmProject;
@@ -909,6 +921,7 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       rec(st, 354, "Native");
       return [{ op: "returnTitle" }, { op: "exit" }];
     case 355:
+      return emitScript(nd, p, st, scope);
     case 356:
     case 357:
       return emitPlaceholder(nd, p, st);
@@ -1435,11 +1448,7 @@ function convertCondition(p: readonly unknown[], st: State): CondResult {
     case 11:
       return unknown("Degraded", "button state is not readable from events");
     case 12: {
-      const steps = stepsScriptCondition(String(p[1] ?? ""));
-      if (steps) return ok(steps);
-      const r: CondResult = { pre: [], cond: null, swap: false, d: "Placeholder", reason: "script condition not ported; treated as false" };
-      r.placeholder = placeholderText(st, "[Script condition not ported:", String(p[1] ?? ""));
-      return r;
+      return convertScriptCondition(String(p[1] ?? ""), st);
     }
     case 13: {
       const id = vehicleId(p[1]);
@@ -1450,21 +1459,13 @@ function convertCondition(p: readonly unknown[], st: State): CondResult {
   }
 }
 
-/** Recognize the ordinary script spelling used to branch on MV/MZ's Steps
- * value. Arbitrary JavaScript remains a visible placeholder; this narrow
- * grammar accepts only a single comparison with an integer literal. */
-function stepsScriptCondition(source: string): Extract<Condition, { kind: "steps" }> | null {
-  const expression = source.trim().replace(/^\((.*)\)$/s, "$1").trim();
-  const steps = String.raw`\$gameParty\s*\.\s*steps\s*\(\s*\)`;
-  const integer = String.raw`[-+]?\d+`;
-  const direct = new RegExp(`^${steps}\\s*(===|==|!==|!=|>=|<=|>|<)\\s*(${integer})$`).exec(expression);
-  const reverse = new RegExp(`^(${integer})\\s*(===|==|!==|!=|>=|<=|>|<)\\s*${steps}$`).exec(expression);
-  if (!direct && !reverse) return null;
-  const rawValue = direct?.[2] ?? reverse?.[1];
-  const value = Number(rawValue);
+function normalizeScriptComparison(
+  kind: "variable" | "steps",
+  id: string | undefined,
+  op: ScriptCompareOp,
+  value: number,
+): Condition | null {
   if (!Number.isSafeInteger(value)) return null;
-  let op = (direct?.[1] ?? reverse?.[2])!;
-  if (reverse) op = ({ ">=": "<=", "<=": ">=", ">": "<", "<": ">" } as Record<string, string>)[op] ?? op;
   const normalized = op === "==" || op === "==="
     ? { op: "==" as const, value }
     : op === "!=" || op === "!=="
@@ -1473,14 +1474,90 @@ function stepsScriptCondition(source: string): Extract<Condition, { kind: "steps
         ? { op: ">=" as const, value }
         : op === "<="
           ? { op: "<=" as const, value }
-          : op === ">"
+          : op === ">" && value < Number.MAX_SAFE_INTEGER
             ? { op: ">=" as const, value: value + 1 }
-            : op === "<"
+            : op === "<" && value > -Number.MAX_SAFE_INTEGER
               ? { op: "<=" as const, value: value - 1 }
               : null;
-  return normalized && Number.isSafeInteger(normalized.value) && normalized.value >= 0
-    ? { kind: "steps", ...normalized }
-    : null;
+  if (!normalized) return null;
+  return kind === "steps"
+    ? normalized.value >= 0 ? { kind: "steps", ...normalized } : null
+    : { kind: "variable", id: id!, ...normalized };
+}
+
+function scriptConditionPlaceholder(source: string, st: State, shape: string, reason: string): CondResult {
+  st.ctx.cov.record("script", shape, "Placeholder", reason);
+  return {
+    pre: [],
+    cond: null,
+    swap: false,
+    d: "Placeholder",
+    reason: `${shape}: ${reason}; treated as false`,
+    placeholder: placeholderText(st, "[Script condition not ported:", source),
+  };
+}
+
+function convertScriptCondition(source: string, st: State): CondResult {
+  const recognized = recognizeScriptCondition(source);
+  if (!recognized.ok) return scriptConditionPlaceholder(source, st, recognized.shape, recognized.reason);
+  const parsed: SafeScriptCondition = recognized.condition;
+  const accepted = (
+    cond: Condition,
+    opts: { pre?: Command[]; swap?: boolean; d?: Disposition; reason?: string } = {},
+  ): CondResult => {
+    const d = opts.d ?? "Native";
+    st.ctx.cov.record("script", parsed.shape, d, opts.reason);
+    return { pre: opts.pre ?? [], cond, swap: opts.swap ?? false, d, ...(opts.reason ? { reason: opts.reason } : {}) };
+  };
+  switch (parsed.kind) {
+    case "variable": {
+      const cond = normalizeScriptComparison("variable", variableId(parsed.id), parsed.op, parsed.value);
+      return cond ? accepted(cond) : scriptConditionPlaceholder(source, st, parsed.shape, "comparison is outside native integer bounds");
+    }
+    case "switch":
+      return accepted({ kind: "switch", id: switchId(parsed.id), value: parsed.negate ? !parsed.value : parsed.value });
+    case "item": {
+      if (!scriptItemExists(st, parsed.itemKind, parsed.id)) {
+        return scriptConditionPlaceholder(source, st, parsed.shape, "database item does not exist");
+      }
+      const equipped = parsed.itemKind !== "item" && parsed.includeEquipment;
+      return accepted(
+        { kind: "item", id: itemId(parsed.itemKind, parsed.id), count: 1 },
+        {
+          swap: parsed.negate,
+          d: equipped ? "Degraded" : "Native",
+          ...(equipped ? { reason: "equipped copies are not counted" } : {}),
+        },
+      );
+    }
+    case "itemCount": {
+      if (!scriptItemExists(st, parsed.itemKind, parsed.id)) {
+        return scriptConditionPlaceholder(source, st, parsed.shape, "database item does not exist");
+      }
+      const type = parsed.itemKind === "item" ? 0 : parsed.itemKind === "weapon" ? 1 : 2;
+      const value = gameData(type, parsed.id, 0, st);
+      if (!("compute" in value)) {
+        return scriptConditionPlaceholder(source, st, parsed.shape, "item count could not be lowered to native commands");
+      }
+      const cond = normalizeScriptComparison("variable", value.from, parsed.op, parsed.value);
+      return cond
+        ? accepted(cond, { pre: value.compute })
+        : scriptConditionPlaceholder(source, st, parsed.shape, "comparison is outside native integer bounds");
+    }
+    case "playerDirection": {
+      const dir = DIR_OF[parsed.value];
+      if (!dir || (parsed.op !== "==" && parsed.op !== "===" && parsed.op !== "!=" && parsed.op !== "!==")) {
+        return scriptConditionPlaceholder(source, st, parsed.shape, "only equality against a cardinal direction is native");
+      }
+      return accepted({ kind: "facing", dir }, { swap: parsed.op === "!=" || parsed.op === "!==" });
+    }
+    case "steps": {
+      const cond = normalizeScriptComparison("steps", undefined, parsed.op, parsed.value);
+      return cond ? accepted(cond) : scriptConditionPlaceholder(source, st, parsed.shape, "comparison is outside native non-negative step bounds");
+    }
+    case "playerCoordinate":
+      return scriptConditionPlaceholder(source, st, parsed.shape, "live player coordinates are not a native event condition");
+  }
 }
 
 /** The scope a branch runs in once `cond` is known to hold. */
@@ -2422,6 +2499,374 @@ function emitNameInput(p: readonly unknown[], st: State): Command[] {
   return [{ op: "scene", id: NAME_INPUT_SCENE_ID, args }];
 }
 
+// --- safe Script subset ----------------------------------------------------------
+
+const SCRIPT_ZERO_BATTLER: RpgMakerFormulaBattler = {
+  hp: 0, mp: 0, tp: 0, mhp: 0, mmp: 0, atk: 0, def: 0, mat: 0, mdf: 0, agi: 0, luk: 0, level: 0,
+};
+
+function formulaHasVariable(node: RpgMakerFormulaNode): boolean {
+  switch (node.kind) {
+    case "variable": return true;
+    case "number":
+    case "param":
+    case "mathConst": return false;
+    case "group":
+    case "unary": return formulaHasVariable(node.value);
+    case "binary": return formulaHasVariable(node.left) || formulaHasVariable(node.right);
+    case "ternary": return formulaHasVariable(node.test) || formulaHasVariable(node.yes) || formulaHasVariable(node.no);
+    case "math": return node.args.some(formulaHasVariable);
+  }
+}
+
+function formulaHasLiveDivision(node: RpgMakerFormulaNode): boolean {
+  switch (node.kind) {
+    case "binary":
+      return ((node.op === "/" || node.op === "%") && formulaHasVariable(node)) ||
+        formulaHasLiveDivision(node.left) || formulaHasLiveDivision(node.right);
+    case "group":
+    case "unary": return formulaHasLiveDivision(node.value);
+    case "ternary": return formulaHasLiveDivision(node.test) || formulaHasLiveDivision(node.yes) || formulaHasLiveDivision(node.no);
+    case "math": return node.args.some(formulaHasLiveDivision);
+    default: return false;
+  }
+}
+
+/** Evaluate a variable-free expression through the K-RPGM3 safe formula
+ * evaluator. The variable bank is deliberately absent; no source executes. */
+function constantFormula(node: RpgMakerFormulaNode): number | null {
+  if (formulaHasVariable(node)) return null;
+  return evaluateRpgMakerFormula(node, { a: SCRIPT_ZERO_BATTLER, b: SCRIPT_ZERO_BATTLER });
+}
+
+interface CompiledScriptFormula {
+  commands: Command[];
+  result: string;
+}
+
+/** Lower the integer-preserving part of the safe formula AST into ordinary
+ * variable commands. Constant Math/exponent expressions fold at import time;
+ * a Math/exponent expression that reads a live variable remains outside this
+ * lowering rather than acquiring a runtime evaluator. */
+function compileScriptFormula(node: RpgMakerFormulaNode): CompiledScriptFormula | null {
+  let next = 0;
+  const temp = (): string => `rmi-script-tmp${++next}`;
+  const emit = (value: RpgMakerFormulaNode, target: string): Command[] | null => {
+    const constant = constantFormula(value);
+    if (constant !== null) return [{ op: "variable", id: target, set: { op: "set", value: constant } }];
+    switch (value.kind) {
+      case "variable":
+        return [{ op: "variable", id: target, set: { op: "copy", from: variableId(value.index) } }];
+      case "group":
+        return emit(value.value, target);
+      case "unary": {
+        if (value.op === "+") return emit(value.value, target);
+        if (value.op !== "-") return null;
+        const child = temp();
+        const commands = emit(value.value, child);
+        return commands ? [
+          ...commands,
+          { op: "variable", id: target, set: { op: "set", value: 0 } },
+          { op: "variable", id: target, set: { op: "sub", from: child } },
+        ] : null;
+      }
+      case "binary": {
+        const op = value.op === "+" ? "add"
+          : value.op === "-" ? "sub"
+          : value.op === "*" ? "mul"
+          : value.op === "/" ? "div"
+          : value.op === "%" ? "mod"
+          : null;
+        if (!op) return null;
+        const right = temp();
+        const leftCommands = emit(value.left, target);
+        const rightCommands = emit(value.right, right);
+        return leftCommands && rightCommands ? [
+          ...leftCommands,
+          ...rightCommands,
+          { op: "variable", id: target, set: { op, from: right } },
+        ] : null;
+      }
+      default:
+        return null;
+    }
+  };
+  const result = temp();
+  const commands = emit(node, result);
+  return commands ? { commands, result } : null;
+}
+
+type ScriptSimpleOperand = number | { variable: string };
+
+function simpleScriptOperand(node: RpgMakerFormulaNode): ScriptSimpleOperand | null {
+  const constant = constantFormula(node);
+  if (constant !== null) return constant;
+  if (node.kind === "variable") return { variable: variableId(node.index) };
+  if (node.kind === "group") return simpleScriptOperand(node.value);
+  return null;
+}
+
+interface LoweredScriptAction {
+  commands: Command[];
+  d: Disposition;
+  reason?: string;
+}
+
+function scriptItemExists(st: State, kind: "item" | "weapon" | "armor", id: number): boolean {
+  return !!(kind === "item" ? st.ctx.rm.items[id] : kind === "weapon" ? st.ctx.rm.weapons[id] : st.ctx.rm.armors[id]);
+}
+
+function scriptVariableExists(st: State, id: number): boolean {
+  return id > 0 && id < (st.ctx.rm.system.variables?.length ?? 0);
+}
+
+function scriptSwitchExists(st: State, id: number): boolean {
+  return id > 0 && id < (st.ctx.rm.system.switches?.length ?? 0);
+}
+
+function constantItemChange(
+  action: Extract<SafeScriptAction, { kind: "changeItem" }>,
+  amount: number,
+  st: State,
+  scope: Scope,
+): LoweredScriptAction {
+  let count = Math.floor(amount);
+  let set: "add" | "sub" = action.operation === "gain" ? "add" : "sub";
+  if (count < 0) {
+    count = -count;
+    set = set === "add" ? "sub" : "add";
+  }
+  const id = itemId(action.itemKind, action.id);
+  const out: Command[] = [];
+  for (let left = count; left > 0; left -= MAX_ITEM_COUNT) {
+    out.push({ op: "item", item: id, set, count: Math.min(MAX_ITEM_COUNT, left) });
+  }
+  if (set === "sub" && action.itemKind !== "item" && action.includeEquipment) {
+    return { commands: out, d: "Degraded", reason: "equipped copies are not removed" };
+  }
+  if (set === "sub" && (scope.items.get(id) ?? 0) < count) {
+    return { commands: out, d: "Degraded", reason: "unguarded loss can take the count below 0 (MV floors it)" };
+  }
+  return set === "add" && count > 0
+    ? { commands: out, d: "Degraded", reason: "kit item commands do not enforce RPG Maker's 99-item inventory cap" }
+    : { commands: out, d: "Native" };
+}
+
+function lowerScriptAction(action: SafeScriptAction, st: State, scope: Scope): LoweredScriptAction {
+  switch (action.kind) {
+    case "refreshMap":
+      // MV/MZ only mark page refresh for the next map update. The kit
+      // re-evaluates eligible event pages from live state every reducer tick,
+      // so the requested observation already happens without an instruction.
+      return { commands: [], d: "Native" };
+    case "setVariable": {
+      if (!scriptVariableExists(st, action.id)) {
+        return { commands: [], d: "Placeholder", reason: "variable id is outside the project database" };
+      }
+      const compiled = compileScriptFormula(action.value);
+      if (!compiled) return { commands: [], d: "Placeholder", reason: "safe expression needs a runtime operator outside native variable commands" };
+      const floorsIntermediate = formulaHasLiveDivision(action.value);
+      return {
+        commands: [...compiled.commands, { op: "variable", id: variableId(action.id), set: { op: "copy", from: compiled.result } }],
+        d: floorsIntermediate ? "Degraded" : "Native",
+        ...(floorsIntermediate ? { reason: "native variable division floors its intermediate result" } : {}),
+      };
+    }
+    case "setSwitch":
+      return scriptSwitchExists(st, action.id)
+        ? { commands: [{ op: "switch", id: switchId(action.id), value: action.value }], d: "Native" }
+        : { commands: [], d: "Placeholder", reason: "switch id is outside the project database" };
+    case "setSelfSwitch": {
+      const map = ownerRmMapId(st);
+      const owner = st.ctx.owner;
+      let event: number | undefined;
+      if (owner.kind === "page") for (const [rm, kit] of owner.eventIds) if (kit === owner.eventId) event = rm;
+      if (owner.kind !== "page" || map !== action.mapId || event !== action.eventId) {
+        return { commands: [], d: "Placeholder", reason: "kit self switches can only target the current map event" };
+      }
+      const multi = eventUsesSeveralSelfSwitches(st);
+      return {
+        commands: [{ op: "selfSwitch", key: action.key, value: action.value }],
+        d: multi ? "Degraded" : "Native",
+        ...(multi ? { reason: "kit stores one active self-switch letter per event" } : {}),
+      };
+    }
+    case "changeItem": {
+      if (!scriptItemExists(st, action.itemKind, action.id)) {
+        return { commands: [], d: "Placeholder", reason: "database item does not exist" };
+      }
+      const amount = constantFormula(action.count);
+      if (amount !== null) return constantItemChange(action, amount, st, scope);
+      const compiled = compileScriptFormula(action.count);
+      if (!compiled) return { commands: [], d: "Placeholder", reason: "item count expression cannot use native variable commands" };
+      const id = itemId(action.itemKind, action.id);
+      const add = (k: number): Command[] => [{ op: "item", item: id, set: "add", count: k }];
+      const sub = (k: number): Command[] => [{ op: "item", item: id, set: "sub", count: k }];
+      return {
+        commands: [
+          ...compiled.commands,
+          ...byVariable(compiled.result, ITEM_BITS, action.operation === "gain" ? add : sub, action.operation === "gain" ? sub : add),
+        ],
+        d: "Degraded",
+        reason: "variable item amount uses a bounded binary lowering; losses are not floored at 0",
+      };
+    }
+    case "changeGold": {
+      const amount = constantFormula(action.amount);
+      if (amount !== null) {
+        let value = Math.floor(amount);
+        let set: "add" | "sub" = action.operation === "gain" ? "add" : "sub";
+        if (value < 0) {
+          value = -value;
+          set = set === "add" ? "sub" : "add";
+        }
+        return {
+          commands: value > 0 ? [{ op: "gold", set, amount: value }] : [],
+          d: value === 0 || (set === "sub" && scope.gold >= value) ? "Native" : "Degraded",
+          ...(value > 0 && set === "add" ? {
+            reason: "kit gold commands do not enforce RPG Maker's 99,999,999 cap",
+          } : value > 0 && scope.gold < value ? {
+            reason: "unguarded loss can take gold below 0 (MV floors it)",
+          } : {}),
+        };
+      }
+      const compiled = compileScriptFormula(action.amount);
+      if (!compiled) return { commands: [], d: "Placeholder", reason: "gold expression cannot use native variable commands" };
+      const add = (k: number): Command[] => [{ op: "gold", set: "add", amount: k }];
+      const sub = (k: number): Command[] => [{ op: "gold", set: "sub", amount: k }];
+      return {
+        commands: [
+          ...compiled.commands,
+          ...byVariable(compiled.result, GOLD_BITS, action.operation === "gain" ? add : sub, action.operation === "gain" ? sub : add),
+        ],
+        d: "Degraded",
+        reason: "variable gold amount uses a binary lowering; losses are not floored at 0",
+      };
+    }
+    case "locatePlayer": {
+      const x = simpleScriptOperand(action.x);
+      const y = simpleScriptOperand(action.y);
+      if (typeof x !== "number" || typeof y !== "number") {
+        return { commands: [], d: "Placeholder", reason: "locate with variable coordinates has no native placement form" };
+      }
+      return {
+        commands: [{ op: "place", target: "player", x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)) }],
+        d: "Degraded",
+        reason: "player placement does not recenter the camera, reroll encounters, or synchronize followers like locate",
+      };
+    }
+    case "reserveTransfer": {
+      const mapNumber = simpleScriptOperand(action.mapId);
+      const x = simpleScriptOperand(action.x);
+      const y = simpleScriptOperand(action.y);
+      if (typeof mapNumber !== "number" || typeof x !== "number" || typeof y !== "number") {
+        return { commands: [], d: "Placeholder", reason: "reserveTransfer currently requires literal map and coordinates" };
+      }
+      if (!Number.isSafeInteger(mapNumber) || mapNumber <= 0) {
+        return { commands: [], d: "Placeholder", reason: "destination map id must be a positive integer" };
+      }
+      const map = st.ctx.maps.get(mapNumber);
+      if (!map) return { commands: [], d: "Placeholder", reason: "destination map is not imported" };
+      const dir = action.direction === undefined ? undefined : DIR_OF[action.direction];
+      if (action.direction !== undefined && action.direction !== 0 && !dir) {
+        return { commands: [], d: "Placeholder", reason: "transfer direction is outside RPG Maker's cardinal values" };
+      }
+      const fadeType = action.fadeType ?? 0;
+      if (fadeType < 0 || fadeType > 2) return { commands: [], d: "Placeholder", reason: "transfer fade type is outside 0-2" };
+      return {
+        commands: [{
+          op: "transfer",
+          map,
+          x: Math.max(0, Math.round(x)),
+          y: Math.max(0, Math.round(y)),
+          ...(dir ? { dir } : {}),
+          ...(fadeType === 2 ? {} : { fade: TRANSFER_FADE_SECONDS }),
+        }],
+        d: fadeType === 1 ? "Degraded" : "Native",
+        ...(fadeType === 1 ? { reason: "white fade shown as black" } : {}),
+      };
+    }
+    case "setEventPosition": {
+      const target = charTarget(action.eventId, st);
+      const x = simpleScriptOperand(action.x);
+      const y = simpleScriptOperand(action.y);
+      if (!target) return { commands: [], d: "Placeholder", reason: "target event does not exist on this map" };
+      if (typeof x !== "number" || typeof y !== "number") {
+        return { commands: [], d: "Placeholder", reason: "setPosition currently requires literal coordinates" };
+      }
+      return { commands: [{ op: "place", target, x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)) }], d: "Native" };
+    }
+    case "setEventDirection": {
+      const target = charTarget(action.eventId, st);
+      const dir = DIR_OF[action.direction];
+      if (!target) return { commands: [], d: "Placeholder", reason: "target event does not exist on this map" };
+      if (!dir) return { commands: [], d: "Placeholder", reason: "direction is outside RPG Maker's cardinal values" };
+      const step: MoveStep = dir === "down" ? "faceDown" : dir === "left" ? "faceLeft" : dir === "right" ? "faceRight" : "faceUp";
+      return {
+        commands: [{ op: "moveRoute", target, route: { steps: [step], repeat: false, skippable: true } }],
+        d: "Degraded",
+        reason: "setDirection is applied through a one-step forced route",
+      };
+    }
+    case "playAudio": {
+      const name = action.audio.name;
+      if (action.audioKind === "bgm" && name === "") return { commands: [{ op: "stopBgm" }], d: "Native" };
+      if (name === "") return { commands: [], d: "Native" };
+      // Direct AudioManager calls do not receive the event-command editor's
+      // 90/100 defaults. Corescript's parameter update treats omitted fields
+      // as zero; a non-zero-volume pitch below the kit's range is degraded.
+      const volume = clamp(Math.round(action.audio.volume ?? 0), 0, 100);
+      const rawPitch = Math.round(action.audio.pitch ?? 0);
+      const pitch = clamp(rawPitch, 50, 150);
+      const pan = clamp(Math.round(action.audio.pan ?? 0), -100, 100);
+      const common = { volume, pitch, ...(pan !== 0 ? { pan } : {}) };
+      const d: Disposition = volume > 0 && rawPitch < 50 ? "Degraded" : "Native";
+      const reason = d === "Degraded" ? "script audio pitch below 50 is clamped to the kit range" : undefined;
+      return action.audioKind === "bgm"
+        ? { commands: [{ op: "playBgm", id: st.ctx.audio("bgm", name), ...common }], d, ...(reason ? { reason } : {}) }
+        : { commands: [{ op: "playSe", id: st.ctx.audio("se", name), ...common }], d, ...(reason ? { reason } : {}) };
+    }
+    case "addMessage": {
+      const lines = wrap(convertMessage(action.text.split(/\r?\n/), st.ctx));
+      return { commands: textCommands(lines.length > 0 ? lines : [""]), d: "Native" };
+    }
+  }
+}
+
+function emitScript(nd: RmNode, p: readonly unknown[], st: State, scope: Scope): Command[] {
+  const source = [String(p[0] ?? ""), ...nd.lines.map((line) => String(line.parameters?.[0] ?? ""))].join("\n");
+  const recognized = recognizeScriptActions(source);
+  if (!recognized.ok) {
+    st.ctx.cov.record("script", recognized.shape, "Placeholder", recognized.reason);
+    rec(st, 355, "Placeholder", `${recognized.shape}: ${recognized.reason}`);
+    return placeholderText(st, "[Script not ported:", source);
+  }
+  const lowered = recognized.actions.map((entry) => lowerScriptAction(entry, st, scope));
+  const failed = lowered.find((entry) => entry.d === "Placeholder" || entry.d === "Dropped");
+  if (failed) {
+    for (const entry of recognized.actions) {
+      st.ctx.cov.record("script", entry.shape, "Placeholder", failed.reason ?? "script sequence could not be lowered atomically");
+    }
+    rec(st, 355, "Placeholder", failed.reason);
+    return placeholderText(st, "[Script not ported:", source);
+  }
+  let worst: Disposition = "Native";
+  let reason: string | undefined;
+  const commands: Command[] = [];
+  for (let i = 0; i < recognized.actions.length; i++) {
+    const entry = recognized.actions[i]!;
+    const result = lowered[i]!;
+    st.ctx.cov.record("script", entry.shape, result.d, result.reason);
+    commands.push(...result.commands);
+    if (result.d === "Degraded") {
+      worst = "Degraded";
+      reason ??= result.reason;
+    }
+  }
+  rec(st, 355, worst, reason);
+  return commands;
+}
+
 // --- placeholders ---------------------------------------------------------------
 
 function placeholderText(st: State, head: string, detail: string): Command[] {
@@ -2430,8 +2875,8 @@ function placeholderText(st: State, head: string, detail: string): Command[] {
   return [{ op: "text", lines: [head, `${snippet}]`] }];
 }
 
-/** Script (355/655), MV Plugin Command (356), MZ Plugin Command (357/657):
- *  always a placeholder; visible mode shows a message naming it. */
+/** MV Plugin Command (356), MZ Plugin Command (357/657), plus the fallback
+ * for a 355 source outside the safe subset: visible mode names it. */
 function emitPlaceholder(nd: RmNode, p: readonly unknown[], st: State): Command[] {
   const code = nd.cmd.code;
   if (code === 355) {

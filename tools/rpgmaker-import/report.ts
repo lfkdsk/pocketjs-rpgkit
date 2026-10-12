@@ -20,6 +20,7 @@ import type { RmProject } from "./rm-types.ts";
 
 const SECTION_TITLES: Record<CoverageSection, string> = {
   command: "Event commands",
+  script: "Safe Script shapes",
   condition: "Conditional Branch types",
   pageCondition: "Event page conditions",
   trigger: "Event triggers",
@@ -30,7 +31,7 @@ const SECTION_TITLES: Record<CoverageSection, string> = {
   battle: "Battle database and formulas",
 };
 
-const SECTION_ORDER: CoverageSection[] = ["command", "condition", "pageCondition", "trigger", "route", "escape", "tile", "audio", "battle"];
+const SECTION_ORDER: CoverageSection[] = ["command", "script", "condition", "pageCondition", "trigger", "route", "escape", "tile", "audio", "battle"];
 
 export interface StaticCommandRow {
   code: number;
