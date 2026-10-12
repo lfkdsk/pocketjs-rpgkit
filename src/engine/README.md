@@ -186,9 +186,11 @@ Conventions:
   reference tick observe the new direction. A `moveRoute` carrying
   `start:"immediate"` consumes its first route command after publication in
   that same tick; omitting `start` keeps the established next-reference-tick
-  start byte-for-byte. The resulting movement, follower breadcrumb and ridden
-  vehicle placement are ordinary reducer state, so save/load, rewind and
-  60/30/20 Hz playback agree.
+  start byte-for-byte. Its first event or player step uses the effective
+  page/runtime speed and any route-scoped grade or exact tiles/second value
+  already latched by that publication. The resulting movement, follower
+  breadcrumb and ridden vehicle placement are ordinary reducer state, so
+  save/load, rewind and 60/30/20 Hz playback agree.
 - **Movement controls:** page defaults are `moveSpeed:5` (MV grade 1-6),
   `moveFrequency:5` (MV grade 1-5 on the fixed reference-tick clock),
   `directionFix:false`, `through:false`, and

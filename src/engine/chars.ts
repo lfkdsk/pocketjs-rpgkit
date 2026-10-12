@@ -1361,10 +1361,16 @@ export function startForcedRouteInPlace(
   const current = s.chars[eventId];
   if (!current?.route || current.route.patrol || current.moving) return [];
   const ch = ownChar(s, eventId);
+  const route = ch.route;
+  if (route === null) return [];
   const others = new Map(Object.entries(s.chars));
   others.set(eventId, ch);
   const finishedWaiters: string[] = [];
-  stepRoute(s, ch, table, player, others, cfg, settings, options, finishedWaiters);
+  // Route installation may have consumed a pending routeSpeed immediately
+  // before this tick-tail call. Match the ordinary character fold by deriving
+  // the config from that freshly latched grade/rate before committing phase 1.
+  const moveCfg = routeSpeedConfig(cfg, settings, route.speed, route.tilesPerSecond);
+  stepRoute(s, ch, table, player, others, moveCfg, settings, options, finishedWaiters);
   return finishedWaiters;
 }
 

@@ -129,6 +129,52 @@ describe("additive immediate scripted facing and route startup", () => {
     expect(started.playerRoute).toMatchObject({ pc: 1 });
   });
 
+  test("an immediate route uses its newly latched exact or grade speed on the first tick", () => {
+    const cases = [
+      { actor: "player" as const, exact: true, origin: 32, pixelsPerTick: 2.4 },
+      { actor: "player" as const, exact: false, origin: 32, pixelsPerTick: 4 },
+      { actor: "event" as const, exact: true, origin: 96, pixelsPerTick: 2.4 },
+      { actor: "event" as const, exact: false, origin: 96, pixelsPerTick: 4 },
+    ];
+    for (const c of cases) {
+      const target = c.actor === "player" ? "player" as const : { event: "runner" } as const;
+      const speed = c.exact
+        ? { kind: "routeSpeed" as const, value: 2 as const, tilesPerSecond: 9 }
+        : { kind: "routeSpeed" as const, value: 6 as const };
+      const p = project([
+        controller([
+          { op: "moveControl", target, control: speed },
+          {
+            op: "moveRoute",
+            target,
+            wait: false,
+            start: "immediate",
+            route: { steps: ["moveRight"], repeat: false, skippable: false },
+          },
+        ]),
+        event("runner", 6, 4, [page("action", [], { moveSpeed: 1 })]),
+      ]);
+      const firstFrames = ([60, 30, 20] as const).map((hz) => {
+        const run = boot(p, hz);
+        const out = action(run.session, run.state);
+        const mover = c.actor === "player" ? out.move : out.chars.chars.runner!;
+        const phase = c.actor === "player" ? out.playerRoute?.phase : mover.phase;
+        expect(phase, `${c.actor} ${c.exact ? "exact" : "grade"} at ${hz} Hz`).toBe(
+          run.session.ticksPerFrame,
+        );
+        expect(mover.px).toBe(c.origin + c.pixelsPerTick * run.session.ticksPerFrame);
+        if (c.exact) expect(mover.stepTilesPerSecond).toBe(9);
+        else expect(mover.stepTilesPerSecond).toBeUndefined();
+        return mover.px;
+      });
+      expect(firstFrames).toEqual([
+        c.origin + c.pixelsPerTick,
+        c.origin + c.pixelsPerTick * 2,
+        c.origin + c.pixelsPerTick * 3,
+      ]);
+    }
+  });
+
   test("face this changes the live event sprite in the issuing tick", () => {
     const run = boot(project([controller([{ op: "face", target: "this", dir: "left" }])]));
     const out = action(run.session, run.state);
@@ -171,14 +217,24 @@ describe("additive immediate scripted facing and route startup", () => {
     expect(out.sw.switches.bumped).toBe(true);
   });
 
-  test("equal reference-tick budgets settle identically at 60, 30, and 20 Hz", () => {
-    const p = project([controller([{
-      op: "moveRoute",
-      target: "player",
-      wait: false,
-      start: "immediate",
-      route: { steps: ["moveRight", "moveDown"], repeat: false, skippable: false },
-    }])]);
+  test("exact-speed immediate routes settle identically at 60, 30, and 20 Hz", () => {
+    const p = project([
+      controller([
+        {
+          op: "moveControl",
+          target: { event: "runner" },
+          control: { kind: "routeSpeed", value: 2, tilesPerSecond: 9 },
+        },
+        {
+          op: "moveRoute",
+          target: { event: "runner" },
+          wait: false,
+          start: "immediate",
+          route: { steps: ["moveRight", "moveDown"], repeat: false, skippable: false },
+        },
+      ]),
+      event("runner", 1, 4, [page("action", [], { moveSpeed: 1 })]),
+    ]);
     const outcomes = ([60, 30, 20] as const).map((hz) => {
       const run = boot(p, hz);
       let out = action(run.session, run.state);
@@ -186,7 +242,7 @@ describe("additive immediate scripted facing and route startup", () => {
       for (let ticks = elapsed; ticks < 24; ticks += run.session.ticksPerFrame) {
         out = stepSession(run.session, out, { buttons: 0 });
       }
-      return { move: out.move, route: out.playerRoute, frame: out.interp.frame };
+      return { char: out.chars.chars.runner, frame: out.interp.frame };
     });
     expect(outcomes[1]).toEqual(outcomes[0]);
     expect(outcomes[2]).toEqual(outcomes[0]);
@@ -249,22 +305,30 @@ describe("additive immediate scripted facing and route startup", () => {
     expect(airship).toMatchObject({ mapId: "field", move: out.move });
   });
 
-  test("a mid-route save/load resumes byte-identically", () => {
+  test("an exact-speed immediate route starts correctly, then saves and resumes byte-identically", () => {
     const runner = event("runner", 1, 4, [page("action", [])]);
     const p = project([
-      controller([{
-        op: "moveRoute",
-        target: { event: "runner" },
-        wait: false,
-        start: "immediate",
-        route: { steps: ["moveRight", "moveDown"], repeat: false, skippable: false },
-      }]),
+      controller([
+        {
+          op: "moveControl",
+          target: { event: "runner" },
+          control: { kind: "routeSpeed", value: 2, tilesPerSecond: 9 },
+        },
+        {
+          op: "moveRoute",
+          target: { event: "runner" },
+          wait: false,
+          start: "immediate",
+          route: { steps: ["moveRight", "moveDown"], repeat: false, skippable: false },
+        },
+      ]),
       runner,
     ]);
     const run = boot(p);
     let live = action(run.session, run.state);
+    expect(live.chars.chars.runner).toMatchObject({ phase: 1, moving: true, stepTilesPerSecond: 9 });
+    expect(live.chars.chars.runner?.px).toBe(18.4);
     live = stepSession(run.session, live, { buttons: 0 });
-    expect(live.chars.chars.runner).toMatchObject({ moving: true });
     const restored = restoreSessionEnvelope(
       run.session,
       encodeEnvelope(createSessionSnapshot(run.session, live, 0), run.session.content),
@@ -278,13 +342,20 @@ describe("additive immediate scripted facing and route startup", () => {
   });
 
   test("rewind restores the state before an immediate route began", () => {
-    const p = project([controller([{
-      op: "moveRoute",
-      target: "player",
-      wait: false,
-      start: "immediate",
-      route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
-    }])]);
+    const p = project([controller([
+      {
+        op: "moveControl",
+        target: "player",
+        control: { kind: "routeSpeed", value: 2, tilesPerSecond: 9 },
+      },
+      {
+        op: "moveRoute",
+        target: "player",
+        wait: false,
+        start: "immediate",
+        route: { steps: ["moveRight", "moveRight"], repeat: false, skippable: false },
+      },
+    ])]);
     const attract = new AttractController(p, [], {
       hz: 60,
       attractEnabled: false,
