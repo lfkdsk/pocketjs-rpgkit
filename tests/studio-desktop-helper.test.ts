@@ -296,8 +296,8 @@ describe("studio desktop helper", () => {
       expect(existsSync(join(outputDir, "project.json"))).toBe(true);
       expect(existsSync(join(outputDir, "coverage.json"))).toBe(true);
       expect(imported.coverage.totals).toEqual({
-        Native: 110,
-        Degraded: 12,
+        Native: 112,
+        Degraded: 10,
         Placeholder: 2,
         Dropped: 0,
         total: 124,

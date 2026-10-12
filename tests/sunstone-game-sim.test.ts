@@ -541,8 +541,11 @@ simDescribe("sunstone — render budget", () => {
     // conditional tone/weather projection add a measured 30,611 B, producing
     // 1,150,034 B. The optional formation and RPG Maker battle renderers stay
     // outside Sunstone's graph.
+    // Reducer-owned MZ message layout runs, sparse encounter-rate state and
+    // the conditional tile-event art resolver add a measured 11,151 B,
+    // producing 1,161,185 B. Import and Studio code remain outside this game.
     // Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_152_000);
+    expect(jsBytes).toBeLessThan(1_163_000);
   });
 });
 
