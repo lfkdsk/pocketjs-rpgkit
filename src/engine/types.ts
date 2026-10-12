@@ -465,7 +465,23 @@ export type Command =
       fade?: number;
       handoff?: TransferHandoff;
     }
-  | { op: "moveRoute"; target: RouteTarget; wait?: boolean; route: MoveRoute }
+  /** Turn a character synchronously at the event instruction boundary. The
+   *  new direction is visible to later conditions in the same reference
+   *  tick; unlike a one-step moveRoute it never waits for the movement
+   *  phase. Explicit facing is allowed regardless of facingMode, matching
+   *  scripted source-engine turns. */
+  | { op: "face"; target: RouteTarget; dir: Dir }
+  /** A forced route normally installs after this tick's movement phase and
+   *  consumes its first step on the next reference tick. `start:immediate`
+   *  opts this command into consuming that first route step in the publish
+   *  tick. Omission preserves the original timeline byte-for-byte. */
+  | {
+      op: "moveRoute";
+      target: RouteTarget;
+      wait?: boolean;
+      start?: "immediate";
+      route: MoveRoute;
+    }
   | { op: "moveControl"; target: RouteTarget; control: MoveControl }
   /** Show or hide the configured follower chain without discarding its
    * saved trail. RPG Maker command 216 maps directly to this command. */

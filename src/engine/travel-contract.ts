@@ -118,6 +118,11 @@ export interface TravelSessionRuntime extends TravelCommandRuntime {
     cfg: Readonly<MovementConfig>,
     origin: Readonly<{ x: number; y: number; moving: boolean }>,
   ): void;
+  finishImmediatePlayerRoute(
+    state: SessionState,
+    cfg: Readonly<MovementConfig>,
+    origin: Readonly<{ x: number; y: number; moving: boolean }>,
+  ): void;
   consumeTravelRequests(
     state: SessionState,
     map: Readonly<MapDef>,

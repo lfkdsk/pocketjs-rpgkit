@@ -114,6 +114,7 @@ export function bindTravelSession(
     tryToggleVehicle: (state, map, passage, cfg) =>
       tryToggleVehicle(state, map, passage, cfg, cache),
     finishTravelMovement,
+    finishImmediatePlayerRoute,
     consumeTravelRequests: (state, map, passage, cfg, dimensions) =>
       consumeTravelRequests(state, map, passage, cfg, dimensions, cache),
   };
@@ -393,6 +394,31 @@ export function finishTravelMovement(
   state.travel = current;
   for (const waiter of drained.waiters) state.interp = continueExternal(state.interp, waiter);
   state.sw = state.interp.sw;
+}
+
+/** Reconcile only the travel state touched by a route that starts after the
+ * ordinary movement phase. Followers must receive the new leader breadcrumb
+ * and a ridden vehicle must share the player's new interpolation, but neither
+ * reducer may advance a second reference tick. */
+export function finishImmediatePlayerRoute(
+  state: SessionState,
+  cfg: Readonly<MovementConfig>,
+  origin: Readonly<{ x: number; y: number; moving: boolean }>,
+): void {
+  let current = state.travel;
+  if (current === undefined) return;
+  if (!origin.moving && state.move.moving && current.followers) {
+    current = travel.startFollowersForLeaderStep(
+      current,
+      state.move,
+      cfg,
+      { x: origin.x, y: origin.y },
+    );
+  }
+  if (current.vehicles?.riding) {
+    current = travel.syncRiddenVehicle(current, state.mapId, state.move);
+  }
+  state.travel = current;
 }
 
 export function consumeTravelRequests(

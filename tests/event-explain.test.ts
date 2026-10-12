@@ -298,6 +298,7 @@ describe("event explanation", () => {
       selfSwitch: { command: { op: "selfSwitch", key: "A", value: true }, expected: "static" },
       if: { command: { op: "if", if: { kind: "switch", id: "s" }, then: [] }, expected: "none" },
       transfer: { command: { op: "transfer", map: "m", x: 0, y: 0 }, expected: "static" },
+      face: { command: { op: "face", target: "player", dir: "up" }, expected: "none" },
       moveRoute: { command: { op: "moveRoute", target: "player", route: { steps: [], repeat: false, skippable: false } }, expected: "none" },
       moveControl: { command: { op: "moveControl", target: "player", control: { kind: "stop" } }, expected: "none" },
       followers: { command: { op: "followers", visible: true }, expected: "none" },

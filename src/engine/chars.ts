@@ -575,6 +575,18 @@ export function installRoute(
   return { state: s, displacedWaiter };
 }
 
+/** Apply a scripted facing change at the event instruction boundary. This
+ *  deliberately bypasses movement-facing locks: an explicit source action
+ *  is not a movement-derived turn. The copy-on-write path preserves the
+ *  previous immutable SessionState for rewind/keyframe users. */
+export function faceCharInPlace(s: CharsState, eventId: string, dir: Dir): boolean {
+  if (!s.chars[eventId]) return false;
+  const ch = ownChar(s, eventId);
+  ch.facing = DIR4[dir];
+  ch.stepDir = ch.facing;
+  return true;
+}
+
 /** The per-tick movement config for a route actor: its resolved settings,
  *  except while the route carries a latched routeSpeed grade, which
  *  replaces the speed component for that route only (running still adds
@@ -1331,6 +1343,29 @@ function stepRoute(
   commitStep(ch, dir, cfg, settings, route.tilesPerSecond);
   route.pc++;
   if (route.pc >= route.steps.length && route.repeat) route.pc = 0;
+}
+
+/** Consume the first boundary command of one freshly installed forced route
+ *  without advancing any other character. Used only by the additive
+ *  `moveRoute.start:"immediate"` path after the ordinary movement phase has
+ *  already run for this reference tick. */
+export function startForcedRouteInPlace(
+  s: CharsState,
+  eventId: string,
+  table: PassageTable,
+  player: PlayerPlace,
+  cfg: MovementConfig,
+  settings: ResolvedMoveSettings,
+  options: CharStepOptions,
+): string[] {
+  const current = s.chars[eventId];
+  if (!current?.route || current.route.patrol || current.moving) return [];
+  const ch = ownChar(s, eventId);
+  const others = new Map(Object.entries(s.chars));
+  others.set(eventId, ch);
+  const finishedWaiters: string[] = [];
+  stepRoute(s, ch, table, player, others, cfg, settings, options, finishedWaiters);
+  return finishedWaiters;
 }
 
 function randomStep(

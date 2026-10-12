@@ -451,6 +451,56 @@ export function stepFollowers(
   };
 }
 
+/** Record a player step that began after this reference tick's ordinary
+ * follower fold (for example an additive immediate scripted route), then
+ * start only followers that are still at rest. Followers already
+ * interpolating were advanced by stepFollowers earlier in the tick and must
+ * not receive a second phase increment. */
+export function startFollowersForLeaderStep(
+  state: Readonly<TravelState> | undefined,
+  leader: Readonly<MovementState>,
+  cfg: Readonly<MovementConfig>,
+  leaderStepOrigin: Readonly<FollowerTrailPoint>,
+): TravelState | undefined {
+  const followers = state?.followers;
+  if (!followers || followers.members.length === 0) return state as TravelState | undefined;
+
+  const members = followers.members.map(cloneFollower);
+  if (!followers.gathering) {
+    let predecessor = leaderStepOrigin;
+    for (const member of members) {
+      const current = { x: member.move.tx, y: member.move.ty };
+      pushTrail(member, predecessor);
+      predecessor = current;
+    }
+  }
+
+  let predecessor: Readonly<MovementState> = leader;
+  for (const member of members) {
+    if (followers.gathering) member.trail.length = 0;
+    while (!member.move.moving && member.trail[0] && sameCell(member.move, member.trail[0]!)) {
+      member.trail.shift();
+    }
+    if (!member.move.moving) {
+      const target = followers.gathering
+        ? { x: predecessor.tx, y: predecessor.ty }
+        : member.trail[0];
+      member.move = advanceFollower(member.move, target, cfg).move;
+    }
+    predecessor = member.move;
+  }
+
+  return {
+    ...state,
+    followers: {
+      visible: followers.visible,
+      gathering: followers.gathering && !gathered(members, leader),
+      gatherWaiters: [...followers.gatherWaiters],
+      members,
+    },
+  };
+}
+
 /** Ordinary transfer semantics: the whole party arrives on the player, trail
  * history is reset, and a ridden vehicle follows.  Parked vehicles stay put. */
 export function syncTravelAfterTransfer(

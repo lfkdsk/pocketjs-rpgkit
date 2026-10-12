@@ -222,6 +222,7 @@ export function classifyCommand(command: Command): CommandWriteClass {
     case "scrollText":
     case "choices":
     case "if":
+    case "face":
     case "moveRoute":
     case "moveControl":
     case "followers":

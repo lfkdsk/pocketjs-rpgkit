@@ -179,6 +179,7 @@ export type EditableCommand = Extract<Command, { op: EditableCommandOp }>;
 /** Imported/runtime-owned commands are displayed losslessly but intentionally
  * kept read-only until the dedicated editor widgets land. */
 export const READ_ONLY_COMMAND_OPS = [
+  "face",
   "screenTone",
   "weather",
   "formationAccess",
@@ -575,6 +576,8 @@ export function commandSummary(command: unknown, opts: { full?: boolean } = {}):
       return "Unlock input";
     case "place":
       return `Place ${targetSummary(command.target)} at (${numberText(command.x)}, ${numberText(command.y)})`;
+    case "face":
+      return `Face ${targetSummary(command.target)} ${text(command.dir)}`;
     case "moveRoute": {
       const route = isRecord(command.route) ? command.route : {};
       const count = Array.isArray(route.steps) ? route.steps.length : 0;

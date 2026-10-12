@@ -210,6 +210,7 @@ function collectWrites(
         if (command.target === "player") out.playerAppearance = true;
         else writeActor(out, command.target);
         break;
+      case "face":
       case "moveRoute":
       case "moveControl":
       case "place":

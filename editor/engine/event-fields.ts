@@ -464,6 +464,7 @@ export function commandFields(
   resources: EventEditorResources = EMPTY_EVENT_EDITOR_RESOURCES,
 ): EditableField[] {
   switch (command.op) {
+    case "face":
     case "screenTone":
     case "weather":
     case "formationAccess":
@@ -548,6 +549,7 @@ export function commandFields(
     case "moveRoute":
       return [
         field("target", "TARGET", target(command.target)), field("wait", "WAIT", command.wait ?? false, "boolean", BOOLS),
+        field("start", "START", optionValue(command.start), "enum", [OMIT, "immediate"]),
         field("steps", "STEPS", routeSteps(command.route)),
         field("repeat", "REPEAT", command.route.repeat, "boolean", BOOLS),
         field("skippable", "SKIP", command.route.skippable, "boolean", BOOLS),
@@ -1222,6 +1224,12 @@ function editCommandFieldUnchecked(command: Command, key: string, raw: string): 
     case "moveRoute": {
       if (key === "target") { const value = parseTarget(raw, true); return value.ok ? good({ ...command, target: value.value }) : value; }
       if (key === "wait") { const value = bool(raw); return value === null ? bad("wait must be true or false") : good({ ...command, wait: value }); }
+      if (key === "start") {
+        if (raw === OMIT || raw.trim() === "") return good(setOptional(command, "start", undefined));
+        return raw === "immediate"
+          ? good({ ...command, start: "immediate" })
+          : bad(`start must be immediate or ${OMIT}`);
+      }
       if (key === "steps") { const value = parseSteps(raw, false); return value.ok ? good({ ...command, route: { ...command.route, steps: value.value } }) : value; }
       if (key === "repeat" || key === "skippable") { const value = bool(raw); return value === null ? bad(`${key} must be true or false`) : good({ ...command, route: { ...command.route, [key]: value } }); }
       break;

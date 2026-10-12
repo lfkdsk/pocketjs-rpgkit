@@ -94,6 +94,7 @@ import {
   type TextTokenResolver,
   type WorldOptions,
   type World,
+  captureImmediateTouchTriggersInPlace,
   continueScene,
 } from "./interpreter.ts";
 import type { RpgMakerTextRuntime } from "./rpgmaker-text-contract.ts";
@@ -122,12 +123,14 @@ import {
   charsPageRevision,
   charsPositionRevision,
   createChars,
+  faceCharInPlace,
   installRoute,
   latchRouteSpeed,
   placeChar,
   resetCharThinkInPlace,
   routeSpeedConfig,
   shareChars,
+  startForcedRouteInPlace,
   stopCharRoute,
   stepCharsInPlace,
   stepCharsInPlaceLegacy,
@@ -3546,6 +3549,7 @@ function stepReferenceTick(
   //    it and never the ones a fiber queued after it.
   const routes = s.interp.pendingMoveRoutes;
   const placements = s.interp.pendingPlacements;
+  const contactsBeforeRequests = contacts?.length ?? 0;
   if (routes.length > 0 || placements.length > 0) {
     let next = 0;
     for (let i = 0; i <= routes.length; i++) {
@@ -3556,8 +3560,34 @@ function stepReferenceTick(
       }
       if (i === routes.length) break;
       syncRequestedPage(sess, s, keyed, syncFacing, routes[i]!, playerMovingAtTickStart);
-      applyMoveRequest(sess, s, routes[i]!);
+      applyMoveRequest(sess, s, routes[i]!, contacts);
     }
+  }
+  const postFacing = s.move.facing;
+  const postContacts = contacts && contacts.length > contactsBeforeRequests
+    ? contacts.slice(contactsBeforeRequests)
+    : undefined;
+  if (postFacing !== interpInput.facing || postContacts !== undefined) {
+    const postCell = { x: s.move.tx, y: s.move.ty };
+    captureImmediateTouchTriggersInPlace(
+      world,
+      s.interp,
+      {
+        ...interpInput,
+        confirmEdge: false,
+        cancelEdge: false,
+        upEdge: false,
+        downEdge: false,
+        playerCell: postCell,
+        prevCell: postCell,
+        facing: postFacing,
+        prevFacing: interpInput.facing,
+        eventCells: displacedCells(map, s.chars, sess.immutableState),
+        liveChars: s.chars.chars,
+        ...(postContacts === undefined ? { touchContacts: undefined } : { touchContacts: postContacts }),
+      },
+      s.ext,
+    );
   }
   if (!s.interp.error && s.interp.pendingTravel !== undefined) {
     sess.travelRuntime!.consumeTravelRequests(
@@ -3667,9 +3697,24 @@ function syncRequestedPage(
   }
 }
 
-function applyMoveRequest(sess: Session, s: SessionState, req: PendingMoveOperation): void {
+function applyMoveRequest(
+  sess: Session,
+  s: SessionState,
+  req: PendingMoveOperation,
+  contacts?: string[],
+): void {
   if ("control" in req) {
     applyTargetMoveControl(s, req.target, req.control);
+    return;
+  }
+  if ("face" in req) {
+    if (req.target === "player") {
+      const facing = DIR_INDEX[req.face];
+      s.move.facing = facing;
+      s.move.stepDir = facing;
+    } else {
+      faceCharInPlace(s.chars, req.eventId, req.face);
+    }
     return;
   }
   if (req.target === "player") {
@@ -3702,6 +3747,7 @@ function applyMoveRequest(sess: Session, s: SessionState, req: PendingMoveOperat
       delete s.interp.moveControls.player.routeSpeed;
       delete s.interp.moveControls.player.routeTilesPerSecond;
     }
+    if (req.start === "immediate") startImmediateRoute(sess, s, req, contacts);
     return;
   }
   // A route to an event with no live character (no active page, or it
@@ -3734,6 +3780,88 @@ function applyMoveRequest(sess: Session, s: SessionState, req: PendingMoveOperat
   if (installed.displacedWaiter) {
     s.interp = continueExternal(s.interp, installed.displacedWaiter);
   }
+  if (req.start === "immediate") startImmediateRoute(sess, s, req, contacts);
+}
+
+/** Consume one freshly installed route command after this tick's ordinary
+ * movement phase. Only commands carrying the additive immediate marker call
+ * this path; legacy routes retain the original next-tick start. */
+function startImmediateRoute(
+  sess: Session,
+  s: SessionState,
+  req: Extract<PendingMoveOperation, { route: unknown }>,
+  contacts?: string[],
+): void {
+  const map = sess.maps.get(s.mapId)!;
+  const eventSettings = moveSettingsFromSyncedChars(
+    map,
+    s.chars,
+    s.interp.moveControls?.events,
+  );
+  if (req.target === "player") {
+    const override = s.interp.moveControls?.player;
+    const authoredSettings = override
+      ? resolveMoveSettings(null, override)
+      : DEFAULT_MOVE_SETTINGS as ResolvedMoveSettings;
+    const terrainPassage = sessionPassageTable(sess, s);
+    const passage = s.travel === undefined
+      ? terrainPassage
+      : sess.travelRuntime!.passageWithParkedVehicles(terrainPassage, s.travel, s.mapId);
+    const settings = s.travel === undefined
+      ? authoredSettings
+      : sess.travelRuntime!.travelMovementContext(
+          s,
+          terrainPassage,
+          passage,
+          map,
+          authoredSettings,
+        ).settings;
+    const wasMoving = s.move.moving;
+    const originX = s.move.tx;
+    const originY = s.move.ty;
+    stepPlayerRoute(s, sess, settings, eventSettings, contacts);
+    if (s.travel !== undefined) {
+      sess.travelRuntime!.finishImmediatePlayerRoute(s, sess.cfg, {
+        x: originX,
+        y: originY,
+        moving: wasMoving,
+      });
+    }
+    return;
+  }
+
+  const settings = eventSettings[req.eventId] ?? DEFAULT_MOVE_SETTINGS as ResolvedMoveSettings;
+  const terrainPassage = sessionPassageTable(sess, s);
+  const passage = s.travel === undefined
+    ? terrainPassage
+    : sess.travelRuntime!.passageWithParkedVehicles(terrainPassage, s.travel, s.mapId);
+  const playerPlace = {
+    tx: s.move.tx,
+    ty: s.move.ty,
+    facing: s.move.facing,
+    destX: s.move.moving ? s.move.tx + DX[s.move.stepDir] : s.move.tx,
+    destY: s.move.moving ? s.move.ty + DY[s.move.stepDir] : s.move.ty,
+    through: s.interp.moveControls?.player.through === true,
+    contacts,
+  };
+  const waiters = startForcedRouteInPlace(
+    s.chars,
+    req.eventId,
+    passage,
+    playerPlace,
+    sess.cfg,
+    settings,
+    {
+      settings: eventSettings,
+      applyControl: (eventId, control) => {
+        const target = eventMoveOverride(s, eventId);
+        if (target) applyMoveControl(target, control);
+      },
+      runtimeRng: s.sw,
+      modalOpen: s.interp.modal !== null,
+    },
+  );
+  for (const waiter of waiters) s.interp = continueExternal(s.interp, waiter);
 }
 
 /** A `place` request: relocate the live character now; the durable

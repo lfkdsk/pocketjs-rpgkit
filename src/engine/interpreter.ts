@@ -816,7 +816,14 @@ export type Instr =
        *  branch still performs it (see the "break" run-loop case). */
       completion?: true;
     }
-  | { op: "moveRoute"; target: RouteTarget; wait: boolean; route: MoveRoute }
+  | { op: "face"; target: RouteTarget; dir: Dir }
+  | {
+      op: "moveRoute";
+      target: RouteTarget;
+      wait: boolean;
+      route: MoveRoute;
+      start?: "immediate";
+    }
   | { op: "moveControl"; target: RouteTarget; control: MoveControl }
   | { op: "followers"; visible: boolean }
   | { op: "gatherFollowers" }
@@ -1173,8 +1180,17 @@ function compileScoped(
             ...(c.handoff ? { handoff: { ...c.handoff } } : {}),
           });
           break;
+        case "face":
+          emit({ op: "face", target: c.target, dir: c.dir });
+          break;
         case "moveRoute":
-          emit({ op: "moveRoute", target: c.target, wait: c.wait ?? true, route: c.route });
+          emit({
+            op: "moveRoute",
+            target: c.target,
+            wait: c.wait ?? true,
+            route: c.route,
+            ...(c.start ? { start: c.start } : {}),
+          });
           break;
         case "moveControl":
           emit({ op: "moveControl", target: c.target, control: c.control });
@@ -1776,6 +1792,13 @@ export interface InterpInput {
  *  the caller's input or to InterpState, so the public fold stays pure. */
 interface LocalCells {
   map?: Map<string, Cell>;
+  /** A synchronous player `face` is visible to later conditions in this
+   *  interpreter fold before the Session drains the published request. */
+  playerFacing?: Facing;
+}
+
+function localFacing(input: Readonly<InterpInput>, local: Readonly<LocalCells> | undefined): Facing {
+  return local?.playerFacing ?? input.facing;
 }
 
 export interface TextModal {
@@ -2132,10 +2155,25 @@ export interface PendingMoveRoute {
    *  when the route lands; false: fire-and-forget, the fiber already
    *  advanced past the command. */
   wait: boolean;
+  /** Consume the first route command in this publish tick instead of on the
+   *  next reference tick. Absent is the legacy delayed start. */
+  start?: "immediate";
   /** Map-event targets only: the target's active page when the request
    *  was published, present only when it differs from the page of the
    *  target's live character (InterpInput.liveChars). The session uses it
    *  to apply a request to a page the same fold just switched on. */
+  page?: number;
+}
+
+/** Synchronous scripted turn. The interpreter also carries a step-local
+ * player-facing override so later conditions in this fold read `dir`; the
+ * Session applies this request to the rendered/saved mover or character in
+ * publication order after the fold. */
+export interface PendingFace {
+  fiber: string;
+  target: "player" | { event: string };
+  eventId: string;
+  face: Dir;
   page?: number;
 }
 
@@ -2151,7 +2189,7 @@ export interface PendingMoveControl {
   page?: number;
 }
 
-export type PendingMoveOperation = PendingMoveRoute | PendingMoveControl;
+export type PendingMoveOperation = PendingMoveRoute | PendingMoveControl | PendingFace;
 
 /** Travel commands are published by the interpreter and consumed by the
  * Session after the fold. The optional queue is absent until content uses
@@ -3408,7 +3446,9 @@ function copyInterp(
     pendingTransfer: s0.pendingTransfer ? { ...s0.pendingTransfer } : null,
     pendingMoveRoutes: s0.pendingMoveRoutes.map((r) => "control" in r
       ? { ...r, control: deepClone(r.control) as MoveControl }
-      : { ...r, route: cloneMoveRoute(r.route) }),
+      : "face" in r
+        ? { ...r }
+        : { ...r, route: cloneMoveRoute(r.route) }),
     ...(s0.pendingTravel ? {
       pendingTravel: s0.pendingTravel.map((request) =>
         request.op === "setVehicleBgm" && request.bgm !== null
@@ -3868,6 +3908,7 @@ function scanTriggers(
   extension: ExtensionScope,
   selected?: PageSelections,
   local?: LocalCells,
+  touchOnly = false,
 ): Record<string, PendingParallel> {
   let pending: Record<string, PendingParallel> | undefined;
   let regionLeaves: { key: string; pageIndex: number }[] | undefined;
@@ -3938,6 +3979,11 @@ function scanTriggers(
     // a victory event's spent parallel page are inert markers, not
     // per-frame start/finish spin.
     if (page.commands.length === 0) continue;
+    // Session may apply an additive immediate route/turn after the ordinary
+    // interpreter fold. Its restricted follow-up scan captures only the
+    // new touch edge: never restart autorun/parallel, reuse confirm, or
+    // observe region crossings a second time in one reference tick.
+    if (touchOnly && page.trigger !== "playerTouch" && page.trigger !== "eventTouch") continue;
     // Short-circuit on the compiled world flag first: ordinary maps retain
     // the old trigger scan without two string comparisons per event.
     if (w.hasRegionTriggers === true &&
@@ -4025,7 +4071,7 @@ function scanTriggers(
       }
     }
   }
-  if (regionLeaves || regionEnters) {
+  if (!touchOnly && (regionLeaves || regionEnters)) {
     const queue = s.pendingRegionTriggers ?? (s.pendingRegionTriggers = []);
     if (regionLeaves) queue.push(...regionLeaves);
     if (regionEnters) queue.push(...regionEnters);
@@ -4033,7 +4079,7 @@ function scanTriggers(
   // A crossing can match several region events (notably leave A plus enter
   // B). Keep the rest queued while one blocking fiber runs, then validate
   // the active page again before starting each successor.
-  while (s.main === null && (s.pendingRegionTriggers?.length ?? 0) > 0) {
+  while (!touchOnly && s.main === null && (s.pendingRegionTriggers?.length ?? 0) > 0) {
     const request = s.pendingRegionTriggers!.shift()!;
     const eventId = request.key.startsWith(`${w.map.id}/`)
       ? request.key.slice(w.map.id.length + 1)
@@ -4054,8 +4100,26 @@ function scanTriggers(
     w.onFiberStart?.(request.key, index, false);
     s.main = startFiber(s, request.key, index, false, w.pagePrograms.get(request.key)![index]!);
   }
-  if (s.pendingRegionTriggers?.length === 0) delete s.pendingRegionTriggers;
+  if (!touchOnly && s.pendingRegionTriggers?.length === 0) delete s.pendingRegionTriggers;
   return pending ?? NO_PENDING_PARALLELS;
+}
+
+/** Capture a playerTouch/eventTouch edge created after the ordinary trigger
+ * scan by a same-tick scripted turn or first route step. The new blocking
+ * fiber is intentionally left at its first instruction: the ordinary fold
+ * already spent this reference tick's instruction budget and the Session
+ * must not recursively drain a second generation of external requests.
+ * Returns true only when this scan started a blocking fiber. */
+export function captureImmediateTouchTriggersInPlace(
+  w: World,
+  s: InterpState,
+  input: InterpInput,
+  ext: JsonValue,
+): boolean {
+  if (s.error) return false;
+  const before = s.main;
+  scanTriggers(s, w, input, { runtime: w.extensions, ext }, undefined, undefined, true);
+  return before === null && s.main !== null;
 }
 
 // A completed, effect-free parallel entry prefix can sleep until one of its
@@ -5945,7 +6009,7 @@ function runFiber(
           ins.cond,
           s.sw,
           f.key,
-          input.facing,
+          localFacing(input, local),
           extension,
           liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving, input.vehicle),
         ) ? top.pc + 1 : ins.onFalse;
@@ -6573,6 +6637,24 @@ function runFiber(
         };
         return;
       }
+      case "face": {
+        const ownEventId = f.key.split("/").pop()!;
+        const target: "player" | { event: string } =
+          ins.target === "player" ? "player"
+          : ins.target === "this" ? { event: ownEventId }
+          : ins.target;
+        const eventId = target === "player" ? ownEventId : target.event;
+        if (target === "player" && local) local.playerFacing = FACING_OF_DIR[ins.dir];
+        s.pendingMoveRoutes.push({
+          fiber: f.key,
+          target,
+          eventId,
+          face: ins.dir,
+          ...(target === "player" ? undefined : publishedPage(s, w, input, extension, eventId)),
+        });
+        top.pc++;
+        break;
+      }
       case "moveRoute": {
         // Resolve "this" to the running fiber's own event id at publish
         // time; the session then only distinguishes the player from a map
@@ -6592,6 +6674,7 @@ function runFiber(
             eventId,
             route: ins.route,
             wait: false,
+            ...(ins.start ? { start: ins.start } : {}),
             ...page,
           });
           top.pc++;
@@ -6604,6 +6687,7 @@ function runFiber(
           eventId,
           route: ins.route,
           wait: true,
+          ...(ins.start ? { start: ins.start } : {}),
           ...page,
         });
         return;
