@@ -187,8 +187,11 @@ simDescribe("the preview draws a loaded document's Chinese text", () => {
 
     // Legible glyphs, not boxes: every box is the same hollow outline, so a
     // row of boxes repeats one pattern, while a row of ideographs has a
-    // different pattern in nearly every 12 px cell. Cells are cut from the
-    // first text row of the dialog box (light ink on the dark panel).
+    // different pattern in nearly every 12 px cell. A wider baked atlas may
+    // phase the same tofu outline across five of those fixed sampling cells;
+    // real ideographs still occupy at least nine distinct cells. Cells are
+    // cut from the first text row of the dialog box (light ink on the dark
+    // panel).
     const distinctCells = (frame: Uint8Array) => {
       const lit = (x: number, y: number) => {
         const i = (y * 480 + x) * 4;
@@ -206,7 +209,7 @@ simDescribe("the preview draws a loaded document's Chinese text", () => {
     };
     expect(distinctCells(a.frame)).toBeGreaterThanOrEqual(9);
     expect(distinctCells(b.frame)).toBeGreaterThanOrEqual(9);
-    expect(distinctCells(tofu.frame)).toBeLessThanOrEqual(4);
+    expect(distinctCells(tofu.frame)).toBeLessThanOrEqual(5);
 
     // The same document draws the same picture whatever was loaded before.
     const again = talk(LINE_A, "chinese-a-again");
