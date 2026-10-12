@@ -271,9 +271,13 @@ const maybeTest = preflight.ok ? test : test.skip;
 // tone/weather projection add 11,390 B to Meadow, 30,611 B to Sunstone and
 // 25,862 B to the WAV fixture. The differing save/UI paths were already
 // reachable in each graph; the optional formation overlay remains isolated.
-const EXPECTED_MEADOW_BYTES = 714_037;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_150_034;
-const EXPECTED_WAV_FIXTURE_BYTES = 915_722;
+// MZ message layout runs, sparse walking-encounter state and the conditional
+// tile-event art resolver add a measured 8,892 B to Meadow, 11,151 B to
+// Sunstone and 9,671 B to the WAV fixture. Importer and Studio code remain
+// outside these game graphs, and the decoder needles below retain isolation.
+const EXPECTED_MEADOW_BYTES = 722_929;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_161_185;
+const EXPECTED_WAV_FIXTURE_BYTES = 925_393;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

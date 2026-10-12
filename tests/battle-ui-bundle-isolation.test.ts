@@ -246,8 +246,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Built-in RPG Maker screen tone/weather presentation plus sparse system and
 // tileset state adds 30,611 B of shared GameView/engine code. The optional
 // RPG Maker battle and formation renderers remain outside this graph.
+// MZ layout runs, sparse encounter-rate state and the conditional tile-event
+// art resolver add 11,151 B more shared runtime code. The importer, Studio
+// flow and optional battle UI remain outside the graph, as checked below.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_150_034;
+const EXPECTED_BYTES = 1_161_185;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

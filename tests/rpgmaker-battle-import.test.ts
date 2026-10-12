@@ -33,7 +33,7 @@ describe("RPG Maker battle database import", () => {
       importRmProject(loadRmProject(STAGE)),
     ]);
     expect(hollow.cov.totals("command")).toEqual({
-      Native: 110, Degraded: 12, Placeholder: 2, Dropped: 0, total: 124,
+      Native: 112, Degraded: 10, Placeholder: 2, Dropped: 0, total: 124,
     });
     expect(stage.cov.totals("command")).toEqual({
       Native: 51, Degraded: 9, Placeholder: 1, Dropped: 0, total: 61,
