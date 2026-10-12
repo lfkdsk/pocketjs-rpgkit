@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
+import { AttractController } from "../src/engine/attract.ts";
 import { mapForTileset } from "../src/engine/tiles.ts";
 import { createSwitchState } from "../src/engine/interpreter.ts";
 import { isStandable } from "../src/engine/passability.ts";
@@ -130,6 +132,38 @@ describe("KRM5 screen tone", () => {
       b: target.b * 29 / 60,
       gray: target.gray * 29 / 60,
     });
+  });
+
+  test("preserves an in-flight tone through save/load and L-trigger rewind", () => {
+    const target = { r: -120, g: 72, b: 36, gray: 180 };
+    const source = project([
+      { op: "screenTone", tone: target, duration: 10, wait: true },
+      { op: "wait", seconds: 20 },
+    ]);
+    const session = createSession(source, 30);
+    const mid = run(session, startSession(source, session), 75);
+    expect(mid.interp.screen?.tone?.left).toBeGreaterThan(0);
+
+    const saved = saveSession(session, mid, 0);
+    if (!saved.ok) throw new Error(saved.error.message);
+    expect(saved.ok).toBe(true);
+    const restored = restoreSessionEnvelope(createSession(source, 30), encodeEnvelope(saved.snapshot));
+    const loaded = loadSession(createSession(source, 30), encodeSaveCode(saved.snapshot));
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) throw new Error(loaded.error.message);
+    expect(restored.interp.screen?.tone).toEqual(mid.interp.screen?.tone);
+    expect(loaded.state.interp.screen?.tone).toEqual(mid.interp.screen?.tone);
+    expect(run(createSession(source, 30), restored, 10).interp.screen?.tone)
+      .toEqual(run(session, mid, 10).interp.screen?.tone);
+
+    const options = { hz: 60, idleFrames: 60_000, rewindSeconds: 3, attractEnabled: false } as const;
+    const rewound = new AttractController(source, [], options);
+    for (let frame = 0; frame < 240; frame++) rewound.step(0);
+    rewound.step(BTN.LTRIGGER);
+    const direct = new AttractController(source, [], options);
+    for (let frame = 0; frame < 60; frame++) direct.step(0);
+    expect(rewound.state).toEqual(direct.state);
+    expect(rewound.state.interp.screen?.tone?.left).toBeGreaterThan(500);
   });
 });
 

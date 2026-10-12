@@ -109,6 +109,27 @@ function lowHpExtension(): ExtensionOptions["initial"] {
 }
 
 describe("imported RPG Maker Battle Processing end to end", () => {
+  test("a map formation swap determines the imported battle slot order", () => {
+    const db = structuredClone(imported.battle);
+    db.party = [1, 2];
+    const project = battleProject();
+    project.system!.rpgMakerText!.party = [1, 2];
+    const commands = project.maps.find((map) => map.id === "map003")!
+      .events!.find((event) => event.id === "ev002")!.pages[0]!.commands;
+    const battleAt = commands.findIndex((command) => command.op === "battle");
+    expect(battleAt).toBeGreaterThanOrEqual(0);
+    commands.splice(battleAt, 0,
+      { op: "formationAccess", enabled: true },
+      { op: "formationSwap", first: 0, second: 1 },
+    );
+
+    const session = createSession(project, 60, options(db));
+    const entered = enterBattle(session, startSession(project, session));
+    expect(entered.sw.partyOrder).toEqual([2, 1]);
+    expect(rpgMakerBattleState(entered.scene!.state).actors.map((actor) => actor.databaseId))
+      .toEqual([2, 1]);
+  });
+
   test("map actor changes reach the imported battle through inventory and saved actor state", () => {
     const db = structuredClone(imported.battle);
     const project = battleProject();

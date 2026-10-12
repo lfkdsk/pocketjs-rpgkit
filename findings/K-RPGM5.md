@@ -36,7 +36,7 @@ the party leader does not change the project-level walking sprite.
 | Tint Screen (223) | PASS / Degraded presentation | exact signed reducer state, reference-clock tween, map/battle projection, save/load/rewind/cadence tests |
 | Set Weather Effect (236) | PASS | rain/storm/snow, stock particle count and motion, deterministic seed/clock, waits and persistence |
 | Change Tileset (282) | PASS / Degraded tile-event art | art and all collision/terrain planes switch atomically and persist |
-| Window Color (138) | PASS / Degraded projection | exact four-channel state; RGB changes message, choice, menu and battle chrome |
+| Window Color (138) | PASS / Degraded projection | stock three-channel RGB imports with neutral gray; RGB changes message, choice, menu and battle chrome |
 | Formation Access (137) | PASS / Degraded player art | access gate and two-selection swap feed followers and battle order |
 | Fixtures, coverage and compatibility | PASS | both real imports, additive schema identity and genuine predecessor shell/save fixtures |
 | Visual review and mutations | PASS | ten two-tier goldens, two 3x review sheets, semantic pixels and all required mutants red |
@@ -70,9 +70,10 @@ At the pinned MV revision:
   (`Game_Battler.js:328-340`; `BattleManager.js:461-467`). Transform calls
   `makeActions` when the enemy already has actions
   (`Game_Enemy.js:180-190`).
-- An explicit live-target action calls `smoothTarget`, which falls back to
-  the first living member when the indexed member is unavailable
-  (`Game_Action.js:301-317`; `Game_Unit.js:83-89`). The earlier request that
+- An explicit live-target action's `targetsForOpponents` path calls
+  `smoothTarget`, which falls back to the first living member when the indexed
+  member is unavailable (`Game_Action.js:301-317`; the `smoothTarget`
+  implementation is `Game_Unit.js:83-89`). The earlier request that
   an explicit dead/hidden target must whiff was therefore disproved and was
   not reintroduced.
 - `Game_Player.updateEncounterCount` decrements only when `canEncounter` is
@@ -153,7 +154,7 @@ array enters the save and no per-frame structure is created or destroyed.
 
 The shapes and motion follow the pinned stock rules: rain and storm move
 down-left with distinct streak geometry and velocity; snow drifts more slowly
-with a sinusoidal horizontal component; each type fades and respawns through
+on a linear down-left path; each type fades and respawns through
 the stock ranges. The same layer remains active when battle replaces the map.
 Tests compare 60/30/20 Hz, save/load, rewind and battle entry, and the active
 QuickJS benchmark confirms a stable 90-node population.
@@ -175,11 +176,13 @@ authored imported tileset image, which is the documented Degraded boundary.
 
 ## Window colour and formation
 
-Change Window Color stores all four authored tone channels. Presentation uses
-RGB only, matching `Window_Base.updateTone`, and derives message, choice,
-menu, formation and battle-window palettes from the same themed chrome. Gray
-is still serialized for lossless import/save round-tripping. This is a palette
-projection, not a per-pixel windowskin filter, and is documented Degraded.
+Change Window Color imports stock MV/MZ's three authored RGB channels and
+stores a neutral gray channel; a fourth gray value on a hand-authored input is
+retained for compatibility. Presentation uses RGB only, matching
+`Window_Base.updateTone`, and derives message, choice, menu, formation and
+battle-window palettes from the same themed chrome. Gray remains serialized
+for lossless save round-tripping. This is a palette projection, not a
+per-pixel windowskin filter, and is documented Degraded.
 
 The formation overlay is opt-in: projects that do not register it import no
 formation UI module. Command 137 controls access. When enabled, the overlay

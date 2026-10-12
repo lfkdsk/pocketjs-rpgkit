@@ -2225,9 +2225,10 @@ function advanceGameScene(
  * completion, leaving the fibers themselves byte-stable while frozen. */
 function tickFrozenWorld(s: SessionState): void {
   advanceInterpAudioInPlace(s.interp);
-  // RPG Maker's Game_Screen keeps advancing while a battle/menu scene owns
-  // the foreground. Map physics and page programs stay frozen, but global
-  // tone/weather transitions remain visible and finish on schedule.
+  // The kit deliberately keeps global tone/weather transitions advancing
+  // while a battle/menu scene owns the foreground so the same presentation
+  // can span map and battle. Stock RPG Maker pauses the map Game_Screen here;
+  // map physics and page programs remain frozen in both models.
   if (s.interp.screen) s.interp.screen = advanceScreenEffects(s.interp.screen);
   s.interp.frame++;
   if (s.scene) s.scene.pausedTicks++;
