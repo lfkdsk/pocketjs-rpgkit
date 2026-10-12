@@ -3549,8 +3549,9 @@ function stepReferenceTick(
   //    it and never the ones a fiber queued after it.
   const routes = s.interp.pendingMoveRoutes;
   const placements = s.interp.pendingPlacements;
-  const contactsBeforeRequests = contacts?.length ?? 0;
   if (routes.length > 0 || placements.length > 0) {
+    const contactsBeforeRequests = contacts?.length ?? 0;
+    let captureAfterRequests = false;
     let next = 0;
     for (let i = 0; i <= routes.length; i++) {
       while (next < placements.length && (i === routes.length || (placements[next]!.afterRoutes ?? 0) <= i)) {
@@ -3559,35 +3560,44 @@ function stepReferenceTick(
         applyPlacement(sess, s, map, p);
       }
       if (i === routes.length) break;
-      syncRequestedPage(sess, s, keyed, syncFacing, routes[i]!, playerMovingAtTickStart);
-      applyMoveRequest(sess, s, routes[i]!, contacts);
+      const request = routes[i]!;
+      syncRequestedPage(sess, s, keyed, syncFacing, request, playerMovingAtTickStart);
+      applyMoveRequest(sess, s, request, contacts);
+      captureAfterRequests ||=
+        ("face" in request && request.target === "player") ||
+        ("route" in request && request.start === "immediate");
     }
-  }
-  const postFacing = s.move.facing;
-  const postContacts = contacts && contacts.length > contactsBeforeRequests
-    ? contacts.slice(contactsBeforeRequests)
-    : undefined;
-  if (postFacing !== interpInput.facing || postContacts !== undefined) {
-    const postCell = { x: s.move.tx, y: s.move.ty };
-    captureImmediateTouchTriggersInPlace(
-      world,
-      s.interp,
-      {
-        ...interpInput,
-        confirmEdge: false,
-        cancelEdge: false,
-        upEdge: false,
-        downEdge: false,
-        playerCell: postCell,
-        prevCell: postCell,
-        facing: postFacing,
-        prevFacing: interpInput.facing,
-        eventCells: displacedCells(map, s.chars, sess.immutableState),
-        liveChars: s.chars.chars,
-        ...(postContacts === undefined ? { touchContacts: undefined } : { touchContacts: postContacts }),
-      },
-      s.ext,
-    );
+    // Only additive same-tick commands need a second, touch-only scan.
+    // Keeping every read behind this sparse request marker preserves the
+    // exact steady-state path for projects which do not opt in.
+    if (captureAfterRequests) {
+      const postFacing = s.move.facing;
+      const postContacts = contacts && contacts.length > contactsBeforeRequests
+        ? contacts.slice(contactsBeforeRequests)
+        : undefined;
+      if (postFacing !== interpInput.facing || postContacts !== undefined) {
+        const postCell = { x: s.move.tx, y: s.move.ty };
+        captureImmediateTouchTriggersInPlace(
+          world,
+          s.interp,
+          {
+            ...interpInput,
+            confirmEdge: false,
+            cancelEdge: false,
+            upEdge: false,
+            downEdge: false,
+            playerCell: postCell,
+            prevCell: postCell,
+            facing: postFacing,
+            prevFacing: interpInput.facing,
+            eventCells: displacedCells(map, s.chars, sess.immutableState),
+            liveChars: s.chars.chars,
+            ...(postContacts === undefined ? { touchContacts: undefined } : { touchContacts: postContacts }),
+          },
+          s.ext,
+        );
+      }
+    }
   }
   if (!s.interp.error && s.interp.pendingTravel !== undefined) {
     sess.travelRuntime!.consumeTravelRequests(

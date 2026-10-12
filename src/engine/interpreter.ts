@@ -1799,11 +1799,7 @@ interface LocalCells {
   map?: Map<string, Cell>;
   /** A synchronous player `face` is visible to later conditions in this
    *  interpreter fold before the Session drains the published request. */
-  playerFacing?: Facing;
-}
-
-function localFacing(input: Readonly<InterpInput>, local: Readonly<LocalCells> | undefined): Facing {
-  return local?.playerFacing ?? input.facing;
+  playerFacing: Facing;
 }
 
 export interface TextModal {
@@ -5667,7 +5663,7 @@ function runFiber(
   input: InterpInput,
   budget: StepBudget,
   extension: MutableExtensionScope,
-  local?: LocalCells,
+  local: LocalCells,
 ): void {
   // Steps this call has taken = budgetAtEntry - budget.remaining (read only
   // at a loop back-edge; see LOOP_YIELD_STEPS).
@@ -6037,7 +6033,7 @@ function runFiber(
           ins.cond,
           s.sw,
           f.key,
-          localFacing(input, local),
+          local.playerFacing,
           extension,
           liveConditionContext(s, w, input.worldIdleBlockers, input.eventPages, input.playerMoving, input.vehicle),
         ) ? top.pc + 1 : ins.onFalse;
@@ -6878,7 +6874,7 @@ export function stepInterpWithExtensionsInPlace(
   // Step-local scratch: a `place` run this step must beat the tick-start
   // eventCells snapshot for any same-step eventOrigin read. Lives only on
   // this call's stack — never on the caller's input or on InterpState.
-  const local: LocalCells = {};
+  const local: LocalCells = { playerFacing: input.facing };
 
   const parallelKeys = immutable ? Object.keys(s.parallels) : undefined;
   const canCacheScan = immutable && w.onFiberStart === undefined &&
