@@ -21,6 +21,7 @@ if (!ready) {
 const builtTest = ready ? test : test.skip;
 
 const IMPLEMENTATION_SUFFIXES = [
+  "/src/engine/rpgmaker-screen.ts",
   "/src/engine/rpgmaker-text.ts",
   "/src/engine/travel-session.ts",
   "/src/engine/travel.ts",
@@ -31,6 +32,7 @@ const IMPLEMENTATION_SUFFIXES = [
 ] as const;
 
 const BUNDLE_NEEDLES = [
+  "// src/engine/rpgmaker-screen.ts",
   "// src/engine/rpgmaker-text.ts",
   "// src/engine/travel-session.ts",
   "// src/engine/travel.ts",
@@ -41,9 +43,9 @@ const BUNDLE_NEEDLES = [
 ] as const;
 
 const EXPECTED_BYTES = {
-  meadow: 676_505,
-  sunstone: 1_108_912,
-  "rmi-play": 1_277_821,
+  meadow: 667_866,
+  sunstone: 1_101_055,
+  "rmi-play": 1_278_531,
 } as const;
 
 function implementationModules(app: string): string[] {
@@ -61,6 +63,7 @@ describe("RPG Maker text and travel capabilities remain opt-in", () => {
       exports: Record<string, string>;
     };
     expect(pkg.exports["./rpgmaker-text"]).toBe("./src/engine/rpgmaker-text.ts");
+    expect(pkg.exports["./rpgmaker-screen"]).toBe("./src/engine/rpgmaker-screen.ts");
     expect(pkg.exports["./travel"]).toBe("./src/travel.ts");
     expect(pkg.exports["./ui/rpgmaker-text"]).toBe("./src/ui/ChoiceColourLine.tsx");
     expect(pkg.exports["./ui/travel"]).toBe("./src/ui/TravelActors.tsx");
@@ -76,8 +79,9 @@ describe("RPG Maker text and travel capabilities remain opt-in", () => {
     }
   });
 
-  builtTest("the imported-project fixture reaches all seven implementations", () => {
+  builtTest("the imported-project fixture reaches all eight implementations", () => {
     expect(implementationModules("rmi-play")).toEqual([
+      "engine/rpgmaker-screen.ts",
       "engine/rpgmaker-text.ts",
       "engine/travel-session.ts",
       "engine/travel.ts",

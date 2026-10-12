@@ -25,6 +25,7 @@
     "./ui/rpgmaker-text": "./src/ui/ChoiceColourLine.tsx",
     "./ui/travel": "./src/ui/TravelActors.tsx",
     "./rpgmaker-text": "./src/engine/rpgmaker-text.ts",
+    "./rpgmaker-screen": "./src/engine/rpgmaker-screen.ts",
     "./travel": "./src/travel.ts",
     "./host": "./src/host/index.ts",
     "./editor-api": "./editor/api/index.ts",

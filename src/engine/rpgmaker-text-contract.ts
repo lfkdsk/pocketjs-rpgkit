@@ -1,5 +1,8 @@
 /** Type-only boundary for the optional RPG Maker message grammar. */
 
+import type { ScreenEffectsState } from "./screen.ts";
+import type { ScreenTone, WeatherKind } from "./types.ts";
+
 export interface RpgMakerTextActor {
   readonly databaseId: number;
   readonly name: string;
@@ -141,4 +144,17 @@ export interface RpgMakerTextRuntime {
     first: number,
     second: number,
   ): number[] | null;
+  startScreenTone(
+    screen: ScreenEffectsState,
+    target: Readonly<ScreenTone>,
+    frames: number,
+  ): void;
+  startWeather(
+    screen: ScreenEffectsState,
+    kind: WeatherKind,
+    power: number,
+    frames: number,
+    seed: number,
+  ): void;
+  advanceScreenEffects(screen: ScreenEffectsState): void;
 }

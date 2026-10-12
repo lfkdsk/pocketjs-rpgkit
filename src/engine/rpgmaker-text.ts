@@ -14,6 +14,11 @@ import type {
   RpgMakerTextSourceActor,
   RpgMakerTextState,
 } from "./rpgmaker-text-contract.ts";
+import {
+  advanceRpgMakerScreenEffects,
+  startScreenTone,
+  startWeather,
+} from "./rpgmaker-screen.ts";
 
 export type {
   ExpandedRpgMakerLines,
@@ -331,4 +336,7 @@ export const rpgMakerTextRuntime: RpgMakerTextRuntime = Object.freeze({
   parseChoices: parseRpgMakerChoices,
   partyOrder: resolveRpgMakerPartyOrder,
   swapParty: swapRpgMakerParty,
+  startScreenTone,
+  startWeather,
+  advanceScreenEffects: advanceRpgMakerScreenEffects,
 });

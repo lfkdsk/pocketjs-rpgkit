@@ -84,8 +84,6 @@ import {
   startScreenFlash,
   startScreenShake,
   startScreenTint,
-  startScreenTone,
-  startWeather,
   tintPicture,
   OPAQUE_BLACK,
   type ScreenEffectsState,
@@ -5407,15 +5405,15 @@ type SimpleScreenInstr = Extract<TimedScreenInstr, {
   op: "screenFade" | "screenTint" | "screenTone" | "weather" | "screenFlash" | "screenShake";
 }>;
 
-function startSimpleScreenEffect(s: InterpState, ins: SimpleScreenInstr): void {
+function startSimpleScreenEffect(s: InterpState, w: World, ins: SimpleScreenInstr): void {
   const screen = ensureScreen(s);
   switch (ins.op) {
     case "screenFade": startScreenFade(screen, ins.direction, ins.color, ins.frames); break;
     case "screenTint": startScreenTint(screen, ins.layer, ins.color, ins.frames); break;
-    case "screenTone": startScreenTone(screen, ins.tone, ins.frames); break;
+    case "screenTone": w.rpgMakerText?.runtime.startScreenTone(screen, ins.tone, ins.frames); break;
     case "weather": {
       const seed = (s.sw.rng ^ Math.imul(s.frame + 1, 0x9e3779b9)) >>> 0;
-      startWeather(screen, ins.kind, ins.power, ins.frames, seed);
+      w.rpgMakerText?.runtime.startWeather(screen, ins.kind, ins.power, ins.frames, seed);
       break;
     }
     case "screenFlash": startScreenFlash(screen, ins.color, ins.intensity, ins.frames); break;
@@ -6058,7 +6056,7 @@ function runFiber(
       case "weather":
       case "screenFlash":
       case "screenShake":
-        startSimpleScreenEffect(s, ins);
+        startSimpleScreenEffect(s, w, ins);
         if (finishOrWaitScreen(s, f, ins)) return;
         top.pc++;
         break;

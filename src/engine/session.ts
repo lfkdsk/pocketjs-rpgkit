@@ -2096,14 +2096,20 @@ function advanceGameScene(
 /** Advance only the interpreter's absolute reference clock. The elapsed
  * pause is retained on the scene and applied to relative fiber clocks on
  * completion, leaving the fibers themselves byte-stable while frozen. */
-function tickFrozenWorld(s: SessionState): void {
+function advanceSessionScreenEffects(sess: Session, s: SessionState): void {
+  if (!s.interp.screen) return;
+  const advanceOptional = sess.worlds.get(s.mapId)?.rpgMakerText?.runtime.advanceScreenEffects;
+  s.interp.screen = advanceScreenEffects(s.interp.screen, advanceOptional);
+}
+
+function tickFrozenWorld(sess: Session, s: SessionState): void {
   advanceInterpAudioInPlace(s.interp);
   // Stock RPG Maker advances $gameScreen while Scene_Battle owns the
   // foreground, but ordinary menu scenes do not. The kit deliberately keeps
   // global tone/weather advancing for every frozen battle/menu scene so the
   // same presentation can span either; map physics and page programs remain
   // frozen.
-  if (s.interp.screen) s.interp.screen = advanceScreenEffects(s.interp.screen);
+  advanceSessionScreenEffects(sess, s);
   s.interp.frame++;
   if (s.scene) s.scene.pausedTicks++;
   s.interp.cues = [];
@@ -3054,7 +3060,7 @@ function stepReferenceTick(
   // background simulation must opt in explicitly; their newly published
   // battle requests remain queued until the active scene completes.
   if (s.scene !== null && !sess.sceneOptions.worldContinues) {
-    tickFrozenWorld(s);
+    tickFrozenWorld(sess, s);
     return { x: s.move.tx, y: s.move.ty };
   }
 
@@ -3090,7 +3096,7 @@ function stepReferenceTick(
   // movement and event waits. Transfer fades and default-frozen scenes take
   // the early-return paths above, so hidden map presentation pauses with the
   // map; worldContinues scenes deliberately reach this path.
-  if (s.interp.screen) s.interp.screen = advanceScreenEffects(s.interp.screen);
+  advanceSessionScreenEffects(sess, s);
 
   // 1. Reconcile NPC pages. A page switch (or an event that went away)
   //    aborts any forced route parked on it; resume the waiter so the

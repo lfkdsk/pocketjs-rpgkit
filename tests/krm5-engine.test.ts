@@ -8,11 +8,14 @@ import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { loadSession, restoreSessionEnvelope, saveSession } from "../src/engine/save-restore.ts";
 import { encodeEnvelope, encodeSaveCode } from "../src/engine/save.ts";
 import {
-  advanceScreenEffects,
+  advanceRpgMakerScreenEffects,
   screenToneAt,
   startScreenTone,
   startWeather,
   weatherPowerAt,
+} from "../src/engine/rpgmaker-screen.ts";
+import {
+  advanceScreenEffects,
   type ScreenEffectsState,
 } from "../src/engine/screen.ts";
 import {
@@ -98,9 +101,9 @@ describe("KRM5 screen tone", () => {
     startScreenTone(screen, { r: -31, g: 19, b: -11, gray: 41 }, 0);
     startScreenTone(screen, { r: -92, g: 82, b: 52, gray: 162 }, 4);
 
-    screen = advanceScreenEffects(screen)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
     expect(screenToneAt(screen.tone)).toEqual({ r: -46.25, g: 34.75, b: 4.75, gray: 71.25 });
-    screen = advanceScreenEffects(screen)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
     expect(screenToneAt(screen.tone)).toEqual({ r: -61.5, g: 50.5, b: 20.5, gray: 101.5 });
 
     const target = { r: -91, g: 61, b: -31, gray: 121 };
@@ -110,7 +113,8 @@ describe("KRM5 screen tone", () => {
         { op: "screenTone", tone: target, duration: 1, wait: true },
         { op: "switch", id: "done", value: true },
       ]);
-      const session = createSession(source, hz);
+      source.system = { rpgMakerText: { party: [], currencyUnit: "G" } };
+      const session = createSession(source, hz, { rpgMakerText: rpgMakerTextRuntime });
       let state = run(session, startSession(source, session), hz / 2);
       expect(state.interp.main?.mode).toBe("screenWait");
       expect(state.interp.screen?.tone).toMatchObject({ total: 60, left: 31 });
@@ -142,27 +146,34 @@ describe("KRM5 screen tone", () => {
       { op: "screenTone", tone: target, duration: 10, wait: true },
       { op: "wait", seconds: 20 },
     ]);
-    const session = createSession(source, 30);
+    source.system = { rpgMakerText: { party: [], currencyUnit: "G" } };
+    const session = createSession(source, 30, { rpgMakerText: rpgMakerTextRuntime });
     const mid = run(session, startSession(source, session), 75);
     expect(mid.interp.screen?.tone?.left).toBeGreaterThan(0);
 
     const saved = saveSession(session, mid, 0);
     if (!saved.ok) throw new Error(saved.error.message);
     expect(saved.ok).toBe(true);
-    const restored = restoreSessionEnvelope(createSession(source, 30), encodeEnvelope(saved.snapshot));
-    const loaded = loadSession(createSession(source, 30), encodeSaveCode(saved.snapshot));
+    const restored = restoreSessionEnvelope(
+      createSession(source, 30, { rpgMakerText: rpgMakerTextRuntime }),
+      encodeEnvelope(saved.snapshot),
+    );
+    const loaded = loadSession(
+      createSession(source, 30, { rpgMakerText: rpgMakerTextRuntime }),
+      encodeSaveCode(saved.snapshot),
+    );
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) throw new Error(loaded.error.message);
     expect(restored.interp.screen?.tone).toEqual(mid.interp.screen?.tone);
     expect(loaded.state.interp.screen?.tone).toEqual(mid.interp.screen?.tone);
-    expect(run(createSession(source, 30), restored, 10).interp.screen?.tone)
+    expect(run(createSession(source, 30, { rpgMakerText: rpgMakerTextRuntime }), restored, 10).interp.screen?.tone)
       .toEqual(run(session, mid, 10).interp.screen?.tone);
 
     const options = { hz: 60, idleFrames: 60_000, rewindSeconds: 3, attractEnabled: false } as const;
-    const rewound = new AttractController(source, [], options);
+    const rewound = new AttractController(source, [], { ...options, rpgMakerText: rpgMakerTextRuntime });
     for (let frame = 0; frame < 240; frame++) rewound.step(0);
     rewound.step(BTN.LTRIGGER);
-    const direct = new AttractController(source, [], options);
+    const direct = new AttractController(source, [], { ...options, rpgMakerText: rpgMakerTextRuntime });
     for (let frame = 0; frame < 60; frame++) direct.step(0);
     expect(rewound.state).toEqual(direct.state);
     expect(rewound.state.interp.screen?.tone?.left).toBeGreaterThan(500);
@@ -183,13 +194,13 @@ describe("KRM5 weather", () => {
       clock: 0,
     });
 
-    screen = advanceScreenEffects(screen)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
     expect(weatherPowerAt(screen.weather)).toBe(2.25);
     expect(screen.weather).toMatchObject({ left: 3, clock: 1 });
-    screen = advanceScreenEffects(screen)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
     expect(weatherPowerAt(screen.weather)).toBe(4.5);
-    screen = advanceScreenEffects(screen)!;
-    screen = advanceScreenEffects(screen)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
     expect(screen.weather).toMatchObject({
       kind: "storm",
       fromPower: 9,
@@ -208,12 +219,12 @@ describe("KRM5 weather", () => {
       seed: 0x1234abcd,
       clock: 4,
     });
-    screen = advanceScreenEffects(screen)!;
-    screen = advanceScreenEffects(screen)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
     expect(weatherPowerAt(screen.weather)).toBe(4.5);
     expect(screen.weather).toMatchObject({ clock: 6, left: 2 });
-    screen = advanceScreenEffects(screen)!;
-    expect(advanceScreenEffects(screen)).toBeUndefined();
+    screen = advanceScreenEffects(screen, advanceRpgMakerScreenEffects)!;
+    expect(advanceScreenEffects(screen, advanceRpgMakerScreenEffects)).toBeUndefined();
   });
 
   test("is identical at 60/30/20 Hz and retains seed/clock through save, load, and keyframe replay", () => {
@@ -221,6 +232,7 @@ describe("KRM5 weather", () => {
       { op: "weather", kind: "rain", power: 7, duration: 1, wait: true },
       { op: "switch", id: "done", value: true },
     ]);
+    source.system = { rpgMakerText: { party: [], currencyUnit: "G" } };
     const states = new Map<number, { session: Session; state: SessionState }>();
     const descriptors: unknown[] = [];
     // The first interpreter fold advances frame 0 to frame 1 before the
@@ -228,7 +240,7 @@ describe("KRM5 weather", () => {
     const expectedSeed = (0x12345678 ^ Math.imul(2, 0x9e3779b9)) >>> 0;
 
     for (const hz of [60, 30, 20] as const) {
-      const session = createSession(source, hz);
+      const session = createSession(source, hz, { rpgMakerText: rpgMakerTextRuntime });
       const state = run(session, startSession(source, session), hz / 2);
       expect(state.interp.main?.mode).toBe("screenWait");
       expect(state.interp.screen?.weather).toEqual({
@@ -251,8 +263,14 @@ describe("KRM5 weather", () => {
     const saved = saveSession(mid.session, mid.state, 0);
     expect(saved.ok).toBe(true);
     if (!saved.ok) throw new Error(saved.error.message);
-    const restored = restoreSessionEnvelope(createSession(source, 30), encodeEnvelope(saved.snapshot));
-    const loaded = loadSession(createSession(source, 30), encodeSaveCode(saved.snapshot));
+    const restored = restoreSessionEnvelope(
+      createSession(source, 30, { rpgMakerText: rpgMakerTextRuntime }),
+      encodeEnvelope(saved.snapshot),
+    );
+    const loaded = loadSession(
+      createSession(source, 30, { rpgMakerText: rpgMakerTextRuntime }),
+      encodeSaveCode(saved.snapshot),
+    );
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) throw new Error(loaded.error.message);
     expect(restored.interp.screen?.weather).toEqual(mid.state.interp.screen?.weather);
@@ -260,7 +278,11 @@ describe("KRM5 weather", () => {
 
     const keyframeBefore = structuredClone(mid.state);
     const uninterrupted = run(mid.session, mid.state, 5);
-    const replayed = run(createSession(source, 30), restored, 5);
+    const replayed = run(
+      createSession(source, 30, { rpgMakerText: rpgMakerTextRuntime }),
+      restored,
+      5,
+    );
     expect(mid.state).toEqual(keyframeBefore);
     expect(replayed.interp.screen?.weather).toEqual(uninterrupted.interp.screen?.weather);
     expect(replayed.interp.main).toEqual(uninterrupted.interp.main);

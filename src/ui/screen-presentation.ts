@@ -6,15 +6,37 @@
 // state participates, so a save/rewind at the same screen clock paints the
 // same result on every backend.
 
-import {
-  screenToneAt,
-  weatherPowerAt,
-  type ScreenEffectsState,
-  type ToneTweenState,
-  type WeatherEffectState,
+import type {
+  ScreenEffectsState,
+  ToneTweenState,
+  WeatherEffectState,
 } from "../engine/screen.ts";
-import type { WeatherKind } from "../engine/types.ts";
+import type { ScreenTone, WeatherKind } from "../engine/types.ts";
 import { toneOverlays, type ToneOverlay } from "./tone-overlay.ts";
+
+const ZERO_SCREEN_TONE: Readonly<ScreenTone> = Object.freeze({ r: 0, g: 0, b: 0, gray: 0 });
+
+function screenToneAt(tone: Readonly<ToneTweenState> | undefined): ScreenTone {
+  if (!tone) return { ...ZERO_SCREEN_TONE };
+  if (tone.total <= 0 || tone.left <= 0) return { ...tone.to };
+  const elapsed = tone.total - tone.left;
+  const channel = (from: number, to: number): number =>
+    (from * (tone.total - elapsed) + to * elapsed) / tone.total;
+  return {
+    r: channel(tone.from.r, tone.to.r),
+    g: channel(tone.from.g, tone.to.g),
+    b: channel(tone.from.b, tone.to.b),
+    gray: channel(tone.from.gray, tone.to.gray),
+  };
+}
+
+function weatherPowerAt(weather: Readonly<WeatherEffectState> | undefined): number {
+  if (!weather) return 0;
+  if (weather.total <= 0 || weather.left <= 0) return weather.targetPower;
+  const elapsed = weather.total - weather.left;
+  return (weather.fromPower * (weather.total - elapsed) + weather.targetPower * elapsed) /
+    weather.total;
+}
 
 export interface WeatherParticleVector {
   dx: number;
