@@ -277,10 +277,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // outside these game graphs, and the decoder needles below retain isolation.
 // Explicit RPG Maker text/presentation and travel capabilities then remove
 // 44,930 B from Meadow, 50,779 B from Sunstone and 51,057 B from the WAV
-// fixture on this baseline. The opted-in fixture pins their positive graph.
-const EXPECTED_MEADOW_BYTES = 677_999;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_406;
-const EXPECTED_WAV_FIXTURE_BYTES = 874_336;
+// fixture on this baseline. Moving actor-name and formation conventions into
+// the text capability removes another 1,314 B from each ordinary graph. The
+// opted-in fixture pins the corresponding positive graph.
+const EXPECTED_MEADOW_BYTES = 676_685;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_109_092;
+const EXPECTED_WAV_FIXTURE_BYTES = 873_022;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

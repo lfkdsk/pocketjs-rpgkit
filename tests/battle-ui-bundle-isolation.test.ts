@@ -250,9 +250,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // art resolver add 11,151 B more shared runtime code. The importer, Studio
 // flow and optional battle UI remain outside the graph, as checked below.
 // Isolating unused RPG Maker text/presentation and travel capabilities removes
-// 50,779 B on this baseline without admitting any battle implementation.
+// 50,779 B on this baseline, then moving actor-name and formation conventions
+// behind the same capability removes another 1,314 B, without admitting any
+// battle implementation.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_110_406;
+const EXPECTED_BYTES = 1_109_092;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

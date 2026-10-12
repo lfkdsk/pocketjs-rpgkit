@@ -41,9 +41,9 @@ const BUNDLE_NEEDLES = [
 ] as const;
 
 const EXPECTED_BYTES = {
-  meadow: 677_999,
-  sunstone: 1_110_406,
-  "rmi-play": 1_275_748,
+  meadow: 676_685,
+  sunstone: 1_109_092,
+  "rmi-play": 1_276_862,
 } as const;
 
 function implementationModules(app: string): string[] {
