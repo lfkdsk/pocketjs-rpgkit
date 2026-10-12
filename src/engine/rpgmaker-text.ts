@@ -1,18 +1,23 @@
 import type {
   ParsedRpgMakerText,
+  RpgMakerTextActor,
   RpgMakerTextColourSpan,
+  RpgMakerTextConfig,
   RpgMakerTextContext,
   RpgMakerTextLayoutControl,
   RpgMakerTextRuntime,
+  RpgMakerTextState,
 } from "./rpgmaker-text-contract.ts";
 
 export type {
   ParsedRpgMakerText,
   RpgMakerTextActor,
   RpgMakerTextColourSpan,
+  RpgMakerTextConfig,
   RpgMakerTextContext,
   RpgMakerTextLayoutControl,
   RpgMakerTextRuntime,
+  RpgMakerTextState,
 } from "./rpgmaker-text-contract.ts";
 
 /** The 32 text colours in RPG Maker MV's stock Window.png palette. */
@@ -169,7 +174,71 @@ export function parseRpgMakerText(input: string, context: RpgMakerTextContext): 
   };
 }
 
+function messageActors(
+  state: Readonly<RpgMakerTextState>,
+  config: Readonly<RpgMakerTextConfig>,
+): readonly RpgMakerTextActor[] {
+  const leaderDatabaseId = config.partyActorIds[0];
+  return config.actors.map((actor) => {
+    const variable = `actor${String(actor.databaseId).padStart(3, "0")}-name`;
+    const renamed = state.variables[variable];
+    const name = actor.databaseId === leaderDatabaseId
+      ? state.playerName ?? actor.name
+      : typeof renamed === "string" ? renamed : actor.name;
+    return name === actor.name ? actor : { databaseId: actor.databaseId, name };
+  });
+}
+
+/** Expand one RPG Maker message from the live reducer view. This is separate
+ * from the low-level parser so actor rename conventions remain opt-in too. */
+export function parseRpgMakerMessage(
+  input: string,
+  state: Readonly<RpgMakerTextState>,
+  config: Readonly<RpgMakerTextConfig>,
+): ParsedRpgMakerText {
+  return parseRpgMakerText(input, {
+    variables: state.variables,
+    actors: messageActors(state, config),
+    partyActorIds: config.partyActorIds,
+    currencyUnit: config.currencyUnit,
+    ...(config.colours ? { colours: config.colours } : {}),
+  });
+}
+
+function numericActorId(id: string): number | null {
+  const match = /(\d+)$/.exec(id);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** Active RPG Maker party membership in the one saved formation order. */
+export function resolveRpgMakerPartyOrder(
+  state: Readonly<RpgMakerTextState>,
+  config: Readonly<RpgMakerTextConfig>,
+): number[] {
+  const initial = config.partyActorIds;
+  const initialSet = new Set(initial);
+  const switches = state.switches ?? {};
+  const active = [
+    ...initial.filter((id) => switches[`party-out-actor${String(id).padStart(3, "0")}`] !== true),
+    ...(state.actorIds ?? [])
+      .map(numericActorId)
+      .filter((id): id is number => id !== null && !initialSet.has(id) &&
+        switches[`party-actor${String(id).padStart(3, "0")}`] === true)
+      .sort((a, b) => a - b),
+  ];
+  if (!state.partyOrder) return active;
+  const live = new Set(active);
+  const ordered = state.partyOrder.filter((id, at, all) => live.has(id) && all.indexOf(id) === at);
+  const held = new Set(ordered);
+  for (const id of active) if (!held.has(id)) ordered.push(id);
+  return ordered;
+}
+
 /** Explicit capability passed to sessions that opt into RPG Maker text. */
 export const rpgMakerTextRuntime: RpgMakerTextRuntime = Object.freeze({
   parse: parseRpgMakerText,
+  parseMessage: parseRpgMakerMessage,
+  partyOrder: resolveRpgMakerPartyOrder,
 });

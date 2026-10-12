@@ -5,6 +5,26 @@ export interface RpgMakerTextActor {
   readonly name: string;
 }
 
+/** Imported database facts retained only by projects that opt into the RPG
+ * Maker message grammar. */
+export interface RpgMakerTextConfig {
+  readonly actors: readonly RpgMakerTextActor[];
+  readonly partyActorIds: readonly number[];
+  readonly currencyUnit: string;
+  readonly colours?: readonly string[];
+}
+
+/** Live reducer facts needed by RPG Maker name escapes and formation order.
+ * Keeping their interpretation behind the capability boundary prevents
+ * ordinary projects from evaluating actor-id and switch-name conventions. */
+export interface RpgMakerTextState {
+  readonly variables: Readonly<Record<string, number | string>>;
+  readonly switches?: Readonly<Record<string, boolean>>;
+  readonly playerName?: string;
+  readonly partyOrder?: readonly number[];
+  readonly actorIds?: readonly string[];
+}
+
 export interface RpgMakerTextContext {
   readonly variables: Readonly<Record<string, number | string>>;
   readonly variableIds?: Readonly<Record<number, string | undefined>> | readonly (string | undefined)[];
@@ -49,4 +69,13 @@ export interface ParsedRpgMakerText {
 /** Parser supplied only by applications that enable `system.rpgMakerText`. */
 export interface RpgMakerTextRuntime {
   parse(input: string, context: RpgMakerTextContext): ParsedRpgMakerText;
+  parseMessage(
+    input: string,
+    state: Readonly<RpgMakerTextState>,
+    config: Readonly<RpgMakerTextConfig>,
+  ): ParsedRpgMakerText;
+  partyOrder(
+    state: Readonly<RpgMakerTextState>,
+    config: Readonly<RpgMakerTextConfig>,
+  ): number[];
 }

@@ -60,8 +60,8 @@ import {
 import { TILE } from "./tiles.ts";
 import { scalarLength } from "./text-break.ts";
 import type {
-  RpgMakerTextActor,
   RpgMakerTextColourSpan,
+  RpgMakerTextConfig,
   RpgMakerTextLayoutControl,
   RpgMakerTextRuntime,
 } from "./rpgmaker-text-contract.ts";
@@ -2517,12 +2517,8 @@ export interface World {
    *  {char:<eventId>} / {char:this} / {char:player} tokens. */
   characterNames?: boolean;
   /** Compiled project database/config for runtime RPG Maker text escapes. */
-  rpgMakerText?: {
+  rpgMakerText?: RpgMakerTextConfig & {
     runtime: RpgMakerTextRuntime;
-    actors: readonly RpgMakerTextActor[];
-    partyActorIds: readonly number[];
-    currencyUnit: string;
-    colours?: readonly string[];
   };
   /** Actor database facts used by imported actor conditions. */
   actors?: ReadonlyMap<string, Readonly<ActorDef>>;
@@ -2559,12 +2555,8 @@ export interface WorldOptions {
   textVariables?: boolean;
   /** Project.system.characterNames: switches built-in {char:} expansion on. */
   characterNames?: boolean;
-  rpgMakerText?: {
+  rpgMakerText?: RpgMakerTextConfig & {
     runtime: RpgMakerTextRuntime;
-    actors: readonly RpgMakerTextActor[];
-    partyActorIds: readonly number[];
-    currencyUnit: string;
-    colours?: readonly string[];
   };
   actors?: readonly ActorDef[];
   playerActor?: string;
@@ -5434,38 +5426,6 @@ function ensureScreen(s: InterpState): ScreenEffectsState {
   return s.screen ?? (s.screen = {});
 }
 
-function numericActorId(id: string): number | null {
-  const match = /(\d+)$/.exec(id);
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isSafeInteger(value) && value > 0 ? value : null;
-}
-
-/** Active RPG Maker party membership in the one saved formation order.
- * Membership continues to come from Change Party Member switches; a stale
- * saved id is filtered and a newly joined id is appended deterministically. */
-export function rpgMakerPartyOrder(
-  s: Readonly<InterpState>,
-  w: Readonly<World>,
-): number[] {
-  const initial = w.rpgMakerText?.partyActorIds ?? [];
-  const initialSet = new Set(initial);
-  const active = [
-    ...initial.filter((id) => s.sw.switches[`party-out-actor${String(id).padStart(3, "0")}`] !== true),
-    ...[...(w.actors?.keys() ?? [])]
-      .map(numericActorId)
-      .filter((id): id is number => id !== null && !initialSet.has(id) &&
-        s.sw.switches[`party-actor${String(id).padStart(3, "0")}`] === true)
-      .sort((a, b) => a - b),
-  ];
-  if (!s.sw.partyOrder) return active;
-  const live = new Set(active);
-  const ordered = s.sw.partyOrder.filter((id, at, all) => live.has(id) && all.indexOf(id) === at);
-  const held = new Set(ordered);
-  for (const id of active) if (!held.has(id)) ordered.push(id);
-  return ordered;
-}
-
 function resolvedEventTarget(
   target: "this" | { event: string },
   fiber: Fiber,
@@ -5566,30 +5526,6 @@ function characterNameInFiber(
   return event ? runtimeEventName(s.sw, w.map.id, event) : undefined;
 }
 
-function rpgMakerTextActors(s: InterpState, w: World): readonly RpgMakerTextActor[] {
-  const configured = w.rpgMakerText?.actors ?? [];
-  const leaderDatabaseId = w.rpgMakerText?.partyActorIds[0];
-  return configured.map((actor) => {
-    const variable = `actor${String(actor.databaseId).padStart(3, "0")}-name`;
-    const renamed = s.sw.variables[variable];
-    const name = actor.databaseId === leaderDatabaseId
-      ? s.sw.playerName ?? actor.name
-      : typeof renamed === "string" ? renamed : actor.name;
-    return name === actor.name ? actor : { databaseId: actor.databaseId, name };
-  });
-}
-
-function rpgMakerBoxText(s: InterpState, w: World, text: string) {
-  const options = w.rpgMakerText!;
-  return options.runtime.parse(text, {
-    variables: s.sw.variables,
-    actors: rpgMakerTextActors(s, w),
-    partyActorIds: options.partyActorIds,
-    currencyUnit: options.currencyUnit,
-    ...(options.colours ? { colours: options.colours } : {}),
-  });
-}
-
 interface ExpandedBoxText {
   text: string;
   colours?: readonly RpgMakerTextColourSpan[];
@@ -5601,7 +5537,10 @@ function boxText(s: InterpState, w: World, text: string, ext: JsonValue, fiber: 
   // run kit brace tokens before or after parsing: a replacement containing
   // another escape/token must print literally, matching MV/MZ.
   if (w.rpgMakerText) {
-    const parsed = rpgMakerBoxText(s, w, text);
+    const parsed = w.rpgMakerText.runtime.parseMessage(text, {
+      variables: s.sw.variables,
+      ...(s.sw.playerName !== undefined ? { playerName: s.sw.playerName } : {}),
+    }, w.rpgMakerText);
     return {
       text: parsed.text,
       ...(parsed.spans ? { colours: parsed.spans } : {}),
@@ -5653,7 +5592,10 @@ function boxLines(
   rpgMakerLayout?: readonly RpgMakerTextLayoutControl[];
 } {
   if (w.rpgMakerText) {
-    const parsed = rpgMakerBoxText(s, w, lines.join("\n"));
+    const parsed = w.rpgMakerText.runtime.parseMessage(lines.join("\n"), {
+      variables: s.sw.variables,
+      ...(s.sw.playerName !== undefined ? { playerName: s.sw.playerName } : {}),
+    }, w.rpgMakerText);
     return {
       lines: parsed.text.split("\n"),
       ...(parsed.spans ? { colours: parsed.spans } : {}),
@@ -6458,7 +6400,12 @@ function runFiber(
         top.pc++;
         break;
       case "formationSwap": {
-        const party = rpgMakerPartyOrder(s, w);
+        const party = w.rpgMakerText?.runtime.partyOrder({
+          variables: s.sw.variables,
+          switches: s.sw.switches,
+          ...(s.sw.partyOrder ? { partyOrder: s.sw.partyOrder } : {}),
+          actorIds: [...(w.actors?.keys() ?? [])],
+        }, w.rpgMakerText) ?? [];
         if (
           s.sw.formationAccess !== false && ins.first !== ins.second &&
           Number.isInteger(ins.first) && Number.isInteger(ins.second) &&

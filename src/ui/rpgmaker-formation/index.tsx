@@ -5,7 +5,6 @@ import { createMemo, createSignal, Show } from "solid-js";
 import { View } from "@pocketjs/framework/components";
 import { BTN } from "@pocketjs/framework/input";
 import { deepClone } from "../../engine/clone.ts";
-import { rpgMakerPartyOrder } from "../../engine/interpreter.ts";
 import type { SessionState } from "../../engine/session.ts";
 import { reconcileFollowers } from "../../engine/travel.ts";
 import type {
@@ -33,6 +32,19 @@ interface FormationViewProps {
   cursor: () => number;
   first: () => number | null;
   theme?: Partial<UiTheme>;
+}
+
+function partyOrder(host: GameViewSessionHost): number[] {
+  const state = host.getState();
+  const world = host.session.worlds.get(state.mapId);
+  const text = world?.rpgMakerText;
+  if (!world || !text) return [];
+  return text.runtime.partyOrder({
+    variables: state.interp.sw.variables,
+    switches: state.interp.sw.switches,
+    ...(state.interp.sw.partyOrder ? { partyOrder: state.interp.sw.partyOrder } : {}),
+    actorIds: [...(world.actors?.keys() ?? [])],
+  }, text);
 }
 
 function FormationView(props: FormationViewProps) {
@@ -74,7 +86,7 @@ function partyMembers(host: GameViewSessionHost): FormationMember[] {
     (host.project.actors ?? []).flatMap((actor) =>
       actor.databaseId === undefined ? [] : [[actor.databaseId, actor.name] as const]),
   );
-  return rpgMakerPartyOrder(state.interp, world).map((actorId) => ({
+  return partyOrder(host).map((actorId) => ({
     actorId,
     name: names.get(actorId) ?? `Actor ${actorId}`,
   }));
@@ -122,7 +134,7 @@ function makeRuntime(
     const current = host.getState();
     const world = host.session.worlds.get(current.mapId);
     if (!world) return { consumed: true };
-    const order = rpgMakerPartyOrder(current.interp, world);
+    const order = partyOrder(host);
     if (picked >= order.length || selected >= order.length) return { consumed: true };
     [order[picked], order[selected]] = [order[selected]!, order[picked]!];
 
