@@ -311,6 +311,7 @@ describe("studio desktop helper", () => {
         ["audio", "se/hollow-steps", 0, 1],
         ["command", "355", 1, 0],
         ["command", "357", 1, 0],
+        ["script", "syntax rejected", 1, 0],
       ]);
       expect(imported.warnings.length).toBeLessThanOrEqual(25);
       expect(helper.importEvents(runId)).toEqual([{

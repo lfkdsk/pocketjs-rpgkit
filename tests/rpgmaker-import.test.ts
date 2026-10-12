@@ -845,7 +845,8 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(122)!.needsKit).not.toContain("timer");
     expect(by.get(118)!.disposition).toBe("Native");
     expect(by.get(119)!.disposition).toBe("Native");
-    expect(by.get(355)!.disposition).toBe("Placeholder");
+    expect(by.get(355)!.disposition).toBe("Native");
+    expect(by.get(355)!.needsKit).toContain("outside the import-time safe subset");
     expect(by.get(357)!.disposition).toBe("Placeholder");
     expect(by.get(301)!.disposition).toBe("Native");
     expect(by.get(301)!.needsKit).toBe("");
