@@ -253,8 +253,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 50,779 B on this baseline, then moving actor-name and formation conventions
 // behind the same capability removes another 1,314 B. Choice colouring and
 // formation validation remove 180 B more, without admitting battle code.
+// Moving tone/weather reducer rules behind the opt-in removes another 7,857 B.
 // Re-measure after every shared-path change.
-const EXPECTED_BYTES = 1_108_912;
+const EXPECTED_BYTES = 1_101_055;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

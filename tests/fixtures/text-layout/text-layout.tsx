@@ -6,6 +6,8 @@
 
 import { mount } from "@pocketjs/framework";
 import { GameView } from "../../../src/ui/GameView.tsx";
+import { rpgMakerTextRuntime } from "../../../src/engine/rpgmaker-text.ts";
+import { rpgMakerChoiceTextRuntime } from "../../../src/ui/ChoiceColourLine.tsx";
 import type { Project } from "../../../src/engine/types.ts";
 import { GAME_ASSETS } from "./assets-game.ts";
 import { FACES, MAP, MAP_ID } from "./fixture-data.ts";
@@ -34,4 +36,12 @@ const project: Project = {
   maps: [mzLayoutPreview ? RPG_MAKER_LAYOUT_MAP : MAP],
 };
 
-mount(() => <GameView project={project} assets={GAME_ASSETS} faces={FACES} />);
+mount(() => (
+  <GameView
+    project={project}
+    assets={GAME_ASSETS}
+    faces={FACES}
+    rpgMakerText={mzLayoutPreview ? rpgMakerTextRuntime : undefined}
+    choiceText={mzLayoutPreview ? rpgMakerChoiceTextRuntime : undefined}
+  />
+));

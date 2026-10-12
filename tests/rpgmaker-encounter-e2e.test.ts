@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { AttractController } from "../src/engine/attract.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { createSession, startSession, stepSession, type Session, type SessionState } from "../src/engine/session.ts";
 import type { ExtensionOptions } from "../src/engine/extensions.ts";
 import type { JsonValue, Project } from "../src/engine/types.ts";
@@ -71,6 +72,7 @@ function options(
   return {
     extensions: { ...createRpgMakerBattleExtensions(db), initial },
     battle: createRpgMakerBattleRules(db),
+    rpgMakerText: rpgMakerTextRuntime,
   };
 }
 

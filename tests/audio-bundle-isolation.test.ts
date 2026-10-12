@@ -281,9 +281,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // the text capability removes another 1,314 B from each ordinary graph;
 // isolating choice colouring and formation validation removes 180 B more.
 // The opted-in fixture pins the corresponding positive graph.
-const EXPECTED_MEADOW_BYTES = 676_505;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_108_912;
-const EXPECTED_WAV_FIXTURE_BYTES = 872_842;
+// Moving tone/weather reducer rules behind the same opt-in removes a further
+// 8,639 B from Meadow, 7,857 B from Sunstone and 7,834 B from the WAV fixture.
+const EXPECTED_MEADOW_BYTES = 667_866;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_101_055;
+const EXPECTED_WAV_FIXTURE_BYTES = 865_008;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

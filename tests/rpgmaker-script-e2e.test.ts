@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { AttractController } from "../src/engine/attract.ts";
 import type { TextModal } from "../src/engine/interpreter.ts";
+import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import { canonicalJson, createAutosaveSessionSnapshot, createSessionSnapshot } from "../src/engine/save.ts";
 import { loadSession } from "../src/engine/save-restore.ts";
 import {
@@ -237,7 +238,10 @@ describe("imported RPG Maker safe Script subset", () => {
   test("60/30/20 Hz, save/load, and rewind replay produce the same imported result", () => {
     const results: ReturnType<typeof evidence>[] = [];
     for (const hz of RATES) {
-      const session = createSession(imported.project, hz, { immutableState: true });
+      const session = createSession(imported.project, hz, {
+        immutableState: true,
+        rpgMakerText: rpgMakerTextRuntime,
+      });
       const opened = advanceToMessage(session, startSession(imported.project, session));
       expect(opened.heard).toContain("se-scripttone");
       expect((opened.state.interp.modal as TextModal).lines).toEqual(["Script subset ready"]);
@@ -280,6 +284,7 @@ describe("imported RPG Maker safe Script subset", () => {
         idleFrames: hz * 10,
         rewindSeconds: 3,
         immutableState: true,
+        rpgMakerText: rpgMakerTextRuntime,
       });
       for (const mask of masks) controller.step(mask);
       const beforeRewind = structuredClone(controller.state);
