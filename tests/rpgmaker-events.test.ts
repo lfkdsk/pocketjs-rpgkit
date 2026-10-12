@@ -1252,7 +1252,7 @@ describe("screen and audio", () => {
     const { cmds, cov } = conv([
       C(137, 0, [0]),
       C(137, 0, [2]),
-      C(138, 0, [[-255, 34, 255, 128]]),
+      C(138, 0, [[-255, 34, 255]]),
       C(236, 0, ["rain", 3, 60, false]),
       C(236, 0, ["storm", 9, 45, true]),
       C(236, 0, ["snow", 6, 0, false]),
@@ -1262,7 +1262,7 @@ describe("screen and audio", () => {
     expect(cmds).toEqual([
       { op: "formationAccess", enabled: false },
       { op: "formationAccess", enabled: true },
-      { op: "windowTone", tone: { r: -255, g: 34, b: 255, gray: 128 } },
+      { op: "windowTone", tone: { r: -255, g: 34, b: 255, gray: 0 } },
       { op: "weather", kind: "rain", power: 3, duration: 1, wait: false },
       { op: "weather", kind: "storm", power: 9, duration: 0.75, wait: true },
       { op: "weather", kind: "snow", power: 6, duration: 0, wait: false },

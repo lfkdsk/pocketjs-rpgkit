@@ -2143,6 +2143,22 @@ function screenTone(v: unknown): ScreenTone | null {
   };
 }
 
+/** Change Window Color stores only RGB in stock MV/MZ project data. Keep
+ * accepting a fourth channel from hand-authored inputs for compatibility,
+ * but default the absent gray channel to the neutral value. */
+function windowTone(v: unknown): ScreenTone | null {
+  if (!Array.isArray(v) || v.length < 3) return null;
+  const channels = v.slice(0, 4);
+  if (!channels.every(isInteger)) return null;
+  const [r, g, b, gray = 0] = channels as [number, number, number, number?];
+  return {
+    r: clamp(r, -255, 255),
+    g: clamp(g, -255, 255),
+    b: clamp(b, -255, 255),
+    gray: clamp(gray, 0, 255),
+  };
+}
+
 function emitTint(p: readonly unknown[], st: State): Command[] {
   const tone = screenTone(p[0]);
   if (!tone) {
@@ -2162,7 +2178,7 @@ function emitTint(p: readonly unknown[], st: State): Command[] {
 }
 
 function emitWindowTone(p: readonly unknown[], st: State): Command[] {
-  const tone = screenTone(p[0]);
+  const tone = windowTone(p[0]);
   if (!tone) {
     rec(st, 138, "Dropped", "window tone is malformed");
     return [];

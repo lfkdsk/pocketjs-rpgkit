@@ -1992,7 +1992,7 @@ function stageMap(): RmMap {
       cmd(211, 1),
       cmd(284, "!StageGlow", false, false, 0, 0),
       cmd(356, "StageLights dim 50"),
-      cmd(138, [-72, 36, -18, 90]),
+      cmd(138, [-72, 36, -18]),
       cmd(223, [-68, 34, -17, 96], 30, true),
       cmd(249, MV_SE.fanfare),
       cmd(224, [255, 255, 224, 170], 20, true),
