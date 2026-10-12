@@ -250,6 +250,8 @@ describe("imported RPG Maker Battle Processing end to end", () => {
 
   for (const hz of [60, 30, 20]) test(`win executes 601, rewards, drops, and levels at ${hz} Hz`, () => {
     const db = structuredClone(imported.battle);
+    db.skills.push({ ...structuredClone(db.skills[0]!), id: 2, name: "Second Wind" });
+    db.classes[0]!.learnings.push({ level: 2, skillId: 2 });
     db.enemies[0]!.params[0] = 1;
     db.enemies[0]!.exp = 200;
     db.enemies[0]!.gold = 37;
@@ -264,6 +266,7 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     expect(state.sw.gold).toBe(137);
     expect(state.sw.items.item001).toBe(1);
     expect((state.ext as Record<string, any>).rpgmakerBattle.actors["1"].level).toBeGreaterThan(1);
+    expect((state.ext as Record<string, any>).rpgmakerBattle.actors["1"].skills).toContain(2);
   });
 
   test("escape executes the imported 602 branch", () => {

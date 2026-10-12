@@ -296,6 +296,7 @@ describe("RPG Maker battle database import", () => {
     map.encounterList = [
       { troopId: 1, weight: 7, regionSet: [2, 5] },
       { troopId: 1, weight: 3, regionSet: [] },
+      { troopId: 1, weight: 0, regionSet: [9] },
     ];
     const result = await importRmProject(project);
 
@@ -305,6 +306,7 @@ describe("RPG Maker battle database import", () => {
       entries: [
         { troopId: 1, weight: 7, regions: [2, 5] },
         { troopId: 1, weight: 3, regions: [] },
+        { troopId: 1, weight: 0, regions: [9] },
       ],
     }]);
     expect(result.project.system?.stepCounter).toBe(true);

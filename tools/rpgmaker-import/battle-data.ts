@@ -531,7 +531,7 @@ export function importBattleDatabase(
       step: Math.max(1, nonNegative(map.encounterStep, 30)),
       entries: map.encounterList.map((entry) => ({
         troopId: nonNegative(entry.troopId),
-        weight: Math.max(1, nonNegative(entry.weight, 1)),
+        weight: nonNegative(entry.weight, 1),
         regions: (entry.regionSet ?? []).map((region) => nonNegative(region)),
       })),
     }));

@@ -1051,7 +1051,9 @@ function battleOperandValue(state: RpgMakerBattleState, operand: RpgMakerValueOp
 
 function transformEnemy(
   db: RpgMakerBattleDatabase,
+  state: RpgMakerBattleState,
   enemy: RpgMakerBattleCombatant,
+  enemyIndex: number,
   enemyId: number,
 ): void {
   const definition = findById(db.enemies, enemyId);
@@ -1063,6 +1065,30 @@ function transformEnemy(
   else delete enemy.image;
   enemy.hp = clamp(enemy.hp, 0, rpgMakerCombatantParam(db, enemy, 0));
   enemy.mp = clamp(enemy.mp, 0, rpgMakerCombatantParam(db, enemy, 1));
+
+  // Game_Enemy.transform calls makeActions(). If this battler already owns
+  // an action in the current turn, rebuild that pending action from the new
+  // enemy definition instead of executing the pre-transform skill.
+  const pendingIndex = state.queue.findIndex((action, index) =>
+    index >= state.queueIndex && action.side === "enemy" && action.user === enemyIndex);
+  if (pendingIndex >= 0) {
+    const pendingSpeed = state.queue[pendingIndex]!.speed;
+    state.queue = state.queue.filter((action, index) =>
+      index < state.queueIndex || action.side !== "enemy" || action.user !== enemyIndex);
+    const action = chooseEnemyAction(db, state, enemy, enemyIndex);
+    if (action) {
+      // startTurn already computed and sorted the battler's speed before a
+      // turn-start page can transform it. makeActions selects a replacement
+      // action but does not re-roll that turn speed.
+      action.speed = pendingSpeed;
+      state.queue.splice(Math.min(pendingIndex, state.queue.length), 0, action);
+    }
+  }
+}
+
+function consumeQueuedActions(state: RpgMakerBattleState, side: "actor" | "enemy", user: number): void {
+  state.queue = state.queue.filter((action, index) =>
+    index < state.queueIndex || action.side !== side || action.user !== user);
 }
 
 function runForcedAction(
@@ -1070,7 +1096,6 @@ function runForcedAction(
   state: RpgMakerBattleState,
   effect: Extract<RpgMakerBattleTroop["pages"][number]["effects"][number], { kind: "forceAction" }>,
 ): string[] {
-  if (!findById(db.skills, effect.skillId)) return [];
   const users = effect.side === "enemy"
     ? troopEffectEnemies(state, effect.subject).map(({ index }) => index)
     : state.actors.flatMap((actor, index) => actor.databaseId === effect.subject ? [index] : []);
@@ -1078,6 +1103,10 @@ function runForcedAction(
   for (const userIndex of users) {
     const user = effect.side === "actor" ? state.actors[userIndex] : state.enemies[userIndex];
     if (!user || user.states.some((active) => active.id === 1)) continue;
+    // Game_Battler.forceAction clears the battler's ordinary actions and
+    // BattleManager removes it from the remaining action-battler queue.
+    consumeQueuedActions(state, effect.side, userIndex);
+    if (!findById(db.skills, effect.skillId)) continue;
     const target = effect.target === -2 ? integer(user.lastTargetIndex) : effect.target;
     const text = resolveAction(db, state, {
       side: effect.side,
@@ -1147,7 +1176,9 @@ function applyTroopPageEffect(
     return [];
   }
   if (effect.kind === "enemyTransform") {
-    for (const { enemy } of troopEffectEnemies(state, effect.index)) transformEnemy(db, enemy, effect.enemyId);
+    for (const { enemy, index } of troopEffectEnemies(state, effect.index)) {
+      transformEnemy(db, state, enemy, index, effect.enemyId);
+    }
     return [];
   }
   if (effect.kind === "battleAnimation") {
@@ -1438,8 +1469,9 @@ function actionTargets(
   user: RpgMakerBattleCombatant,
 ): { side: "actor" | "enemy"; index: number }[] {
   const scopeSide = targetSide(usable.scope);
-  if (scopeSide === "user") return [{ side: action.side, index: action.user }];
   const userRestriction = action.forced ? 0 : restriction(db, user);
+  if (usable.scope === 0 && userRestriction === 0) return [];
+  if (scopeSide === "user") return [{ side: action.side, index: action.user }];
   let targetSideName: "actor" | "enemy";
   if (userRestriction >= 1 && userRestriction <= 3) {
     const opponents = action.side === "actor" ? "enemy" : "actor";
@@ -1784,10 +1816,6 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
   const usable = usableForAction(db, action);
   if (!usable) return "";
   const targets = actionTargets(db, state, action, usable, user);
-  if (targets.length === 0) return [
-    formatTerm(db, db.terms.messages.useItem, user.name, usable.name),
-    formatTerm(db, db.terms.messages.actionFailure, user.name),
-  ].join("\n");
   if (action.kind === "skill") {
     const skill = usable as RpgMakerBattleSkill;
     if (!action.forced && !skillAffordable(user, skill)) return formatTerm(db, db.terms.messages.actionFailure, user.name);
@@ -1797,6 +1825,12 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
     const key = itemKey(action.id);
     if ((state.items[key] ?? 0) <= 0) return formatTerm(db, db.terms.messages.actionFailure, user.name);
     if ((usable as RpgMakerBattleItem).consumable) state.items[key] = Math.max(0, state.items[key]! - 1);
+  }
+  if (targets.length === 0) {
+    // Stock still pays/consumes the usable and announces it, but with no
+    // targets there is no apply(), result line, TP gain, or target cursor.
+    updateActionEndStates(db, user);
+    return formatTerm(db, db.terms.messages.useItem, user.name, usable.name);
   }
   const messages: string[] = [];
   state.effect = null;
