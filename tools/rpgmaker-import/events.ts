@@ -34,10 +34,11 @@ import type {
   PictureOrigin,
   PictureTone,
   RouteTarget,
-  ScreenColor,
+  ScreenTone,
   ShopGood,
   TextBoxLayout,
   Trigger,
+  WeatherKind,
 } from "../../src/engine/types.ts";
 import { RM_COMMAND_BY_CODE, RM_CONDITION_TYPES, RM_ROUTE_BY_CODE } from "./catalog.ts";
 import type { Coverage, Disposition } from "./coverage.ts";
@@ -148,9 +149,7 @@ const SHAKE_PIXEL_SCALE = 16 / 48;
  *  largest item count (99 < 2^7) in the binary lowerings below. */
 const GOLD_BITS = 27;
 const ITEM_BITS = 7;
-/** The screenTint layer RM's Tint Screen drives, and the screenBackdrop
- *  layer pictures show on. */
-export const TONE_LAYER = "tone";
+/** The screenBackdrop layer pictures show on. */
 export const PICTURE_LAYER = "picture";
 
 const DIR_OF: Readonly<Record<number, Dir>> = { 2: "down", 4: "left", 6: "right", 8: "up" };
@@ -357,6 +356,7 @@ const int = (v: unknown, fallback = 0): number => Math.trunc(num(v, fallback));
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 const seconds = (frames: unknown): number => Math.max(0, num(frames)) / FPS;
 const byte = (v: unknown): number => clamp(int(v), 0, 255);
+const isInteger = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 
 const actorOperation = (v: unknown): "add" | "sub" => int(v) === 0 ? "add" : "sub";
 
@@ -786,6 +786,18 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       rec(st, 135, "Native");
       // MV: parameter 0 disables, any other value enables.
       return [{ op: "menuAccess", enabled: int(p[0]) !== 0 }];
+    case 137:
+      if (!isInteger(p[0])) {
+        rec(st, 137, "Dropped", "formation access parameter is malformed");
+        return [];
+      }
+      rec(st, 137, "Degraded", "formation reorders followers and battle slots but keeps the walking leader fixed");
+      // MV: parameter 0 disables, any other value enables.
+      return [{ op: "formationAccess", enabled: p[0] !== 0 }];
+    case 138:
+      return emitWindowTone(p, st);
+    case 236:
+      return emitWeather(p, st);
     case 285: {
       rec(st, 285, "Native");
       // MV layout: [variableId, infoType, locationType, x, y]. infoType 0 is
@@ -808,6 +820,13 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
     case 281:
       rec(st, 281, "Native");
       return [{ op: "mapNameDisplay", visible: int(p[0]) === 0 }];
+    case 282:
+      if (!isInteger(p[0]) || p[0] <= 0) {
+        rec(st, 282, "Dropped", "tileset id must be a positive integer");
+        return [];
+      }
+      rec(st, 282, "Degraded", "map art and passage switch together; tile-image event sprites keep their imported art");
+      return [{ op: "changeTileset", id: `ts${p[0]}` }];
     case 283:
       return emitBattleSetting(code, p, st);
     case 284: {
@@ -2109,25 +2128,69 @@ function emitAnimation(p: readonly unknown[], st: State): Command[] {
 
 // --- screen and audio -------------------------------------------------------------
 
-/** MV tones add [-255..255] per channel and blend toward grey; the kit
- *  overlays one RGBA colour. The overlay's alpha is the strongest channel
- *  shift and its colour leans each channel the same way; a pure grey tone
- *  becomes a grey veil. Approximate either way. */
-export function toneOverlay(tone: readonly unknown[]): ScreenColor {
-  const [r, g, b, gray] = [0, 1, 2, 3].map((k) => clamp(int(tone[k]), -255, 255)) as [number, number, number, number];
-  const m = Math.max(Math.abs(r), Math.abs(g), Math.abs(b));
-  if (m === 0 && gray <= 0) return { r: 0, g: 0, b: 0, a: 0 };
-  if (m === 0) return { r: 128, g: 128, b: 128, a: clamp(Math.round(gray / 2), 0, 255) };
-  const ch = (t: number): number => clamp(Math.round(128 + (t * 128) / m), 0, 255);
-  return { r: ch(r), g: ch(g), b: ch(b), a: clamp(m, 0, 255) };
+/** MV/MZ tones use signed RGB offsets and a non-negative greyscale amount.
+ * Keep the authored descriptor instead of projecting it to an RGBA veil. */
+function screenTone(v: unknown): ScreenTone | null {
+  if (!Array.isArray(v) || v.length < 4) return null;
+  const channels = v.slice(0, 4);
+  if (!channels.every(isInteger)) return null;
+  const [r, g, b, gray] = channels as [number, number, number, number];
+  return {
+    r: clamp(r, -255, 255),
+    g: clamp(g, -255, 255),
+    b: clamp(b, -255, 255),
+    gray: clamp(gray, 0, 255),
+  };
 }
 
 function emitTint(p: readonly unknown[], st: State): Command[] {
-  const tone = Array.isArray(p[0]) ? (p[0] as unknown[]) : [];
-  const color = toneOverlay(tone);
-  if (color.a === 0) rec(st, 223, "Native");
-  else rec(st, 223, "Degraded", "colour tone approximated as an overlay colour");
-  return [{ op: "screenTint", layer: TONE_LAYER, color, duration: seconds(p[1]), wait: !!p[2] }];
+  const tone = screenTone(p[0]);
+  if (!tone) {
+    rec(st, 223, "Dropped", "screen tone is malformed");
+    return [];
+  }
+  if (!isInteger(p[1]) || p[1] < 0) {
+    rec(st, 223, "Dropped", "screen tone duration must be a non-negative frame count");
+    return [];
+  }
+  if (typeof p[2] !== "boolean") {
+    rec(st, 223, "Dropped", "screen tone wait flag must be boolean");
+    return [];
+  }
+  rec(st, 223, "Degraded", "signed tone is retained exactly; portable rendering approximates additive colour and desaturation");
+  return [{ op: "screenTone", tone, duration: seconds(p[1]), wait: p[2] }];
+}
+
+function emitWindowTone(p: readonly unknown[], st: State): Command[] {
+  const tone = screenTone(p[0]);
+  if (!tone) {
+    rec(st, 138, "Dropped", "window tone is malformed");
+    return [];
+  }
+  rec(st, 138, "Degraded", "window tone is retained exactly and projected onto the kit theme palette");
+  return [{ op: "windowTone", tone }];
+}
+
+function emitWeather(p: readonly unknown[], st: State): Command[] {
+  const kind = p[0];
+  if (kind !== "none" && kind !== "rain" && kind !== "storm" && kind !== "snow") {
+    rec(st, 236, "Dropped", "unknown weather kind");
+    return [];
+  }
+  if (!isInteger(p[1]) || p[1] < 0 || p[1] > 9) {
+    rec(st, 236, "Dropped", "weather power must be an integer from 0 to 9");
+    return [];
+  }
+  if (!isInteger(p[2]) || p[2] < 0) {
+    rec(st, 236, "Dropped", "weather duration must be a non-negative frame count");
+    return [];
+  }
+  if (typeof p[3] !== "boolean") {
+    rec(st, 236, "Dropped", "weather wait flag must be boolean");
+    return [];
+  }
+  rec(st, 236, "Native");
+  return [{ op: "weather", kind: kind as WeatherKind, power: p[1], duration: seconds(p[2]), wait: p[3] }];
 }
 
 function waitCommands(total: number): Command[] {

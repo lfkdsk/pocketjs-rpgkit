@@ -1234,16 +1234,63 @@ describe("screen and audio", () => {
     expect(cmds).toEqual([
       { op: "screenFade", direction: "out", duration: 0.4, wait: true },
       { op: "screenFade", direction: "in", duration: 0.4, wait: true },
-      { op: "screenTint", layer: "tone", color: { r: 0, g: 0, b: 0, a: 0 }, duration: 0.5, wait: false },
+      { op: "screenTone", tone: { r: 0, g: 0, b: 0, gray: 0 }, duration: 0.5, wait: false },
       { op: "screenFlash", color: { r: 255, g: 0, b: 0, a: 255 }, intensity: 170, duration: 0.5, wait: true },
       { op: "screenShake", strength: 4, speed: 3, duration: 1.5, wait: false },
       { op: "wait", seconds: 30 },
       { op: "wait", seconds: 10 },
     ]);
-    expect(only(cov, 223)).toBe("Native");
+    expect(only(cov, 223)).toBe("Degraded");
     const tint = conv([C(223, 0, [[-68, -68, 0, 68], 60, true])]);
-    expect(tint.cmds).toEqual([{ op: "screenTint", layer: "tone", color: { r: 0, g: 0, b: 128, a: 68 }, duration: 1, wait: true }]);
+    expect(tint.cmds).toEqual([{
+      op: "screenTone", tone: { r: -68, g: -68, b: 0, gray: 68 }, duration: 1, wait: true,
+    }]);
     expect(only(tint.cov, 223)).toBe("Degraded");
+  });
+
+  test("K-RPGM5 system, weather and tileset commands preserve source operands", () => {
+    const { cmds, cov } = conv([
+      C(137, 0, [0]),
+      C(137, 0, [2]),
+      C(138, 0, [[-255, 34, 255, 128]]),
+      C(236, 0, ["rain", 3, 60, false]),
+      C(236, 0, ["storm", 9, 45, true]),
+      C(236, 0, ["snow", 6, 0, false]),
+      C(236, 0, ["none", 0, 30, true]),
+      C(282, 0, [7]),
+    ]);
+    expect(cmds).toEqual([
+      { op: "formationAccess", enabled: false },
+      { op: "formationAccess", enabled: true },
+      { op: "windowTone", tone: { r: -255, g: 34, b: 255, gray: 128 } },
+      { op: "weather", kind: "rain", power: 3, duration: 1, wait: false },
+      { op: "weather", kind: "storm", power: 9, duration: 0.75, wait: true },
+      { op: "weather", kind: "snow", power: 6, duration: 0, wait: false },
+      { op: "weather", kind: "none", power: 0, duration: 0.5, wait: true },
+      { op: "changeTileset", id: "ts7" },
+    ]);
+    expect(counts(cov, "command", "236").Native).toBe(4);
+    for (const code of [137, 138, 282]) expect(counts(cov, "command", String(code)).Degraded).toBeGreaterThan(0);
+    for (const code of [137, 138, 236, 282]) expect(counts(cov, "command", String(code)).Dropped).toBe(0);
+  });
+
+  test.each([
+    [137, [], "formation access parameter is malformed"],
+    [138, ["blue"], "window tone is malformed"],
+    [223, [null, 60, true], "screen tone is malformed"],
+    [223, [[0, 0, 0, 0], -1, true], "screen tone duration must be a non-negative frame count"],
+    [236, ["hail", 5, 60, false], "unknown weather kind"],
+    [236, ["rain", 10, 60, false], "weather power must be an integer from 0 to 9"],
+    [236, ["rain", 5, -1, false], "weather duration must be a non-negative frame count"],
+    [236, ["rain", 5, 60, 1], "weather wait flag must be boolean"],
+    [282, [0], "tileset id must be a positive integer"],
+  ] as const)("malformed command %i is dropped with a diagnostic", (code, parameters, reason) => {
+    const ctx = makeCtx();
+    const cmds = convertCommands([C(code, 0, [...parameters]), END(0)], ctx);
+    expect(cmds).toEqual([]);
+    const row = ctx.cov.list("command").find((entry) => entry.key === String(code));
+    expect(row?.counts.Dropped).toBe(1);
+    expect(row?.reasons).toEqual([reason]);
   });
 
   test("numbered pictures preserve transforms, timing and MV/MZ easing", () => {
