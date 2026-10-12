@@ -5,6 +5,7 @@ import { canonicalJson } from "../src/engine/save.ts";
 import { parseRpgMakerFormula, RPGMAKER_FORMULA_FALLBACK } from "../src/rpgmaker-battle/formula.ts";
 import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject } from "../tools/rpgmaker-import/project.ts";
+import { staticCommandTable } from "../tools/rpgmaker-import/report.ts";
 
 const ROOT = join(import.meta.dir, "fixtures/rpgmaker");
 const HOLLOW = join(ROOT, "hollow-mz");
@@ -15,6 +16,30 @@ function formulaCoverage(result: Awaited<ReturnType<typeof importRmProject>>) {
 }
 
 describe("RPG Maker battle database import", () => {
+  test("the static command catalogue measures battle-only commands through the troop converter", () => {
+    const rows = new Map(staticCommandTable().map((row) => [row.code, row]));
+    for (const code of [331, 332, 333, 334, 335, 336, 339, 340, 342]) {
+      expect(rows.get(code)?.disposition).toBe("Native");
+    }
+    expect(rows.get(337)).toMatchObject({
+      disposition: "Degraded",
+      reason: "battle animation keeps its numeric database id because no cooked animation id is available",
+    });
+  });
+
+  test("the two fixture command-coverage snapshots match the documented totals", async () => {
+    const [hollow, stage] = await Promise.all([
+      importRmProject(loadRmProject(HOLLOW)),
+      importRmProject(loadRmProject(STAGE)),
+    ]);
+    expect(hollow.cov.totals("command")).toEqual({
+      Native: 107, Degraded: 9, Placeholder: 2, Dropped: 2, total: 120,
+    });
+    expect(stage.cov.totals("command")).toEqual({
+      Native: 52, Degraded: 5, Placeholder: 1, Dropped: 0, total: 58,
+    });
+  });
+
   test("normalizes MZ actors, curves, enemies, troops, items, states, and battler art", async () => {
     const result = await importRmProject(loadRmProject(HOLLOW));
     const battle = result.battle;

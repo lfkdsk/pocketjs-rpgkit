@@ -13,6 +13,7 @@
 
 import { Coverage, DISPOSITIONS, type CoverageSection, type Disposition } from "./coverage.ts";
 import type { AudioMediaRecord } from "./audio-media.ts";
+import { convertRpgMakerTroopEffects } from "./battle-data.ts";
 import { RM_COMMANDS, sampleCommands } from "./catalog.ts";
 import { convertCommands, type EventContext } from "./events.ts";
 import type { RmProject } from "./rm-types.ts";
@@ -99,6 +100,7 @@ function sampleContext(cov: Coverage): EventContext {
 /** The importer's handling of every MV/MZ command code. */
 export function staticCommandTable(): StaticCommandRow[] {
   const rows: StaticCommandRow[] = [];
+  const troopOnly = new Set([331, 332, 333, 334, 335, 336, 337, 339, 340, 342]);
   for (const info of RM_COMMANDS) {
     if (info.continuation) continue;
     const samples = sampleCommands(info.code);
@@ -106,7 +108,8 @@ export function staticCommandTable(): StaticCommandRow[] {
     let reason = "";
     if (samples.length > 0) {
       const cov = new Coverage();
-      convertCommands(samples, sampleContext(cov));
+      if (troopOnly.has(info.code)) convertRpgMakerTroopEffects(samples, cov);
+      else convertCommands(samples, sampleContext(cov));
       const row = cov.list("command").find((r) => r.key === String(info.code));
       if (row) {
         // The disposition the sample recorded most often for its own code.

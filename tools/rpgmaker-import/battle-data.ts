@@ -225,7 +225,10 @@ function usable(
   };
 }
 
-function troopEffects(
+/** Convert the executable subset of troop-page commands. Exported so the
+ * static command catalogue measures battle-only commands through the same
+ * converter used by real imports instead of reporting map-event fallbacks. */
+export function convertRpgMakerTroopEffects(
   commands: readonly RmCommand[],
   cov: Coverage,
 ): { effects: RpgMakerTroopPageEffect[]; unsupported: number } {
@@ -355,7 +358,7 @@ function troopPage(page: RmTroopPage, cov: Coverage, troopId: number, index: num
     condition.actorHp = { actorId: nonNegative(raw.actorId), percent: clamp(raw.actorHp, 0, 100, 100) };
   }
   if (raw?.switchValid) condition.switch = switchId(nonNegative(raw.switchId));
-  const converted = troopEffects(page.list ?? [], cov);
+  const converted = convertRpgMakerTroopEffects(page.list ?? [], cov);
   if (converted.unsupported > 0) {
     cov.record(
       "battle",

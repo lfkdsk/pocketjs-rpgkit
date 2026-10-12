@@ -172,14 +172,23 @@ In short:
 ## Command table
 
 Every MV/MZ event command code and what the importer does with a minimal
-use of it: 69 of the 107 commands map natively, 1 runs degraded, 3 become
-placeholders (Script and the two plugin commands) and 34 are dropped, many
-of them actor, enemy and battle-only commands. "Needs
-kit" names the runtime capability a native mapping would take; it is the
-list of what the kit would need to import an RPG Maker game completely.
+use of it: 92 of the 107 commands map natively, 7 run degraded, 3 become
+placeholders (Script and the two plugin commands) and 5 are dropped. "Needs
+kit" names the remaining or presentation-only runtime capability. The
+static table sends troop-only commands through the same troop converter as a
+real import, rather than treating them as map commands.
 `tests/rpgmaker-import.test.ts` keeps this table in step with the
 importer. Each import also writes the same table, plus per-construct counts
 for that project, to `coverage.md`.
+
+The two self-written fixtures currently measure as follows; these are source
+uses, not the 107-row capability catalogue:
+
+| Fixture | Command uses | Native | Degraded | Placeholder | Dropped | Native |
+|---|---:|---:|---:|---:|---:|---:|
+| Hollow MZ | 120 | 107 | 9 | 2 | 2 | 89.2% |
+| Stage MV | 58 | 52 | 5 | 1 | 0 | 89.7% |
+| Combined | 178 | 159 | 14 | 3 | 2 | 89.3% |
 
 <!-- rpgmaker-commands:begin -->
 | Code | Command | Flavor | Handling | Notes | Needs kit |
@@ -207,14 +216,14 @@ for that project, to `coverage.md`.
 | 127 | Change Weapons | MV/MZ | Native |  | equipment (equipped copies) and item changes by variable |
 | 128 | Change Armors | MV/MZ | Native |  | equipment (equipped copies) and item changes by variable |
 | 129 | Change Party Member | MV/MZ | Native |  | a party roster (the importer keeps one switch per actor) |
-| 132 | Change Battle BGM | MV/MZ | Dropped |  | battle audio settings in the battle setup |
-| 133 | Change Victory ME | MV/MZ | Dropped |  | battle audio settings in the battle setup |
+| 132 | Change Battle BGM | MV/MZ | Degraded | battle BGM setting persists, but the current battle audio lifecycle does not play it | battle audio settings in the battle setup |
+| 133 | Change Victory ME | MV/MZ | Degraded | victory ME setting persists, but the current battle audio lifecycle does not play it | battle audio settings in the battle setup |
 | 134 | Change Save Access | MV/MZ | Native |  |  |
 | 135 | Change Menu Access | MV/MZ | Native |  |  |
-| 136 | Change Encounter | MV/MZ | Dropped |  | random encounters |
+| 136 | Change Encounter | MV/MZ | Native |  | random encounters |
 | 137 | Change Formation Access | MV/MZ | Dropped |  | a party formation menu |
 | 138 | Change Window Color | MV/MZ | Dropped |  | a runtime UI theme command |
-| 139 | Change Defeat ME | MV/MZ | Dropped |  | battle audio settings in the battle setup |
+| 139 | Change Defeat ME | MV/MZ | Degraded | defeat ME setting persists, but the current battle audio lifecycle does not play it | battle audio settings in the battle setup |
 | 140 | Change Vehicle BGM | MV/MZ | Native |  |  |
 | 201 | Transfer Player | MV/MZ | Native |  | a white transfer fade colour |
 | 202 | Set Vehicle Location | MV/MZ | Native |  |  |
@@ -252,38 +261,38 @@ for that project, to `coverage.md`.
 | 261 | Play Movie | MV/MZ | Dropped |  | video playback |
 | 281 | Change Map Name Display | MV/MZ | Native |  |  |
 | 282 | Change Tileset | MV/MZ | Dropped |  | runtime tileset swaps (a ground/upper layer variant per tileset) |
-| 283 | Change Battle Background | MV/MZ | Dropped |  | battle backgrounds in the battle setup |
+| 283 | Change Battle Background | MV/MZ | Degraded | battle background names persist, but battle backgrounds are not presented | battle backgrounds in the battle setup |
 | 284 | Change Parallax | MV/MZ | Native |  |  |
 | 285 | Get Location Info | MV/MZ | Native |  |  |
 | 301 | Battle Processing | MV/MZ | Native |  |  |
 | 302 | Shop Processing | MV/MZ | Native |  |  |
 | 303 | Name Input Processing | MV/MZ | Native |  |  |
-| 311 | Change HP | MV/MZ | Dropped |  | actor stats |
-| 312 | Change MP | MV/MZ | Dropped |  | actor stats |
-| 326 | Change TP | MV/MZ | Dropped |  | actor stats |
-| 313 | Change State | MV/MZ | Dropped |  | actor states |
-| 314 | Recover All | MV/MZ | Dropped |  | actor stats |
-| 315 | Change EXP | MV/MZ | Dropped |  | actor experience |
-| 316 | Change Level | MV/MZ | Dropped |  | actor levels |
-| 317 | Change Parameter | MV/MZ | Dropped |  | actor parameters |
-| 318 | Change Skill | MV/MZ | Dropped |  | actor skills |
-| 319 | Change Equipment | MV/MZ | Dropped |  | equipment slots |
+| 311 | Change HP | MV/MZ | Native |  | actor stats |
+| 312 | Change MP | MV/MZ | Native |  | actor stats |
+| 326 | Change TP | MV/MZ | Native |  | actor stats |
+| 313 | Change State | MV/MZ | Native |  | actor states |
+| 314 | Recover All | MV/MZ | Native |  | actor stats |
+| 315 | Change EXP | MV/MZ | Native |  | actor experience |
+| 316 | Change Level | MV/MZ | Native |  | actor levels |
+| 317 | Change Parameter | MV/MZ | Native |  | actor parameters |
+| 318 | Change Skill | MV/MZ | Native |  | actor skills |
+| 319 | Change Equipment | MV/MZ | Native |  | equipment slots |
 | 320 | Change Name | MV/MZ | Native |  | runtime names for actors other than actor 1 |
-| 321 | Change Class | MV/MZ | Dropped |  | actor classes |
-| 322 | Change Actor Images | MV/MZ | Dropped |  | per-actor walking/face/battler images (the player sprite can change via appearance) |
+| 321 | Change Class | MV/MZ | Native |  | actor classes |
+| 322 | Change Actor Images | MV/MZ | Degraded | actor images persist, but map, face, and side-view presentation do not update live | per-actor walking/face/battler images (the player sprite can change via appearance) |
 | 323 | Change Vehicle Image | MV/MZ | Native |  |  |
-| 324 | Change Nickname | MV/MZ | Dropped |  | actor profiles |
-| 325 | Change Profile | MV/MZ | Dropped |  | actor profiles |
-| 331 | Change Enemy HP | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 332 | Change Enemy MP | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 342 | Change Enemy TP | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 333 | Change Enemy State | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 334 | Enemy Recover All | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 335 | Enemy Appear | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 336 | Enemy Transform | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 337 | Show Battle Animation | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 339 | Force Action | MV/MZ | Dropped |  | an RPG Maker battle system |
-| 340 | Abort Battle | MV/MZ | Dropped |  | an RPG Maker battle system |
+| 324 | Change Nickname | MV/MZ | Native |  | actor profiles |
+| 325 | Change Profile | MV/MZ | Native |  | actor profiles |
+| 331 | Change Enemy HP | MV/MZ | Native |  | an RPG Maker battle system |
+| 332 | Change Enemy MP | MV/MZ | Native |  | an RPG Maker battle system |
+| 342 | Change Enemy TP | MV/MZ | Native |  | an RPG Maker battle system |
+| 333 | Change Enemy State | MV/MZ | Native |  | an RPG Maker battle system |
+| 334 | Enemy Recover All | MV/MZ | Native |  | an RPG Maker battle system |
+| 335 | Enemy Appear | MV/MZ | Native |  | an RPG Maker battle system |
+| 336 | Enemy Transform | MV/MZ | Native |  | an RPG Maker battle system |
+| 337 | Show Battle Animation | MV/MZ | Degraded | battle animation keeps its numeric database id because no cooked animation id is available | an RPG Maker battle system |
+| 339 | Force Action | MV/MZ | Native |  | an RPG Maker battle system |
+| 340 | Abort Battle | MV/MZ | Native |  | an RPG Maker battle system |
 | 351 | Open Menu Screen | MV/MZ | Native |  |  |
 | 352 | Open Save Screen | MV/MZ | Native |  |  |
 | 353 | Game Over | MV/MZ | Native |  |  |
@@ -387,23 +396,27 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   front-view module imports actor/class parameter curves, enemy action patterns,
   troops and positions, skills/items, states, rewards, weighted region-aware
   map encounters, and the common turn/enemy-HP/switch troop-page conditions.
-  MV side-view projects intentionally render in front view. Troop pages execute
-  only messages, switches and constant-variable changes; battle backgrounds,
-  battle BGM/ME settings and battle-only event commands such as Force Action or
-  Enemy Transform remain dropped. Encounter Disable, vehicle suppression and
-  Encounter Half are not modelled.
+  Troop pages additionally execute enemy HP/MP/TP/state changes, recovery,
+  appear, transform, forced actions and abort in source order. MV side-view
+  projects intentionally render in front view. Numeric Show Battle Animation
+  ids are retained but cannot paint without a cooked animation id. Battle
+  BGM/ME records and per-map battleback names persist, but the current battle
+  presentation does not consume them. Encounter Disable works; vehicle
+  suppression and Encounter Half are not modelled.
 - **Damage formulas use a safe subset, never `eval`.** Battler parameters
   (`a.atk`, `b.def`, and the other basic parameters), literal `v[n]`, arithmetic,
   comparisons, boolean operators, ternaries and common `Math` functions are
   parsed into a bounded JSON tree. A formula outside that subset is reported as
   Degraded and deterministically falls back to
   `Math.max(0, a.atk * 4 - b.def * 2)`.
-- **Event-time actor simulation is still incomplete.** Battles persist HP, MP,
-  TP, experience, levels, learned skills and states in the extension state, but
-  map-event Change HP/MP/TP/EXP/Level/Class/Skill/Equipment/State commands are
-  still dropped and actor event conditions read imported initial facts. A
-  `\P[n]` lookup uses the initial party order rather than later Change Party
-  Member results.
+- **Event-time actor simulation is still incomplete.** Map events can change
+  actor HP/MP/TP, states, recovery, EXP, level, parameter bonuses, skills,
+  equipment, class, images, nickname and profile; the saved extension state is
+  also the next battle's source and rewinds with the session. Show Level Up
+  messages and changed actor-image presentation are not drawn. Actor event
+  conditions for class, skill, equipment and state still read imported initial
+  facts. A `\P[n]` lookup uses the initial party order rather than later Change
+  Party Member results.
 - **Maps are capped at 256 × 256**, the kit's limit.
 - Region ids and terrain tags are carried over as sparse per-cell map data
   (Get Location Info, the `region` condition and authored region-crossing
