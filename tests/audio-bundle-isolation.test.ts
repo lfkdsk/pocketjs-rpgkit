@@ -287,9 +287,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 8,898 B to Meadow and the WAV fixture and 10,485 B to Sunstone's already
 // reachable save/demo graph. Neither audio decoder becomes reachable from
 // Meadow, and neither optional RPG Maker capability re-enters these graphs.
-const EXPECTED_MEADOW_BYTES = 676_764;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_111_540;
-const EXPECTED_WAV_FIXTURE_BYTES = 873_906;
+// Frozen-battle capability routing adds 1,185 B to these reducer graphs.
+// Moving tone/weather presentation behind the optional KRM2 entry then
+// removes 11,122 B from the two GameView graphs, for a net 9,937 B reduction.
+const EXPECTED_MEADOW_BYTES = 677_949;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_101_603;
+const EXPECTED_WAV_FIXTURE_BYTES = 863_969;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
