@@ -270,7 +270,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // to prove that no optional battle code became reachable.
 // The ordinary tileset-passage fast path adds 798 B of shared session code;
 // runtime passage overrides remain sparse and battle code remains absent.
-const EXPECTED_BYTES = 1_107_296;
+// Compile-time worldIdle context admission adds 534 B while letting worlds
+// that never read worldIdle skip construction of that per-tick context.
+const EXPECTED_BYTES = 1_107_830;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
