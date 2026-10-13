@@ -1,85 +1,178 @@
 # QuickJS performance checks
 
-Pocket RPG Kit's desktop host runs game code in QuickJS, so runtime changes are
-measured in that guest rather than in Bun. `tools/pr1-quickjs-bench.sh` builds
-the same workload bundle at two commits and runs both in one pinned desktop
-host. Each measurement window is interleaved baseline, candidate, candidate,
-baseline (ABBA) to reduce the effect of host drift.
+Pocket RPG Kit's desktop host runs game code in QuickJS, so runtime changes
+are measured in that guest rather than in Bun. `tools/pr1-quickjs-bench.sh`
+builds the same workload bundle at two commits and runs both with the current
+checkout's pinned desktop host.
+
+## Prepare the host
+
+The benchmark is Linux-oriented. It requires a full Git history, the PocketJS
+submodule, Bun, stable Rust/Cargo, Bash and GNU/Linux tools including `taskset`,
+`sha256sum` and `find -printf`. Prepare a fresh checkout with:
+
+```sh
+git submodule update --init --recursive
+bun install --frozen-lockfile
+command -v bash git bun cargo awk taskset sha256sum
+test -f vendor/pocketjs/hosts/desktop/Cargo.toml
+```
+
+Choose an allowed, otherwise idle **logical CPU** and check its SMT sibling;
+pinning one sibling does not stop a busy sibling from adding noise. Check load
+before and after the run, and do not run builds, tests, subagents or another
+benchmark concurrently:
+
+```sh
+taskset -pc "$$"
+lscpu -e=CPU,CORE,SOCKET,ONLINE
+uptime
+ps -eLo pid,psr,pcpu,comm --sort=-pcpu | head -20
+```
+
+`PR1_QJS_SCRATCH` defaults to the user cache. Concurrent runs must use
+different scratch directories; otherwise they share host sources, Cargo
+output, bundles and logs.
 
 ## Report a comparison
 
-Pass an explicit baseline commit. For a branch based on `origin/main`, a normal
-three-window run is:
+Pass an explicit baseline commit. For a branch based on `origin/main`, this
+runs the complete table in three interleaved windows:
 
 ```sh
 base=$(git merge-base HEAD origin/main)
-PR1_QJS_CPU=2 PR1_QJS_ROUNDS=3 tools/pr1-quickjs-bench.sh "$base"
+env -u PR1_BENCH_CASE \
+  -u PR1_QJS_MAX_REGRESSION_PCT \
+  -u PR1_QJS_COMPARISON \
+  PR1_QJS_CPU=2 \
+  PR1_QJS_ROUNDS=3 \
+  PR1_QJS_ITERS=2000 \
+  PR1_BENCH_ROUNDS=9 \
+  tools/pr1-quickjs-bench.sh "$base"
 ```
 
-Choose an otherwise idle physical CPU. Check `uptime` and `ps` before the run;
-the script also records `uptime` around every window and records the granted
-CPU affinity. Avoid running builds, tests, or other benchmarks at the same
-time. `PR1_QJS_ITERS` controls the iterations in each slot and defaults to
-2,000.
+Replace CPU 2 when it is not an allowed idle logical CPU. Report-only mode has
+no regression limit by default. `PR1_BENCH_CASE=<name>` selects one diagnostic
+workload; clear it for a final review. Setting
+`PR1_QJS_MAX_REGRESSION_PCT=<percent>` turns a single report comparison into a
+gate.
 
-For diagnosis, `PR1_BENCH_CASE=streamedRoam` selects one workload. A final
-performance review should omit it and measure all workloads. Report-only mode
-has no limit by default; setting `PR1_QJS_MAX_REGRESSION_PCT` turns that one
-comparison into a gate.
+The complete table is:
 
-The analyzer computes two directional deltas per window: candidate slot 2
-against baseline slot 1, and candidate slot 3 against baseline slot 4. Its
-headline is the median of all paired deltas. It fails closed if any requested
-round, slot, or case is missing, duplicated, mislabeled, non-numeric, or not
-positive.
+- `sunstoneIdle`, `sunstoneWalk`, `sunstoneControlWalk`;
+- `streamedRoam`, `battleScene`;
+- `sunstoneIdleImmutable`, `sunstoneControlWalkImmutable`,
+  `battleSceneImmutable`.
 
-## Check a change and cumulative drift
+There are two different round controls:
+
+- `PR1_QJS_ROUNDS` is the number of outer ABBA windows. Report mode defaults
+  to 1; guard mode defaults to and requires at least 3.
+- `PR1_BENCH_ROUNDS` is the number of timing samples inside each host slot and
+  defaults to 9. Each case first runs 400 warmups; each sample folds
+  `PR1_QJS_ITERS` iterations, which defaults to 2,000.
+
+The Rust driver prints mean, median and p95, but the gate reads `mean_us`.
+
+## Read an ABBA result
+
+Each window starts a new host/guest process in this order:
+
+```text
+baseline -> candidate -> candidate -> baseline
+```
+
+For each workload, the analyzer computes two directional deltas:
+
+```text
+(candidate slot 2 / baseline slot 1 - 1) * 100
+(candidate slot 3 / baseline slot 4 - 1) * 100
+```
+
+The reported/gated value is the median of all `2 × PR1_QJS_ROUNDS` paired
+deltas, not a ratio of raw medians. A positive value is a regression; a
+negative value is an improvement. Each workload is gated independently,
+equality passes, and malformed, missing, duplicate, non-positive or mislabeled
+samples fail closed.
+
+The log records the candidate, baseline and PocketJS commits, both bundle
+hashes, requested iterations/windows, granted affinity and load around every
+window. Keep those lines with any reviewed number.
+
+## Check one change and cumulative drift
 
 Guard mode runs two independent comparisons:
 
 ```sh
 base=$(git merge-base HEAD origin/main)
-PR1_QJS_CPU=2 PR1_QJS_ROUNDS=3 tools/pr1-quickjs-bench.sh --guard "$base"
+git status --porcelain --untracked-files=normal --ignore-submodules=none
+env -u PR1_BENCH_CASE \
+  PR1_QJS_CPU=2 \
+  PR1_QJS_ROUNDS=3 \
+  PR1_QJS_ITERS=2000 \
+  PR1_BENCH_ROUNDS=9 \
+  tools/pr1-quickjs-bench.sh --guard "$base"
 ```
 
-| Comparison | Baseline | Purpose |
-| --- | --- | --- |
-| `single` | The command-line change base | Detect a regression introduced by this branch |
-| `cumulative` | `baseline_sha` in `tools/pr1-quickjs-baseline.conf` | Detect small regressions accumulated across branches |
+Guard mode requires a clean candidate worktree, including submodules.
 
-Guard mode requires a clean candidate worktree, including submodules, and at
-least three windows. The fixed configuration contains full commit identity and
-separate percentage limits for the two comparisons. Each case must stay at or
-below its applicable limit; equality passes. The final machine-readable line
-is `PR1_QJS_GUARD_RESULT`.
+| Comparison | Baseline | Current limit | Purpose |
+| --- | --- | ---: | --- |
+| `single` | Command-line change base | 3.0% | Detect a regression introduced by this branch. |
+| `cumulative` | `baseline_sha` in `tools/pr1-quickjs-baseline.conf` | 3.0% | Detect small regressions accumulated across branches. |
 
-Guard mode's exit codes are stable for automation:
+The config file is the source of truth for the baseline and limits. At this
+revision its historical checkpoint is
+`a4dc4e72341ae6aa7373623f83dbd07124316a6d`. The two transcripts are retained
+as `guard-single.log` and `guard-cumulative.log` under `PR1_QJS_SCRATCH`.
 
-| Code | Meaning |
-| --- | --- |
-| 0 | Every measured case passed, or a report-only run completed |
-| 1 | At least one measured case exceeded its limit |
-| 2 | Usage or preflight error, such as a bad ref, config, or dirty guard worktree |
-| 3 | Benchmark execution failed or its transcript was malformed or incomplete |
+When both comparisons reach the analyzer, the final line is
+`PR1_QJS_GUARD_RESULT`; exit 0 means pass, 1 means a measured regression, 2
+means a usage/preflight error, and 3 means an incomplete or malformed
+comparison. There is one current orchestration limitation: an earlier
+`bun`/`cargo`/copy/`taskset` failure can make the shell exit 1 before it emits
+that final line. Automation must therefore treat a missing guard-result line
+as an infrastructure error and inspect both transcripts, not interpret the
+raw 1 as a measured regression.
 
-The two comparison transcripts are retained as `guard-single.log` and
-`guard-cumulative.log` in `PR1_QJS_SCRATCH` (by default, the user cache). Each
-also contains `PR1_QJS_RESULT` records for per-case ingestion.
+The analyzer itself has a focused synthetic regression suite:
+
+```sh
+bun test tests/pr1-quickjs-guard.test.ts
+```
+
+That suite covers pairing, thresholds and malformed rows. It does not launch
+QuickJS or exercise the shell's worktree, submodule, Cargo and dual-comparison
+orchestration.
 
 ## Move the fixed baseline deliberately
 
-The historical baseline is a release-cadence checkpoint, not a moving branch.
-Update `tools/pr1-quickjs-baseline.conf` only in a reviewed performance change:
+The historical baseline is a reviewed release-cadence checkpoint, not a
+moving branch. Before proposing a new checkpoint, resolve both identities and
+prove ancestry:
 
-1. Run the full workload table against both the old fixed baseline and the
-   proposed checkpoint under the same low-load conditions.
-2. Record why the old comparison is no longer the useful cumulative window and
-   account for every accepted regression.
+```sh
+old=$(awk '$1 == "baseline_sha" { print $2 }' tools/pr1-quickjs-baseline.conf)
+checkpoint=$(git rev-parse origin/main)
+git rev-parse --verify "$old^{commit}"
+git rev-parse --verify "$checkpoint^{commit}"
+git merge-base --is-ancestor "$old" "$checkpoint"
+```
+
+Then:
+
+1. Under the same low-load conditions, run the **complete eight-workload**
+   report against both `old` and `checkpoint`, with at least three windows.
+2. Record why the old comparison is no longer the useful cumulative window
+   and account for every accepted regression. A Native/feature milestone is
+   not itself a reason to erase history.
 3. Put the proposed checkpoint's full lowercase 40-character commit SHA in
-   `baseline_sha`; it must remain reachable and must be an ancestor of future
-   change bases.
-4. Change a limit only as an explicit policy decision, never merely to make a
+   `tools/pr1-quickjs-baseline.conf`. It must already be an ancestor of the
+   change base used by future guarded branches; normally the checkpoint first
+   enters `main`, then a later reviewed change moves the config.
+4. Run guard mode from a clean checkout and the synthetic suite above.
+5. Change a limit only as a separate policy decision, never merely to make a
    failing run pass.
 
-Keeping the baseline fixed across many merges is what lets the cumulative
-comparison catch chronic drift that no individual branch exceeds by itself.
+Keeping the checkpoint fixed across many merges is what lets the cumulative
+comparison catch chronic drift which no individual branch exceeds.

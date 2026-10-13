@@ -32,17 +32,37 @@ the parts an RPG-Maker-style game needs without any specific game:
   one-image CLUT8+PackBits entries loaded only when shown, native animated-tile
   atlases, 16×16 or 16×32 static walker frames, and the `GameAssets` manifest
   a game mounts;
+- **RPG Maker MV/MZ import** (`tools/rpgmaker-import`) — maps, passage,
+  events, database records, images, audio and opt-in front-view battle data,
+  with a generated Native/Degraded/Placeholder/Dropped coverage report and a
+  bounded, non-evaluating Script subset;
+- **explicit optional capabilities** — RPG Maker text/screen rules, travel,
+  battle, connected-world rendering, audio and presentation helpers use
+  separate registrations and package entries; ordinary projects neither
+  activate nor bundle their concrete implementations;
 - **the format** (`src/data/schema.json`, v1; changes recorded in
   `src/data/CHANGELOG.md`);
 - **five examples** (`examples/`), each a PocketJS app with its own art
   and tests on the wasm sim host (below);
-- **a map/event editor, in preview** (`editor/`): paints tiles, edits event
-  footprints/pages/conditions/command trees, and runs the unsaved document
-  through the production game view with a live state debugger
-  ([below](#editor-preview)).
+- **Studio** (`editor/studio/`, web and desktop) — the active DOM/canvas map
+  and event editor, including local project folders and an RPG Maker import
+  flow; the older PocketJS editor (`editor/`) remains available and is frozen
+  for new feature work ([below](#editor-preview)).
 
 What is done, partial or still planned is tracked area by area in
 [docs/status.md](docs/status.md).
+
+## Documentation
+
+| Topic | Guide |
+| --- | --- |
+| Feature maturity | [Feature status](docs/status.md) |
+| Build a project and use the runtime | [Quick start](#quick-start), [engine contract](src/engine/README.md) |
+| Import RPG Maker MV/MZ | [Importer quick start, command matrix and limits](docs/rpgmaker-import.md) |
+| Register only the features a game uses | [Optional capabilities and bundle isolation](docs/capabilities.md) |
+| Edit in the browser or desktop app | [Studio](docs/studio.md), [Studio desktop](docs/studio-desktop.md), [editor tutorial](docs/editor-tutorial.md) |
+| Automate edits and validation | [Edit API](docs/edit-api.md), [QA checks](docs/qa-checks.md), [protocols](docs/protocols.md) |
+| Measure runtime changes | [QuickJS performance checks](docs/quickjs-performance.md) |
 
 ## Examples
 
@@ -2051,13 +2071,15 @@ pixel checks, and the Hz/determinism proofs).
 
 ## Using it in your own project
 
-The published package exports the engine surface (`pocket-rpgkit`), the
-Solid components (`pocket-rpgkit/ui`), the opt-in lazy image path
-(`pocket-rpgkit/ui/image`), the opt-in WAV/QOA bridge
-(`pocket-rpgkit/ui/audio`), the battle UI kit (`pocket-rpgkit/ui/battle`),
-the demo controls (`pocket-rpgkit/ui/demo`), save and load for a GameView
-(`pocket-rpgkit/ui/saves`), the host adapters (`pocket-rpgkit/host`), and the schema
-(`pocket-rpgkit/schema`). The
+The published package exports the engine surface (`pocket-rpgkit` and
+`pocket-rpgkit/engine`), base Solid components (`pocket-rpgkit/ui`), host
+adapters (`pocket-rpgkit/host`), the editor API and the schema. Optional
+entries keep concrete features out of applications which do not import them:
+lazy images, audio, generic battle UI, demo controls, saves, connected-world
+rendering, parallax, choice/item icons, RPG Maker text and screen rules, KRM2
+screen presentation, travel reducer/presentation, RPG Maker battle
+rules/scene/formation. The full entry list, registrations and absence behavior
+are in [Optional capabilities](docs/capabilities.md). The
 in-repo examples import the sources relatively, because PocketJS's build
 pass 1 walks relative imports; `examples/meadow/meadow.tsx` shows the
 reducer loop by hand:

@@ -1,151 +1,242 @@
 # Importing RPG Maker MV/MZ projects
 
-`tools/rpgmaker-import` converts an RPG Maker MV or MZ project's
-`data/*.json` files, referenced images and Ogg/M4A media into an
-`rpgkit-project/v1` document plus generated art and QOA audio. Plain projects
-and deployments using RPG Maker's standard encrypted-media format are both
-supported. It is a
-prototype: it shows how much of an
-RPG Maker game maps onto the kit directly, and lists what is still missing.
+`tools/rpgmaker-import` converts RPG Maker MV or MZ maps, events, database
+records, referenced images and Ogg/M4A media into an `rpgkit-project/v1`
+project, generated art, QOA audio and an opt-in front-view battle database.
+Plain projects and standard encrypted deployments are supported. The importer
+is a build-time tool, so applications which do not use it bundle none of its
+code.
 
-The importer is a build-time tool. Nothing in it is imported by the
-runtime, so games that do not use it carry none of its code.
+This is a compatibility importer, not an RPG Maker JavaScript runtime. Every
+import writes a coverage report which separates exact mappings from documented
+degradations, visible placeholders and dropped constructs.
 
-## RPG Maker parity anchors
+## Quick start
 
-The mappings are checked against the official MV core at commit
-[`182e3144`](https://github.com/rpgtkoolmv/corescript/tree/182e31449707ba7e406db0485c44c2a9d11e2dcd):
+### Command line
 
-- commands 105/405 and the continuous speed/fast-forward rules come from
-  [`Game_Interpreter.command105`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L412-L424)
-  and
-  [`Window_ScrollText`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_windows/Window_ScrollText.js#L56-L82);
-- the actor party/name/class/skill/weapon/armour/state subtypes follow the
-  [`command111` actor block](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L487-L515);
-- audio event commands and their volume/pitch/pan records follow
-  [`command241` through `command250`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1247-L1293)
-  and
-  [`AudioManager`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_managers/AudioManager.js#L81-L133).
-  Its ME path pauses BGM, resumes it when the decoded buffer stops, and fades
-  it in for 0.5 seconds; see
-  [`playMe`/`stopMe`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_managers/AudioManager.js#L235-L268).
-- Formation and window colour follow
-  [`command137`/`command138`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L944-L958),
-  including the two-selection
-  [`swapOrder`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_scenes/Scene_Menu.js#L106-L127)
-  flow. RPG Maker windows consume only the saved tone's RGB channels
-  ([`Window_Base.updateTone`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_windows/Window_Base.js#L85-L88)).
-- Screen tone and weather commands, including their optional waits, follow
-  [`command223`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1149-L1156),
-  [`command236`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1236-L1245)
-  and the weighted interpolation in
-  [`Game_Screen`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Screen.js#L214-L220).
-  Particle count, stock white shapes, direction, fade and respawn ranges come
-  from
-  [`Weather`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_core/Weather.js#L64-L70)
-  and its
-  [update rules](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_core/Weather.js#L95-L108).
-- Change Tileset waits for its images and refreshes the map through
-  [`command282`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Interpreter.js#L1333-L1352)
-  and
-  [`Game_Map.changeTileset`](https://github.com/rpgtkoolmv/corescript/blob/182e31449707ba7e406db0485c44c2a9d11e2dcd/js/rpg_objects/Game_Map.js#L692-L695).
-
-The public MZ v1.1.0 mirror at commit
-[`5ecc09ae`](https://github.com/stak/rmmz-corescript/tree/5ecc09ae5170c6aee71c7d9513e553e3dbea116b)
-has the same
-[`command105`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_objects.js#L9855-L9867),
-[`actor predicates`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_objects.js#L9931-L9959),
-[`scrolling window`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_windows.js#L5199-L5252),
-and
-[`ME/BGM lifecycle`](https://github.com/stak/rmmz-corescript/blob/5ecc09ae5170c6aee71c7d9513e553e3dbea116b/rmmz_managers.js#L1254-L1291).
-The mirror is corroborating source, not an official repository.
-
-## Usage
+The source directory must contain `data/System.json`; an MV deployment with
+`www/data/System.json` is accepted too. `ffmpeg` must be on `PATH` when the
+project references audio. This repository includes a small fixture for a
+complete smoke import:
 
 ```sh
-bun tools/rpgmaker-import <project-dir> --out <dir> [--shard] [--placeholders visible|silent]
+rm -rf build/rpgmaker-import
+bun tools/rpgmaker-import tests/fixtures/rpgmaker/hollow-mz \
+  --out build/rpgmaker-import --shard
 ```
 
-`<project-dir>` is the folder holding `data/System.json` (MV deployments
-with a `www/` folder work too). The output folder receives:
+Replace the source and output paths for a real project. The full syntax is
+`bun tools/rpgmaker-import <project-dir> --out <dir> [--shard]
+[--placeholders visible|silent]`. The destination must not already contain
+files from an older import. `--placeholders silent` omits visible text boxes
+for unsupported Script/plugin commands while still counting them as
+Placeholder. Repeating an import from the same input writes the same bytes.
 
-| File | Contents |
+The CLI and desktop helper write the complete directory:
+
+| Output | Contents |
 | --- | --- |
-| `project.json` | The `rpgkit-project/v1` document. With `--shard`, a `ProjectShell` plus one `maps/<id>.json` per map. |
-| `tiles/ts<N>.png` | One generated 16 px tile sheet per RM tileset (every distinct composed cell, see [Tiles](#tiles-and-autotiles)). |
-| `tiles/iconset.png` | `IconSet.png` scaled from 32 px cells to the kit's 16 px item cells, when present. |
-| `sprites/*.png` | Character blocks (3 × 4 walking frames) and tile-image events. |
-| `animations/*.png` | Imported MV `Animations.json` timelines, flattened into one deterministic multi-cell sheet per animation. |
-| `parallaxes/*.png` | Referenced map and Change Parallax images, scaled by the same map-to-16-px factor as tiles. |
-| `pictures/*.png` | Pictures used by Show Picture, copied unchanged. |
-| `audio/*.qoa` | Referenced BGM/BGS/ME/SE, decoded to signed 16-bit stereo at 44.1 kHz and encoded with the kit's deterministic QOA encoder. |
-| `system/balloon.png` | The balloon sheet, when Show Balloon Icon is used. |
-| `assets.json` | The render manifest an asset cooker bakes: sheets (including item cells), sprites, animations, parallaxes, pictures, audio, animated water cells per map, the balloon sheet, and the player's sprite. |
-| `battle.json` | Normalized actors, classes, enemies, troops, skills, items, states, terms and map encounters for the opt-in front-view battle module. |
-| `audio-media.json` | Stable per-track source/output byte counts, source format, decoded channels/rate/frames and 60 Hz duration; missing/corrupt media includes its reason. |
-| `coverage.md` | What happened to every construct in this project, the code-side RPG Maker capabilities the application must register, and the table of every MV/MZ command. |
-| `coverage.json` | The machine-readable per-project construct counts (the static command table is Markdown-only). |
+| `project.json`, optionally `maps/*.json` | Inline `rpgkit-project/v1`, or a `ProjectShell` and map shards with `--shard`. |
+| `tiles/`, `sprites/`, `animations/`, `parallaxes/`, `pictures/`, `system/` | Generated tile sheets, character blocks, MV animation sheets, backgrounds, pictures and balloons. |
+| `audio/*.qoa` | Referenced BGM/BGS/ME/SE, normalized to signed 16-bit stereo at 44.1 kHz and encoded deterministically. |
+| `assets.json` | Asset-cooker manifest for sheets, sprites, animation, backgrounds, pictures, audio and animated tiles. |
+| `battle.json` | Normalized actors, classes, enemies, troops, skills, items, states, terms, audio settings and map encounters. |
+| `audio-media.json` | Per-track source/output sizes, decoded format/duration, or a missing/corrupt reason. |
+| `coverage.md`, `coverage.json` | Human and machine-readable handling by source construct. Markdown also includes the static command catalogue and required screen registrations. |
 
-`--placeholders silent` drops the visible text boxes that stand in for
-plugin and script commands (they still count as Placeholder).
+### Studio
 
-Importing the same project twice writes the same bytes.
+Web and desktop Studio expose **Open → Import RPG Maker MV/MZ…** in English
+and Chinese. The source is converted without replacing the current document;
+Studio shows command-use totals and every Placeholder/Dropped reason first.
+Only **Open result** replaces the document. A cancelled or failed import keeps
+the current document.
 
-### Importing in Studio
+| Browser Studio | Desktop Studio |
+| --- | --- |
+| Chrome and Edge request read-only folder access. Conversion stays in the page. The resulting pack contains the project shell, map entries and imported PNG assets. The review coverage is not stored in that pack; audio is reported Dropped because a page has no ffmpeg/QOA host, and the pack does not carry `battle.json` or the CLI manifests. Studio play-test uses its generic battle stand-in. Use CLI/desktop when the complete battle/audio output is required. | Native dialogs select the source and destination parent. A helper runs the complete importer, including audio, into a hidden sibling staging directory. It refuses an existing destination and publishes a completed import with one rename. See [Studio desktop](studio-desktop.md#rpg-maker-import). |
 
-Studio exposes the same conversion as **Open → Import RPG Maker MV/MZ…** in
-English and Chinese. It asks for a project folder, shows progress, then shows
-the exact Native / Degraded / Placeholder / Dropped totals, every
-Placeholder/Dropped reason and warnings. The converted project is not opened
-until **Open result** is pressed, so the current document remains available
-while the report is reviewed. A failed import keeps the current document and
-shows a readable error.
+The checked-in wide result is English at a 1440 × 900 CSS viewport and device
+scale 1; the compact result is Chinese at 600 × 900 and device scale 2. The
+compact dialog uses two metric columns without horizontal clipping.
 
-- In Chrome and Edge, the browser directory picker requests read-only access.
-  Conversion stays in the page and the result is a self-contained sharded
-  pack. Maps and images, including standard encrypted deployment images, are
-  imported; referenced Ogg/M4A is reported Dropped because a browser page has
-  no ffmpeg/QOA conversion host. The ordinary Studio pack and image limits
-  are checked before the result can be opened.
-- The desktop app uses native dialogs for the source folder and destination
-  parent. A helper runs the full importer, including audio conversion. It
-  writes a hidden sibling staging folder, refuses an existing destination,
-  removes staging on failure or cancellation, and publishes the completed
-  folder with one rename before opening it through Studio's opaque folder
-  token. It never overwrites an existing project.
+| Wide result | Compact result |
+| --- | --- |
+| ![RPG Maker import coverage in wide Studio](screenshots/studio/studio-rpgmaker-import-wide.png) | ![RPG Maker import coverage in compact Studio](screenshots/studio/studio-rpgmaker-import-compact-2x.png) |
 
-### Running an imported project
+### Run the imported result
 
-`project.json` runs on the kit's engine like any other project; the art has
-to be baked by a cooker as for any game. `tests/fixtures/rmi-play` is a
-complete example: its `gen-assets.ts` imports two test projects, bakes the
-512 px map chunks from the generated tile sheets, slices each character
-block into the twelve walker frames, cooks animated water into sprite
-atlases, slices balloons and animations, carries parallaxes and item cells,
-fits pictures into a screen layer, packs imported QOA under the generated
-audio keys, and writes the `GameAssets` manifest. Its `rmi-play.tsx` mounts
-`GameView` with `createAudioEffects`, the opt-in parallax renderer and
-item-icon row, the RPG Maker battle reducer and front-view scene, and the kit's
-name-input scene. Production games use `pocket-rpgkit/rpgmaker-battle` and
-`pocket-rpgkit/ui/rpgmaker-battle` to wire the generated `battle.json` into
-`GameView`'s `extensions`, `battle` and `battleScene` props. The battle module,
-audio, parallax and item-icon renderers all have separate entry points. A game
-that wants the minimal party-order menu also passes
-`createRpgMakerFormation()` from `pocket-rpgkit/ui/rpgmaker-formation` as its
-`GameView` overlay. Formation is therefore absent from games that do not opt
-in. Omitting any of these entry points keeps its implementation out of the
-bundle.
+`project.json` uses the normal engine, but a game still needs to cook the
+generated art and explicitly register optional runtime/presentation modules.
+The complete reference integration is `tests/fixtures/rmi-play`:
 
-The generated `coverage.md` has a **Required application capabilities**
-section derived from the commands this import actually uses. Tone and weather
-require the `rpgMakerText` runtime registration; tone, weather, numbered
-pictures, the timer and map-name banners also require `GameView`'s
-`screenPresentation` registration (normally `krm2ScreenPresentation`). Session
-loading scans common events and every nested branch, and repeats the check when
-a sharded map is acquired. A rendering host that omits a required registration
-gets a readable load error instead of waiting on an invisible effect. Headless
-reducers may omit the presentation policy when they intentionally inspect only
-saved state.
+```sh
+bun tools/build-example.ts rmi-play
+```
+
+Its cooker imports both test projects, bakes map chunks and sprite frames,
+packs QOA, pictures, parallaxes, balloons and animations, and writes
+`GameAssets`. Its entry registers audio, parallax, item icons, RPG Maker text
+and screen presentation, the generated battle database and front-view scene,
+formation, travel and name input. See [Optional capabilities](capabilities.md)
+for the registrations and their absence behavior.
+
+## Support matrix
+
+The static catalogue runs a minimal sample of each independent/head command
+through the real converter. It contains **107 commands**: **95 Native, 9
+Degraded, 2 Placeholder and 1 Dropped**. Continuation and branch-marker codes
+such as text lines and battle-result branches are handled with their parent
+but are not separate catalogue rows.
+
+- **Native**: represented by kit commands without gameplay loss; exact
+  importer lowerings also count here.
+- **Degraded**: runs with the reason shown below.
+- **Placeholder**: emits a deliberate visible stand-in by default.
+- **Dropped**: emits no command.
+
+| Handling | Command codes and reason |
+| --- | --- |
+| Native | The 95 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. |
+| Degraded | **132, 133, 139** retain battle BGM/victory/defeat settings, but the current battle presentation does not play them; **137** reorders followers/battle slots but keeps the walking leader art fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **283** retains battleback names without painting them; **322** retains actor-image data without updating live map/face/side-view art; **337** retains a numeric animation id without a cooked animation id. |
+| Placeholder | **356, 357** (MV/MZ plugin commands) need a per-plugin port. |
+| Dropped | **261** (Play Movie) has no video host. |
+
+Recalculate the catalogue from the current converter:
+
+```sh
+bun -e 'import { staticCommandTable } from "./tools/rpgmaker-import/report.ts"; const rows=staticCommandTable(); for (const d of ["Native","Degraded","Placeholder","Dropped"]) { const selected=rows.filter((row)=>row.disposition===d); console.log(`${d} ${selected.length} ${selected.map((row)=>row.code).join(",")}`); }'
+```
+
+The two self-authored fixtures count real command uses rather than catalogue
+rows:
+
+| Fixture | Uses | Native | Degraded | Placeholder | Dropped | Native share |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Hollow MZ | 124 | 112 | 10 | 2 | 0 | 90.3% |
+| Stage MV | 61 | 51 | 9 | 1 | 0 | 83.6% |
+| Combined | 185 | 163 | 19 | 3 | 0 | 88.1% |
+
+Every real import writes per-project counts to `coverage.md` and
+`coverage.json`; those counts, not the static minimal samples, determine the
+work needed for that game.
+
+## Battle system
+
+The importer always writes `battle.json`, but battle execution and
+presentation are optional application capabilities. A production game imports
+`pocket-rpgkit/rpgmaker-battle` and `pocket-rpgkit/ui/rpgmaker-battle`, then
+passes the generated database to `GameView`'s `extensions`, `battle` and
+`battleScene` props. A `battle` command without registered rules is rejected
+when the session loads; `GameView` also requires rules and scene together.
+
+The database normalizes actors/classes, parameter curves, enemies and action
+patterns, troops/pages, skills, items, states, terms, rewards, battle audio
+settings, battlebacks and map encounters. Battle Processing supports fixed or
+variable troops and random encounters, including Win/Escape/Lose branches.
+Map encounters feed the same reducer through a deterministic, saved step
+counter; Encounter Half and vehicle rates are honored.
+
+Troop pages execute messages, switches and constant variable writes; enemy
+HP/MP/TP/state changes, recovery, appear and transform; animation records,
+forced actions and abort. Unsupported troop commands are explicitly counted
+Dropped. Wins grant deterministic experience, levels, gold and drops. A loss
+which RPG Maker does not allow follows Game Over.
+
+Damage formulas are parsed into a bounded data tree and never evaluated as
+JavaScript. The subset accepts `a`/`b` battler parameters, literal `v[n]`,
+arithmetic, comparisons, boolean operators, ternaries and allowlisted `Math`
+members. A rejected formula is reported Degraded and uses
+`Math.max(0, a.atk * 4 - b.def * 2)`.
+
+The current module is deterministic front-view battle. Side-view projects are
+shown in front view; battle audio settings and battleback names persist but are
+not presented; numeric battle-animation ids need cooked art; and the trait
+subset is listed under [known limitations](#known-limitations).
+
+## Import-time safe Script subset
+
+RPG Maker stores Script fields as JavaScript. The importer **never executes
+that source**. It joins a 355 command and its 655 continuations, then accepts
+only a bounded tokenizer/AST allowlist: at most **2,048 source characters, 512
+tokens, 512 AST nodes, depth 64, 32 statements, database id 9,999 and string
+length 4,096**. Every statement must lower successfully; one unknown or unsafe
+shape rejects the entire block, so a safe prefix never runs by accident.
+
+| Accepted shape | Import result and limits |
+| --- | --- |
+| `$gameMap.requestRefresh()` | Native no-op: kit pages already re-evaluate from live state. |
+| `$gameVariables.setValue`, `$gameSwitches.setValue`, `$gameSelfSwitches.setValue` | Literal valid ids and allowlisted values lower to variable/switch commands; multiple self-switch letters are Degraded. |
+| `$gameParty.gainItem/loseItem`, `gainGold/loseGold` | Literal database references plus safe numeric amounts lower to inventory/gold commands; stock cap/equipment differences are Degraded. |
+| `$gamePlayer.locate`, `reserveTransfer` | Representable transfers are Native; `locate` is Degraded because stock camera/follower/vehicle/encounter side effects differ. |
+| `$gameMap.event(id).setPosition/setDirection` | Literal event targets lower to placement/movement; direction-fix and stop-count differences are Degraded. |
+| `AudioManager.playSe/playBgm` | A literal object may contain only `name`, `volume`, `pitch` and `pan`. |
+| `$gameMessage.add(string)` | A bounded string literal becomes message text. |
+| Exact variable/item-count/direction/Steps comparisons and switch/item tests | Representable integer tests lower natively; equipment inclusion is Degraded and player x/y remains Placeholder. |
+
+Numeric expressions reuse the safe formula AST: finite literals,
+`$gameVariables.value(id)`, arithmetic and selected `Math` constants/functions.
+Constant expressions fold during import. Prototype access, `constructor`,
+`globalThis`, `require`, dynamic import, declarations/control flow, unknown
+calls and over-budget input fail closed.
+
+Coverage reasons contain source-free shape names. With visible placeholders,
+the in-game stand-in includes at most the first 40 normalized source
+characters; use `--placeholders silent` when even that preview should be
+omitted.
+
+## Known limitations
+
+- Plugins and JavaScript outside the exact safe subset are not ported.
+  `js/plugins.js` parameters are not interpreted.
+- Browser Studio produces an editable maps/images pack, not the complete
+  CLI/desktop directory. It drops audio and does not persist `battle.json`,
+  manifests or coverage files in the pack.
+- RPG Maker battle is partial front-view battle. Battle audio/battlebacks,
+  side-view layout, some traits and uncooked numeric animations are retained
+  as data or reported, not fully presented.
+- Tone, window colour, MZ cursor/font controls and some animation blend/flash
+  behavior are portable approximations. MZ Effekseer animations are dropped.
+- Actor event simulation does not cover every later predicate/presentation
+  effect. In particular, changed actor art is not drawn live and some actor
+  conditions still use imported initial facts.
+- Maps larger than **256 × 256** are rejected. Ladder, bush and counter special
+  behavior is not simulated; their passage remains.
+- RTP and third-party assets retain their own licenses. The importer reads the
+  supplied project and does not fetch or grant redistribution rights.
+- Missing/corrupt audio is omitted with a reason. Standard RPG Maker encrypted
+  media is supported only when `System.json` supplies a valid key/header.
+
+More edge cases are documented in [detailed limitations](#detailed-limitations).
+
+## Real-project trials
+
+Three public games are tested at pinned revisions without committing their
+content. Counts are source command uses, **not a fidelity score**:
+
+| Project | Engine and pinned source | Uses | Native | Degraded | Placeholder | Dropped |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| GameDev: The Beginning | MV 1.6.2, [`a3c3ec7`](https://github.com/yancharkin/game_jams/tree/a3c3ec739071ca285045025f9b619d17877a7193/%5Bigmc_2017%5D_gamedev_the_beginning) | 1,718 | 1,395 | 106 | 161 | 56 |
+| The Basement | MV 1.5.2, [`0aea825`](https://github.com/fluxrider/The_Basement/tree/0aea82564bf84299441c6b285e04977f5f11a68a) | 31 | 20 | 11 | 0 | 0 |
+| Strange Sea: Before | MZ 1.0.0, [`103d87c`](https://github.com/ShrLeeKNsword/strange_sea_before/tree/103d87c00c8903db841b9aad23dea30e26d6b1a8/ver_0.0.1) | 197 | 151 | 46 | 0 | 0 |
+| **Combined** |  | **1,946** | **1,566** | **163** | **161** | **56** |
+
+The combined Native source frequency is **80.5%**. GameDev reaches battle,
+but its plugin/Script/picture-heavy opening is not a faithful port. The
+Basement and Strange Sea maps, dialogue and front-view battles are
+recognizable and playable within the limits above. Each trial's two import
+passes produced identical coverage bytes.
+
+## Detailed conversion notes
+
+Mappings are checked against the official MV core at commit
+[`182e3144`](https://github.com/rpgtkoolmv/corescript/tree/182e31449707ba7e406db0485c44c2a9d11e2dcd),
+including scrolling text, actor predicates, audio commands/ME lifecycle,
+formation/window tone, screen tone/weather interpolation and Change Tileset.
+The public MZ v1.1.0 mirror at
+[`5ecc09ae`](https://github.com/stak/rmmz-corescript/tree/5ecc09ae5170c6aee71c7d9513e553e3dbea116b)
+is a corroborating source, not an official repository.
 
 ## Ids
 
@@ -208,7 +299,7 @@ original pixels.
 
 ## Events
 
-See the coverage table in [the report](#coverage) for every command code.
+See the [full command table](#full-command-table) for every catalogue code.
 In short:
 
 - Pages keep their order; the kit, like MV, runs the highest-numbered page
@@ -232,7 +323,7 @@ In short:
   map held in a variable becomes a chain of `if` branches over the map
   ids).
 - Plugin commands (356, 357) remain placeholders. Script (355/655) uses the
-  bounded import-time subset below; a block outside that subset becomes a
+  bounded import-time subset above; a block outside that subset becomes a
   visible text box (or nothing with `--placeholders silent`) and is counted
   as Placeholder.
 - Battle Processing becomes the kit's `battle` command with
@@ -241,36 +332,6 @@ In short:
   ids and random map encounters all resolve through the opt-in module. A win
   grants deterministic experience, levels, gold and drops; a disallowed loss
   follows the ordinary Game Over path.
-
-### Import-time safe Script subset
-
-RPG Maker stores Script fields as JavaScript. The importer never evaluates
-that source. It joins a 355 command and its 655 continuation lines as RPG
-Maker does, tokenizes at most 2,048 characters / 512 tokens into a bounded
-AST, and accepts only the exact shapes below. Every statement in a block must
-be accepted; one extra call or expression rejects the whole block. Rejection
-reasons and coverage use source-free shape names rather than copying project
-Script into the report.
-
-| Accepted shape | Import result and limits |
-|---|---|
-| `$gameMap.requestRefresh()` | Native no-op: kit pages already re-evaluate from live state every reducer tick |
-| `$gameVariables.setValue(id, expression)` | Native when the literal target id exists and the safe numeric formula lowers to variable commands; live division/modulo is Degraded because native variable arithmetic floors intermediate values |
-| `$gameSwitches.setValue(id, boolean)` | Native for an existing literal switch id and a boolean literal |
-| `$gameSelfSwitches.setValue([map,event,key], boolean)` | Native only for the issuing event's own map/event and one of A–D; kit's single active letter makes multi-letter event use Degraded |
-| `$gameParty.gainItem/loseItem`, `gainGold/loseGold` | Literal database references plus safe numeric amounts lower to ordinary inventory/gold commands; inventory caps, equipped-copy removal and unguarded flooring differences are reported Degraded |
-| `$gamePlayer.locate`, `reserveTransfer` | Transfer is Native when its operands and direction are representable; `locate` is Degraded because it does not reproduce stock camera, follower, vehicle and encounter-reset side effects |
-| `$gameMap.event(id).setPosition/setDirection` | Literal event targets lower to placement or movement commands; direction is Degraded because stock direction-fix/stop-count details differ |
-| `AudioManager.playSe/playBgm` | A literal object containing only `name`, `volume`, `pitch` and `pan`; omitted numeric fields remain zero as in the Script API |
-| `$gameMessage.add(string)` | A bounded string literal becomes native message text |
-| Exact variable/item-count/direction/Steps comparisons and switch/item-presence tests | Native when the referenced project data and integer comparison are representable; item equipment inclusion is Degraded, and live player x/y comparisons remain Placeholder |
-
-Numeric expressions reuse the safe formula AST: finite literals,
-`$gameVariables.value(id)`, arithmetic, selected `Math` constants and
-functions. Constant expressions fold during import; no runtime JavaScript
-interpreter is emitted. Prototype access, `constructor`, `globalThis`,
-`require`, dynamic import, declarations/control flow, unknown calls,
-over-budget input and mixed safe/unsafe statements all fail closed.
 
 ## Screen and system commands
 
@@ -319,37 +380,20 @@ declines entry by returning `null` does not run this boundary. Projects that do
 not register the RPG Maker runtime retain the existing kit-native battle
 behavior byte-for-byte.
 
-## Command table
+<a id="full-command-table"></a>
 
-Every MV/MZ event command code and what the importer does with a minimal
-use of it: 95 of the 107 commands map natively, 9 run degraded, 2 become
-placeholders (the two plugin commands) and 1 is dropped. Script's minimal
-entry is the exact native refresh no-op above; other shapes are classified
-per use. "Needs kit" names the remaining or presentation-only runtime capability. The
-static table sends troop-only commands through the same troop converter as a
-real import, rather than treating them as map commands.
+## Full command table
+
+Each independent/head MV/MZ event command code and what the importer does with
+a minimal use of it: 95 of the 107 commands map natively, 9 run degraded, 2
+become placeholders and 1 is dropped. Script's minimal entry is the exact
+native refresh no-op above; other shapes are classified per use. "Needs kit"
+names the remaining or presentation-only runtime capability. The static table
+sends troop-only commands through the same troop converter as a real import,
+rather than treating them as map commands.
 `tests/rpgmaker-import.test.ts` keeps this table in step with the
 importer. Each import also writes the same table, plus per-construct counts
 for that project, to `coverage.md`.
-
-The two self-written fixtures currently measure as follows; these are source
-uses, not the 107-row capability catalogue:
-
-| Fixture | Command uses | Native | Degraded | Placeholder | Dropped | Native |
-|---|---:|---:|---:|---:|---:|---:|
-| Hollow MZ | 124 | 112 | 10 | 2 | 0 | 90.3% |
-| Stage MV | 61 | 51 | 9 | 1 | 0 | 83.6% |
-| Combined | 185 | 163 | 19 | 3 | 0 | 88.1% |
-
-The importer is also exercised against three complete public games at pinned
-revisions. They are fetched only into a temporary test directory; no project
-file, asset or dialogue from them is committed here.
-
-| Project | Engine and pinned source | Local-use terms | Event command uses | Native | Degraded | Placeholder | Dropped |
-|---|---|---|---:|---:|---:|---:|---:|
-| GameDev: The Beginning | MV 1.6.2, [`a3c3ec7`](https://github.com/yancharkin/game_jams/tree/a3c3ec739071ca285045025f9b619d17877a7193/%5Bigmc_2017%5D_gamedev_the_beginning) | MIT code, CC BY-SA 4.0 assets | 1,718 | 1,395 | 106 | 161 | 56 |
-| The Basement | MV 1.5.2, [`0aea825`](https://github.com/fluxrider/The_Basement/tree/0aea82564bf84299441c6b285e04977f5f11a68a) | MIT repository license | 31 | 20 | 11 | 0 | 0 |
-| Strange Sea: Before | MZ 1.0.0, [`103d87c`](https://github.com/ShrLeeKNsword/strange_sea_before/tree/103d87c00c8903db841b9aad23dea30e26d6b1a8/ver_0.0.1) | Apache-2.0 file; README additionally limits use to study/education and forbids copying or republication, so validation was local only | 197 | 151 | 46 | 0 | 0 |
 
 <!-- rpgmaker-commands:begin -->
 | Code | Command | Flavor | Handling | Notes | Needs kit |
@@ -542,7 +586,7 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   second. Volume, pitch and pan (-100..100) are retained on every audio
   command. `ffmpeg` must be on `PATH` while importing.
 
-## Known limitations
+## Detailed limitations
 
 - **Plugins and arbitrary scripts are not ported.** The exact import-time
   Script subset above lowers without executing source. Everything else in

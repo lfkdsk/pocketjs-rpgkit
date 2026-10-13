@@ -562,8 +562,8 @@ interface in [`editor/studio/preview.ts`](../editor/studio/preview.ts)).
 Each host also reports which of these it can do, with a
 reason, and the UI enables or disables its controls from that. The web page
 uses the browser host (`host-browser.ts`). Tests use an in-memory host
-(`host-memory.ts`). A desktop shell would implement the same interface
-with native files and processes. Opening and saving project folders is
+(`host-memory.ts`). The desktop app implements the same interface through
+`host-desktop.ts`, with native files and helper processes. Opening and saving project folders is
 host-neutral code (`project-directory.ts`) written against a small
 directory interface. `tests/studio-host.test.ts` scans `editor/studio/`
 (every script and page) so that storage, download, fetch, file-picker,
@@ -575,7 +575,7 @@ host-neutral controller `PlayTest` (`preview.ts`), which checks the document
 against the protocol's limits and decides what to send. That includes
 the page shell: `index.html` only marks a slot (`<!-- studio:host-boot -->`),
 and the build puts the browser host's pre-paint theme script
-(`host-browser-boot.ts`) there; a desktop shell would use its own page.
+(`host-browser-boot.ts`) there; the desktop build injects its own host boot.
 
 The document lives in an `EditSession` ([`editor/api/session.ts`](../editor/api/session.ts)),
 which only calls `executeEditOperation` / `executeShardedEditOperation` and
