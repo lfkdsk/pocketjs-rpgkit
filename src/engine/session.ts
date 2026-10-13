@@ -1880,9 +1880,22 @@ const NO_MAP_INPUT: SessionInput = {
   rightEdge: false,
 };
 
+const NO_BATTLE_INPUT: Readonly<BattleInput> = {
+  buttons: 0,
+  confirmEdge: false,
+  cancelEdge: false,
+  upEdge: false,
+  downEdge: false,
+};
+
 function battleInput(input: SessionInput): Readonly<BattleInput> {
+  const buttons = input.buttons >>> 0;
+  if (
+    buttons === 0 && input.confirmEdge !== true && input.cancelEdge !== true &&
+    input.upEdge !== true && input.downEdge !== true
+  ) return NO_BATTLE_INPUT;
   return {
-    buttons: input.buttons >>> 0,
+    buttons,
     confirmEdge: input.confirmEdge === true,
     cancelEdge: input.cancelEdge === true,
     upEdge: input.upEdge === true,
@@ -2524,20 +2537,23 @@ function foldSession(
   const frozenRpgMakerScreen = frozen &&
     s0.interp.screen !== undefined &&
     rpgMakerGameScreenRuntime(sess, s0.scene) !== null;
-  const interp = frozen
-    ? {
-        ...s0.interp,
-        // Frozen scenes still advance the global timer. Give that sparse
-        // top-level field a private bank shell while retaining the large
-        // immutable records by identity.
-        sw: { ...s0.interp.sw },
-        ...(s0.interp.audio ? { audio: cloneAudioState(s0.interp.audio) } : {}),
-        // A frozen RPG Maker battle advances Game_Screen. Detach it once per
-        // host fold so low-rate reference ticks cannot mutate the published
-        // predecessor or a rewind keyframe.
-        ...(frozenRpgMakerScreen ? { screen: cloneScreenEffects(s0.interp.screen)! } : {}),
-      }
-    : shareInterp(s0.interp, sess.immutableState);
+  let interp: InterpState;
+  if (frozen) {
+    interp = {
+      ...s0.interp,
+      // Frozen scenes still advance the global timer. Give that sparse
+      // top-level field a private bank shell while retaining the large
+      // immutable records by identity.
+      sw: { ...s0.interp.sw },
+    };
+    if (s0.interp.audio) interp.audio = cloneAudioState(s0.interp.audio);
+    // A frozen RPG Maker battle advances Game_Screen. Detach it once per
+    // host fold so low-rate reference ticks cannot mutate the published
+    // predecessor or a rewind keyframe.
+    if (frozenRpgMakerScreen) interp.screen = cloneScreenEffects(s0.interp.screen)!;
+  } else {
+    interp = shareInterp(s0.interp, sess.immutableState);
+  }
   // Host requests are one-frame outputs. A frozen scene or transfer fade
   // may not enter the interpreter path that normally clears them.
   delete interp.hostActions;

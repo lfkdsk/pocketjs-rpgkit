@@ -4,26 +4,29 @@
 interface DeletableMetadata { delete(key: object): boolean }
 interface MetadataScope {
   parent: MetadataScope | null;
-  maps: DeletableMetadata[];
-  keys: object[];
+  maps?: DeletableMetadata[];
+  keys?: object[];
 }
 let currentScope: MetadataScope | null = null;
 
 export function beginStateMetadata(): MetadataScope {
-  const scope: MetadataScope = { parent: currentScope, maps: [], keys: [] };
+  const scope: MetadataScope = { parent: currentScope };
   currentScope = scope;
   return scope;
 }
 
 export function trackStateMetadata(map: DeletableMetadata, key: object): void {
   if (!currentScope) return;
-  currentScope.maps.push(map);
-  currentScope.keys.push(key);
+  (currentScope.maps ??= []).push(map);
+  (currentScope.keys ??= []).push(key);
 }
 
 export function endStateMetadata(scope: MetadataScope): void {
   currentScope = scope.parent;
-  for (let i = 0; i < scope.maps.length; i++) scope.maps[i]!.delete(scope.keys[i]!);
+  const maps = scope.maps;
+  if (maps === undefined) return;
+  const keys = scope.keys!;
+  for (let i = 0; i < maps.length; i++) maps[i]!.delete(keys[i]!);
 }
 
 /** Eviction only invalidates a derived revision cache; it never owns state.

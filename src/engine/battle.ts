@@ -125,12 +125,21 @@ export function cloneScene(scene: SceneSlot | null, immutableState = false): Sce
   if (scene === null) return null;
   const shareState = scene.kind === "battle" && immutableState;
   if (!shareState) assertJsonValue(scene.state, `${scene.kind} scene state`);
-  return {
+  const state = shareState ? scene.state : deepClone(scene.state);
+  if (scene.kind !== "battle") {
+    return {
+      ...scene,
+      state,
+      pausedTicks: scene.pausedTicks ?? 0,
+    };
+  }
+  const cloned: BattleScene = {
     ...scene,
-    state: shareState ? scene.state : deepClone(scene.state),
+    state,
     pausedTicks: scene.pausedTicks ?? 0,
-    ...(scene.kind === "battle" && scene.returnAudio !== undefined
-      ? { returnAudio: scene.returnAudio === null ? null : cloneAudioState(scene.returnAudio) }
-      : {}),
   };
+  if (scene.returnAudio !== undefined) {
+    cloned.returnAudio = scene.returnAudio === null ? null : cloneAudioState(scene.returnAudio);
+  }
+  return cloned;
 }
