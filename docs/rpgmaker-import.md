@@ -8,8 +8,10 @@ is a build-time tool, so applications which do not use it bundle none of its
 code.
 
 This is a compatibility importer, not an RPG Maker JavaScript runtime. Every
-import writes a coverage report which separates exact mappings from documented
-degradations, visible placeholders and dropped constructs.
+conversion computes coverage which separates exact mappings from documented
+degradations, visible placeholders and dropped constructs. CLI and desktop
+imports write it as `coverage.md` and `coverage.json`; Browser Studio shows it
+during review but does not store it in the resulting pack.
 
 ## Quick start
 
@@ -31,7 +33,8 @@ Replace the source and output paths for a real project. The full syntax is
 [--placeholders visible|silent]`. The destination must not already contain
 files from an older import. `--placeholders silent` omits visible text boxes
 for unsupported Script/plugin commands while still counting them as
-Placeholder. Repeating an import from the same input writes the same bytes.
+Placeholder. Repeated fixture imports are byte-stable within the same importer
+and media-tool environment.
 
 The CLI and desktop helper write the complete directory:
 
@@ -90,8 +93,10 @@ Degraded, 2 Placeholder and 1 Dropped**. Continuation and branch-marker codes
 such as text lines and battle-result branches are handled with their parent
 but are not separate catalogue rows.
 
-- **Native**: represented by kit commands without gameplay loss; exact
-  importer lowerings also count here.
+- **Native**: the catalogue's minimal sample is represented by kit commands
+  without gameplay loss; exact importer lowerings also count here. Each real
+  occurrence is classified independently and may differ with its operands or
+  project data.
 - **Degraded**: runs with the reason shown below.
 - **Placeholder**: emits a deliberate visible stand-in by default.
 - **Dropped**: emits no command.
@@ -99,9 +104,13 @@ but are not separate catalogue rows.
 | Handling | Command codes and reason |
 | --- | --- |
 | Native | The 95 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. |
-| Degraded | **132, 133, 139** retain battle BGM/victory/defeat settings, but the current battle presentation does not play them; **137** reorders followers/battle slots but keeps the walking leader fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **283** retains battleback names without painting them; **322** retains actor-image data without updating live map/face/side-view art; **337** retains a numeric animation id without a cooked animation id. |
+| Degraded | **132, 133, 139** retain battle BGM/victory/defeat settings, but the current battle presentation does not play them; **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **283** retains battleback names without painting them; **322** retains actor-image data without updating live map/face/side-view art; **337** retains a numeric animation id without a cooked animation id. |
 | Placeholder | **356, 357** (MV/MZ plugin commands) need a per-plugin port. |
 | Dropped | **261** (Play Movie) has no video host. |
+
+The generated code-137 reason in the full table says that the "walking leader"
+stays fixed. This refers only to the project-level walking-player artwork:
+party index 0 still participates in formation and battle-slot swaps.
 
 Recalculate the catalogue from the current converter:
 
@@ -118,13 +127,13 @@ rows:
 | Stage MV | 61 | 51 | 9 | 1 | 0 | 83.6% |
 | Combined | 185 | 163 | 19 | 3 | 0 | 88.1% |
 
-Every real import writes per-project counts to `coverage.md` and
-`coverage.json`; those counts, not the static minimal samples, determine the
-work needed for that game.
+Every conversion computes per-project counts; CLI and desktop imports write
+them to `coverage.md` and `coverage.json`. Those counts, not the static minimal
+samples, determine the work needed for that game.
 
 ## Battle system
 
-The importer always writes `battle.json`, but battle execution and
+The CLI and desktop importer always write `battle.json`, but battle execution and
 presentation are optional application capabilities. A production game imports
 `pocket-rpgkit/rpgmaker-battle` and `pocket-rpgkit/ui/rpgmaker-battle`, then
 passes the generated database to `GameView`'s `extensions`, `battle` and
@@ -212,8 +221,10 @@ More edge cases are documented in [detailed limitations](#detailed-limitations).
 
 ## Real-project trials
 
-Three public games are tested at pinned revisions without committing their
-content. Counts are source command uses, **not a fidelity score**:
+Recorded conversion trials cover three public games at pinned revisions
+without committing their content. Counts are source command uses, **not a
+fidelity score**; these are recorded trials, not fixtures in the automated
+test suite:
 
 | Project | Engine and pinned source | Uses | Native | Degraded | Placeholder | Dropped |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -542,8 +553,9 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   the runtime expand `\N[n]`, `\P[n]`, `\V[n]`, `\G` and `\\`, and apply
   `\C[n]` colour spans when the box opens. Expansion is one left-to-right
   pass; replacement values containing another escape are not rescanned.
-  `\P[n]` follows the current active party order, including formation swaps
-  and later Change Party Member additions and removals. In Show Text, MZ `\PX` and `\PY`
+  `\P[n]` uses the imported initial party order; formation swaps and later
+  Change Party Member commands do not change its slots. Names in those slots
+  still reflect supported runtime renames. In Show Text, MZ `\PX` and `\PY`
   set a cursor position scaled into the kit's message content box, and `\FS`
   selects the nearest baked font slot. Those three remain Degraded because the
   coordinate/font metrics are an approximation and choice-list layout does not
@@ -644,8 +656,9 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   also the next battle's source and rewinds with the session. Show Level Up
   messages and changed actor-image presentation are not drawn. Actor event
   conditions for class, skill, equipment and state still read imported initial
-  facts. `\P[n]` follows the current active party order, including formation
-  swaps and later Change Party Member additions and removals.
+  facts. `\P[n]` uses the imported initial party order; formation swaps and
+  later Change Party Member commands do not change its slots. Names in those
+  slots still reflect supported runtime renames.
 - **Maps are capped at 256 × 256**, the kit's limit.
 - Region ids and terrain tags are carried over as sparse per-cell map data
   (Get Location Info, the `region` condition and authored region-crossing

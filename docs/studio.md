@@ -101,8 +101,9 @@ writes only the map files whose text changed, followed by the shell:
 
 This is **not crash-atomic**: a browser has no way to replace several files
 at once, so a crash, power loss or a closed tab between two replacements
-can still leave new map files next to an old shell. What it guarantees is
-that a failed write does not leave a half-saved project. Saves into one
+can still leave new map files next to an old shell. A failed replacement is
+rolled back when the browser accepts every restore write; if restoration also
+fails, the error names the files which may hold the new version. Saves into one
 folder never overlap: Ctrl/Cmd+S pressed while a save is running queues
 another one, which starts when the first has finished, compares against
 what the first wrote, and saves the document as it is by then. The Save
@@ -546,8 +547,10 @@ escapes. Studio refuses a folder whose files alone total more than 64 MiB
 before reading any map file, and one whose pack comes out larger after
 reading them; a folder it accepts always opens. The largest real project we know of
 (about 17 MB of inline JSON, 263 maps, at most 502 events on a map) fits
-comfortably. `tests/studio-import-limits.test.ts` checks each limit exactly
-at the limit and one over.
+comfortably. `tests/studio-import-limits.test.ts` checks document, pack, shard,
+map/event and individual-PNG boundaries at the limit and just over it;
+`tests/studio-pack-assets.test.ts` separately covers folder-art filtering and
+the aggregate pack budget.
 
 ## How it is built
 
@@ -567,8 +570,9 @@ uses the browser host (`host-browser.ts`). Tests use an in-memory host
 host-neutral code (`project-directory.ts`) written against a small
 directory interface. `tests/studio-host.test.ts` scans `editor/studio/`
 (every script and page) so that storage, download, fetch, file-picker,
-dialog, media-query, iframe and `postMessage` calls appear only in the
-browser host. The browser host's play-test (`BrowserPreview`) embeds
+dialog, media-query, iframe and `postMessage` calls stay inside its explicit
+browser, desktop and browser-import host allowlist rather than shared Studio
+controllers. The browser host's play-test (`BrowserPreview`) embeds
 `../preview/?embed` (the player page shows only its game screen with
 `?embed`) and talks to it; the panel (`preview-panel.ts`) renders the
 host-neutral controller `PlayTest` (`preview.ts`), which checks the document
@@ -590,8 +594,9 @@ PocketJS editor), `tests/editor-api-equivalence.test.ts` (the PocketJS
 editor and Studio produce the same patches, history and bytes for the same
 edits), `tests/studio-host.test.ts` (the host boundary; open, save,
 restore, export and folder saves on the in-memory host),
-`tests/studio-directory-save.test.ts` (folder saves with injected write
-failures leave the old version), `tests/studio-import-limits.test.ts`,
+`tests/studio-directory-save.test.ts` (folder save preparation, replacement,
+successful rollback and rollback-failure reporting),
+`tests/studio-import-limits.test.ts`,
 `tests/studio-inspector-model.test.ts` (including where a dragged command
 lands), `tests/edit-move-map.test.ts`, `tests/studio-pack-assets.test.ts`
 (project art conventions, packs with assets, art read from folders),

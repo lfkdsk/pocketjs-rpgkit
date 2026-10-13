@@ -87,7 +87,7 @@ These hooks have a defined fallback instead of load-time rejection.
 
 | Capability | Enable it | If it is absent |
 | --- | --- | --- |
-| Game text tokens | Declare `system.textTokens` and pass the pure `textTokens(key, view)` resolver | Without the declaration, `{x:key}` stays literal. With the declaration but no answer, it expands to `???`. The value is captured when the box opens so save, replay and rewind agree. |
+| Game text tokens | Declare `system.textTokens` and pass the pure `textTokens(key, view)` resolver | On the non-RPG-Maker text path, no declaration leaves `{x:key}` literal, while a declared key with no answer expands to `???`. The value is captured when the box opens so save, replay and rewind agree. `system.rpgMakerText` selects its separate backslash grammar instead. |
 | Seam movement policy | Put `movementCapability` on a trusted world opening and pass `handoffCapability` | A capability-bearing opening stays blocked unless the policy returns `true`, even when its terrain is ordinarily passable. An admitted opening may relax only the destination solid bit; bounds, directional edges and character bodies still block. |
 | Connected-world traversal | Declare `worldTraversal: "seamless-v1"` plus a matching `worldLayout`, and pass a world factory from `pocket-rpgkit/ui/world` | A missing or mismatched topology falls back to `legacy-transfer`. Live play and attract/refold receive the same registration. |
 | Host audio | Import `createAudioEffects` from `pocket-rpgkit/ui/audio` and pass its component as `effects` | Audio state still advances deterministically, but no frame callback or sound output is installed. |
@@ -109,7 +109,7 @@ bundle intends to pay for them.
 | Package entry | What it contributes | Behavior when the application does not import/pass it | Isolation test |
 | --- | --- | --- | --- |
 | `pocket-rpgkit/rpgmaker-text` | RPG Maker escape parser plus screen tone/weather reducer | Projects which declare/use it fail admission; ordinary projects do no parsing or optional screen work | `tests/rpgmaker-capability-bundle-isolation.test.ts` |
-| `pocket-rpgkit/rpgmaker-screen` | Direct tone/weather rule helpers for custom integrations | No concrete screen reducer helpers in the graph | `tests/rpgmaker-capability-bundle-isolation.test.ts` |
+| `pocket-rpgkit/rpgmaker-screen` | Direct tone/weather rule helpers for custom integrations | No direct helper API is imported. The module is still reached indirectly when an application imports `rpgmaker-text`, whose runtime owns these reducer rules | `tests/rpgmaker-capability-bundle-isolation.test.ts` (group boundary) |
 | `pocket-rpgkit/travel` | Followers and vehicle reducer | Projects with travel data fail admission | `tests/rpgmaker-capability-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/krm2` | Tone/weather, numbered pictures, timer and map-name presentation | Required rendering content fails admission | `tests/krm2-ui-bundle-isolation.test.ts`, `tests/rpgmaker-capability-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/rpgmaker-text` | Coloured RPG Maker choice rows | Choices render as plain text | `tests/rpgmaker-capability-bundle-isolation.test.ts` |
@@ -123,7 +123,7 @@ bundle intends to pay for them.
 | `pocket-rpgkit/ui/rpgmaker-formation` | Formation overlay | Formation access state persists, but no formation menu is drawn | **No bundle-isolation assertion.** Functional coverage: `tests/rpgmaker-formation.test.ts` |
 | `pocket-rpgkit/ui/parallax` | Map parallax layer | Authored/runtime parallax state persists without a backdrop node | `tests/krm3v-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/item-icons` | Item/shop icon rows | Text-only item and shop rows keep their dimensions | `tests/krm3v-ui-bundle-isolation.test.ts` |
-| `pocket-rpgkit/ui/choice-icons` | Character icons beside choices | Rows fall back to text and warn once for missing requested art | `tests/battle-ui-bundle-isolation.test.ts` |
+| `pocket-rpgkit/ui/choice-icons` | Character icons beside choices | Rows fall back to text and warn once that the `choiceIconBox` presentation is missing | `tests/battle-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/image` | Lazy indexed image cache/components | Existing eager `ui:img` sources continue to work | `tests/battle-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/saves` | `GameView` session save/load helpers | The application owns any alternative save integration | **No dedicated bundle-isolation assertion.** Functional coverage: `tests/ks2-save-view-sim.test.ts` |
 
@@ -135,8 +135,9 @@ that entry.
 ## Package-size checks
 
 `tools/build-example.ts` writes `dist/<app>.inputs.json` beside each bundle.
-Isolation tests inspect both that pass-one source graph and concrete strings in
-the final QuickJS bundle. The RPG Maker capability test uses Meadow and
+Isolation tests inspect the pass-one source graph, concrete strings in the
+final QuickJS bundle, or both, according to the boundary named in each test.
+The RPG Maker capability test checks both artifacts, using Meadow and
 Sunstone as negative controls and `rmi-play` as the positive control. It also
 pins the current bundle sizes: **683,647 bytes for Meadow, 1,107,830 bytes for
 Sunstone, and 1,297,182 bytes for `rmi-play`**. These are regression pins, not
@@ -149,10 +150,11 @@ bun tools/build-example.ts meadow sunstone rmi-play
 bun test tests/rpgmaker-capability-bundle-isolation.test.ts
 ```
 
-Other optional entries have their own positive fixture and ordinary-app
-negative control in the tests named in the catalogue. Keep the source-graph
-assertion: a byte-size pin alone cannot prove that an unwanted module stayed
-out.
+The tests named in the catalogue use positive fixtures, ordinary-application
+negative controls, or both. Rows which explicitly say that no isolation
+assertion exists are known gaps. Where a pass-one manifest is available, keep
+that source-graph assertion: a byte-size or final-string pin alone cannot prove
+that an unwanted module stayed out.
 
 ## Adding an optional feature
 

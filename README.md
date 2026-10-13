@@ -1179,9 +1179,13 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `appearance` | change a player's/event's walking sprite, opacity, or visibility; optionally save a new player reset baseline |
 | `layer` | show/hide a named visual layer or select one of its prepackaged variants for this map visit |
 | `changeParallax` | replace or clear the current map's parallax image, loop axes, signed scroll speeds and RPG Maker `!`/zero-camera mode |
+| `changeTileset` | atomically select one of the current map's precomposed art, passage, vehicle-passage and terrain variants |
 | `tileProperty` | replace one cell's passage and/or one-sided entry/exit edge masks for this map visit |
 | `screenFade` | fade the complete presentation out to a colour (default opaque black) or back in, independently of transfer |
 | `screenTint` | tween a named composable RGBA screen-tint layer (a zero-alpha target removes it) |
+| `screenTone` | tween RPG Maker's signed RGB/gray tone; reducer and save retain exact channels while portable presentation approximates the colour matrix |
+| `weather` | start or fade deterministic RPG Maker rain, storm or snow at power 0–9 |
+| `windowTone` | retain RPG Maker's global signed window tone; RGB affects kit chrome while gray is kept for lossless state |
 | `screenFlash` | flash an RGBA colour at 0..255 intensity, then decay to transparent |
 | `screenShake` | deterministic horizontal shake with pixel strength, cycles/second speed, and duration |
 | `camera` | scroll focus to an absolute tile, the player, this event, or a named event; targeting the player restores live follow |
@@ -1202,6 +1206,8 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `changeName` | replace the player name used by `{name}`, or a map event's saved runtime name consumed by opted-in `{char:...}` text; the name may come from a variable |
 | `mapNameDisplay` | enable or disable the automatic three-second banner on subsequent map entries |
 | `menuAccess` / `saveAccess` | enable or disable the host menu/save entry (default enabled; a disabled entry drops the matching `openMenu`/`openSave` request) |
+| `formationAccess` | enable or disable a host party menu's formation entry (default enabled) |
+| `formationSwap` | swap two zero-based positions in the current active party order |
 | `wait` | virtual-time pause (seconds, compiled against `simulationHz`) |
 | `gold` | add/sub gold |
 | `item` | add/remove an item count |

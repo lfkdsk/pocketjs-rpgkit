@@ -126,14 +126,13 @@ revision its historical checkpoint is
 `a4dc4e72341ae6aa7373623f83dbd07124316a6d`. The two transcripts are retained
 as `guard-single.log` and `guard-cumulative.log` under `PR1_QJS_SCRATCH`.
 
-When both comparisons reach the analyzer, the final line is
-`PR1_QJS_GUARD_RESULT`; exit 0 means pass, 1 means a measured regression, 2
-means a usage/preflight error, and 3 means an incomplete or malformed
-comparison. There is one current orchestration limitation: an earlier
-`bun`/`cargo`/copy/`taskset` failure can make the shell exit 1 before it emits
-that final line. Automation must therefore treat a missing guard-result line
-as an infrastructure error and inspect both transcripts, not interpret the
-raw 1 as a measured regression.
+Usage and guard-preflight failures exit 2 before comparisons start and do not
+emit `PR1_QJS_GUARD_RESULT`. Once comparisons start, the wrapper runs both and
+always emits that final line: exit 0 means pass, 1 means a measured regression,
+and 3 means at least one comparison was incomplete, malformed or failed its
+infrastructure. Automation must therefore require the final line before
+interpreting exit 1 as a measured regression; a missing line is a preflight or
+wrapper-level infrastructure failure.
 
 The analyzer itself has a focused synthetic regression suite:
 
