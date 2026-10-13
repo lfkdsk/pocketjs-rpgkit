@@ -1,9 +1,12 @@
 # QuickJS performance checks
 
-Pocket RPG Kit's desktop host runs game code in QuickJS, so runtime changes
-are measured in that guest rather than in Bun. `tools/pr1-quickjs-bench.sh`
-builds the same workload bundle at two commits and runs both with the current
-checkout's pinned desktop host.
+Pocket RPG Kit's desktop host runs game code in QuickJS, so runtime changes are
+measured in that guest rather than in Bun. `tools/pr1-quickjs-bench.sh` builds
+the same workload bundle at two commits and loads both into one QuickJS guest
+in one pinned desktop-host process. Odd measurement windows use baseline,
+candidate, candidate, baseline (ABBA); even windows reverse ownership to
+candidate, baseline, baseline, candidate (BAAB). Reversing the slots cancels
+systematic inner/outer-slot bias as well as monotonic host drift.
 
 ## Prepare the host
 
@@ -36,8 +39,8 @@ output, bundles and logs.
 
 ## Report a comparison
 
-Pass an explicit baseline commit. For a branch based on `origin/main`, this
-runs the complete table in three interleaved windows:
+Pass an explicit baseline commit. For a branch based on `origin/main`, a normal
+six-window run is:
 
 ```sh
 base=$(git merge-base HEAD origin/main)
@@ -45,9 +48,7 @@ env -u PR1_BENCH_CASE \
   -u PR1_QJS_MAX_REGRESSION_PCT \
   -u PR1_QJS_COMPARISON \
   PR1_QJS_CPU=2 \
-  PR1_QJS_ROUNDS=3 \
-  PR1_QJS_ITERS=2000 \
-  PR1_BENCH_ROUNDS=9 \
+  PR1_QJS_ROUNDS=6 \
   tools/pr1-quickjs-bench.sh "$base"
 ```
 
@@ -64,40 +65,39 @@ The complete table is:
 - `sunstoneIdleImmutable`, `sunstoneControlWalkImmutable`,
   `battleSceneImmutable`.
 
-There are two different round controls:
+Each case starts with `PR1_QJS_ITERS` probe iterations (2,000 by default), then
+calibrates the real batch near `PR1_QJS_TARGET_SAMPLE_US` (100,000 microseconds
+by default). This lengthens small cases such as `battleSceneImmutable` and
+shortens already-expensive cases. Every slot reports the median of
+`PR1_QJS_SAMPLES` timed batches (five by default), and the transcript records
+the actual chosen iteration count.
 
-- `PR1_QJS_ROUNDS` is the number of outer ABBA windows. Report mode defaults
-  to 1; guard mode defaults to and requires at least 3.
-- `PR1_BENCH_ROUNDS` is the number of timing samples inside each host slot and
-  defaults to 9. Each case first runs 400 warmups; each sample folds
-  `PR1_QJS_ITERS` iterations, which defaults to 2,000.
+## Read a counterbalanced result
 
-The Rust driver prints mean, median and p95, but the gate reads `mean_us`.
-
-## Read an ABBA result
-
-Each window starts a new host/guest process in this order:
+One timed host/guest process performs all requested windows. Odd windows use:
 
 ```text
 baseline -> candidate -> candidate -> baseline
 ```
 
-For each workload, the analyzer computes two directional deltas:
+Even windows reverse the labels:
 
 ```text
-(candidate slot 2 / baseline slot 1 - 1) * 100
-(candidate slot 3 / baseline slot 4 - 1) * 100
+candidate -> baseline -> baseline -> candidate
 ```
 
-The reported/gated value is the median of all `2 × PR1_QJS_ROUNDS` paired
-deltas, not a ratio of raw medians. A positive value is a regression; a
-negative value is an improvement. Each workload is gated independently,
-equality passes, and malformed, missing, duplicate, non-positive or mislabeled
-samples fail closed.
+The analyzer computes two candidate/baseline deltas per window, following the
+reversed labels in even windows. Its headline is the median of the per-slot
+`median_us` ratios. A deterministic percentile bootstrap resamples complete
+windows (both directions together) 20,000 times and reports a 95% confidence
+interval. A positive value is a regression and a negative value is an
+improvement. It fails closed if any requested round, slot, or case is missing,
+duplicated, mislabeled, non-numeric, or not positive.
 
 The log records the candidate, baseline and PocketJS commits, both bundle
-hashes, requested iterations/windows, granted affinity and load around every
-window. Keep those lines with any reviewed number.
+hashes, probe and calibrated iterations, requested windows and samples,
+granted affinity, and load around the paired process. Keep those lines with
+any reviewed number.
 
 ## Check one change and cumulative drift
 
@@ -106,33 +106,42 @@ Guard mode runs two independent comparisons:
 ```sh
 base=$(git merge-base HEAD origin/main)
 git status --porcelain --untracked-files=normal --ignore-submodules=none
-env -u PR1_BENCH_CASE \
-  PR1_QJS_CPU=2 \
-  PR1_QJS_ROUNDS=3 \
-  PR1_QJS_ITERS=2000 \
-  PR1_BENCH_ROUNDS=9 \
-  tools/pr1-quickjs-bench.sh --guard "$base"
+PR1_QJS_CPU=2 tools/pr1-quickjs-bench.sh --guard "$base"
 ```
-
-Guard mode requires a clean candidate worktree, including submodules.
 
 | Comparison | Baseline | Current limit | Purpose |
 | --- | --- | ---: | --- |
 | `single` | Command-line change base | 3.0% | Detect a regression introduced by this branch. |
 | `cumulative` | `baseline_sha` in `tools/pr1-quickjs-baseline.conf` | 3.0% | Detect small regressions accumulated across branches. |
 
+Guard mode requires a clean candidate worktree, including submodules, and an
+even number of windows of at least four (the default is six). The fixed
+configuration contains full commit identity and separate percentage limits
+for the two comparisons. A case passes only when the upper confidence bound is
+at or below its limit, fails when the lower bound is above the limit, and is
+inconclusive when the interval crosses the limit. Equality passes. Every
+`PR1_QJS_RESULT` names the case, point estimate, confidence bounds, limit, and
+verdict; the final machine-readable line is `PR1_QJS_GUARD_RESULT`.
+
 The config file is the source of truth for the baseline and limits. At this
 revision its historical checkpoint is
 `a4dc4e72341ae6aa7373623f83dbd07124316a6d`. The two transcripts are retained
 as `guard-single.log` and `guard-cumulative.log` under `PR1_QJS_SCRATCH`.
 
+Guard mode's exit codes are stable for automation:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Every measured case passed, or a report-only run completed |
+| 1 | At least one measured case exceeded its limit |
+| 2 | Confidence interval crossed a limit, or a usage/preflight error before measurement |
+| 3 | Benchmark execution failed or its transcript was malformed or incomplete |
+
 Usage and guard-preflight failures exit 2 before comparisons start and do not
 emit `PR1_QJS_GUARD_RESULT`. Once comparisons start, the wrapper runs both and
-always emits that final line: exit 0 means pass, 1 means a measured regression,
-and 3 means at least one comparison was incomplete, malformed or failed its
-infrastructure. Automation must therefore require the final line before
-interpreting exit 1 as a measured regression; a missing line is a preflight or
-wrapper-level infrastructure failure.
+always emits that final line. Automation must therefore require the final line
+before interpreting exit 1 or 2 as a measured verdict; a missing line is a
+preflight or wrapper-level infrastructure failure.
 
 The analyzer itself has a focused synthetic regression suite:
 
@@ -140,9 +149,9 @@ The analyzer itself has a focused synthetic regression suite:
 bun test tests/pr1-quickjs-guard.test.ts
 ```
 
-That suite covers pairing, thresholds and malformed rows. It does not launch
-QuickJS or exercise the shell's worktree, submodule, Cargo and dual-comparison
-orchestration.
+That suite covers counterbalanced pairing, point and interval thresholds, and
+malformed rows. It does not launch QuickJS or exercise the shell's worktree,
+submodule, Cargo and dual-comparison orchestration.
 
 ## Move the fixed baseline deliberately
 
@@ -161,7 +170,7 @@ git merge-base --is-ancestor "$old" "$checkpoint"
 Then:
 
 1. Under the same low-load conditions, run the **complete eight-workload**
-   report against both `old` and `checkpoint`, with at least three windows.
+   report against both `old` and `checkpoint`, with at least six windows.
 2. Record why the old comparison is no longer the useful cumulative window
    and account for every accepted regression. A Native/feature milestone is
    not itself a reason to erase history.

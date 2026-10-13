@@ -1,7 +1,8 @@
 #!/bin/bash
 # pr1-quickjs-bench.sh — build pre-PR main and this checkout's engine workloads
-# and run both inside the pinned PocketJS desktop host's QuickJS guest, in
-# interleaved main → candidate → candidate → main windows.
+# and run both inside one pinned PocketJS desktop-host QuickJS guest, in
+# counterbalanced main → candidate → candidate → main (ABBA) and
+# candidate → main → main → candidate (BAAB) windows.
 #
 # Usage:
 #   tools/pr1-quickjs-bench.sh <baseline_ref>
@@ -15,21 +16,26 @@
 # The run header and the opening line both record the resolved baseline commit.
 #
 # Environment options:
-#   PR1_QJS_ROUNDS=N   run N interleaved windows (default 1). With N>1 the
-#                      summary reports the median of the 2N paired deltas per
-#                      case — forward slot2/slot1-1 and reverse slot3/slot4-1
-#                      per window — the same pairing review rounds use.
-#   PR1_QJS_CPU=N      pin every timed process to CPU N with taskset(1)
+#   PR1_QJS_ROUNDS=N   run N interleaved windows (default 1; guard default 6,
+#                      where guard mode requires an even number >= 4).
+#                      The summary reports the median of the 2N paired deltas
+#                      and a complete-window bootstrap 95% confidence interval.
+#   PR1_QJS_CPU=N      pin the paired timed process to CPU N with taskset(1)
 #                      (e.g. PR1_QJS_CPU=2). Recommended for stable numbers;
 #                      the run header records the affinity actually granted.
-#   PR1_QJS_ITERS=N    iterations per case per slot (default 2000).
+#   PR1_QJS_ITERS=N    calibration-probe iterations (default 2000).
+#   PR1_QJS_SAMPLES=N  timed batches summarized by each slot (default 5).
+#   PR1_QJS_TARGET_SAMPLE_US=N  calibrate each case near this duration per
+#                      timed batch (default 100000 microseconds).
+#   PR1_QJS_BOOTSTRAP_SAMPLES=N  deterministic complete-window bootstrap
+#                      resamples used for the 95% CI (default 20000).
 #   PR1_BENCH_CASE=NAME  run one focused workload instead of the full table.
 #   PR1_QJS_SCRATCH=DIR  scratch worktree/build directory.
 #
-# Each round records `uptime` before and after its window, and the run header
-# records candidate/baseline/PocketJS SHAs, CPU affinity and the sha256 of
-# both built bundles, so a pasted log is enough to replay the run. The summary
-# stage checks every slot against the selected workload count (8 or 1).
+# The timed process records `uptime` and a short `ps` snapshot before and after
+# all windows. The run header records candidate/baseline/PocketJS SHAs, CPU
+# affinity and both bundle hashes, so a pasted log is enough to replay it. The
+# summary stage checks every slot against the selected workload count (8 or 1).
 #
 # Extraction note: with --nocapture libtest attaches a slot's first benchmark
 # line to its `test ...` line, so PR1_QJS rows are extracted with an
@@ -119,9 +125,10 @@ if [ "${1:-}" = "--guard" ]; then
     echo "pr1-quickjs-bench: guard mode requires a clean candidate worktree and submodules" >&2
     exit 2
   fi
-  guard_rounds="${PR1_QJS_ROUNDS:-3}"
-  if [[ ! "$guard_rounds" =~ ^[1-9][0-9]*$ ]] || [ "$guard_rounds" -lt 3 ]; then
-    echo "pr1-quickjs-bench: guard mode requires PR1_QJS_ROUNDS >= 3" >&2
+  guard_rounds="${PR1_QJS_ROUNDS:-6}"
+  if [[ ! "$guard_rounds" =~ ^[1-9][0-9]*$ ]] || [ "$guard_rounds" -lt 4 ] ||
+      [ $((guard_rounds % 2)) -ne 0 ]; then
+    echo "pr1-quickjs-bench: guard mode requires an even PR1_QJS_ROUNDS >= 4" >&2
     exit 2
   fi
   guard_scratch="${PR1_QJS_SCRATCH:-${XDG_CACHE_HOME:-$HOME/.cache}/pocket-rpgkit-bench/pr1-quickjs}"
@@ -142,6 +149,7 @@ if [ "${1:-}" = "--guard" ]; then
   set -e
 
   regressions=0
+  inconclusive=0
   errors=0
   for result_spec in "single:$single_status:$single_log" "cumulative:$cumulative_status:$cumulative_log"; do
     comparison_name="${result_spec%%:*}"
@@ -151,6 +159,8 @@ if [ "${1:-}" = "--guard" ]; then
     result_line="$(grep -E "^PR1_QJS_COMPARISON_RESULT comparison=$comparison_name " "$comparison_log" | tail -1)"
     if [[ "$result_line" == *" verdict=fail "* ]] && [ "$comparison_status" -eq 1 ]; then
       regressions=$((regressions + 1))
+    elif [[ "$result_line" == *" verdict=inconclusive "* ]] && [ "$comparison_status" -eq 2 ]; then
+      inconclusive=$((inconclusive + 1))
     elif [[ "$result_line" == *" verdict=pass "* ]] && [ "$comparison_status" -eq 0 ]; then
       :
     else
@@ -161,8 +171,9 @@ if [ "${1:-}" = "--guard" ]; then
   status=0
   if [ "$errors" -gt 0 ]; then verdict=error; status=3
   elif [ "$regressions" -gt 0 ]; then verdict=fail; status=1
+  elif [ "$inconclusive" -gt 0 ]; then verdict=inconclusive; status=2
   fi
-  echo "PR1_QJS_GUARD_RESULT verdict=$verdict regressions=$regressions errors=$errors"
+  echo "PR1_QJS_GUARD_RESULT verdict=$verdict regressions=$regressions inconclusive=$inconclusive errors=$errors"
   exit "$status"
 fi
 
@@ -188,6 +199,9 @@ target="$scratch/target"
 rounds="${PR1_QJS_ROUNDS:-1}"
 cpu="${PR1_QJS_CPU:-}"
 iters="${PR1_QJS_ITERS:-2000}"
+samples="${PR1_QJS_SAMPLES:-5}"
+target_sample_us="${PR1_QJS_TARGET_SAMPLE_US:-100000}"
+bootstrap_samples="${PR1_QJS_BOOTSTRAP_SAMPLES:-20000}"
 comparison="${PR1_QJS_COMPARISON:-manual}"
 limit_pct="${PR1_QJS_MAX_REGRESSION_PCT:-}"
 rows="$scratch/rows.log"
@@ -202,8 +216,13 @@ if [ -n "$selected_case" ]; then
     *) echo "pr1-quickjs-bench: unknown PR1_BENCH_CASE '$selected_case'" >&2; exit 2 ;;
   esac
 fi
-if [[ ! "$rounds" =~ ^[1-9][0-9]*$ ]] || [[ ! "$iters" =~ ^[1-9][0-9]*$ ]]; then
-  echo "pr1-quickjs-bench: rounds and iterations must be positive integers" >&2
+if [[ ! "$rounds" =~ ^[1-9][0-9]*$ ]] || [[ ! "$iters" =~ ^[1-9][0-9]*$ ]] ||
+    [[ ! "$samples" =~ ^[1-9][0-9]*$ ]] || [[ ! "$target_sample_us" =~ ^[1-9][0-9]*$ ]]; then
+  echo "pr1-quickjs-bench: rounds, iterations, samples, and target sample time must be positive integers" >&2
+  exit 2
+fi
+if [[ ! "$bootstrap_samples" =~ ^[1-9][0-9]*$ ]] || [ "$bootstrap_samples" -lt 1000 ]; then
+  echo "pr1-quickjs-bench: bootstrap samples must be an integer >= 1000" >&2
   exit 2
 fi
 if [[ ! "$comparison" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -258,15 +277,17 @@ if [ -n "$cpu" ]; then
   pin=(taskset -c "$cpu")
 fi
 
-run_slot() {
-  local js="$1"
-  local label="$2"
+run_paired() {
   if [ -n "$selected_case" ]; then
-    PR1_BENCH_JS="$js" PR1_BENCH_LABEL="$label" PR1_BENCH_ITERS="$iters" \
+    PR1_BENCH_MAIN_JS="$scratch/main.js" PR1_BENCH_CANDIDATE_JS="$scratch/candidate.js" \
+      PR1_BENCH_ITERS="$iters" PR1_BENCH_WINDOWS="$rounds" PR1_BENCH_SAMPLES="$samples" \
+      PR1_BENCH_TARGET_SAMPLE_US="$target_sample_us" \
       PR1_BENCH_CASE="$selected_case" "${pin[@]}" "$bin" \
       pr1_quickjs_bench::tick_fold --ignored --exact --nocapture 2>&1
   else
-    PR1_BENCH_JS="$js" PR1_BENCH_LABEL="$label" PR1_BENCH_ITERS="$iters" \
+    PR1_BENCH_MAIN_JS="$scratch/main.js" PR1_BENCH_CANDIDATE_JS="$scratch/candidate.js" \
+      PR1_BENCH_ITERS="$iters" PR1_BENCH_WINDOWS="$rounds" PR1_BENCH_SAMPLES="$samples" \
+      PR1_BENCH_TARGET_SAMPLE_US="$target_sample_us" \
       "${pin[@]}" "$bin" \
       pr1_quickjs_bench::tick_fold --ignored --exact --nocapture 2>&1
   fi
@@ -282,6 +303,10 @@ run_slot() {
   echo "PR1_QJS meta=key bundle_candidate value=$(sha256sum "$scratch/candidate.js" | cut -d' ' -f1)"
   echo "PR1_QJS meta=key rounds value=$rounds"
   echo "PR1_QJS meta=key iters value=$iters"
+  echo "PR1_QJS meta=key samples value=$samples"
+  echo "PR1_QJS meta=key target_sample_us value=$target_sample_us"
+  echo "PR1_QJS meta=key bootstrap_samples value=$bootstrap_samples"
+  echo "PR1_QJS meta=key pairing value=same_guest"
   echo "PR1_QJS meta=key cases value=${cases[*]}"
   if [ -n "$cpu" ]; then
     # Query the pinned process itself: taskset -cp $$ would report the
@@ -291,20 +316,15 @@ run_slot() {
     echo "PR1_QJS meta=key affinity value=none"
   fi
 
-  for round in $(seq 1 "$rounds"); do
-    echo "PR1_QJS round=$round phase=uptime_before value=\"$(uptime)\""
-    slot=0
-    for label in main candidate candidate main; do
-      slot=$((slot + 1))
-      js="$scratch/$label.js"
-      # Unanchored extraction: the first benchmark line of each slot is
-      # attached to libtest's `test ...` line, so ^PR1_QJS would drop it.
-      run_slot "$js" "$label" \
-        | grep -E 'PR1_QJS|^test result' \
-        | sed -E "s/PR1_QJS label=/PR1_QJS round=$round slot=$slot label=/"
-    done
-    echo "PR1_QJS round=$round phase=uptime_after value=\"$(uptime)\""
-  done
+  echo "PR1_QJS phase=uptime_before value=\"$(uptime)\""
+  echo "PR1_QJS phase=ps_before columns=pid,psr,pcpu,comm"
+  ps -eo pid,psr,pcpu,comm --sort=-pcpu | sed -n '1,12p'
+  # Unanchored extraction: libtest may attach the first benchmark line to its
+  # `test ...` prefix, so ^PR1_QJS would silently drop that row.
+  run_paired | grep -E 'PR1_QJS|^test result'
+  echo "PR1_QJS phase=uptime_after value=\"$(uptime)\""
+  echo "PR1_QJS phase=ps_after columns=pid,psr,pcpu,comm"
+  ps -eo pid,psr,pcpu,comm --sort=-pcpu | sed -n '1,12p'
 } | tee "$rows"
 
 # Pair each window's candidate slots against their neighboring baseline slots
@@ -317,5 +337,6 @@ awk \
   -v baseline_sha="$baseline_sha" \
   -v candidate_sha="$(git -C "$root" rev-parse HEAD)" \
   -v limit_pct="$limit_pct" \
+  -v bootstrap_samples="$bootstrap_samples" \
   -f "$root/tools/pr1-quickjs-analyze.awk" \
   "$rows"
