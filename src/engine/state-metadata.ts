@@ -17,8 +17,14 @@ export function beginStateMetadata(): MetadataScope {
 
 export function trackStateMetadata(map: DeletableMetadata, key: object): void {
   if (!currentScope) return;
-  (currentScope.maps ??= []).push(map);
-  (currentScope.keys ??= []).push(key);
+  const maps = currentScope.maps;
+  if (maps !== undefined) {
+    maps.push(map);
+    currentScope.keys!.push(key);
+    return;
+  }
+  currentScope.maps = [map];
+  currentScope.keys = [key];
 }
 
 export function endStateMetadata(scope: MetadataScope): void {
