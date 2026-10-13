@@ -55,7 +55,7 @@ the current document.
 
 | Browser Studio | Desktop Studio |
 | --- | --- |
-| Chrome and Edge request read-only folder access. Conversion stays in the page. The resulting pack contains the project shell, map entries and imported PNG assets. The review coverage is not stored in that pack; audio is reported Dropped because a page has no ffmpeg/QOA host, and the pack does not carry `battle.json` or the CLI manifests. Studio play-test uses its generic battle stand-in. Use CLI/desktop when the complete battle/audio output is required. | Native dialogs select the source and destination parent. A helper runs the complete importer, including audio, into a hidden sibling staging directory. It refuses an existing destination and publishes a completed import with one rename. See [Studio desktop](studio-desktop.md#rpg-maker-import). |
+| Chrome and Edge request read-only folder access. Conversion stays in the page. The resulting pack contains the project shell, map entries and imported PNG assets. The review coverage is not stored in that pack; audio is reported Dropped because a page has no ffmpeg/QOA host, and the pack does not carry `battle.json` or the CLI manifests. Studio play-test uses its generic battle stand-in. Use CLI/desktop when the complete battle/audio output is required. | Native dialogs select the source and destination parent. A helper runs the complete importer, including audio, into a hidden sibling staging directory. It refuses an existing destination and publishes a completed import with one rename. See [Studio desktop](studio-desktop.md#files-and-folders). |
 
 The checked-in wide result is English at a 1440 × 900 CSS viewport and device
 scale 1; the compact result is Chinese at 600 × 900 and device scale 2. The

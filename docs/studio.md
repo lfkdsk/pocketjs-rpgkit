@@ -52,7 +52,7 @@ the URL to open a bundled example directly.
 | --- | --- |
 | Open a local file | **Open → Open file…** (Ctrl/⌘+O). Accepts inline `rpgkit-project/v1` JSON and `rpgkit-edit/sharded-pack-v1` packs. |
 | Open a project folder | **Open → Open folder…** (Chrome and Edge). Picks a folder holding a `ProjectShell` (usually `project.json`) and its map files; see [Project folders](#project-folders). Other browsers show the item disabled, with the reason as its tooltip. |
-| Import an RPG Maker project | **Open → Import RPG Maker MV/MZ…** (Chrome and Edge). Picks the source folder read-only, converts maps and images locally, shows bilingual coverage and exact Placeholder/Dropped reasons, then opens the result only when you confirm. Browser audio is reported Dropped because the page has no Ogg/M4A-to-QOA converter. See [the importer](rpgmaker-import.md#importing-in-studio). |
+| Import an RPG Maker project | **Open → Import RPG Maker MV/MZ…** (Chrome and Edge). Picks the source folder read-only, converts maps and images locally, shows bilingual coverage and exact Placeholder/Dropped reasons, then opens the result only when you confirm. Browser audio is reported Dropped because the page has no Ogg/M4A-to-QOA converter. See [the importer](rpgmaker-import.md#studio). |
 | Open an example | **Open → Example: …** — Sunstone, Meadow, and Sunstone as a sharded pack. |
 | Save | **Save** (Ctrl/⌘+S) validates the document, then writes it back into its folder if it was opened from one; otherwise it stores it in this browser's `localStorage`. If storage is unavailable or full, a red notice says so and nothing is marked saved. |
 | Restore | Reloading the page reopens the saved document. |
