@@ -124,7 +124,7 @@ bundle intends to pay for them.
 | `pocket-rpgkit/ui/parallax` | Map parallax layer | Authored/runtime parallax state persists without a backdrop node | `tests/krm3v-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/item-icons` | Item/shop icon rows | Text-only item and shop rows keep their dimensions | `tests/krm3v-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/choice-icons` | Character icons beside choices | Rows fall back to text and warn once that the `choiceIconBox` presentation is missing | `tests/battle-ui-bundle-isolation.test.ts` |
-| `pocket-rpgkit/ui/image` | Lazy indexed image cache/components | Existing eager `ui:img` sources continue to work | `tests/battle-ui-bundle-isolation.test.ts` |
+| `pocket-rpgkit/ui/image` | Lazy indexed image cache/components | Existing eager `ui:img` sources continue to work | **No dedicated bundle-isolation assertion.** `tests/battle-ui-bundle-isolation.test.ts` only notes the entry in a comment |
 | `pocket-rpgkit/ui/saves` | `GameView` session save/load helpers | The application owns any alternative save integration | **No dedicated bundle-isolation assertion.** Functional coverage: `tests/ks2-save-view-sim.test.ts` |
 
 The world entry intentionally includes its sandbox preview implementation in
