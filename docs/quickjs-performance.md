@@ -117,9 +117,10 @@ PR1_QJS_CPU=2 tools/pr1-quickjs-bench.sh --guard "$base"
 Guard mode requires a clean candidate worktree, including submodules, and an
 even number of windows of at least four (the default is six). The fixed
 configuration contains full commit identity and separate percentage limits
-for the two comparisons. A case passes only when the upper confidence bound is
-at or below its limit, fails when the lower bound is above the limit, and is
-inconclusive when the interval crosses the limit. Equality passes. Every
+for the two comparisons. A case passes when its point estimate is at or below
+its limit, fails when the confidence interval's lower bound is above the limit,
+and is inconclusive when the point estimate is above the limit but the interval
+crosses it. Equality passes. Every
 `PR1_QJS_RESULT` names the case, point estimate, confidence bounds, limit, and
 verdict; the final machine-readable line is `PR1_QJS_GUARD_RESULT`.
 

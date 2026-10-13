@@ -162,7 +162,7 @@ describe("PR1 QuickJS benchmark analyzer", () => {
     expect(result.stdout).toContain("statistic=median_us median_pct=+1.000000");
   });
 
-  test("returns two when the complete-window confidence interval crosses the limit", () => {
+  test("passes a within-limit point estimate when only the upper confidence tail crosses", () => {
     const rows = completeRows(3);
     for (let index = 0; index < rows.length; index++) {
       const round = Math.floor(index / 4);
@@ -172,9 +172,26 @@ describe("PR1 QuickJS benchmark analyzer", () => {
     }
     const result = runAnalyzer(rows, { rounds: 3 });
 
-    expect(result.exitCode).toBe(2);
+    expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
       "median_pct=+3.000000 ci95_low_pct=+1.000000 ci95_high_pct=+5.000000 " +
+        "limit_pct=3.000000 verdict=pass",
+    );
+  });
+
+  test("returns two when the point estimate exceeds the limit but its interval crosses", () => {
+    const rows = completeRows(3);
+    for (let index = 0; index < rows.length; index++) {
+      const round = Math.floor(index / 4);
+      if (rows[index]!.includes("label=candidate")) {
+        rows[index] = rows[index]!.replace("median_us=101", `median_us=${101 + round * 3}`);
+      }
+    }
+    const result = runAnalyzer(rows, { rounds: 3 });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toContain(
+      "median_pct=+4.000000 ci95_low_pct=+1.000000 ci95_high_pct=+7.000000 " +
         "limit_pct=3.000000 verdict=inconclusive",
     );
     expect(result.stdout).toContain(

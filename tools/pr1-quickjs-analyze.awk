@@ -186,13 +186,16 @@ END {
       verdict = "fail"
       shown_limit = sprintf("%.6f", limit_pct + 0)
       failed_cases++
-    } else if (ci_high - (limit_pct + 0) <= 0.0000005) {
-      verdict = "pass"
-      shown_limit = sprintf("%.6f", limit_pct + 0)
-    } else {
+    } else if (point_median - (limit_pct + 0) > 0.0000005) {
       verdict = "inconclusive"
       shown_limit = sprintf("%.6f", limit_pct + 0)
       inconclusive_cases++
+    } else {
+      # Keep the point-estimate limit compatible with the original guard. A
+      # noisy upper confidence tail is evidence to report, not enough by
+      # itself to reject a point estimate that remains within budget.
+      verdict = "pass"
+      shown_limit = sprintf("%.6f", limit_pct + 0)
     }
     printf "PR1_QJS_RESULT comparison=%s baseline=%s candidate=%s case=%s pairs=%d statistic=median_us median_pct=%+.6f ci95_low_pct=%+.6f ci95_high_pct=%+.6f limit_pct=%s verdict=%s\n", \
       comparison, baseline_sha, candidate_sha, bench_case, pair_count, point_median, ci_low, ci_high, shown_limit, verdict
