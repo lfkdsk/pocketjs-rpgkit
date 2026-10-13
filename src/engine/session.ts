@@ -1533,7 +1533,9 @@ function sessionConditionContext(
     ? undefined
     : s.travel.vehicles?.riding ?? null,
 ): ConditionContext {
-  const context: ConditionContext = { worldIdle: isSessionWorldIdle(s) };
+  const context: ConditionContext = {
+    worldIdle: world.needsWorldIdleContext !== false && isSessionWorldIdle(s),
+  };
   if (playerMoving !== undefined) context.playerMoving = playerMoving;
   if (vehicle !== undefined) context.vehicle = vehicle;
   if (s.interp.audio) context.audio = s.interp.audio;
@@ -3671,9 +3673,11 @@ function stepReferenceTick(
     eventCells,
     ...(liveEventCells ? { liveEventCells } : {}),
     eventPages,
-    worldIdleBlockers: sessionWorldIdleBlockers(s),
     liveChars: s.chars.chars,
   };
+  if (world.needsWorldIdleContext !== false) {
+    interpInput.worldIdleBlockers = sessionWorldIdleBlockers(s);
+  }
   if ((input.buttons & 0x2000) !== 0) interpInput.scrollFastHeld = true;
   if (travel !== undefined) interpInput.vehicle = travel.vehicles?.riding ?? null;
   if (contacts !== undefined && contacts.length > 0) interpInput.touchContacts = contacts;

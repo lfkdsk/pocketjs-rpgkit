@@ -78,6 +78,24 @@ const sessionStep = (session: Session, state: SessionState, confirmEdge = false)
   stepSession(session, state, { buttons: 0, confirmEdge });
 
 describe("worldIdle derived predicate", () => {
+  test("compiles live idle context only for maps that read it", () => {
+    expect(createWorld(map()).needsWorldIdleContext).toBe(false);
+
+    const pageWorld = createWorld(map([event("page", [page(
+      "action",
+      [],
+      { all: [{ kind: "worldIdle" }] },
+    )])]));
+    expect(pageWorld.needsWorldIdleContext).toBe(true);
+
+    const branchWorld = createWorld(map([event("branch", [page("action", [{
+      op: "if",
+      if: { kind: "worldIdle", negate: true },
+      then: [],
+    }])])]));
+    expect(branchWorld.needsWorldIdleContext).toBe(true);
+  });
+
   test("condition and negate use a supplied point-in-time value", () => {
     const sw = createSwitchState();
     expect(evalCondition({ kind: "worldIdle" }, sw, "idle-map/test")).toBe(false);

@@ -2466,6 +2466,10 @@ export interface World {
   /** True when some page or program reads `playerMoving`; the session then
    *  samples the mover only for this map. */
   needsPlayerMovingContext?: boolean;
+  /** False when compiled pages/programs never read `worldIdle`, allowing the
+   *  session to skip deriving idle blockers. Undefined stays conservative
+   *  for callers that construct a World without the compiler. */
+  needsWorldIdleContext?: boolean;
   /** True when this map or a common event evaluates an actor condition. */
   needsActorContext?: boolean;
   /** True when page selection reads the persistent step count. Command-only
@@ -2836,7 +2840,9 @@ function liveConditionContext(
   playerMoving?: boolean,
   vehicle?: string | null,
 ): ConditionContext {
-  const context: ConditionContext = { worldIdle: isWorldIdle(s, blockers) };
+  const context: ConditionContext = {
+    worldIdle: w.needsWorldIdleContext !== false && isWorldIdle(s, blockers),
+  };
   if (playerMoving !== undefined) context.playerMoving = playerMoving;
   if (vehicle !== undefined) context.vehicle = vehicle;
   if (s.audio) context.audio = s.audio;
@@ -2867,6 +2873,7 @@ const CONTEXT_MAP_ANIM_TARGET = 4;
 const CONTEXT_REGION = 8;
 const CONTEXT_PLAYER_MOVING = 16;
 const CONTEXT_ACTOR = 32;
+const CONTEXT_WORLD_IDLE = 64;
 
 function conditionContextFlags(condition: Condition): number {
   if (condition.kind === "appearance" && condition.target !== "player") {
@@ -2876,6 +2883,7 @@ function conditionContextFlags(condition: Condition): number {
   if (condition.kind === "region") return CONTEXT_REGION;
   if (condition.kind === "playerMoving") return CONTEXT_PLAYER_MOVING;
   if (condition.kind === "actor") return CONTEXT_ACTOR;
+  if (condition.kind === "worldIdle") return CONTEXT_WORLD_IDLE;
   return 0;
 }
 
@@ -3135,6 +3143,7 @@ function finishWorld(build: WorldBuild, orderedEvents: readonly GameEvent[]): Wo
     needsRegionContext: (contextFlags & CONTEXT_REGION) !== 0,
     needsPlayerMovingContext: (contextFlags & CONTEXT_PLAYER_MOVING) !== 0,
     needsActorContext: (contextFlags & CONTEXT_ACTOR) !== 0,
+    needsWorldIdleContext: (contextFlags & CONTEXT_WORLD_IDLE) !== 0,
     ...(pageReadsSteps ? { pageReadsSteps: true } : {}),
     ...(regionCells ? { regionCells } : {}),
     ...(terrainCells ? { terrainCells } : {}),
