@@ -272,7 +272,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // runtime passage overrides remain sparse and battle code remains absent.
 // Compile-time worldIdle context admission adds 534 B while letting worlds
 // that never read worldIdle skip construction of that per-tick context.
-const EXPECTED_BYTES = 1_107_830;
+// Immutable scene/session allocation fast paths add 732 B of shared engine
+// code; the needles below still exclude optional battle presentation code.
+const EXPECTED_BYTES = 1_108_562;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
