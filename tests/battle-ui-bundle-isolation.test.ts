@@ -268,7 +268,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Applying a freshly latched speed to the first immediate event-route step
 // adds 161 B on the shared session path; the isolation checks below continue
 // to prove that no optional battle code became reachable.
-const EXPECTED_BYTES = 1_106_498;
+// The ordinary tileset-passage fast path adds 798 B of shared session code;
+// runtime passage overrides remain sparse and battle code remains absent.
+const EXPECTED_BYTES = 1_107_296;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

@@ -300,9 +300,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Deriving an immediate event route's first-step config from its freshly
 // latched route speed adds 161 B to every shared session graph. It reaches no
 // audio decoder or optional presentation implementation.
-const EXPECTED_MEADOW_BYTES = 682_315;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_106_498;
-const EXPECTED_WAV_FIXTURE_BYTES = 868_864;
+// Preserving the ordinary tileset-passage fast path before consulting sparse
+// runtime overrides adds 798 B of shared session code to every graph while
+// keeping the unused override path allocation-free.
+const EXPECTED_MEADOW_BYTES = 683_113;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_107_296;
+const EXPECTED_WAV_FIXTURE_BYTES = 869_662;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

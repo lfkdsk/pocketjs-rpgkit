@@ -61,13 +61,15 @@ const EXPECTED_BYTES = {
   // to Meadow, 4,422 B to Sunstone and 4,659 B to the opted-in fixture. It
   // does not link either optional screen implementation into the controls;
   // the graph and bundle needles below keep that boundary.
+  // The ordinary tileset-passage fast path then adds 798 B of shared session
+  // code to all three while keeping sparse runtime overrides allocation-free.
   // The implementation-graph and bundle needles below still prove that the
   // optional RPG Maker and travel implementations stay out of both controls.
   // Effective first-step config for immediate event routes adds 161 B to each
   // shared session graph without admitting an optional capability module.
-  meadow: 682_315,
-  sunstone: 1_106_498,
-  "rmi-play": 1_295_850,
+  meadow: 683_113,
+  sunstone: 1_107_296,
+  "rmi-play": 1_296_648,
 } as const;
 
 function implementationModules(app: string): string[] {
