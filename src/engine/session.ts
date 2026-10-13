@@ -3137,6 +3137,19 @@ function incrementStepCounter(s: SessionState): void {
   s.sw.steps = Math.max(0, clampFiniteVar((s.sw.steps ?? 0) + 1));
 }
 
+/** Cold optional Steps fold. Keeping the movement comparison and sparse-bank
+ * write out of the ordinary walking path preserves the pre-RPG-Maker tick
+ * shape for projects which did not opt into a global step counter. */
+function advanceStepCounterAfterMovement(
+  s: SessionState,
+  beforeX: number,
+  beforeY: number,
+  stepsBeforeMovement: number | undefined,
+): boolean {
+  if (s.move.tx !== beforeX || s.move.ty !== beforeY) incrementStepCounter(s);
+  return stepsBeforeMovement !== undefined && (s.sw.steps ?? 0) !== stepsBeforeMovement;
+}
+
 function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: number } {
   const handoff = s.handoff!;
   const left = freezeLeftMap(s, sess.maps.get(handoff.sourceMapId)!, handoff);
@@ -3609,13 +3622,17 @@ function stepReferenceTick(
     });
     travel = s.travel;
   }
-  const playerMoved = s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY;
-  if (sess.stepCounter && playerMoved) {
-    incrementStepCounter(s);
-  }
-  const stepPageChanged = stepsBeforeMovement !== undefined && (s.sw.steps ?? 0) !== stepsBeforeMovement;
+  const stepPageChanged = sess.stepCounter
+    ? advanceStepCounterAfterMovement(
+        s,
+        playerCellBeforeMovementX,
+        playerCellBeforeMovementY,
+        stepsBeforeMovement,
+      )
+    : false;
   const playerStep = sess.extensions.playerStep;
-  if (playerStep !== null && playerMoved) {
+  if (playerStep !== null &&
+      (s.move.tx !== playerCellBeforeMovementX || s.move.ty !== playerCellBeforeMovementY)) {
     runPlayerStepHook(
       sess,
       s,
