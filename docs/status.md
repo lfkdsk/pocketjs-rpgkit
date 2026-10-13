@@ -110,6 +110,7 @@ The links point to where each feature is described in detail.
 | --- | --- | --- |
 | Immutable reducer-state fast path | Done | Opt-in copy-on-write banks and bounded identity caches preserve ordinary event ordering, saves and rewind; see [Opt-in immutable-state fast path](../README.md#opt-in-immutable-state-fast-path) |
 | Retained and incremental game UI | Done | Viewport windows, actor frames, dialog leaves and battle widgets reuse stable nodes and update only changed paint inputs |
+| Fixed-history QuickJS drift guard | Done | The desktop-guest ABBA benchmark checks both the current change base and a reviewed historical checkpoint, validates complete transcripts, and emits machine-readable per-case verdicts; see [QuickJS performance checks](quickjs-performance.md) |
 
 ## Maps and resources
 
