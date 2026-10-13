@@ -113,6 +113,34 @@ function lowHpExtension(): ExtensionOptions["initial"] {
 }
 
 describe("imported RPG Maker Battle Processing end to end", () => {
+  test("imported screen effects clear at the accepted battle boundary", async () => {
+    const raw = loadRmProject(HOLLOW);
+    const list = raw.maps.get(3)!.events[2]!.pages[0]!.list;
+    const battleAt = list.findIndex((entry) => entry.code === 301);
+    expect(battleAt).toBeGreaterThanOrEqual(0);
+    list.splice(battleAt, 0,
+      { code: 221, indent: 0, parameters: [] },
+      { code: 223, indent: 0, parameters: [[-30, 20, 10, 40], 600, false] },
+      { code: 224, indent: 0, parameters: [[255, 240, 220, 200], 600, false] },
+      { code: 225, indent: 0, parameters: [7, 3, 600, false] },
+    );
+
+    const generated = await importRmProject(raw);
+    const project = battleProject(generated.project);
+    const commands = project.maps.find((map) => map.id === "map003")!
+      .events!.find((event) => event.id === "ev002")!.pages[0]!.commands;
+    const importedBattleAt = commands.findIndex((command) => command.op === "battle");
+    expect(commands.slice(importedBattleAt - 4, importedBattleAt).map((command) => command.op))
+      .toEqual(["screenFade", "screenTone", "screenFlash", "screenShake"]);
+
+    const session = createSession(project, 60, options(generated.battle));
+    const entered = enterBattle(session, startSession(project, session));
+    expect(entered.interp.screen?.fade).toBeUndefined();
+    expect(entered.interp.screen?.flash).toBeUndefined();
+    expect(entered.interp.screen?.shake).toBeUndefined();
+    expect(entered.interp.screen?.tone?.to).toEqual({ r: -30, g: 20, b: 10, gray: 40 });
+  });
+
   test("a map formation swap determines the imported battle slot order", () => {
     const db = structuredClone(imported.battle);
     db.party = [1, 2];

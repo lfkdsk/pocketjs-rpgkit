@@ -208,20 +208,20 @@ describe("RPG Maker battle-start screen cleanup", () => {
   });
 
   test("ordinary battles retain native screen state byte-for-field", () => {
-    const p = project([
+    const commands: Command[] = [
       { op: "screenFade", direction: "out", duration: 10 },
       { op: "screenFlash", color: { r: 255, g: 255, b: 255, a: 255 }, intensity: 255, duration: 10 },
       { op: "screenShake", strength: 8, speed: 4, duration: 10 },
-      { op: "battle", setup: { enemyHp: 99 } },
-    ]);
+    ];
+    const baselineProject = project(commands);
+    const baselineSession = createSession(baselineProject, 60);
+    const baseline = run(baselineSession, startSession(baselineProject, baselineSession), 1);
+
+    const p = project([...commands, { op: "battle", setup: { enemyHp: 99 } }]);
     const session = createSession(p, 60, { battle: toyBattleRules });
     const state = run(session, startSession(p, session), 1);
     expect(state.scene?.kind).toBe("battle");
-    expect(state.interp.screen).toMatchObject({
-      fade: { left: 600 },
-      flash: { left: 600 },
-      shake: { left: 600 },
-    });
+    expect(state.interp.screen).toEqual(baseline.interp.screen);
   });
 
   test("a declined battle does not run battle-start cleanup", () => {
