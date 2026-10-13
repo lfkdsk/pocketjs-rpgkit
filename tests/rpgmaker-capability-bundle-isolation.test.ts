@@ -69,9 +69,11 @@ const EXPECTED_BYTES = {
   // shared session graph without admitting an optional capability module.
   // Compile-time worldIdle context admission adds 534 B to each graph while
   // the implementation and bundle needles below retain the same boundary.
-  meadow: 683_647,
-  sunstone: 1_107_830,
-  "rmi-play": 1_297_182,
+  // Immutable scene/session allocation fast paths add 732 B to every shared
+  // engine graph; the implementation and bundle needles remain unchanged.
+  meadow: 684_379,
+  sunstone: 1_108_562,
+  "rmi-play": 1_297_914,
 } as const;
 
 function implementationModules(app: string): string[] {

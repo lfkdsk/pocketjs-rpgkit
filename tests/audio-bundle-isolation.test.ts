@@ -305,9 +305,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // keeping the unused override path allocation-free.
 // Compile-time worldIdle context admission adds 534 B to each shared graph;
 // the decoder needles below remain unchanged.
-const EXPECTED_MEADOW_BYTES = 683_647;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_107_830;
-const EXPECTED_WAV_FIXTURE_BYTES = 870_196;
+// Immutable scene/session allocation fast paths add 732 B to each shared
+// engine graph without admitting either audio decoder into Meadow.
+const EXPECTED_MEADOW_BYTES = 684_379;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_108_562;
+const EXPECTED_WAV_FIXTURE_BYTES = 870_928;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
