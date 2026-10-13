@@ -46,21 +46,26 @@ registered reducer rules and registered presentation. The capability guide
 likewise separates content admission, hot-path absence and static bundle
 isolation instead of treating them as one switch.
 
-Four older documentation mismatches remain outside this documentation-only
+Three older documentation mismatches remain outside this documentation-only
 scope and were not silently propagated:
 
 1. `src/engine/README.md:899-911` lists 9 `SessionOptions`, while
    `src/engine/session.ts:493-553` currently declares 19. The missing table
    entries include immutable state, scene rules, RPG Maker runtime/screen
    validation, travel, text pagination/layout/tokens and world handoff.
-2. `src/engine/README.md:574-575` says `\P[n]` ignores runtime party reorder,
-   but `src/engine/rpgmaker-text.ts:308-313` applies saved `partyOrder`.
-3. `src/engine/README.md:523-528` says the RPG Maker text capability owns
+2. `src/engine/README.md:523-528` says the RPG Maker text capability owns
    screen presentation. Reducer clocks use the text runtime, but visible
    KRM2 presentation is independently registered and validated in
    `src/engine/session.ts:517-520,602-686`.
-4. `tools/studio-verify.ts:1894-1940` generates screenshot names containing
+3. `tools/studio-verify.ts:1894-1940` generates screenshot names containing
    `-web`; the two committed documentation screenshots omit that segment.
+
+The party-name item previously listed here was not a mismatch. Message
+expansion passes the fixed imported `partyActorIds` directly at
+`src/engine/rpgmaker-text.ts:228-239`; the live-order helper at lines 293-313
+is used by formation and battle integration, not by `\P[n]`. The engine guide
+was therefore already correct: message lookups keep the imported initial
+order while supported actor renames still change the displayed name.
 
 ## 3. Documented-command validation
 
@@ -123,6 +128,96 @@ around removed punctuation, and checks explicit HTML ids.
   `310934f9b9b3efbb09d108f1de29432335609b31`, so no rebase was necessary.
 - All three branch commits are authored by `lfkdsk <lfkdsk@gmail.com>`. The diff contains only root/documentation Markdown and this finding; there is no `bun.lock`, schema, source, generated asset or submodule-pointer diff, and the branch contains no merge commit.
 
-subagent 使用：4 / capability 边界与隔离测试、QuickJS 流程与基线、RPG Maker 导入器与矩阵、Studio 行为与截图分别做只读审计 / 并行审计缩短了事实核对时间，进入报告的命令、数字与判断均由主代理复核
+## 6. Correction audit
+
+The failed review was rechecked against implementation call paths and the
+assertions in every cited test rather than accepted mechanically. The final
+documentation now makes these corrections:
+
+1. `pocket-rpgkit/ui/rpgmaker-formation` explicitly says that it has **no
+   bundle-isolation assertion**. `tests/rpgmaker-formation.test.ts` is labelled
+   only as functional coverage. `pocket-rpgkit/ui/saves` is disclosed the same
+   way. A combined follow-up for positive/negative bundle guards was proposed;
+   the proposal is not assumed to be accepted or scheduled.
+2. All three user-facing descriptions of `\P[n]` now follow the actual message
+   call path: imported initial party order, unaffected by formation swaps or
+   later membership changes, while supported renames remain live. This also
+   resolves the contradiction within the changed document set.
+3. The four lower-severity review findings are fixed: a capability-bearing
+   seam fails closed without its policy, the public export is named
+   `rpgMakerTextRuntime`, saves no longer imply an isolation suite, and the
+   obsolete `the-80-commands` compatibility anchor is gone.
+4. The README command catalogue had only 81 distinct operations under its
+   “87 commands” heading. It now includes `changeTileset`, `screenTone`,
+   `weather`, `windowTone`, `formationAccess` and `formationSwap`; an automated
+   comparison against the `Command` union reports **code=87, docs=87,
+   missing=none, extra=none**.
+5. Browser Studio computes and displays importer coverage but does not persist
+   it in its pack, and it does not include CLI/desktop `battle.json` or
+   manifests. The guide and status ledger now reserve persisted coverage and
+   battle output for CLI/desktop imports. The static **95/107 Native** figure
+   is described as one minimal sample per command head, while the three public
+   game figures are identified as recorded manual conversion trials rather
+   than automated fixtures.
+6. Studio documentation now covers rollback failure (which can leave a mixed
+   old/new folder), splits exact boundary tests from aggregate asset-budget
+   coverage, and names the browser/desktop/importer allowlist instead of
+   claiming only one browser-host file. The matching status row is consistent.
+7. QuickJS guard documentation now matches the wrapper: usage/preflight errors
+   exit 2 before a final result; once comparisons begin, both run and the
+   wrapper always emits `PR1_QJS_GUARD_RESULT`, exiting 0, 1 or 3.
+8. The package guide now describes the manifest's exports without claiming
+   that this `private: true` package is currently published.
+
+## 7. Test-citation cross-check
+
+The six audited guides contain **46 unique `tests/*.test.ts` references**.
+Every path exists. Test names and relevant assertions were inspected for each
+claim; the following list records the actual scope rather than inferring it
+from filenames. For compactness, table entries abbreviate
+`tests/<name>.test.ts` as `<name>`:
+
+| Documentation area | Tests checked | What the assertions actually cover |
+| --- | --- | --- |
+| Capability source-graph/final-bundle boundaries | `rpgmaker-capability-bundle-isolation`, `krm2-ui-bundle-isolation`, `world-ui-bundle-isolation`, `audio-bundle-isolation`, `demo-ui-bundle-isolation`, `battle-ui-bundle-isolation`, `rpgmaker-battle-isolation`, `krm3v-ui-bundle-isolation` | Export identity plus the positive fixture, ordinary-app negative control, pass-one graph, final-bundle needles or byte pins provided by each named test. The catalogue no longer claims that every row has both kinds of assertion. |
+| Capability functional-only references | `rpgmaker-formation`, `ks2-save-view-sim` | Formation access/order and GameView save/load behavior. Neither is represented as a bundle-isolation test. `choice-icon-render` additionally verifies the documented labels-only fallback and one warning when the optional icon box is absent. |
+| Importer matrix | `rpgmaker-import` | `staticCommandTable()` classifications and byte-for-byte equality between `commandTableLines()` and the Markdown inside the generated table markers. |
+| QuickJS analyzer | `pr1-quickjs-guard` | ABBA pairing, threshold equality, report-only mode and malformed/missing/duplicate/non-positive input failures. It does not claim to exercise shell orchestration or QuickJS. |
+| Studio model, host and limits | `studio-session`, `editor-api-equivalence`, `studio-host`, `studio-directory-save`, `studio-import-limits`, `studio-inspector-model`, `edit-move-map`, `studio-pack-assets`, `studio-build`, `studio-playtest`, `preview-art-sim` | Reversible edits/equivalence, allowlisted host APIs, successful and failed rollback, exact document/pack/shard/map/event/PNG boundaries, aggregate asset budgets, drag destinations, build determinism and play-test art transport/rendering. |
+| README editor references | `editor-api-equivalence`, `editor-model`, `editor-sim`, `editor-proposal-sim`, `editor-agent-sim`, `editor-event-sim`, `editor-playtest-sim` | Shared patches/bytes, document and edit gates, pointer/gamepad flows, proposals, offline agent flow, responsive inspector/runtime editing and real GameView play/debug goldens. |
+| README battle and guest references | `battle-ui-bundle-isolation`, `kb4-battle-rules`, `kb4-battle-sim`, `guest-globals` | Generic battle UI absence, pure battle state machine, rendered/pixel/Hz proofs, and the statically scanned QuickJS guest-global allowlist. |
+| Status rendering and screen references | `rpgmaker-scroll-text-visual`, `ks1-screen-effects`, `r2-ui-sim` | Scrolling-text pixels, recursive admission/battle cleanup/screen timelines, and the world-overlay mount order. |
+| Status connected-world references | `world-streamed-sim`, `seamless-handoff`, `world-bounded-sim`, `world-preview`, `world-left-map`, `world-preview-sim`, `world-preview-sandbox` | Transition frames, reducer handoff rules, bounded continuous rendering, conservative preview reasons, saved left-map snapshots, preview handover frames and sandbox purity/cache behavior. |
+| Status editor/mobile web references | `editor-api-equivalence`, `tap-walk-hz`, `web-oauth-state`, `web-name-input`, `web-invite-link` | Identical editor protocol results, 60/30/20/4 Hz tap routes, OAuth lifecycle, IME-safe character naming and invite persistence/copy/consumption. |
+
+Two nuances found by this pass are now explicit in the guides: isolation tests
+do not all have the same positive/negative or source/final shape, and a
+functional test is not evidence of static bundle isolation.
+
+## 8. Correction gates
+
+- `bun run build:example`: exit 0 for every example and fixture.
+- `bunx tsc --noEmit`: exit 0 with no output.
+- `bun run build:wasm`: exit 0; the rebuilt web wasm is **359,675 bytes**.
+- The inline local-link checker again found **12 files, 255 local targets, 0
+  unresolved**.
+- The independent command-catalogue comparison reports **code=87, docs=87,
+  missing=none, extra=none**.
+- With Homebrew's `ffmpeg` explicitly present on `PATH`, the five importer
+  files affected by the first background runner's stripped environment pass
+  **62 tests, 0 fail**. The first runner's diagnostic transcript is retained
+  separately; all seven failures/three module errors there were `ffmpeg`
+  lookup failures rather than assertion mismatches.
+- The final `bun run test` gate passes **4,576 tests, 0 fail, 0 skip**, with
+  **730,583 expectations across 298 files in 580.09 seconds**. The complete
+  transcript is `/var/tmp/fleet/4531/full-test-final.log`; its captured exit
+  status is 0.
+- A final fetch resolves both `origin/main` and the branch merge-base to
+  `310934f9b9b3efbb09d108f1de29432335609b31`, so no rebase is required.
+- The branch diff is documentation-only: root/documentation Markdown and this
+  finding, with no lockfile, source, schema, generated asset or submodule
+  pointer change. The branch contains no merge commit.
+
+subagent 使用：4 / capability 导出与隔离、RPG Maker 导入器与文本调用路径、README Studio QuickJS、全量对抗式文档声明分别做只读审计 / 并行核对缩短了覆盖面审查时间；进入报告的代码路径、断言、命令与数字均由主代理复核
 
 PASS

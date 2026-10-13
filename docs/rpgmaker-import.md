@@ -402,8 +402,8 @@ native refresh no-op above; other shapes are classified per use. "Needs kit"
 names the remaining or presentation-only runtime capability. The static table
 sends troop-only commands through the same troop converter as a real import,
 rather than treating them as map commands.
-`tests/rpgmaker-import.test.ts` keeps this table in step with the
-importer. Each import also writes the same table, plus per-construct counts
+`tests/rpgmaker-import.test.ts` keeps this table in step with the importer.
+CLI and desktop imports also write the same table, plus per-construct counts
 for that project, to `coverage.md`.
 
 <!-- rpgmaker-commands:begin -->

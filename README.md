@@ -2075,7 +2075,7 @@ pixel checks, and the Hz/determinism proofs).
 
 ## Using it in your own project
 
-The published package exports the engine surface (`pocket-rpgkit` and
+The package manifest exports the engine surface (`pocket-rpgkit` and
 `pocket-rpgkit/engine`), base Solid components (`pocket-rpgkit/ui`), host
 adapters (`pocket-rpgkit/host`), the editor API and the schema. Optional
 entries keep concrete features out of applications which do not import them:
