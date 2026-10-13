@@ -303,9 +303,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Preserving the ordinary tileset-passage fast path before consulting sparse
 // runtime overrides adds 798 B of shared session code to every graph while
 // keeping the unused override path allocation-free.
-const EXPECTED_MEADOW_BYTES = 683_113;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_107_296;
-const EXPECTED_WAV_FIXTURE_BYTES = 869_662;
+// Compile-time worldIdle context admission adds 534 B to each shared graph;
+// the decoder needles below remain unchanged.
+const EXPECTED_MEADOW_BYTES = 683_647;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_107_830;
+const EXPECTED_WAV_FIXTURE_BYTES = 870_196;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

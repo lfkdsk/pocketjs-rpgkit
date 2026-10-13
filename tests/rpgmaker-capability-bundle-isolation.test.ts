@@ -67,9 +67,11 @@ const EXPECTED_BYTES = {
   // optional RPG Maker and travel implementations stay out of both controls.
   // Effective first-step config for immediate event routes adds 161 B to each
   // shared session graph without admitting an optional capability module.
-  meadow: 683_113,
-  sunstone: 1_107_296,
-  "rmi-play": 1_296_648,
+  // Compile-time worldIdle context admission adds 534 B to each graph while
+  // the implementation and bundle needles below retain the same boundary.
+  meadow: 683_647,
+  sunstone: 1_107_830,
+  "rmi-play": 1_297_182,
 } as const;
 
 function implementationModules(app: string): string[] {
