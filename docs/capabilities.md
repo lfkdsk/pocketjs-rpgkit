@@ -26,7 +26,7 @@ cached.
 
 | Capability | Project or content trigger | Host registration | If it is absent |
 | --- | --- | --- | --- |
-| RPG Maker text runtime | `system.rpgMakerText` | `rpgMakerText` from `pocket-rpgkit/rpgmaker-text` | Session creation throws. The parser, text expansion and tone/weather reducer stay out of ordinary application graphs. |
+| RPG Maker text runtime | `system.rpgMakerText` | `rpgMakerTextRuntime` from `pocket-rpgkit/rpgmaker-text` | Session creation throws. The parser, text expansion and tone/weather reducer stay out of ordinary application graphs. |
 | RPG Maker screen runtime | `screenTone` or `weather` commands | The same `rpgMakerText` runtime; its contract also owns the optional tone/weather reducer | Loading throws and names the commands which require it. |
 | Screen presentation | `screenTone`, `weather`, numbered-picture, timer or map-name commands; or `system.mapNameDisplay: true` | `GameView screenPresentation`, normally `krm2ScreenPresentation` from `pocket-rpgkit/ui/krm2` | A rendering host throws instead of waiting on an invisible effect. A deliberate headless `createSession` caller may omit the presentation policy and inspect reducer state only. |
 | Travel reducer | A project declares `followers` or non-empty `vehicles` | `travelRuntime` from `pocket-rpgkit/travel` | Session creation throws. |
@@ -88,7 +88,7 @@ These hooks have a defined fallback instead of load-time rejection.
 | Capability | Enable it | If it is absent |
 | --- | --- | --- |
 | Game text tokens | Declare `system.textTokens` and pass the pure `textTokens(key, view)` resolver | Without the declaration, `{x:key}` stays literal. With the declaration but no answer, it expands to `???`. The value is captured when the box opens so save, replay and rewind agree. |
-| Seam movement policy | Put `movementCapability` on a trusted world opening and pass `handoffCapability` | The opening keeps ordinary solid-terrain rules. A `true` answer may relax only the destination solid bit; bounds, directional edges and character bodies still block. |
+| Seam movement policy | Put `movementCapability` on a trusted world opening and pass `handoffCapability` | A capability-bearing opening stays blocked unless the policy returns `true`, even when its terrain is ordinarily passable. An admitted opening may relax only the destination solid bit; bounds, directional edges and character bodies still block. |
 | Connected-world traversal | Declare `worldTraversal: "seamless-v1"` plus a matching `worldLayout`, and pass a world factory from `pocket-rpgkit/ui/world` | A missing or mismatched topology falls back to `legacy-transfer`. Live play and attract/refold receive the same registration. |
 | Host audio | Import `createAudioEffects` from `pocket-rpgkit/ui/audio` and pass its component as `effects` | Audio state still advances deterministically, but no frame callback or sound output is installed. |
 | Host actions | Pass the application's host-action handler | The reducer still reaches the action boundary, but no external side effect occurs. |
@@ -120,12 +120,12 @@ bundle intends to pay for them.
 | `pocket-rpgkit/ui/battle` | Generic state-driven battle widgets | No generic battle UI implementation in the bundle | `tests/battle-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/rpgmaker-battle` | RPG Maker front-view battle rules and importer extensions | Imported battle commands need another registered `BattleRules` or fail | `tests/rpgmaker-battle-isolation.test.ts` |
 | `pocket-rpgkit/ui/rpgmaker-battle` | RPG Maker front-view battle scene | `GameView` requires it together with the RPG Maker battle rules | `tests/rpgmaker-battle-isolation.test.ts` |
-| `pocket-rpgkit/ui/rpgmaker-formation` | Formation overlay | Formation access state persists, but no formation menu is drawn | `tests/rpgmaker-battle-isolation.test.ts` |
+| `pocket-rpgkit/ui/rpgmaker-formation` | Formation overlay | Formation access state persists, but no formation menu is drawn | **No bundle-isolation assertion.** Functional coverage: `tests/rpgmaker-formation.test.ts` |
 | `pocket-rpgkit/ui/parallax` | Map parallax layer | Authored/runtime parallax state persists without a backdrop node | `tests/krm3v-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/item-icons` | Item/shop icon rows | Text-only item and shop rows keep their dimensions | `tests/krm3v-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/choice-icons` | Character icons beside choices | Rows fall back to text and warn once for missing requested art | `tests/battle-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/image` | Lazy indexed image cache/components | Existing eager `ui:img` sources continue to work | `tests/battle-ui-bundle-isolation.test.ts` |
-| `pocket-rpgkit/ui/saves` | `GameView` save/load overlay | The application owns any alternative save UI | Save UI suites under `tests/` |
+| `pocket-rpgkit/ui/saves` | `GameView` session save/load helpers | The application owns any alternative save integration | **No dedicated bundle-isolation assertion.** Functional coverage: `tests/ks2-save-view-sim.test.ts` |
 
 The world entry intentionally includes its sandbox preview implementation in
 the entry's graph even when `npcPreview.sandbox` is off. The isolation boundary

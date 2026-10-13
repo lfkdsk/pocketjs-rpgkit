@@ -99,7 +99,7 @@ but are not separate catalogue rows.
 | Handling | Command codes and reason |
 | --- | --- |
 | Native | The 95 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. |
-| Degraded | **132, 133, 139** retain battle BGM/victory/defeat settings, but the current battle presentation does not play them; **137** reorders followers/battle slots but keeps the walking leader art fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **283** retains battleback names without painting them; **322** retains actor-image data without updating live map/face/side-view art; **337** retains a numeric animation id without a cooked animation id. |
+| Degraded | **132, 133, 139** retain battle BGM/victory/defeat settings, but the current battle presentation does not play them; **137** reorders followers/battle slots but keeps the walking leader fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **283** retains battleback names without painting them; **322** retains actor-image data without updating live map/face/side-view art; **337** retains a numeric animation id without a cooked animation id. |
 | Placeholder | **356, 357** (MV/MZ plugin commands) need a per-plugin port. |
 | Dropped | **261** (Play Movie) has no video host. |
 
@@ -542,7 +542,8 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   the runtime expand `\N[n]`, `\P[n]`, `\V[n]`, `\G` and `\\`, and apply
   `\C[n]` colour spans when the box opens. Expansion is one left-to-right
   pass; replacement values containing another escape are not rescanned.
-  `\P[n]` follows the imported party order. In Show Text, MZ `\PX` and `\PY`
+  `\P[n]` follows the current active party order, including formation swaps
+  and later Change Party Member additions and removals. In Show Text, MZ `\PX` and `\PY`
   set a cursor position scaled into the kit's message content box, and `\FS`
   selects the nearest baked font slot. Those three remain Degraded because the
   coordinate/font metrics are an approximation and choice-list layout does not
@@ -643,8 +644,8 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   also the next battle's source and rewinds with the session. Show Level Up
   messages and changed actor-image presentation are not drawn. Actor event
   conditions for class, skill, equipment and state still read imported initial
-  facts. A `\P[n]` lookup uses the initial party order rather than later Change
-  Party Member results.
+  facts. `\P[n]` follows the current active party order, including formation
+  swaps and later Change Party Member additions and removals.
 - **Maps are capped at 256 × 256**, the kit's limit.
 - Region ids and terrain tags are carried over as sparse per-cell map data
   (Get Location Info, the `region` condition and authored region-crossing

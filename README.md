@@ -1155,8 +1155,6 @@ are translated by the shared `worldNode`. Both sit inside the renderer's
 band adds the origin itself. The coordinate spaces and the single
 conversion point are documented in `src/ui/world-contract.ts`.
 
-<a id="the-80-commands"></a>
-
 ### The 87 commands
 
 | op | purpose |
