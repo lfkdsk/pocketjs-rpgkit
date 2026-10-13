@@ -1,6 +1,6 @@
 # RPG Maker screen capability lifecycle
 
-Implementation candidate: `083636dcc149befa6bb01be537d55c7e10be482e`
+Implementation and test candidate: `58b1a3798444a7d32299744c20f3956b8f85c611`
 Performance baseline: `a4dc4e72341ae6aa7373623f83dbd07124316a6d`
 PocketJS: `862040bd77edc49b1f815beff63952b6616a14c6`
 
@@ -28,13 +28,15 @@ timer and map-name display additionally require the rendering host's
 common-event world is compiled, during staged acquisition, and before a lazy
 map is cached.
 
-Presentation has an intentional three-state policy:
+Presentation admission has an intentional three-state API policy:
 
 - `true` means a rendering host registered presentation;
 - `false` means a rendering host explicitly lacks presentation, so authored
   visible commands are rejected with the command names in the error;
-- omitted/`null` identifies a deliberate reducer-only caller that may inspect
-  or save state without painting it.
+- omitted identifies a deliberate reducer-only caller that may inspect or save
+  state without painting it. A deserialised/runtime `null` is accepted as the
+  same compatibility case, but `null` is not part of the public TypeScript
+  input type.
 
 `GameView` now passes the boolean policy to both its live session and its
 attract controller. An integration test constructs each real host path and
@@ -53,7 +55,7 @@ The reference boundary is official MV core
 `rpgtkoolmv/corescript@182e31449707ba7e406db0485c44c2a9d11e2dcd`,
 `js/rpg_objects/Game_Screen.js:25-31`, and MZ v1.1.0 mirror
 `stak/rmmz-corescript@5ecc09ae5170c6aee71c7d9513e553e3dbea116b`,
-`js/rmmz_objects.js:782-788`. Both clear fade, flash, shake, zoom and the stale
+`rmmz_objects.js:782-788`. Both clear fade, flash, shake, zoom and the stale
 battle-picture bank while retaining tone and weather.
 
 The kit clears exactly the stock banks it models: `fade`, `flash` and `shake`.
@@ -86,9 +88,16 @@ an unchanged lockfile. All three were removed afterwards.
 
 | Isolated mutation | Discriminating result |
 | --- | --- |
-| Make capability validation a no-op | 63 pass, 6 fail across 69 tests; inline/common, staged, lazy, live `GameView` and attract `GameView` admission all failed as expected |
+| Make capability validation a no-op | 63 pass, 6 fail across 69 formal tests; inline, staged, lazy, live `GameView` and attract `GameView` admission failed as expected |
 | Remove the accepted-battle cleanup hook | 47 pass, 4 fail across 51 tests; exact cleanup, multi-rate/save and both rewind boundaries failed |
 | Clear fade/flash/shake for an ordinary project | 29 pass, 1 fail; the byte-for-field ordinary-battle negative control alone caught the spill while the capable positive case still passed |
+
+The combined inline/common assertion stops at the first inline failure. A
+separate isolated probe placed the same common-event assertion first and
+failed with 0 pass and 1 fail. A second probe directly showed that the no-op
+validator admits a command into an invisible `screenWait`. Thus every required
+admission shape and the original silent-wait failure mode are individually
+discriminated, without overstating the six-test formal run.
 
 ## Bundle and startup cost boundary
 
@@ -188,49 +197,84 @@ reverse pair. Linear percentile interpolation gives the 95% interval
 crosses rather than clears 3%, the run does not establish a greater-than-3%
 regression and does not trigger a performance fix.
 
+The accepted full-table and focused ABBA transcripts, CPU/process timelines,
+and deterministic bootstrap output are registered together as artifact
+`55860` (SHA-256
+`6e9c11884393afdf64e0e1e2748b565ee02f2ced7240bb1ba5e3ce1cf1357acc`).
+
 ## Consumer validation
 
 ### Wander
 
-A disposable worktree of Wander `dc7cb6127ea4c60ab0c30c028a373dac92d1ed94`
-used component `083636dc` and PocketJS `862040bd`. Frozen-lockfile install,
-wasm rebuild, both Wander builds and TypeScript passed. The complete suite
-finished with 523 pass, 0 fail and 501,127 assertions across 45 files in
-100.64 seconds.
+A disposable worktree of the then-current Wander main
+`b827e9ae75a7f01f4fcb8423c7071c339766bbcd` used component `58b1a379` and
+PocketJS `862040bd`. Frozen-lockfile install, wasm rebuild, asset generation,
+production build and TypeScript passed. The complete suite finished with 523
+pass, 0 fail and 501,127 assertions across 45 files in 98.89 seconds.
 
 ### Tuxemon
 
-A disposable worktree of Tuxemon
-`4520e7f87c8514929609ce7162449159960f4253` used the same component and
+A disposable worktree of the then-current Tuxemon main
+`4fcdfb64b23b152d3ebd5777b7531cf623d63af5` used the same component and
 PocketJS revisions. Frozen-lockfile install, wasm rebuild, the full source
 import, production build and TypeScript passed. The complete suite finished
-with 1,387 pass, 6 browser-condition skips, 0 fail and 245,711 assertions
-across 162 files in 434.41 seconds. The skips are consumer-only browser UI
-conditions, not component gate skips.
+with 1,418 pass, 6 browser-condition skips, 0 fail and 257,860 assertions
+across 166 files in 451.01 seconds. The skips are consumer-only browser UI
+conditions, not component gate skips. The full test transcript is artifact
+`55861` (SHA-256
+`35e6cf80b8ec2d740dbc0efc085f96f8e0a9a0f5c584be30ab6a9e5e9858ead3`).
 
 Neither consumer was committed. Their only tracked change is the disposable
 component submodule pointer.
 
 ## Final component gates
 
-After deleting `dist/`, the required order completed on the rebased candidate:
+After deleting `dist/`, the required order completed in one uninterrupted
+persistent transcript on the final implementation/test candidate:
 
 | Gate | Result |
 | --- | --- |
 | `bun run build:wasm` | pass; web wasm 359,675 B |
 | `bun run build:example` | pass |
 | `bunx tsc --noEmit` | pass |
-| `bun run test` | 4,567 pass, 0 fail, 0 skip; 730,551 assertions across 297 files in 504.48 seconds |
+| `bun run test` | 4,568 pass, 0 fail, 0 skip; 730,558 assertions across 297 files in 496.32 seconds |
+
+The complete ordered-gate transcript is artifact `55862` (SHA-256
+`01c7d486b6536610b46faa5935069bb8bb30164eaaaaac774617c7b346671fbd`).
+An earlier interactive attempt had been terminated by the five-minute host
+session limit while tests were still passing; it is not used as acceptance
+evidence. The persistent rerun above is the authoritative complete sequence.
 
 ## Compatibility and hygiene
 
-The final branch is a linear, non-merge series directly above current
+The final branch is a linear, non-merge series directly above
 `origin/main` `afbde1c529f3f96ac4551f5f2a19da101f2d3a6c`; its merge base is the
 same revision. The PocketJS submodule remains pinned to the expected revision.
 There is no `bun.lock`, schema or generated-map change. `git diff --check`,
 public-path scanning, commit-author scanning and merge-commit scanning pass.
 The only final worktree change before delivery is this report.
 
-subagent 使用：3 / capability paths and silent mutation; pinned battle semantics and no-cleanup mutation; verification mapping and ordinary-project spill mutation / saved parallel review time
+## Final delivery recheck
+
+The previous delivery report commit `945fcf8b` was already a linear descendant
+of the required component main `afbde1c5`, so no merge or additional rebase was
+needed. The final recheck maps all three requested areas to committed code and
+acceptance evidence:
+
+| Required area | Implementation/test commits | Final evidence |
+| --- | --- | --- |
+| Capability admission and readable importer requirements | `4b300d35`, `23e27c66` | inline/common, staged, lazy, live and attract host tests; validation no-op mutation |
+| Accepted-battle cleanup with ordinary-project isolation | `4b300d35`, `abef50ad`, `58b1a379` | exact field lifecycle, 60/30/20/4 Hz, save/restore, rewind, imported battle fixture and two cleanup mutations |
+| Unused-feature QuickJS boundary | `d6e7e709`, `ac778586`, `083636dc` | complete load/CPU/process table, 12 focused ABBA blocks, 1,000,000-resample interval, artifact `55860` |
+
+The final test-only hardening in `58b1a379` routes real RPG Maker command codes
+221/223/224/225 through the importer and a real Battle Processing command, then
+checks that fade/flash/shake clear while tone survives. It also upgrades the
+ordinary-project negative control to compare the complete `interp.screen`
+state against its no-battle baseline. Those two focused files pass together
+with 46 pass, 0 fail and 298 assertions, and are included in the 4,568-test
+component gate.
+
+subagent 使用：3 / capability admission and silent-wait mutation; battle lifecycle and isolated cleanup mutations; delivery evidence, performance traceability and consumer-main review / saved parallel review time
 
 PASS
