@@ -58,6 +58,7 @@ import {
 } from "../../vendor/pocketjs/framework/src/touch.ts";
 import { rpgkitBootFromSearch, withDemoQuery } from "./boot.ts";
 import { fitViewport } from "./fit.ts";
+import { bindBrowserGamepads } from "./gamepad.ts";
 import { BTN } from "./keys.ts";
 import { createMasterAudioHost } from "./audio-control.ts";
 // The pack format (kind tag, entry-key rule, envelope check, byte spelling)
@@ -1363,6 +1364,7 @@ class Player {
     this.bindKeys();
     this.bindPointer();
     this.bindPad();
+    bindBrowserGamepads(this, this.config.gamepad);
     this.editorHost?.bind();
     this.bindDemoControls();
     this.bindDemoMenu();

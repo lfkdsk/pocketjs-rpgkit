@@ -60,6 +60,7 @@ function playerConfig(game: WebGame): PlayerConfig {
     simHz: 60,
     autosaveStorageKey: `pocket-rpgkit:${game.plan.app.id}:autosave:v1`,
     keys: keyMasks(game.keymap),
+    ...(game.gamepad ? { gamepad: game.gamepad } : {}),
     ...(game.documents
       ? {
           editor: {
@@ -148,6 +149,11 @@ describe("games", () => {
     expect(parse({ games: { "../x": {} } })).toThrow(/not a usable game id/);
     expect(parse({ games: { meadow: { controls: [{ button: "TURBO", action: "x" }] } } })).toThrow(/known button/);
     expect(parse({ games: { meadow: { keys: { KeyA: "TURBO" } } } })).toThrow(/not a button/);
+    expect(parse({ games: { meadow: { gamepad: [] } } })).toThrow(/gamepad is an object/);
+    expect(parse({ games: { meadow: { gamepad: { deadzone: -0.1 } } } })).toThrow(/finite number from 0 through 1/);
+    expect(parse({ games: { meadow: { gamepad: { buttons: { "01": "CIRCLE" } } } } })).toThrow(/integer index/);
+    expect(parse({ games: { meadow: { gamepad: { buttons: { 0: "TURBO" } } } } })).toThrow(/not a button/);
+    expect(parse({ games: { meadow: { gamepad: { deadzone: 0.3, buttons: { 0: "CROSS", 1: "CIRCLE", 2: null } } } } })).not.toThrow();
     expect(parse({ games: { meadow: { viewport: "stretch" } } })).toThrow(/"fixed" or "dynamic"/);
     expect(parse({ games: { meadow: { controls: [{ keys: ["Mouse"], action: "Paint" }] } } })).not.toThrow();
     expect(parse({ games: { meadow: { controls: [{ button: "CIRCLE", keys: ["Enter"], action: "x" }] } } })).toThrow(/either literal keys/);
@@ -426,6 +432,25 @@ describe("pages", () => {
       }
       expect(html).toContain('<input type="range" id="audio-volume" min="0" max="100" step="5" value="100">');
     }
+  });
+
+  test("normalizes a game's physical-controller override into player settings", () => {
+    const games = {
+      ...config.games,
+      meadow: {
+        ...config.games?.meadow,
+        gamepad: { deadzone: 0.35, buttons: { 0: "CROSS" as const, 1: "CIRCLE" as const, 2: null } },
+      },
+    };
+    const game = resolveGame(KIT_ROOT, { ...config, games }, "meadow");
+    const html = renderPlayer(site, game, playerConfig(game), true);
+    const json = /<script type="application\/json" id="pocket-game">(.*?)<\/script>/s.exec(html)![1]!;
+    const parsed = JSON.parse(json) as PlayerConfig;
+    expect(parsed.gamepad).toMatchObject({
+      deadzone: 0.35,
+      buttons: { 0: BTN.CROSS, 1: BTN.CIRCLE, 12: BTN.UP },
+    });
+    expect(parsed.gamepad?.buttons[2]).toBeUndefined();
   });
 
   test("the editor page exposes local files, built-in projects and browser-only privacy copy", () => {

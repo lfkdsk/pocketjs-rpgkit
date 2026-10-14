@@ -67,6 +67,11 @@ import type { Size, ViewportConfig } from "./web/fit.ts";
 import { writeSiteIcons } from "./web/icon.ts";
 import { PAGE_I18N_SCRIPT, PLAYER_I18N } from "./web/i18n.ts";
 import {
+  normalizeGamepadConfig,
+  type BrowserGamepadConfig,
+  type WebGamepadConfig,
+} from "./web/gamepad.ts";
+import {
   BUTTON_GLYPHS,
   BUTTON_NAMES,
   isControlButton,
@@ -195,6 +200,8 @@ export interface WebGameEntry {
   /** Key changes over tools/web/keys.ts KEYMAP: {"KeyA": "SQUARE"} binds,
    *  {"KeyY": null} unbinds. */
   keys?: Record<string, string | null>;
+  /** Browser Gamepad API deadzone and standard-layout button overrides. */
+  gamepad?: WebGamepadConfig;
   /** Enable the browser document host and copy these built-in projects. */
   documents?: WebDocumentExample[];
   /** Languages the game's content ships in. When declared, the player page
@@ -281,6 +288,7 @@ export interface WebGame {
   plan: ResolvedBuildPlan;
   viewport: ViewportConfig;
   keymap: Keymap;
+  gamepad?: BrowserGamepadConfig;
   documents?: Array<WebDocumentExample & { path: string }>;
   /** Present when the game declares languages: the player page shows a
    *  switcher and translates its own chrome. */
@@ -304,6 +312,8 @@ export interface PlayerConfig {
   autosaveStorageKey: string;
   /** KeyboardEvent.code -> button mask. */
   keys: Record<string, number>;
+  /** Normalized browser Gamepad API mapping. Omitted for the defaults. */
+  gamepad?: BrowserGamepadConfig;
   /** The resolved build declared net.http, so the page may mount its bounded
    *  browser transport. Omitted for every other application. */
   netHttp?: true;
@@ -417,6 +427,11 @@ function validateEntry(id: string, entry: WebGameEntry, source: string): void {
     withKeys(entry.keys);
   } catch (error) {
     throw new Error(`web: ${source}: games.${id}.keys: ${error instanceof Error ? error.message : error}`);
+  }
+  try {
+    normalizeGamepadConfig(entry.gamepad);
+  } catch (error) {
+    throw new Error(`web: ${source}: games.${id}.gamepad: ${error instanceof Error ? error.message : error}`);
   }
   if (entry.chapters !== undefined && !Array.isArray(entry.chapters)) {
     throw new Error(`web: ${source}: games.${id}.chapters is a list`);
@@ -752,6 +767,7 @@ export function resolveGame(projectRoot: string, config: WebSiteConfig, id: stri
     plan,
     viewport: viewportFor(manifest, plan, entry.viewport),
     keymap: withKeys(entry.keys),
+    ...(entry.gamepad ? { gamepad: normalizeGamepadConfig(entry.gamepad) } : {}),
     ...(documents ? { documents } : {}),
     ...(languages
       ? {
@@ -1490,6 +1506,7 @@ export async function buildWebSite(options: BuildOptions): Promise<WebGame[]> {
       simHz: 60,
       autosaveStorageKey: `pocket-rpgkit:${game.plan.app.id}:autosave:v1`,
       keys: keyMasks(game.keymap),
+      ...(game.gamepad ? { gamepad: game.gamepad } : {}),
       ...playerHostCapabilities(game.plan.features),
       ...(game.auth ? { auth: game.auth } : {}),
       ...(game.documents
