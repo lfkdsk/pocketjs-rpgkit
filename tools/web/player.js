@@ -1336,6 +1336,10 @@ class Player {
     this.wasm = null;
     this.httpHost = null;
     this.pakChunks = null;
+    // The guest raises this around a retryable map acquire. Raw asset waits
+    // freeze before the next frame; a map acquire must also keep the current
+    // host/core frame uncommitted until GameView retries the stored input.
+    this.frameBlocked = false;
     this.chunkVeil = false;
     this.hitFacts = null;
     this.state = "loading";
@@ -1435,6 +1439,7 @@ class Player {
           prepare: pakChunks.prepare,
           prefetch: pakChunks.prefetch,
           stats: pakChunks.stats,
+          setFrameBlocked: (blocked) => { this.frameBlocked = blocked === true; },
         }
       : undefined;
     this.audio.reset();
@@ -1553,11 +1558,12 @@ class Player {
     this.audio.beginFrame();
     if (socketHost) socketHost.beginFrame();
     this.frameFn(this.buttons(), ANALOG_CENTER, packed, hits);
-    // prepare() marks its chunk synchronously before returning its promise.
-    // Stop at that boundary: neither the PocketJS clock nor the host frame
-    // counter observes how long the network takes, and tick() retries only
-    // after the bytes are resident.
-    if (this.pakChunks?.blocking) return false;
+    // GameView keeps a retryable map input in its own blocked slot. Do not
+    // commit the host/core frame until that exact input was folded. Optional
+    // audio can start a raw chunk request after the reducer has already
+    // advanced; that frame does commit, and tick() freezes before the next
+    // one while the raw request is pending.
+    if (this.frameBlocked) return false;
     this.wasm.tick();
     this.frames++;
     this.editorHost?.afterStep();
