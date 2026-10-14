@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 // The vendored browser transport intentionally remains plain JavaScript.
 // @ts-expect-error no declaration file for the browser-only host module
 import { createNetHost } from "../vendor/pocketjs/hosts/web/net.js";
@@ -6,6 +8,7 @@ import { createNetHost } from "../vendor/pocketjs/hosts/web/net.js";
 // @ts-expect-error no declaration file for the browser-only host module
 import { mountHttpHost } from "../tools/web/player.js";
 import { playerHostCapabilities } from "../tools/web.ts";
+import { Cdp, CHROME_START_BUDGET_MS, launchChrome } from "../tools/lib/cdp.ts";
 
 interface Host {
   ns: {
@@ -120,52 +123,35 @@ describe("PocketJS browser HTTP contract through the component gate", () => {
     expect(events).toEqual([{ t: "error", h: handle, code: "timeout", message: "request timed out" }]);
   });
 
-  test("uses no credentials and bounds manual same-scheme redirects", async () => {
+  test("uses no credentials and delegates redirects to browser fetch", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const host = createNetHost(async (url: string, init: RequestInit) => {
       calls.push({ url, init });
-      if (calls.length === 1) {
-        return new Response(null, { status: 302, headers: { location: "/final" } });
-      }
-      return new Response(new Uint8Array([7]), { status: 200, headers: { "x-result": "ok" } });
+      const response = new Response(new Uint8Array([7]), { status: 200, headers: { "x-result": "ok" } });
+      Object.defineProperties(response, {
+        redirected: { value: true },
+        url: { value: "https://api.example.test/final" },
+      });
+      return response;
     }) as Host;
     const handle = host.ns.start(meta({ method: "POST" }), new Uint8Array([1, 2]).buffer as ArrayBuffer);
     const events = await admitted(host);
 
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ t: "done", h: handle, status: 200, bytes: 1 });
-    expect(calls.map((call) => call.url)).toEqual([
-      "https://api.example.test/start",
-      "https://api.example.test/final",
-    ]);
+    expect(events[0]).toMatchObject({
+      t: "done",
+      h: handle,
+      status: 200,
+      url: "https://api.example.test/final",
+      bytes: 1,
+    });
+    expect(calls.map((call) => call.url)).toEqual(["https://api.example.test/start"]);
     expect(calls[0]!.init).toMatchObject({
       method: "POST",
       credentials: "omit",
       cache: "no-store",
-      redirect: "manual",
+      redirect: "follow",
     });
-    expect(calls[1]!.init).toMatchObject({
-      method: "GET",
-      body: undefined,
-      credentials: "omit",
-      cache: "no-store",
-      redirect: "manual",
-    });
-
-    let redirects = 0;
-    const limited = createNetHost(async (_url: string, init: RequestInit) => {
-      redirects++;
-      expect(init.credentials).toBe("omit");
-      return new Response(null, { status: 307, headers: { location: `/hop-${redirects}` } });
-    }) as Host;
-    const limitedHandle = limited.ns.start(meta(), empty());
-    expect(await admitted(limited)).toEqual([{
-      t: "error",
-      h: limitedHandle,
-      code: "redirect",
-      message: "redirect_limit",
-    }]);
-    expect(redirects).toBe(4);
   });
 
   test("publishes all transport facts as one batch at the next frame", async () => {
@@ -203,5 +189,224 @@ describe("PocketJS browser HTTP contract through the component gate", () => {
     host.beginFrame();
     expect(host.ns.poll()).toBeUndefined();
     expect(host.ns.take(handle, new ArrayBuffer(1))).toBe(-1);
+  });
+});
+
+const CHROME = Bun.which("google-chrome") ?? Bun.which("google-chrome-stable") ??
+  Bun.which("chromium") ?? "/usr/bin/google-chrome";
+setDefaultTimeout(CHROME_START_BUDGET_MS + 30_000);
+
+interface BrowserProbe {
+  event: {
+    t: "done" | "error";
+    h: number;
+    status?: number;
+    url?: string;
+    code?: string;
+    message?: string;
+    bytes?: number;
+  };
+  text: string | null;
+}
+
+describe.skipIf(!existsSync(CHROME))("PocketJS redirects in real Chrome", () => {
+  let httpServer: ReturnType<typeof Bun.serve> | null = null;
+  let foreignServer: ReturnType<typeof Bun.serve> | null = null;
+  let httpsServer: ReturnType<typeof Bun.serve> | null = null;
+  let validationRoot = "";
+  let pageOrigin = "";
+  let cdp: Cdp | null = null;
+  let proc: ReturnType<typeof Bun.spawn> | null = null;
+  const requests: Array<{ server: "main" | "foreign" | "secure"; path: string; method: string }> = [];
+
+  const evaluate = async <T>(expression: string): Promise<T> => {
+    if (!cdp) throw new Error("CDP is not connected");
+    const result = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    if (result.exceptionDetails) {
+      throw new Error(`Chrome evaluation failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text}`);
+    }
+    return result.result.value as T;
+  };
+
+  const probe = (path: string, method = "GET", body: number[] = []) =>
+    evaluate<BrowserProbe>(`window.runNetProbe(${JSON.stringify(path)}, ${JSON.stringify(method)}, ${JSON.stringify(body)})`);
+
+  beforeAll(async () => {
+    validationRoot = resolve(
+      import.meta.dir,
+      "..",
+      ".pocket-build",
+      "validation",
+      "web-net-redirect",
+      `${process.pid}-${Date.now()}`,
+    );
+    mkdirSync(validationRoot, { recursive: true });
+    const key = join(validationRoot, "key.pem");
+    const cert = join(validationRoot, "cert.pem");
+    const certificate = Bun.spawnSync([
+      "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+      "-keyout", key, "-out", cert, "-days", "1", "-sha256",
+      "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+    ], { stdout: "ignore", stderr: "pipe" });
+    if (certificate.exitCode !== 0) {
+      throw new Error(`could not create the local HTTPS certificate: ${certificate.stderr.toString()}`);
+    }
+
+    const built = await Bun.build({
+      entrypoints: [resolve(import.meta.dir, "..", "vendor", "pocketjs", "hosts", "web", "net.js")],
+      target: "browser",
+      format: "esm",
+    });
+    if (!built.success || built.outputs.length !== 1) throw new Error("could not bundle the PocketJS browser NET host");
+    const netModule = await built.outputs[0]!.text();
+    const corsHeaders = () => ({
+      "Access-Control-Allow-Origin": pageOrigin,
+      "Content-Type": "text/plain; charset=utf-8",
+    });
+
+    foreignServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push({ server: "foreign", path: url.pathname, method: request.method });
+        return new Response("foreign target", { headers: corsHeaders() });
+      },
+    });
+    httpsServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: Bun.file(key), cert: Bun.file(cert) },
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push({ server: "secure", path: url.pathname, method: request.method });
+        return new Response("secure target", { headers: corsHeaders() });
+      },
+    });
+
+    const page = `<!doctype html><meta charset="utf-8"><script type="module">
+      import { createNetHost } from "/net.js";
+      const decoder = new TextDecoder();
+      window.runNetProbe = async (path, method = "GET", bytes = []) => {
+        const host = createNetHost();
+        const handle = host.ns.start(JSON.stringify({
+          url: new URL(path, location.origin).href,
+          method,
+          headers: {},
+          timeoutMs: 10_000,
+          maxBytes: 1024,
+        }), new Uint8Array(bytes).buffer);
+        if (handle < 0) throw new Error(host.ns.lastError());
+        for (let i = 0; i < 2_000; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          host.beginFrame();
+          const batch = host.ns.poll();
+          if (!batch) continue;
+          const event = JSON.parse(batch)[0];
+          let text = null;
+          if (event.t === "done") {
+            const body = new ArrayBuffer(event.bytes);
+            if (host.ns.take(handle, body) !== event.bytes) throw new Error("response body was not available");
+            text = decoder.decode(body);
+          }
+          host.reset();
+          return { event, text };
+        }
+        host.reset();
+        throw new Error("NET host did not produce an event");
+      };
+      window.__netReady = true;
+    </script>`;
+
+    httpServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/") return new Response(page, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+        if (url.pathname === "/net.js") return new Response(netModule, { headers: { "Content-Type": "text/javascript" } });
+        requests.push({ server: "main", path: url.pathname, method: request.method });
+        if (url.pathname === "/same-start") return Response.redirect(new URL("/same-final", url).href, 302);
+        if (url.pathname === "/same-final") return new Response("same target");
+        if (url.pathname === "/cross-origin") {
+          return Response.redirect(`http://127.0.0.1:${foreignServer!.port}/foreign-final`, 302);
+        }
+        if (url.pathname === "/cross-scheme") {
+          return Response.redirect(`https://127.0.0.1:${httpsServer!.port}/secure-final`, 302);
+        }
+        const hop = /^\/multi-(\d+)$/.exec(url.pathname);
+        if (hop) {
+          const index = Number(hop[1]);
+          return Response.redirect(new URL(index === 4 ? "/multi-final" : `/multi-${index + 1}`, url).href, 302);
+        }
+        if (url.pathname === "/multi-final") return new Response("multi target");
+        return new Response("not found", { status: 404 });
+      },
+    });
+    pageOrigin = `http://127.0.0.1:${httpServer.port}`;
+
+    const chrome = await launchChrome(CHROME, join(validationRoot, "chrome"), "800,600");
+    proc = chrome.proc;
+    cdp = await Cdp.connect(chrome.ws);
+    await cdp.send("Runtime.enable");
+    await cdp.send("Page.enable");
+    await cdp.send("Security.enable");
+    await cdp.send("Security.setIgnoreCertificateErrors", { ignore: true });
+    const loaded = new Promise((resolveLoaded) => cdp!.on("Page.loadEventFired", resolveLoaded));
+    await cdp.send("Page.navigate", { url: `${pageOrigin}/` });
+    await loaded;
+    expect(await evaluate<boolean>("window.__netReady === true")).toBe(true);
+  });
+
+  afterAll(() => {
+    cdp?.close();
+    proc?.kill();
+    httpServer?.stop(true);
+    foreignServer?.stop(true);
+    httpsServer?.stop(true);
+    if (validationRoot) rmSync(validationRoot, { recursive: true, force: true });
+  });
+
+  test("follows a same-origin 302 and applies browser POST rewriting", async () => {
+    const result = await probe("/same-start", "POST", [1, 2]);
+    expect(result).toMatchObject({
+      event: { t: "done", status: 200, url: `${pageOrigin}/same-final` },
+      text: "same target",
+    });
+    expect(requests.filter((entry) => entry.path.startsWith("/same"))).toEqual([
+      { server: "main", path: "/same-start", method: "POST" },
+      { server: "main", path: "/same-final", method: "GET" },
+    ]);
+  });
+
+  test("lets Chrome follow multiple hops and reports the final URL", async () => {
+    const result = await probe("/multi-0");
+    expect(result).toMatchObject({
+      event: { t: "done", status: 200, url: `${pageOrigin}/multi-final` },
+      text: "multi target",
+    });
+    expect(requests.filter((entry) => entry.path.startsWith("/multi")).map((entry) => entry.path)).toEqual([
+      "/multi-0", "/multi-1", "/multi-2", "/multi-3", "/multi-4", "/multi-final",
+    ]);
+  });
+
+  test("rejects a scheme-changing final URL", async () => {
+    expect(await probe("/cross-scheme")).toMatchObject({
+      event: { t: "error", code: "redirect", message: "redirect_scheme" },
+      text: null,
+    });
+    expect(requests.filter((entry) => entry.server === "secure")).toEqual([
+      { server: "secure", path: "/secure-final", method: "GET" },
+    ]);
+  });
+
+  test("rejects a final URL at another origin", async () => {
+    expect(await probe("/cross-origin")).toMatchObject({
+      event: { t: "error", code: "redirect", message: "redirect_origin" },
+      text: null,
+    });
+    expect(requests.filter((entry) => entry.server === "foreign")).toEqual([
+      { server: "foreign", path: "/foreign-final", method: "GET" },
+    ]);
   });
 });

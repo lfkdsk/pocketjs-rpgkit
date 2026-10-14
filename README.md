@@ -172,9 +172,13 @@ The static player mounts PocketJS's bounded HTTP host only when the resolved
 `pocket.json` build declares `net.http`. Undeclared games receive no `net`
 namespace and do not pump an HTTP host each frame. The browser transport uses
 `credentials: "omit"` (no ambient cookies), `cache: "no-store"`, at most two
-in-flight requests, 64 KiB request bodies, 256 KiB responses, three
-same-scheme redirects and a 120-second maximum timeout. Page CORS and mixed
-content rules still apply; see the [PocketJS NET contract](vendor/pocketjs/docs/NET.md).
+in-flight requests, 64 KiB request bodies, 256 KiB responses and a 120-second
+maximum timeout. Browser Fetch follows redirects and exposes the final response;
+the host accepts it when the final URL keeps the request's scheme and origin.
+The browser controls the hop limit because scripts cannot inspect intermediate
+redirects. Page CORS and mixed-content rules apply, and a redirected target can
+receive the request before the host validates its final URL. See the
+[PocketJS NET contract](vendor/pocketjs/docs/NET.md).
 
 Physical controllers join the same `BTN` mask as keyboard and touch input.
 The player accepts Gamepad API controllers whose browser mapping is
