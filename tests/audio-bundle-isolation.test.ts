@@ -307,9 +307,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // the decoder needles below remain unchanged.
 // Immutable scene/session allocation fast paths add 732 B to each shared
 // engine graph without admitting either audio decoder into Meadow.
-const EXPECTED_MEADOW_BYTES = 684_379;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_108_562;
-const EXPECTED_WAV_FIXTURE_BYTES = 870_928;
+// The synced PocketJS style ABI and capability table add 146 B to each app
+// for contain, its enum values, and text.glyphs.runtime; decoder reachability
+// remains unchanged.
+const EXPECTED_MEADOW_BYTES = 684_525;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_108_708;
+const EXPECTED_WAV_FIXTURE_BYTES = 871_074;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

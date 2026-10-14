@@ -71,9 +71,12 @@ const EXPECTED_BYTES = {
   // the implementation and bundle needles below retain the same boundary.
   // Immutable scene/session allocation fast paths add 732 B to every shared
   // engine graph; the implementation and bundle needles remain unchanged.
-  meadow: 684_379,
-  sunstone: 1_108_562,
-  "rmi-play": 1_297_914,
+  // The synced PocketJS style ABI and capability table add 146 B to each app
+  // for contain, its enum values, and text.glyphs.runtime; graph reachability
+  // and the implementation needles below remain unchanged.
+  meadow: 684_525,
+  sunstone: 1_108_708,
+  "rmi-play": 1_298_060,
 } as const;
 
 function implementationModules(app: string): string[] {
