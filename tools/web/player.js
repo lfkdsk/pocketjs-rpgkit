@@ -1405,18 +1405,28 @@ class Player {
     globalThis.__pocketWeb = true;
     globalThis.__pocketAuth = oauth?.token ? { token: oauth.token } : undefined;
     if (oauth?.error) console.warn("OAuth:", oauth.error);
+    // Start these in their historical core -> pak -> bundle order. Besides
+    // keeping old applications byte-for-byte compatible at the host edge,
+    // this makes the security-sensitive boot probe's ordering explicit.
+    const wasmPromise = fetchOk(new URL(config.wasm, base), "The PocketJS core")
+      .then((r) => r.arrayBuffer());
     const pakChunksPromise = config.pakManifest
       ? openPakChunkLoader(new URL(config.pakManifest, base))
       : Promise.resolve(null);
-    const pakPromise = pakChunksPromise.then((chunks) => chunks
-      ? chunks.startup()
+    // Preserve the legacy request order for applications without a chunk
+    // manifest. Deferring this fetch through Promise.then would let the game
+    // bundle request overtake the asset pack by one microtask.
+    const pakPromise = config.pakManifest
+      ? pakChunksPromise.then((chunks) => chunks.startup())
       : config.pak
         ? fetchOk(new URL(config.pak, base), "The asset pack").then((r) => r.arrayBuffer())
-        : undefined);
+        : Promise.resolve(undefined);
+    const sourcePromise = fetchOk(new URL(config.bundle, base), "The game bundle")
+      .then((r) => r.text());
     const [wasmBytes, pak, source, pakChunks] = await Promise.all([
-      fetchOk(new URL(config.wasm, base), "The PocketJS core").then((r) => r.arrayBuffer()),
+      wasmPromise,
       pakPromise,
-      fetchOk(new URL(config.bundle, base), "The game bundle").then((r) => r.text()),
+      sourcePromise,
       pakChunksPromise,
     ]);
     this.fit();
