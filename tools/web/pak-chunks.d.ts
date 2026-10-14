@@ -48,6 +48,9 @@ export interface PakChunkLoaderOptions {
   sha256?: (bytes: ArrayBuffer) => Promise<string>;
   gunzip?: (bytes: ArrayBuffer) => Promise<ArrayBuffer>;
   baseUrl?: string | URL;
+  /** Verified content-addressed assets persist here. Defaults to the browser's
+   * Cache Storage; null/false disables persistent caching. */
+  cache?: Cache | null | false;
   /** Maximum number of low-priority post-first-frame fetches. Default 2. */
   backgroundConcurrency?: number;
 }

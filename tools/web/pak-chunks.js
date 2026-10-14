@@ -7,6 +7,7 @@ const PAK_VERSION = 1;
 const PAK_HEADER_SIZE = 32;
 const PAK_ENTRY_SIZE = 24;
 const SHA256 = /^[0-9a-f]{64}$/;
+const ASSET_CACHE = "pocket-rpgkit:pak-chunks:v1";
 
 function fail(message) {
   throw new Error(`Web pak chunks: ${message}`);
@@ -147,9 +148,50 @@ function parsePak(bytes, expectedKeys) {
   return { data, entries };
 }
 
-async function fetchAsset(asset, manifestUrl, fetchImpl, digest, decompress) {
-  const url = new URL(asset.file, manifestUrl);
-  const response = await fetchImpl(url);
+async function browserAssetCache(option) {
+  if (option === false || option === null) return null;
+  if (option !== undefined) return option;
+  try {
+    return await globalThis.caches?.open(ASSET_CACHE) ?? null;
+  } catch {
+    // Cache Storage is an optimization. Private browsing, quota pressure or
+    // an unavailable secure context must not keep the game from loading.
+    return null;
+  }
+}
+
+async function cachedResponse(cache, url) {
+  if (!cache) return undefined;
+  try {
+    return await cache.match(url.href);
+  } catch {
+    return undefined;
+  }
+}
+
+async function forgetCachedResponse(cache, url) {
+  if (!cache) return;
+  try {
+    await cache.delete(url.href);
+  } catch {
+    // The failing cached response has already been rejected by its content
+    // hash. A cache cleanup failure is not a network/game failure.
+  }
+}
+
+async function rememberResponse(cache, url, compressed) {
+  if (!cache) return;
+  try {
+    await cache.put(url.href, new Response(compressed.slice(0), {
+      headers: { "content-type": "application/octet-stream" },
+    }));
+  } catch {
+    // Cache quota and policy are browser-owned; the verified resident copy is
+    // still usable for this session.
+  }
+}
+
+async function validateAssetResponse(asset, response, digest, decompress) {
   if (!response.ok) fail(`${asset.file} returned ${response.status}`);
   const compressed = await response.arrayBuffer();
   if (compressed.byteLength !== asset.bytes) {
@@ -161,13 +203,33 @@ async function fetchAsset(asset, manifestUrl, fetchImpl, digest, decompress) {
   if (unpacked.byteLength !== asset.unpackedBytes) {
     fail(`${asset.file} expands to ${unpacked.byteLength} bytes, expected ${asset.unpackedBytes}`);
   }
-  return unpacked;
+  return { compressed, unpacked };
+}
+
+async function fetchAsset(asset, manifestUrl, fetchImpl, digest, decompress, cache) {
+  const url = new URL(asset.file, manifestUrl);
+  // Keep the no-cache path synchronous up to fetchImpl(). startBackground()
+  // has historically launched its bounded requests before returning.
+  const cached = cache ? await cachedResponse(cache, url) : undefined;
+  if (cached) {
+    try {
+      return (await validateAssetResponse(asset, cached, digest, decompress)).unpacked;
+    } catch {
+      // A stale/corrupt Cache Storage value never becomes authoritative. Drop
+      // it and make one validated network attempt before surfacing failure.
+      await forgetCachedResponse(cache, url);
+    }
+  }
+  const fetched = await validateAssetResponse(asset, await fetchImpl(url), digest, decompress);
+  await rememberResponse(cache, url, fetched.compressed);
+  return fetched.unpacked;
 }
 
 export async function openPakChunkLoader(manifestUrl, options = {}) {
   const fetchImpl = options.fetch ?? fetch;
   const digest = options.sha256 ?? sha256;
   const decompress = options.gunzip ?? gunzip;
+  const assetCache = await browserAssetCache(options.cache);
   const baseUrl = options.baseUrl ?? globalThis.document?.baseURI;
   const absoluteManifestUrl = baseUrl === undefined
     ? new URL(manifestUrl)
@@ -210,7 +272,7 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
     if (existing) return existing;
     const chunk = byId.get(id);
     if (!chunk) return Promise.reject(new Error(`Web pak chunks: unknown chunk ${id}`));
-    const promise = fetchAsset(chunk, absoluteManifestUrl, fetchImpl, digest, decompress)
+    const promise = fetchAsset(chunk, absoluteManifestUrl, fetchImpl, digest, decompress, assetCache)
       .then((bytes) => {
         resident.set(id, parsePak(bytes, chunk.entries));
         failures.delete(id);
@@ -268,6 +330,7 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
           fetchImpl,
           digest,
           decompress,
+          assetCache,
         );
       }
       return startupBytes.slice(0);

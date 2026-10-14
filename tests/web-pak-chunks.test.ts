@@ -24,6 +24,25 @@ function response(body: BodyInit, init?: ResponseInit): Response {
   return new Response(body, init);
 }
 
+function memoryCache(): Cache {
+  const values = new Map<string, Response>();
+  return {
+    async match(request: RequestInfo | URL) {
+      return values.get(String(request))?.clone();
+    },
+    async put(request: RequestInfo | URL, value: Response) {
+      values.set(String(request), value.clone());
+    },
+    async delete(request: RequestInfo | URL) {
+      return values.delete(String(request));
+    },
+    async add() { throw new Error("unused"); },
+    async addAll() { throw new Error("unused"); },
+    async keys() { return []; },
+    async matchAll() { return []; },
+  } as Cache;
+}
+
 describe("Web pak chunk manifest", () => {
   test("requires content-addressed assets and one owner per deferred entry", () => {
     const bytes = new Uint8Array([1]);
@@ -230,5 +249,44 @@ describe("Web pak chunk loader", () => {
     expect(loader.ready("maps/a")).toBe(true);
     expect(loader.ready("audio/theme")).toBe(true);
     expect(loader.stats().resident).toEqual(["audio", "map"]);
+  });
+
+  test("reuses verified content-addressed assets across loader instances", async () => {
+    const startup = new Uint8Array([4, 5, 6]);
+    const map = pack([{ key: "maps/a", dtype: 0, data: new Uint8Array([7]) }]);
+    const manifest = {
+      version: 1,
+      format: "pocket-pak-chunks/v1",
+      startup: asset(HASH, startup, "startup"),
+      chunks: [{ id: "map", ...asset(HASH, map, "map"), entries: ["maps/a"], requires: [] }],
+    };
+    const cache = memoryCache();
+    const requests: string[] = [];
+    const fetchMock = async (input: URL | RequestInfo): Promise<Response> => {
+      const url = String(input);
+      requests.push(url);
+      if (url.endsWith("manifest.json")) return response(JSON.stringify(manifest));
+      if (url.includes("startup-")) return response(exact(startup));
+      if (url.includes("map-")) return response(exact(map));
+      return response("missing", { status: 404 });
+    };
+    const open = () => openPakChunkLoader("https://example.test/game/manifest.json", {
+      fetch: fetchMock,
+      sha256: async () => HASH,
+      gunzip: async (bytes: ArrayBuffer) => bytes,
+      cache,
+    });
+
+    const cold = await open();
+    await cold.startup();
+    await cold.prepare("maps/a");
+    const warm = await open();
+    await warm.startup();
+    await warm.prepare("maps/a");
+
+    expect(requests.filter((url) => url.endsWith("manifest.json"))).toHaveLength(2);
+    expect(requests.filter((url) => url.includes("startup-"))).toHaveLength(1);
+    expect(requests.filter((url) => url.includes("map-") && !url.endsWith("manifest.json"))).toHaveLength(1);
+    expect([...new Uint8Array(warm.read("maps/a", 0, 1)!)]).toEqual([7]);
   });
 });
