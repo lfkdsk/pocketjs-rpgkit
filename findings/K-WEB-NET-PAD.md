@@ -257,4 +257,113 @@ physical controllers Done with direct test and usage pointers.
 
 subagent 使用：3 / HTTP contract、Gamepad 设计、验证矩阵 / 是，调研并行节省时间
 
+## Fix1: real-browser redirect contract
+
+This section supersedes the earlier statements that no PocketJS patch was
+needed and that browser redirects were followed manually. Chrome implements
+Fetch `redirect: "manual"` as an `opaqueredirect`: script sees status 0 and no
+`Location` header, so the previous loop could not follow even a same-origin
+302 in a real browser.
+
+The narrow PocketJS patch is based directly on `rpgkit-base-sync` at
+`5169a92f7ef2c35c16bc7aed420a7d202b98dca8`:
+
+| Item | Value |
+|---|---|
+| PocketJS branch | `fleet/4717-pocketjs` |
+| PocketJS HEAD | `91f9b373a9cdcb291a4576900463e2ad8bb85702` |
+| Component functional commit | `5531f814d0f47f1a5c548bfc827cead17505c57d` |
+| Component PocketJS gitlink | `91f9b373a9cdcb291a4576900463e2ad8bb85702` |
+
+The browser host now makes one request with `redirect: "follow"`, while
+retaining `credentials: "omit"` and `cache: "no-store"`. After Fetch returns,
+it parses the exposed final response URL and accepts it only when it is at most
+2,048 UTF-8 bytes and preserves the initial scheme and origin. Request,
+response, concurrency and timeout limits are unchanged.
+
+This is an intentionally explicit web-host contract. Fetch hides intermediate
+redirects and controls its own hop limit, so browser code cannot enforce the
+desktop host's exact three-hop limit. CORS and mixed-content rules remain
+authoritative. Final-URL validation also happens after network contact: a
+disallowed redirected target may receive the credential-free request before
+the host rejects the result. The desktop host and its same-scheme redirect
+semantics are unchanged.
+
+### Redirect discrimination in Chrome
+
+The focused component gate used Google Chrome 138.0.7204.92 and ran the real
+PocketJS browser host rather than a duplicate transport:
+
+| Real-browser case | Result |
+|---|---|
+| same-origin POST 302 followed as GET to a 200 response | pass |
+| five-hop same-origin redirect chain | pass |
+| final scheme differs from the request | rejected |
+| final origin differs from the request | rejected |
+
+Together with the mock-independent host boundary checks, the focused result
+was 12 pass, 0 fail, 0 skip, with 40 assertions. In an isolated disposable
+worktree, changing only `redirect: "follow"` back to `"manual"` made the fetch
+option assertion and all four Chrome redirect cases fail: 7 pass, 5 fail,
+process exit 1. The candidate worktrees were not changed by the mutation.
+
+### Fix1 gates
+
+The component checkout was cleaned of `node_modules` and `dist` before the
+acceptance run. The public-registry lock refresh was necessary because the
+synced PocketJS workspace was not represented by the old lock; a frozen
+install then completed without modifying the lock, and the lock contains no
+private-registry URL.
+
+| Gate | Result |
+|---|---|
+| `bun install --frozen-lockfile` | pass from the clean checkout |
+| `bun run build:wasm` | pass |
+| `bun run build:example` | pass |
+| `bunx tsc --noEmit` | pass, no diagnostics |
+| focused component HTTP/Chrome tests | 12 pass, 0 fail, 0 skip |
+| complete component `bun test` | 4,603 pass, 0 fail, 0 skip; 730,685 assertions across 300 files |
+| PocketJS focused NET/System tests and TypeScript | 12 pass, 0 fail; typecheck pass |
+| PocketJS selected unit stages | 1,097 pass, 4 platform-conditioned skips, 0 fail; Wasm host 256 pass, 0 fail |
+
+The four PocketJS skips are explicit platform conditions in PocketJS's own
+unit stage; the component acceptance gate has zero skips.
+
+### QuickJS dormant-path guard
+
+The six-round interleaved run was pinned to CPU 31. Both comparisons ended
+`verdict=pass regressions=0 inconclusive=0 errors=0`:
+
+| Workload | Single change median | Cumulative median |
+|---|---:|---:|
+| `sunstoneIdle` | +2.112061% | -1.875216% |
+| `sunstoneWalk` | -1.955060% | -2.073206% |
+| `sunstoneControlWalk` | -0.634324% | -1.569986% |
+| `streamedRoam` | -0.606512% | -1.257795% |
+| `battleScene` | +0.041389% | -0.728590% |
+| `sunstoneIdleImmutable` | +0.315400% | -2.173644% |
+| `sunstoneControlWalkImmutable` | -0.079973% | -1.694577% |
+| `battleSceneImmutable` | -0.290821% | -4.675271% |
+
+### Consumer regression matrix
+
+| Consumer | Result |
+|---|---|
+| Tuxemon default CI groups | 1,859 pass, 6 intentional browser-condition skips, 0 fail |
+| Tuxemon browser-condition rerun | 9 pass, 0 fail |
+| Tuxemon web and browser matrix | build plus journey, Chinese UI, demo, Arena, expedition, double-input, audio, language and generic verifier pass |
+| Wander | Wasm/apps/typecheck pass; 523 pass, 0 fail, 0 skip; two-app web build and HTTP smoke pass |
+
+The three previously generated Chrome frames were opened at original detail.
+The Paper Town dialog and Chinese battle frame remain crisp and coherent, and
+the portrait page keeps its d-pad, A/B/Select/Start controls, chapter area,
+bilingual links and control table readable without overlap or horizontal
+breakage.
+
+PocketJS and component-library NET documentation now describe native browser
+following, final-URL validation, browser-controlled hops and the post-contact
+limitation. The component status list marks the real-Chrome behavior Done.
+
+subagent 使用：3 / 真实 Chrome 驱动与测试审查、重定向合同与上游对照、回归范围核对 / 是，并行确认测试辨识力与兼容边界
+
 PASS
