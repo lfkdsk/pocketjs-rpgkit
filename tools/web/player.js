@@ -49,6 +49,7 @@
 
 import { createWasmUi } from "../../vendor/pocketjs/hosts/web/wasm-ops.js";
 import { createAudioHost } from "../../vendor/pocketjs/hosts/web/audio.js";
+import { createNetHost } from "../../vendor/pocketjs/hosts/web/net.js";
 import { createSocketHost } from "../../vendor/pocketjs/hosts/web/socket.js";
 import {
   __packTouch,
@@ -134,6 +135,26 @@ export function createBrowserAutosaveBridge(storageKey, storage) {
       }
     },
   };
+}
+
+/** Mount the bounded HTTP transport only for a build that declared
+ * `net.http`. Wrapping this player's audio boundary admits HTTP after audio
+ * and before socket/guest work, while keeping the ordinary step method free
+ * of an untaken per-frame HTTP branch. */
+export function mountHttpHost(player, enabled, target = globalThis, factory = createNetHost) {
+  if (!enabled) {
+    target.net = undefined;
+    return null;
+  }
+  const host = factory();
+  host.reset();
+  target.net = host.ns;
+  const beginAudioFrame = player.audio.beginFrame.bind(player.audio);
+  player.audio.beginFrame = function beginAudioAndHttpFrame() {
+    beginAudioFrame();
+    host.beginFrame();
+  };
+  return host;
 }
 
 /** Browser KeyboardEvent.key -> the desktop companion's named-key dialect. */
@@ -1311,6 +1332,7 @@ class Player {
     this.lastMouse = null;
     this.frameFn = null;
     this.wasm = null;
+    this.httpHost = null;
     this.hitFacts = null;
     this.state = "loading";
     this.running = false;
@@ -1383,6 +1405,7 @@ class Player {
     globalThis.__pak = pak;
     this.audio.reset();
     globalThis.audio = this.audio.ns;
+    this.httpHost = mountHttpHost(this, config.netHttp === true);
     if (!socketHost) socketHost = createSocketHost();
     socketHost.reset();
     globalThis.socket = socketHost.ns;
@@ -1422,6 +1445,7 @@ class Player {
 
   fail(error) {
     this.pause();
+    this.httpHost?.reset();
     this.frameFn = null;
     console.error(`${this.config.app}:`, error);
     const text = error && error.message ? error.message : String(error);

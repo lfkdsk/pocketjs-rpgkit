@@ -304,6 +304,9 @@ export interface PlayerConfig {
   autosaveStorageKey: string;
   /** KeyboardEvent.code -> button mask. */
   keys: Record<string, number>;
+  /** The resolved build declared net.http, so the page may mount its bounded
+   *  browser transport. Omitted for every other application. */
+  netHttp?: true;
   /** Browser implementation of the rpgkit-editor companion. */
   editor?: {
     storageKey: string;
@@ -311,6 +314,12 @@ export interface PlayerConfig {
   };
   /** OAuth sign-in config (games that declare auth in web.json). */
   auth?: WebAuthConfig;
+}
+
+/** Runtime host switches derived from the manifest's resolved declarations.
+ * Keep absent capabilities absent from the serialized player config. */
+export function playerHostCapabilities(features: Readonly<Record<string, boolean>>): Pick<PlayerConfig, "netHttp"> {
+  return features["net.http"] === true ? { netHttp: true } : {};
 }
 
 // ---- configuration ---------------------------------------------------------
@@ -1481,6 +1490,7 @@ export async function buildWebSite(options: BuildOptions): Promise<WebGame[]> {
       simHz: 60,
       autosaveStorageKey: `pocket-rpgkit:${game.plan.app.id}:autosave:v1`,
       keys: keyMasks(game.keymap),
+      ...playerHostCapabilities(game.plan.features),
       ...(game.auth ? { auth: game.auth } : {}),
       ...(game.documents
         ? {

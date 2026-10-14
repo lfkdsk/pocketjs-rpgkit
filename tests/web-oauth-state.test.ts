@@ -114,6 +114,7 @@ function harnessPage(): string {
   const fn = extractOAuthFromFragment(source);
   const initAuthUI = extractBraced(source, "function initAuthUI");
   const setAuthUI = extractBraced(source, "function setAuthUI");
+  const mountHttpHost = extractBraced(source, "export function mountHttpHost").replace(/^export /, "");
   const boot = extractPlayerBoot(source);
   const translate = extractLine(source, "const t = ");
   const key = /const OAUTH_STATE_KEY = "[^"]+";/.exec(source)?.[0];
@@ -136,6 +137,7 @@ ${fn}
 ${translate}
 ${initAuthUI}
 ${setAuthUI}
+${mountHttpHost}
 ${boot}
 
 const AUTH_TICKET_KEY = "pocket-rpgkit:auth-test:ticket";
@@ -157,6 +159,7 @@ function fetchOk(url, label) {
   });
 }
 const createWasmUi = async () => ({ ops: {} });
+const createNetHost = () => ({ reset() {}, beginFrame() {}, ns: {} });
 const createSocketHost = () => ({ reset() {}, ns: {} });
 const createBrowserAutosaveBridge = () => ({});
 const rpgkitBootFromSearch = () => ({});
