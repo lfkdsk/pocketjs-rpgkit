@@ -62,8 +62,11 @@ export function createWorldPrefetcher(
   const budgetMs = options.budgetMs ?? 8;
   const now = options.now ?? Date.now;
   const staged = new Set<string>();
-  const prefetched = new Set<string>();
-  const prefetching = new Set<string>();
+  let transport: {
+    desired: Set<string>;
+    prefetched: Set<string>;
+    prefetching: Set<string>;
+  } | undefined;
   const failures = new Map<string, string>();
 
   const reconcile = (): void => {
@@ -94,8 +97,19 @@ export function createWorldPrefetcher(
       // transfer boundary's full acquire handles readiness; nothing to do.
       const canStage = sess.repository?.acquireStep !== undefined;
       const queue = compiledQueue(set);
-      const keep = new Set(queue);
-      for (const id of [...prefetched]) if (!keep.has(id)) prefetched.delete(id);
+      const prefetch = canStage ? undefined : sess.repository?.prefetch;
+      if (prefetch) {
+        transport ??= {
+          desired: new Set<string>(),
+          prefetched: new Set<string>(),
+          prefetching: new Set<string>(),
+        };
+        transport.desired.clear();
+        for (const id of queue) transport.desired.add(id);
+        for (const id of [...transport.prefetched]) {
+          if (!transport.desired.has(id)) transport.prefetched.delete(id);
+        }
+      }
       for (const id of queue) {
         if (staged.has(id)) continue;
         // A parsed-only map (visible but not imminent) is resident in the
@@ -103,19 +117,20 @@ export function createWorldPrefetcher(
         if (sess.maps.has(id) && sess.worlds.has(id) && sess.tables.has(id)) continue;
         if (failures.has(id)) { pending++; continue; }
         if (!canStage) {
-          if (prefetched.has(id)) continue;
+          if (!prefetch) { pending++; continue; }
+          const active = transport!;
+          if (active.prefetched.has(id)) continue;
           pending++;
-          const prefetch = sess.repository?.prefetch;
-          if (!prefetch || prefetching.has(id)) continue;
+          if (active.prefetching.has(id)) continue;
           if (stages > 0 && now() - start >= budgetMs) continue;
-          prefetching.add(id);
+          active.prefetching.add(id);
           void prefetch(id).then(
             () => {
-              prefetching.delete(id);
-              if (keep.has(id)) prefetched.add(id);
+              active.prefetching.delete(id);
+              if (active.desired.has(id)) active.prefetched.add(id);
             },
             (error) => {
-              prefetching.delete(id);
+              active.prefetching.delete(id);
               failures.set(id, error instanceof Error ? error.message : String(error));
             },
           );
@@ -144,7 +159,7 @@ export function createWorldPrefetcher(
         }
       }
       return {
-        staged: staged.size + prefetched.size,
+        staged: staged.size + (transport?.prefetched.size ?? 0),
         pending,
         stages,
         failures: Object.fromEntries(failures),
