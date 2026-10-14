@@ -61,6 +61,7 @@ import { fitViewport } from "./fit.ts";
 import { bindBrowserGamepads } from "./gamepad.ts";
 import { BTN } from "./keys.ts";
 import { createMasterAudioHost } from "./audio-control.ts";
+import { openPakChunkLoader } from "./pak-chunks.js";
 // The pack format (kind tag, entry-key rule, envelope check, byte spelling)
 // is shared with the TypeScript edit API; this file only adds plain Errors.
 import {
@@ -1334,6 +1335,8 @@ class Player {
     this.frameFn = null;
     this.wasm = null;
     this.httpHost = null;
+    this.pakChunks = null;
+    this.chunkVeil = false;
     this.hitFacts = null;
     this.state = "loading";
     this.running = false;
@@ -1355,6 +1358,16 @@ class Player {
     this.overlay.hidden = state === "running";
     this.updateHint();
     this.editorHost?.updateControls();
+  }
+
+  setChunkVeil(visible) {
+    if (this.chunkVeil === visible) return;
+    this.chunkVeil = visible;
+    // A network wait is presentation owned by the host, not a Player state:
+    // visibility pause/resume and the fixed-step clock continue to regard the
+    // app as running, while tick() below advances no guest or core frames.
+    this.overlay.hidden = !visible;
+    if (visible) this.message.textContent = t("loading", "Loading…");
   }
 
   // ---- boot ---------------------------------------------------------------
@@ -1387,10 +1400,19 @@ class Player {
     globalThis.__pocketWeb = true;
     globalThis.__pocketAuth = oauth?.token ? { token: oauth.token } : undefined;
     if (oauth?.error) console.warn("OAuth:", oauth.error);
-    const [wasmBytes, pak, source] = await Promise.all([
+    const pakChunksPromise = config.pakManifest
+      ? openPakChunkLoader(new URL(config.pakManifest, base))
+      : Promise.resolve(null);
+    const pakPromise = pakChunksPromise.then((chunks) => chunks
+      ? chunks.startup()
+      : config.pak
+        ? fetchOk(new URL(config.pak, base), "The asset pack").then((r) => r.arrayBuffer())
+        : undefined);
+    const [wasmBytes, pak, source, pakChunks] = await Promise.all([
       fetchOk(new URL(config.wasm, base), "The PocketJS core").then((r) => r.arrayBuffer()),
-      config.pak ? fetchOk(new URL(config.pak, base), "The asset pack").then((r) => r.arrayBuffer()) : undefined,
+      pakPromise,
       fetchOk(new URL(config.bundle, base), "The game bundle").then((r) => r.text()),
+      pakChunksPromise,
     ]);
     this.fit();
     this.wasm = await createWasmUi(wasmBytes, {
@@ -1405,6 +1427,16 @@ class Player {
     // The host contract (engine.js load()): every global before the eval.
     globalThis.ui = ops;
     globalThis.__pak = pak;
+    this.pakChunks = pakChunks;
+    globalThis.__pakRead = pakChunks?.read;
+    globalThis.__pocketPak = pakChunks
+      ? {
+          ready: pakChunks.ready,
+          prepare: pakChunks.prepare,
+          prefetch: pakChunks.prefetch,
+          stats: pakChunks.stats,
+        }
+      : undefined;
     this.audio.reset();
     globalThis.audio = this.audio.ns;
     this.httpHost = mountHttpHost(this, config.netHttp === true);
@@ -1437,6 +1469,10 @@ class Player {
     this.step();
     this.paint();
     this.setState("running");
+    // Do not compete with the title's critical path. Chunks explicitly
+    // marked for background loading start only after the first guest frame
+    // has been painted and the loading overlay can come down.
+    pakChunks?.startBackground();
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) this.pause();
       else this.resume();
@@ -1475,12 +1511,23 @@ class Player {
   tick(now) {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.tick);
+    if (this.pakChunks?.blocking) {
+      this.last = now;
+      this.acc = 0;
+      this.setChunkVeil(true);
+      return;
+    }
+    this.setChunkVeil(false);
     this.acc += Math.min(MAX_ELAPSED_MS, now - this.last);
     this.last = now;
     let steps = 0;
     try {
       while (this.acc >= STEP_MS && steps < MAX_CATCH_UP) {
-        this.step();
+        if (!this.step()) {
+          this.acc = 0;
+          this.setChunkVeil(true);
+          break;
+        }
         this.acc -= STEP_MS;
         steps++;
       }
@@ -1506,11 +1553,17 @@ class Player {
     this.audio.beginFrame();
     if (socketHost) socketHost.beginFrame();
     this.frameFn(this.buttons(), ANALOG_CENTER, packed, hits);
+    // prepare() marks its chunk synchronously before returning its promise.
+    // Stop at that boundary: neither the PocketJS clock nor the host frame
+    // counter observes how long the network takes, and tick() retries only
+    // after the bytes are resident.
+    if (this.pakChunks?.blocking) return false;
     this.wasm.tick();
     this.frames++;
     this.editorHost?.afterStep();
     this.syncDemoControls();
     this.editorHost?.afterStep();
+    return true;
   }
 
   paint() {

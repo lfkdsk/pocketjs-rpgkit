@@ -303,6 +303,9 @@ export interface PlayerConfig {
   app: string;
   bundle: string;
   pak: string | null;
+  /** Optional content-addressed Web pak manifest. When present, its startup
+   *  pack replaces `pak` and deferred entries are fetched on demand. */
+  pakManifest?: string;
   wasm: string;
   viewport: ViewportConfig;
   rasterDensity: number;
