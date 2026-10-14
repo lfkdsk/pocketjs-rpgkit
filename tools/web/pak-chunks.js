@@ -245,6 +245,8 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
   const failures = new Map();
   const blockers = new Set();
   const backgroundQueue = [];
+  const queued = new Set();
+  const scheduled = new Map();
   const backgroundConcurrency = Number.isSafeInteger(options.backgroundConcurrency) &&
       options.backgroundConcurrency > 0
     ? options.backgroundConcurrency
@@ -292,29 +294,57 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
     const ids = closure(id).filter((candidate) => !resident.has(candidate));
     if (ids.length === 0) return Promise.resolve();
     for (const candidate of ids) blockers.add(candidate);
-    return Promise.all(ids.map(load)).then(() => undefined).finally(() => {
+    return Promise.all(ids.map((candidate) => schedule(candidate, true))).then(() => undefined).finally(() => {
       for (const candidate of ids) blockers.delete(candidate);
     });
-  };
-
-  const prefetch = (key) => {
-    const id = entryToChunk.get(key);
-    if (!id) return Promise.resolve();
-    return Promise.all(closure(id).map(load)).then(() => undefined);
   };
 
   const pumpBackground = () => {
     while (backgroundActive < backgroundConcurrency && backgroundQueue.length > 0) {
       const id = backgroundQueue.shift();
+      queued.delete(id);
+      const job = scheduled.get(id);
+      if (!job) continue;
       if (resident.has(id)) continue;
       backgroundActive++;
       void load(id)
-        .catch((error) => console.error(error))
+        .then(job.resolve, job.reject)
         .finally(() => {
+          scheduled.delete(id);
           backgroundActive--;
           pumpBackground();
         });
     }
+  };
+
+  const schedule = (id, urgent) => {
+    if (resident.has(id)) return Promise.resolve();
+    const active = scheduled.get(id);
+    if (active) {
+      if (urgent && queued.has(id)) {
+        backgroundQueue.splice(backgroundQueue.indexOf(id), 1);
+        backgroundQueue.unshift(id);
+      }
+      return active.promise;
+    }
+    let resolve;
+    let reject;
+    const promise = new Promise((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
+    scheduled.set(id, { promise, resolve, reject });
+    queued.add(id);
+    if (urgent) backgroundQueue.unshift(id);
+    else backgroundQueue.push(id);
+    pumpBackground();
+    return promise;
+  };
+
+  const prefetch = (key) => {
+    const id = entryToChunk.get(key);
+    if (!id) return Promise.resolve();
+    return Promise.all(closure(id).map((candidate) => schedule(candidate, true))).then(() => undefined);
   };
 
   return {
@@ -356,8 +386,9 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
     startBackground() {
       if (backgroundStarted) return;
       backgroundStarted = true;
-      for (const chunk of manifest.chunks) if (chunk.background) backgroundQueue.push(chunk.id);
-      pumpBackground();
+      for (const chunk of manifest.chunks) {
+        if (chunk.background) void schedule(chunk.id, false).catch((error) => console.error(error));
+      }
     },
     stats() {
       return {

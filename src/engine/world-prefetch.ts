@@ -62,6 +62,8 @@ export function createWorldPrefetcher(
   const budgetMs = options.budgetMs ?? 8;
   const now = options.now ?? Date.now;
   const staged = new Set<string>();
+  const prefetched = new Set<string>();
+  const prefetching = new Set<string>();
   const failures = new Map<string, string>();
 
   const reconcile = (): void => {
@@ -91,12 +93,35 @@ export function createWorldPrefetcher(
       // Without synchronous staging units the async prepare path or the
       // transfer boundary's full acquire handles readiness; nothing to do.
       const canStage = sess.repository?.acquireStep !== undefined;
-      for (const id of compiledQueue(set)) {
+      const queue = compiledQueue(set);
+      const keep = new Set(queue);
+      for (const id of [...prefetched]) if (!keep.has(id)) prefetched.delete(id);
+      for (const id of queue) {
         if (staged.has(id)) continue;
         // A parsed-only map (visible but not imminent) is resident in the
         // parsed layer only: it still needs its compiled stages staged.
         if (sess.maps.has(id) && sess.worlds.has(id) && sess.tables.has(id)) continue;
-        if (failures.has(id) || !canStage) { pending++; continue; }
+        if (failures.has(id)) { pending++; continue; }
+        if (!canStage) {
+          if (prefetched.has(id)) continue;
+          pending++;
+          const prefetch = sess.repository?.prefetch;
+          if (!prefetch || prefetching.has(id)) continue;
+          if (stages > 0 && now() - start >= budgetMs) continue;
+          prefetching.add(id);
+          void prefetch(id).then(
+            () => {
+              prefetching.delete(id);
+              if (keep.has(id)) prefetched.add(id);
+            },
+            (error) => {
+              prefetching.delete(id);
+              failures.set(id, error instanceof Error ? error.message : String(error));
+            },
+          );
+          stages++;
+          continue;
+        }
         // Stage this map to completion in prefetch priority order, or until
         // the budget runs out. At least one stage always runs when work is
         // pending, so a stage slower than the budget cannot starve the queue.
@@ -119,7 +144,7 @@ export function createWorldPrefetcher(
         }
       }
       return {
-        staged: staged.size,
+        staged: staged.size + prefetched.size,
         pending,
         stages,
         failures: Object.fromEntries(failures),

@@ -158,4 +158,36 @@ describe("createWorldPrefetcher", () => {
     const stats = prefetcher.update({ ...SET, imminent: [], parsedKeep: ["map_a"], compiledKeep: ["map_a"] });
     expect(stats).toEqual({ staged: 0, pending: 0, stages: 0, failures: {}, stageMs: 0 });
   });
+
+  test("promotes async working-set bytes one hint per zero-budget frame without blocking", async () => {
+    const started: string[] = [];
+    const releases = new Map<string, () => void>();
+    const { session } = setup((base) => ({
+      meta: base.meta,
+      acquire: base.acquire,
+      releaseExcept: base.releaseExcept,
+      prefetch: (id) => {
+        started.push(id);
+        return new Promise<void>((resolve) => { releases.set(id, resolve); });
+      },
+    }));
+    const prefetcher = createWorldPrefetcher(session, { budgetMs: 0, now: () => 0 });
+
+    const first = prefetcher.update(SET);
+    expect(first.stages).toBe(1);
+    expect(first.pending).toBe(2);
+    expect(started).toEqual(["map_b"]);
+
+    releases.get("map_b")!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = prefetcher.update(SET);
+    expect(second.stages).toBe(1);
+    expect(started).toEqual(["map_b", "map_c"]);
+
+    releases.get("map_c")!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(prefetcher.update(SET)).toMatchObject({ staged: 2, pending: 0, stages: 0, failures: {} });
+    expect(session.maps.has("map_b")).toBe(false);
+    expect(session.preparingMaps.has("map_b")).toBe(false);
+  });
 });

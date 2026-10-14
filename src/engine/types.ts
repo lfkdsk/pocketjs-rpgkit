@@ -1437,6 +1437,9 @@ export interface MapRepository {
   releaseExcept(ids: readonly string[]): void;
   /** Optional residency counters, for cache-boundedness diagnostics. */
   stats?(): { cached: number; pending: number };
+  /** Hint that a map may be needed soon. Implementations may stage transport
+   * bytes asynchronously, but must not make simulation wait for this hint. */
+  prefetch?(id: string): Promise<void>;
   prepare?(id: string): Promise<void>;
 }
 

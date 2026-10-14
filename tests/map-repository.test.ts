@@ -256,7 +256,7 @@ describe("sharded map repository", () => {
     expect(textReads).toBe(1);
   });
 
-  test("missing local entries are errors while async entries can be prepared", () => {
+  test("missing local entries are errors while async entries can be prepared or prefetched", async () => {
     const split = splitProjectMaps(fixture());
     const local = createJsonMapRepository(split.shell.mapIndex, { read: () => undefined });
     expect(() => local.acquire("map_00")).toThrow(/missing entry/);
@@ -266,12 +266,17 @@ describe("sharded map repository", () => {
       expect(error).not.toBeInstanceOf(MapNotReadyError);
     }
 
+    const prefetched: string[] = [];
     const remote = createJsonMapRepository(split.shell.mapIndex, {
       read: () => undefined,
+      prefetch: async (entry) => { prefetched.push(entry); },
       prepare: async () => {},
     });
     expect(() => remote.acquire("map_00")).toThrow(MapNotReadyError);
     expect(() => remote.acquire("map_00")).toThrow(/not ready/);
+    await remote.prefetch!("map_00");
+    expect(prefetched).toEqual([split.shell.mapIndex.find((entry) => entry.id === "map_00")!.entry]);
+    await expect(remote.prefetch!("missing")).rejects.toThrow("unknown map missing");
   });
 
   test("an inline session reports its own unknown maps without mentioning a repository", () => {

@@ -215,6 +215,61 @@ describe("Web pak chunk loader", () => {
     expect(loader.stats()).toMatchObject({ resident: ["a", "b", "c"], pending: [], queued: [] });
   });
 
+  test("promotes prefetch through the bounded background scheduler", async () => {
+    const startup = new Uint8Array([1]);
+    const chunks = ["a", "b", "c", "d"].map((id) => ({
+      id,
+      bytes: pack([{ key: `maps/${id}`, dtype: 0, data: new Uint8Array([id.charCodeAt(0)]) }]),
+    }));
+    const manifest = {
+      version: 1,
+      format: "pocket-pak-chunks/v1",
+      startup: asset(HASH, startup, "startup"),
+      chunks: chunks.map(({ id, bytes }) => ({
+        id,
+        ...asset(HASH, bytes, id),
+        entries: [`maps/${id}`],
+        background: true,
+        requires: [],
+      })),
+    };
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const loader = await openPakChunkLoader("https://example.test/manifest.json", {
+      fetch: async (input: URL | RequestInfo) => {
+        const url = String(input);
+        if (url.endsWith("manifest.json")) return response(JSON.stringify(manifest));
+        const chunk = chunks.find(({ id }) => url.includes(`/${id}-`))!;
+        started.push(chunk.id);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return response(exact(chunk.bytes));
+      },
+      sha256: async () => HASH,
+      gunzip: async (bytes: ArrayBuffer) => bytes,
+      backgroundConcurrency: 2,
+    });
+    loader.startBackground();
+    expect(started).toEqual(["a", "b"]);
+
+    const promoted = loader.prefetch("maps/d");
+    expect(loader.blocking).toBe(false);
+    expect(started).toEqual(["a", "b"]);
+    releases[0]!();
+    for (let turn = 0; turn < 4 && started.length < 3; turn++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(started).toEqual(["a", "b", "d"]);
+    releases[2]!();
+    await promoted;
+    releases[1]!();
+    for (let turn = 0; turn < 4 && started.length < 4; turn++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    releases[3]!();
+    await loader.prefetch("maps/c");
+    expect(loader.stats()).toMatchObject({ resident: ["a", "b", "c", "d"], pending: [], queued: [] });
+  });
+
   test("prepares declared dependencies under the same blocking veil", async () => {
     const startup = new Uint8Array([1]);
     const map = pack([{ key: "maps/a", dtype: 0, data: new Uint8Array([2]) }]);

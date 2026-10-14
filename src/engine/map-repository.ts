@@ -505,6 +505,9 @@ export interface MapEntrySource {
   /** Optional host text fast path. When present it is authoritative: an
    *  undefined result has the same missing/not-ready meaning as read(). */
   readText?(entry: string): string | undefined;
+  /** Non-blocking working-set hint. Unlike prepare(), this must not install a
+   * host veil or otherwise make simulation progress depend on completion. */
+  prefetch?(entry: string): Promise<void>;
   prepare?(entry: string): Promise<void>;
 }
 
@@ -586,6 +589,13 @@ export function createJsonMapRepository(
       for (const id of [...pending.keys()]) if (!keep.has(id)) pending.delete(id);
     },
     stats: () => ({ cached: cache.size, pending: pending.size }),
+    ...(source.prefetch ? {
+      prefetch: async (id: string) => {
+        const meta = index.get(id);
+        if (!meta) throw new Error(`map repository: unknown map ${id}`);
+        await source.prefetch!(meta.entry);
+      },
+    } : {}),
     ...(source.prepare ? {
       prepare: async (id: string) => {
         const meta = index.get(id);
