@@ -82,6 +82,7 @@ import {
 const STEP_MS = 1000 / 60;
 const MAX_ELAPSED_MS = 250;
 const MAX_CATCH_UP = 4;
+const BACKGROUND_START_DELAY_MS = 1000;
 /** spec ANALOG_CENTER on both axes: no nub on this host. */
 const ANALOG_CENTER = 0x8080;
 /** framework/src/touch.ts caps a frame at 8 live contacts. */
@@ -1474,10 +1475,14 @@ class Player {
     this.step();
     this.paint();
     this.setState("running");
-    // Do not compete with the title's critical path. Chunks explicitly
-    // marked for background loading start only after the first guest frame
-    // has been painted and the loading overlay can come down.
-    pakChunks?.startBackground();
+    // Do not compete with the title/New Game critical path. Demand prepares
+    // can promote a chunk immediately; the exhaustive background queue gets
+    // a short grace period after the first painted guest frame.
+    if (pakChunks) {
+      setTimeout(() => {
+        if (this.state === "running") pakChunks.startBackground();
+      }, BACKGROUND_START_DELAY_MS);
+    }
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) this.pause();
       else this.resume();
