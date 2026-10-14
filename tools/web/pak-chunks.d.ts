@@ -10,6 +10,8 @@ export interface PakChunk extends PakChunkAsset {
   id: string;
   entries: string[];
   background: boolean;
+  /** Other chunks that must be resident before this chunk's entries are ready. */
+  requires: string[];
 }
 
 export interface PakChunkManifest {

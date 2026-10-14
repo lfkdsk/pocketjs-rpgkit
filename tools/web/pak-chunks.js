@@ -64,8 +64,33 @@ export function parsePakChunkManifest(value) {
       entryOwners.set(key, id);
       return key;
     });
-    return { id, ...asset, entries, background: record.background === true };
+    const requires = record.requires === undefined
+      ? []
+      : Array.isArray(record.requires)
+        ? record.requires.map((dependency, dependencyIndex) =>
+          asString(dependency, `manifest.chunks[${index}].requires[${dependencyIndex}]`))
+        : fail(`manifest.chunks[${index}].requires must be an array`);
+    if (new Set(requires).size !== requires.length) fail(`chunk ${id} repeats a dependency`);
+    if (requires.includes(id)) fail(`chunk ${id} depends on itself`);
+    return { id, ...asset, entries, background: record.background === true, requires };
   });
+  const chunksById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+  for (const chunk of chunks) {
+    for (const dependency of chunk.requires) {
+      if (!chunksById.has(dependency)) fail(`chunk ${chunk.id} requires unknown chunk ${dependency}`);
+    }
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  const visit = (id) => {
+    if (visiting.has(id)) fail(`chunk dependency cycle at ${id}`);
+    if (visited.has(id)) return;
+    visiting.add(id);
+    for (const dependency of chunksById.get(id).requires) visit(dependency);
+    visiting.delete(id);
+    visited.add(id);
+  };
+  for (const chunk of chunks) visit(chunk.id);
   return { version: 1, format: "pocket-pak-chunks/v1", startup, chunks };
 }
 
@@ -166,6 +191,19 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
   let backgroundStarted = false;
   let startupBytes = null;
 
+  const closure = (id) => {
+    const found = [];
+    const seen = new Set();
+    const visit = (next) => {
+      if (seen.has(next)) return;
+      seen.add(next);
+      found.push(next);
+      for (const dependency of byId.get(next).requires) visit(dependency);
+    };
+    visit(id);
+    return found;
+  };
+
   const load = (id) => {
     if (resident.has(id)) return Promise.resolve();
     const existing = pending.get(id);
@@ -188,15 +226,19 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
 
   const prepare = (key) => {
     const id = entryToChunk.get(key);
-    if (!id || resident.has(id)) return Promise.resolve();
-    blockers.add(id);
-    return load(id).finally(() => blockers.delete(id));
+    if (!id) return Promise.resolve();
+    const ids = closure(id).filter((candidate) => !resident.has(candidate));
+    if (ids.length === 0) return Promise.resolve();
+    for (const candidate of ids) blockers.add(candidate);
+    return Promise.all(ids.map(load)).then(() => undefined).finally(() => {
+      for (const candidate of ids) blockers.delete(candidate);
+    });
   };
 
   const prefetch = (key) => {
     const id = entryToChunk.get(key);
-    if (!id || resident.has(id)) return Promise.resolve();
-    return load(id);
+    if (!id) return Promise.resolve();
+    return Promise.all(closure(id).map(load)).then(() => undefined);
   };
 
   const pumpBackground = () => {
@@ -232,7 +274,7 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
     },
     ready(key) {
       const id = entryToChunk.get(key);
-      return id === undefined || resident.has(id);
+      return id === undefined || closure(id).every((candidate) => resident.has(candidate));
     },
     read(key, start, end) {
       const id = entryToChunk.get(key);

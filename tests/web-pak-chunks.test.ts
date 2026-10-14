@@ -36,6 +36,7 @@ describe("Web pak chunk manifest", () => {
         ...asset(OTHER_HASH, bytes, "maps"),
         entries: ["maps/a"],
         background: true,
+        requires: [],
       }],
     };
     const parsed = parsePakChunkManifest(valid);
@@ -67,8 +68,8 @@ describe("Web pak chunk loader", () => {
       format: "pocket-pak-chunks/v1",
       startup: asset(HASH, startup, "startup"),
       chunks: [
-        { id: "maps", ...asset(HASH, maps, "maps"), entries: ["maps/a"] },
-        { id: "audio", ...asset(HASH, audio, "audio"), entries: ["music/theme"], background: true },
+        { id: "maps", ...asset(HASH, maps, "maps"), entries: ["maps/a"], requires: [] },
+        { id: "audio", ...asset(HASH, audio, "audio"), entries: ["music/theme"], background: true, requires: [] },
       ],
     };
     let releaseMaps!: () => void;
@@ -133,7 +134,7 @@ describe("Web pak chunk loader", () => {
       version: 1,
       format: "pocket-pak-chunks/v1",
       startup: asset(HASH, startup, "startup"),
-      chunks: [{ id: "maps", ...asset(HASH, wrong, "maps"), entries: ["maps/a"] }],
+      chunks: [{ id: "maps", ...asset(HASH, wrong, "maps"), entries: ["maps/a"], requires: [] }],
     };
     const loader = await openPakChunkLoader("https://example.test/manifest.json", {
       fetch: async (input: URL | RequestInfo) => String(input).endsWith("manifest.json")
@@ -162,6 +163,7 @@ describe("Web pak chunk loader", () => {
         ...asset(HASH, bytes, id),
         entries: [`maps/${id}`],
         background: true,
+        requires: [],
       })),
     };
     const releases: Array<() => void> = [];
@@ -192,5 +194,41 @@ describe("Web pak chunk loader", () => {
     releases[2]!();
     await Promise.all(chunks.map(({ id }) => loader.prefetch(`maps/${id}`)));
     expect(loader.stats()).toMatchObject({ resident: ["a", "b", "c"], pending: [], queued: [] });
+  });
+
+  test("prepares declared dependencies under the same blocking veil", async () => {
+    const startup = new Uint8Array([1]);
+    const map = pack([{ key: "maps/a", dtype: 0, data: new Uint8Array([2]) }]);
+    const audio = pack([{ key: "audio/theme", dtype: 0, data: new Uint8Array([3]) }]);
+    const manifest = {
+      version: 1,
+      format: "pocket-pak-chunks/v1",
+      startup: asset(HASH, startup, "startup"),
+      chunks: [
+        { id: "map", ...asset(HASH, map, "map"), entries: ["maps/a"], requires: ["audio"] },
+        { id: "audio", ...asset(HASH, audio, "audio"), entries: ["audio/theme"], requires: [] },
+      ],
+    };
+    const files = new Map<string, Uint8Array>([
+      [manifest.chunks[0].file, map],
+      [manifest.chunks[1].file, audio],
+    ]);
+    const loader = await openPakChunkLoader("https://example.test/manifest.json", {
+      fetch: async (input: URL | RequestInfo) => {
+        const url = String(input);
+        if (url.endsWith("manifest.json")) return response(JSON.stringify(manifest));
+        const name = url.slice(url.lastIndexOf("/") + 1);
+        return response(exact(files.get(name)!));
+      },
+      sha256: async () => HASH,
+      gunzip: async (bytes: ArrayBuffer) => bytes,
+    });
+    const preparing = loader.prepare("maps/a");
+    expect(loader.blocking).toBe(true);
+    expect(loader.stats().blocking).toEqual(["audio", "map"]);
+    await preparing;
+    expect(loader.ready("maps/a")).toBe(true);
+    expect(loader.ready("audio/theme")).toBe(true);
+    expect(loader.stats().resident).toEqual(["audio", "map"]);
   });
 });
