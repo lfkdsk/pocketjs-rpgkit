@@ -161,10 +161,63 @@ and controls come from `web.json`. An example without an entry still gets a
 card: its `pocket.json` title, default controls, and a preview rendered from
 its own bundle. Every URL is relative, so the site works under any path.
 `.github/workflows/pages.yml` publishes `dist/web` to GitHub Pages on every
-push to `main`. Player pages mount the PocketJS audio
-host before the game starts, load their AudioWorklet relative to the page,
-and expose mute and master-volume controls. Browsers start the audio clock on
-the first key or pointer gesture, as required by their autoplay policies.
+push to `main`. Player pages mount the PocketJS audio host before the game
+starts, load their AudioWorklet relative to the page, and expose mute and
+master-volume controls. Browsers start the audio clock on the first key or
+pointer gesture, as required by their autoplay policies.
+
+### Browser HTTP and physical controllers
+
+The static player mounts PocketJS's bounded HTTP host only when the resolved
+`pocket.json` build declares `net.http`. Undeclared games receive no `net`
+namespace and do not pump an HTTP host each frame. The browser transport uses
+`credentials: "omit"` (no ambient cookies), `cache: "no-store"`, at most two
+in-flight requests, 64 KiB request bodies, 256 KiB responses, three
+same-scheme redirects and a 120-second maximum timeout. Page CORS and mixed
+content rules still apply; see the [PocketJS NET contract](vendor/pocketjs/docs/NET.md).
+
+Physical controllers join the same `BTN` mask as keyboard and touch input.
+The player accepts Gamepad API controllers whose browser mapping is
+`"standard"`, merges the d-pad with axes 0/1, and treats an axis as held only
+past the default `0.25` deadzone. The default buttons follow the web target's
+letter glyphs:
+
+| Gamepad button | Standard label | PocketJS button |
+| ---: | --- | --- |
+| 0 | south / A | `CIRCLE` (confirm) |
+| 1 | east / B | `CROSS` (cancel) |
+| 2 | west / X | `TRIANGLE` |
+| 3 | north / Y | `SQUARE` |
+| 4 or 6 | left shoulder / trigger | `LTRIGGER` |
+| 5 or 7 | right shoulder / trigger | `RTRIGGER` |
+| 8 / 9 | Back / Start | `SELECT` / `START` |
+| 12–15 | d-pad up/down/left/right | `UP` / `DOWN` / `LEFT` / `RIGHT` |
+
+Use a game's `web.json` entry to change the deadzone or physical-button map.
+Overrides merge over the defaults; `null` unbinds an index. For example, this
+swaps the confirm and cancel positions and unbinds X:
+
+```json
+{
+  "games": {
+    "my-game": {
+      "gamepad": {
+        "deadzone": 0.3,
+        "buttons": { "0": "CROSS", "1": "CIRCLE", "2": null }
+      }
+    }
+  }
+}
+```
+
+The browser reads live state through `navigator.getGamepads()` only while at
+least one accepted controller is connected. Disconnecting the final controller
+restores the original keyboard/touch-only `buttons()` method; a missing slot is
+also pruned if the browser loses a disconnect event. `tests/web-gamepad.test.ts`
+runs synthetic mappings plus a real headless-Chrome smoke. The smoke replaces
+`navigator.getGamepads` before the page module loads and dispatches browser
+connection events, so it covers the Chrome realm, polling and BTN aggregation,
+but not USB/HID discovery or a particular controller driver's vendor mapping.
 
 Web builds use a 2× raster density by default so fonts and vector assets are
 baked and drawn at two physical samples per logical pixel. Set

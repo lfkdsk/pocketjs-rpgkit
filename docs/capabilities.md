@@ -15,6 +15,15 @@ which the application imports unconditionally. Conversely, importing a module
 does not enable it until the application passes the matching `createSession`
 option or `GameView` prop.
 
+The static browser player applies the same rule at its host boundary. A
+resolved `net.http` declaration adds PocketJS's bounded browser transport;
+without it the namespace is absent and the ordinary player step has no HTTP
+branch. Browser Gamepad support is an `input.buttons` source rather than a new
+guest API: it is dormant until a standard controller connects, joins the
+existing keyboard/touch mask while connected, and restores the original
+no-controller path after disconnect. Configuration and the default physical
+mapping are documented under [Browser HTTP and physical controllers](../README.md#browser-http-and-physical-controllers).
+
 ## Capability catalogue
 
 ### Strict content admission
