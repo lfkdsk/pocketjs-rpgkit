@@ -146,4 +146,51 @@ describe("Web pak chunk loader", () => {
     expect(loader.blocking).toBe(false);
     expect(loader.stats().failures.maps).toMatch(/entries do not match/);
   });
+
+  test("bounds post-first-frame background requests without making them blockers", async () => {
+    const startup = new Uint8Array([1]);
+    const chunks = ["a", "b", "c"].map((id) => ({
+      id,
+      bytes: pack([{ key: `maps/${id}`, dtype: 0, data: new Uint8Array([id.charCodeAt(0)]) }]),
+    }));
+    const manifest = {
+      version: 1,
+      format: "pocket-pak-chunks/v1",
+      startup: asset(HASH, startup, "startup"),
+      chunks: chunks.map(({ id, bytes }) => ({
+        id,
+        ...asset(HASH, bytes, id),
+        entries: [`maps/${id}`],
+        background: true,
+      })),
+    };
+    const releases: Array<() => void> = [];
+    const fetchMock = async (input: URL | RequestInfo): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith("manifest.json")) return response(JSON.stringify(manifest));
+      const chunk = chunks.find(({ id }) => url.includes(`/${id}-`))!;
+      await new Promise<void>((resolve) => releases.push(resolve));
+      return response(exact(chunk.bytes));
+    };
+    const loader = await openPakChunkLoader("https://example.test/manifest.json", {
+      fetch: fetchMock,
+      sha256: async () => HASH,
+      gunzip: async (bytes: ArrayBuffer) => bytes,
+      backgroundConcurrency: 2,
+    });
+    loader.startBackground();
+    expect(releases).toHaveLength(2);
+    expect(loader.blocking).toBe(false);
+    expect(loader.stats().pending).toHaveLength(2);
+    expect(loader.stats().queued).toHaveLength(1);
+    releases[0]!();
+    for (let turn = 0; turn < 4 && releases.length < 3; turn++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(releases).toHaveLength(3);
+    releases[1]!();
+    releases[2]!();
+    await Promise.all(chunks.map(({ id }) => loader.prefetch(`maps/${id}`)));
+    expect(loader.stats()).toMatchObject({ resident: ["a", "b", "c"], pending: [], queued: [] });
+  });
 });

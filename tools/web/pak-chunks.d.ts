@@ -23,6 +23,7 @@ export interface PakChunkStats {
   startupBytes: number;
   resident: string[];
   pending: string[];
+  queued: string[];
   blocking: string[];
   failures: Record<string, string>;
   compressedBytes: number;
@@ -45,6 +46,8 @@ export interface PakChunkLoaderOptions {
   sha256?: (bytes: ArrayBuffer) => Promise<string>;
   gunzip?: (bytes: ArrayBuffer) => Promise<ArrayBuffer>;
   baseUrl?: string | URL;
+  /** Maximum number of low-priority post-first-frame fetches. Default 2. */
+  backgroundConcurrency?: number;
 }
 
 export function parsePakChunkManifest(value: unknown): PakChunkManifest;

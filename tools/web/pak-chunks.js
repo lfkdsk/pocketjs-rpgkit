@@ -157,6 +157,13 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
   const pending = new Map();
   const failures = new Map();
   const blockers = new Set();
+  const backgroundQueue = [];
+  const backgroundConcurrency = Number.isSafeInteger(options.backgroundConcurrency) &&
+      options.backgroundConcurrency > 0
+    ? options.backgroundConcurrency
+    : 2;
+  let backgroundActive = 0;
+  let backgroundStarted = false;
   let startupBytes = null;
 
   const load = (id) => {
@@ -190,6 +197,20 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
     const id = entryToChunk.get(key);
     if (!id || resident.has(id)) return Promise.resolve();
     return load(id);
+  };
+
+  const pumpBackground = () => {
+    while (backgroundActive < backgroundConcurrency && backgroundQueue.length > 0) {
+      const id = backgroundQueue.shift();
+      if (resident.has(id)) continue;
+      backgroundActive++;
+      void load(id)
+        .catch((error) => console.error(error))
+        .finally(() => {
+          backgroundActive--;
+          pumpBackground();
+        });
+    }
   };
 
   return {
@@ -228,15 +249,17 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
     prepare,
     prefetch,
     startBackground() {
-      for (const chunk of manifest.chunks) {
-        if (chunk.background) void load(chunk.id).catch((error) => console.error(error));
-      }
+      if (backgroundStarted) return;
+      backgroundStarted = true;
+      for (const chunk of manifest.chunks) if (chunk.background) backgroundQueue.push(chunk.id);
+      pumpBackground();
     },
     stats() {
       return {
         startupBytes: manifest.startup.bytes,
         resident: [...resident.keys()].sort(),
         pending: [...pending.keys()].sort(),
+        queued: [...backgroundQueue],
         blocking: [...blockers].sort(),
         failures: Object.fromEntries([...failures].sort(([a], [b]) => a.localeCompare(b))),
         compressedBytes: manifest.startup.bytes + [...resident.keys()]
