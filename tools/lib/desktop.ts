@@ -10,12 +10,13 @@
 // and start it with --js/--pak pointing at this repo's artifacts. Every
 // host flag derives from the resolved plan.
 
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { $ } from "bun";
 import { validateAndResolveBuildPlan } from "../../vendor/pocketjs/framework/src/manifest/resolve.ts";
 import type { ResolvedBuildPlan } from "../../vendor/pocketjs/framework/src/manifest/plan.ts";
 import { appDirOf, fontLicenseFiles } from "./font-licenses.ts";
+import { packageNativeArtifacts } from "./native-package.ts";
 
 const root = resolve(import.meta.dir, "..", "..");
 const pocketjs = join(root, "vendor", "pocketjs");
@@ -28,11 +29,21 @@ export interface DesktopBuild {
   outdir: string;
   /** The release pocket-desktop-host binary. */
   bin: string;
+  /** Source-preserving package used only by the explicit bytecode path. */
+  pocket?: string;
+}
+
+export interface DesktopBuildOptions {
+  /** Compile section-6 bytecode and launch the final package with --pocket. */
+  bytecode?: boolean;
 }
 
 /** Resolve `manifestPath` (a pocket.json) for the desktop target, build the
  *  bundle from the plan, and `cargo build --release` the host. */
-export async function buildForDesktop(manifestPath: string): Promise<DesktopBuild> {
+export async function buildForDesktop(
+  manifestPath: string,
+  options: DesktopBuildOptions = {},
+): Promise<DesktopBuild> {
   const manifest = await Bun.file(manifestPath).json();
   const resolution = validateAndResolveBuildPlan(manifest, { target: DESKTOP_TARGET });
   if (!resolution.ok) {
@@ -49,6 +60,19 @@ export async function buildForDesktop(manifestPath: string): Promise<DesktopBuil
   mkdirSync(resolve(planPath, ".."), { recursive: true });
   await Bun.write(planPath, JSON.stringify(plan, null, 2) + "\n");
   await $`bun ${join(pocketjs, "tools", "build.ts")} --plan=${planPath} --project-root=${root} --outdir=${outdir}`.cwd(root);
+  let pocket: string | undefined;
+  if (options.bytecode) {
+    pocket = join(outdir, `${plan.app.output}.pocket`);
+    const packaged = await packageNativeArtifacts({
+      manifest: new Uint8Array(readFileSync(manifestPath)),
+      plan,
+      javascript: new Uint8Array(readFileSync(join(outdir, `${plan.app.output}.js`))),
+      pak: new Uint8Array(readFileSync(join(outdir, `${plan.app.output}.pak`))),
+      bytecode: true,
+      bytecodeBuildDirectory: join(root, ".pocket-build", "quickjs-bytecode"),
+    });
+    writeFileSync(pocket, packaged.bytes);
+  }
   await $`cargo build --release ${desktopHostFeatures()}`.cwd(join(pocketjs, "hosts", "desktop"));
 
   // Glyphs baked from a fallback font are a derivative of it: its license
@@ -56,11 +80,12 @@ export async function buildForDesktop(manifestPath: string): Promise<DesktopBuil
   for (const file of fontLicenseFiles(appDirOf(root, plan.app.entry))) copyFileSync(file, join(outdir, basename(file)));
 
   const bin = join(pocketjs, "hosts", "desktop", "target", "release", "pocket-desktop-host");
-  return { plan, outdir, bin };
+  return { plan, outdir, bin, ...(pocket ? { pocket } : {}) };
 }
 
 /** Host flags for a built app, all derived from its resolved plan. */
-export function desktopFlags({ plan, outdir }: DesktopBuild): string[] {
+export function desktopFlags({ plan, outdir, pocket }: DesktopBuild): string[] {
+  if (pocket) return ["--pocket", pocket];
   return [
     "--app", plan.app.output,
     // The per-app data.fs root keys off the reverse-DNS app id.

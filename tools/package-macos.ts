@@ -3,6 +3,7 @@
 //   bun tools/package-macos.ts sunstone                  # examples/sunstone
 //   bun tools/package-macos.ts --project-root ../my-game # a game that vendors this kit
 //   bun tools/package-macos.ts grow --name Grow --icon shot.png --icon-crop 8,56,128,128
+//   bun tools/package-macos.ts sunstone --bytecode       # package source + bytecode
 //
 // The bundle is the PocketJS desktop host plus the app's bundle and pak:
 //
@@ -10,6 +11,7 @@
 //                         Contents/MacOS/<app>                launcher (CFBundleExecutable)
 //                         Contents/MacOS/pocket-desktop-host  release host from vendor/pocketjs
 //                         Contents/Resources/<app>.js, <app>.pak, AppIcon.icns, licenses
+//                         (or <app>.pocket under explicit --bytecode)
 //   dist/macos/<Name>-macos-<arch>.zip
 //
 // The launcher starts the host with the same plan-derived flags as
@@ -26,6 +28,7 @@ import { validateAndResolveBuildPlan } from "../vendor/pocketjs/framework/src/ma
 import { decodePng } from "../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../vendor/pocketjs/tools/png.ts";
 import { appDirOf, fontLicenseFiles } from "./lib/font-licenses.ts";
+import { packageNativeArtifacts } from "./lib/native-package.ts";
 
 if (process.platform !== "darwin") {
   console.error("package-macos: run this on a Mac (the host is built for the local architecture)");
@@ -46,10 +49,17 @@ const opt = (flag: string): string | undefined => {
   args.splice(i, 2);
   return v;
 };
+const takeFlag = (flag: string): boolean => {
+  const i = args.indexOf(flag);
+  if (i < 0) return false;
+  args.splice(i, 1);
+  return true;
+};
 const projectRoot = opt("--project-root");
 let name = opt("--name");
 let icon = opt("--icon");
 let iconCrop = opt("--icon-crop");
+const bytecode = takeFlag("--bytecode");
 const example = args.find((a) => !a.startsWith("--"));
 
 // Kit examples: a short bundle name and an icon cropped from a pixel golden.
@@ -111,6 +121,19 @@ const planPath = join(root, ".pocket", target, `${app}.plan.json`);
 mkdirSync(resolve(planPath, ".."), { recursive: true });
 await Bun.write(planPath, JSON.stringify(plan, null, 2) + "\n");
 await $`bun ${join(pocketjs, "tools", "build.ts")} --plan=${planPath} --project-root=${root} --outdir=${outdir}`.cwd(root);
+let pocket: string | undefined;
+if (bytecode) {
+  pocket = join(outdir, `${app}.pocket`);
+  const packaged = await packageNativeArtifacts({
+    manifest: new Uint8Array(readFileSync(manifestPath)),
+    plan,
+    javascript: new Uint8Array(readFileSync(join(outdir, `${app}.js`))),
+    pak: new Uint8Array(readFileSync(join(outdir, `${app}.pak`))),
+    bytecode: true,
+    bytecodeBuildDirectory: join(root, ".pocket-build", "quickjs-bytecode"),
+  });
+  writeFileSync(pocket, packaged.bytes);
+}
 await $`cargo build --release`.cwd(join(pocketjs, "hosts", "desktop"));
 const host = join(pocketjs, "hosts", "desktop", "target", "release", "pocket-desktop-host");
 
@@ -126,8 +149,12 @@ mkdirSync(macos, { recursive: true });
 mkdirSync(res, { recursive: true });
 
 cpSync(host, join(macos, "pocket-desktop-host"));
-cpSync(join(outdir, `${app}.js`), join(res, `${app}.js`));
-cpSync(join(outdir, `${app}.pak`), join(res, `${app}.pak`));
+if (pocket) {
+  cpSync(pocket, join(res, `${app}.pocket`));
+} else {
+  cpSync(join(outdir, `${app}.js`), join(res, `${app}.js`));
+  cpSync(join(outdir, `${app}.pak`), join(res, `${app}.pak`));
+}
 for (const [src, dst] of licenses) cpSync(src, join(res, dst));
 
 const sh = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -141,14 +168,16 @@ const flags = [
   ...(plan.companions.length > 0 ? ["--companions", plan.companions.join(",")] : []),
 ];
 const launcher = join(macos, app);
+const guest = pocket
+  ? `--pocket "$res/${app}.pocket"`
+  : `${flags.map(sh).join(" ")} \\\n+  --js "$res/${app}.js" --pak "$res/${app}.pak"`;
 writeFileSync(
   launcher,
   `#!/bin/sh
 # ${name}: start the PocketJS desktop host on this bundle's ${app}.js/.pak.
 here=$(cd "$(dirname "$0")" && pwd)
 res="$here/../Resources"
-exec "$here/pocket-desktop-host" ${flags.map(sh).join(" ")} \\
-  --js "$res/${app}.js" --pak "$res/${app}.pak" "$@"
+exec "$here/pocket-desktop-host" ${guest} "$@"
 `,
 );
 chmodSync(launcher, 0o755);

@@ -46,6 +46,7 @@
     "desktop": "bun tools/desktop.ts",
     "rpgkit-check": "bun tools/rpgkit-check/cli.ts",
     "package:macos": "bun tools/package-macos.ts",
+    "package:native": "bun tools/package-native.ts",
     "editor": "bun tools/editor.ts",
     "rpgkit-edit": "bun tools/rpgkit-edit/cli.ts",
     "rpgkit-edit:mcp": "bun tools/rpgkit-edit/mcp.ts",
