@@ -174,7 +174,7 @@ const guest = pocket
 writeFileSync(
   launcher,
   `#!/bin/sh
-# ${name}: start the PocketJS desktop host on this bundle's ${app}.js/.pak.
+# ${name}: start the PocketJS desktop host on this bundle's packaged guest.
 here=$(cd "$(dirname "$0")" && pwd)
 res="$here/../Resources"
 exec "$here/pocket-desktop-host" ${guest} "$@"

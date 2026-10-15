@@ -278,6 +278,7 @@ bun test                 # full suite incl. sim journeys and pixel goldens
 bunx tsc --noEmit        # typecheck, exit 0
 bun run desktop sunstone # build for the desktop host and open a window
                          # (also: grow, meadow; needs a Rust toolchain)
+bun run desktop sunstone --bytecode # opt in to a source-preserving .pocket
 bun run web              # the browser site in dist/web (see above)
 ```
 
@@ -289,7 +290,70 @@ architecture and ad-hoc signed, not notarized, so a downloaded copy opens
 the first time with right-click > Open (or Privacy & Security > Open
 Anyway). A game that vendors this kit packages itself with
 `bun vendor/pocket-rpgkit/tools/package-macos.ts --project-root .`
-(`--name`, `--icon <png>`, `--icon-crop x,y,w,h` to taste).
+(`--name`, `--icon <png>`, `--icon-crop x,y,w,h` to taste). Add
+`--bytecode` to either desktop command to package target-matched QuickJS
+bytecode beside its source and launch the desktop host with `--pocket`.
+Omitting the flag keeps the established loose `--js`/`--pak` path.
+
+### Native bytecode packages
+
+Native bytecode is an explicit release choice. Web builds always keep their
+current source path. Desktop and PSP packages retain the exact JavaScript in
+section 3, the pak in section 4, and add a target-specific bytecode envelope
+in section 6; a host whose engine ABI differs falls back to the source.
+
+Games such as Wander that rewrite a release bundle or pak must package the
+**final** bytes rather than invoke a manifest compiler a second time:
+
+```sh
+bun vendor/pocket-rpgkit/tools/package-native.ts \
+  --target psp --manifest pocket.json --plan .pocket/psp/game.plan.json \
+  --js dist/psp/game.js --pak dist/psp/game.pak --bytecode \
+  -o dist/psp/game.pocket
+```
+
+`--plan` is the resolved plan that produced those artifacts. The packager
+decodes its own output and checks that section 3 and section 4 equal the
+supplied bytes; when `--bytecode` is present it also requires section 6 and
+its target ABI. Leaving the flag out deliberately emits a source-only
+package. The PSP ABI is pinned cumulatively to
+`lfkdsk/quickjs-rs@2af09e8f18b0b810a7f1b0699762c0f08bcc0f85`, QuickJS
+`2026-06-04`, bytecode version 5, descriptor
+`sha256:58b9adf09c223efd9a84bffb4637312075ebb0ed1729b7d352282a01f7e8b73d`;
+packaging stops if PocketJS's descriptor, PSP Cargo dependency, lockfile, or
+toolchain pin drifts.
+
+On PSP, bytecode packages use PocketJS's generic runtime with `app.pocket`
+beside the EBOOT. A release that needs only the portable generic host can
+build the runtime and repack the final package, for example:
+
+```sh
+bun vendor/pocketjs/tools/runtime.ts psp
+bun vendor/pocketjs/tools/repack.ts --target psp \
+  --runtime vendor/pocketjs/dist/runtime/psp \
+  --pocket dist/psp/game.pocket \
+  --id dev.example.game --title Game --author Example --version 1.0.0 \
+  -o dist/psp/game-memory-stick.zip
+```
+
+A game that needs plan-derived host inputs, `io.offload` slot, viewport, or
+its own PSP XMB metadata builds a plan-specific generic runtime instead:
+
+```sh
+bun vendor/pocketjs/tools/psp.ts --runtime \
+  --plan=.pocket/psp/game.plan.json --project-root=. --outdir=dist/psp \
+  --skip-build --release
+```
+
+`--runtime` makes `POCKETJS_EMBED_APP=0`; `--skip-build` is redundant in that
+mode but is accepted so an existing post-processing pipeline can keep it.
+The EBOOT is written to
+`vendor/pocketjs/hosts/psp/target/mipsel-sony-psp/release/EBOOT.PBP`.
+The release step must copy that EBOOT and the final package into the same
+installation directory, naming the package exactly lowercase `app.pocket`.
+`--outdir` supplies the plan/host artifact directory; it does not collect the
+EBOOT or sidecar. Without `--runtime`, `tools/psp.ts --plan ... --skip-build`
+still embeds loose JS and pak bytes and cannot exercise section 6.
 
 `bun run build:example sunstone` builds one example. `bun run gen-assets`
 regenerates every example's baked art from its `assets/src/` (and then the
@@ -3299,7 +3363,8 @@ tools/lib/       game-agnostic baking pipelines (bake.ts, chunks.ts,
                  deterministic QOA encoding, and the desktop-host
                  build/launch helper (desktop.ts)
 tools/           example/editor build driver, desktop and editor launchers,
-                 macOS packager (package-macos.ts), web site builder
+                 final-artifact native packager (package-native.ts), macOS
+                 packager (package-macos.ts), web site builder
                  (web.ts, web/, web-verify.ts)
 examples/        meadow (minimal), sunstone (game + attract + QOA), grow
                  (demo), showcase (feature gallery); the endless Wander and
