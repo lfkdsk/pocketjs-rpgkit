@@ -24,6 +24,7 @@ import {
   verifyPlanHash,
   type ResolvedBuildPlan,
 } from "../../vendor/pocketjs/framework/src/manifest/plan.ts";
+import { validateAndResolveBuildPlan } from "../../vendor/pocketjs/framework/src/manifest/resolve.ts";
 
 /** The PSP engine actually linked by PocketJS's host.  Keep the digest here,
  * as well as in PocketJS, so a submodule update cannot silently make RPG Kit
@@ -118,6 +119,16 @@ export async function packageNativeArtifacts(
   const { plan } = input;
   if (!verifyPlanHash(plan)) {
     throw new Error("native-package: resolved build plan hash is invalid");
+  }
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(new TextDecoder().decode(input.manifest));
+  } catch {
+    throw new Error("native-package: manifest is not JSON");
+  }
+  const resolution = validateAndResolveBuildPlan(manifest, { target: plan.target.id });
+  if (!resolution.ok || canonicalJson(resolution.plan) !== canonicalJson(plan)) {
+    throw new Error("native-package: manifest does not resolve to the supplied plan");
   }
   if (input.javascript.at(-1) === 0) {
     throw new Error("native-package: javascript already has a NUL terminator");
@@ -223,6 +234,13 @@ export function assertNativePackageArtifacts(
   const pak = findSection(variant, POCKET_SECTION.pak);
   if (!pak || !equalBytes(pak, input.pak)) {
     throw new Error("native-package: embedded pak differs from the final pak");
+  }
+  const plan = findSection(variant, POCKET_SECTION.plan);
+  if (
+    !plan ||
+    new TextDecoder().decode(plan) !== canonicalJson(input.plan)
+  ) {
+    throw new Error("native-package: embedded plan differs from the release plan");
   }
   const section = findSection(variant, POCKET_SECTION.bytecode);
   if (input.bytecode && !section) {

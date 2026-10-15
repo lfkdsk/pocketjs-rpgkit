@@ -89,6 +89,16 @@ test("source-only stays the default and a requested-but-missing section fails", 
   })).toThrow("--bytecode requested but section 6 is missing");
 });
 
+test("native package refuses artifacts paired with a different manifest", async () => {
+  const input = desktopInput(false);
+  const manifest = JSON.parse(new TextDecoder().decode(input.manifest));
+  manifest.title = "A different release";
+  await expect(packageNativeArtifacts({
+    ...input,
+    manifest: new TextEncoder().encode(JSON.stringify(manifest)),
+  })).rejects.toThrow("manifest does not resolve to the supplied plan");
+});
+
 test("package-native CLI makes bytecode opt-in explicit", () => {
   const common = [
     "--target", "psp",
