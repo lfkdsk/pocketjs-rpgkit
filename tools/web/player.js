@@ -1297,7 +1297,7 @@ export class BrowserEditorHost {
   }
 }
 
-class Player {
+export class Player {
   constructor(config) {
     this.config = config;
     // ?embed: the page shows only the game screen, sized to the window, for
@@ -1350,6 +1350,15 @@ class Player {
     this.acc = 0;
     this.frames = 0;
     this.scale = { device: 1, css: 1 };
+    // The demo hook is polled with the guest frame because chapter autoplay
+    // may advance without a DOM event. The surrounding controls are static,
+    // though, and rewriting every button at 60 Hz is especially expensive on
+    // mobile Chrome. Cache both the element lookup and the last state that
+    // actually reached the DOM.
+    this.demoControls = undefined;
+    this.demoControlsKey = null;
+    this.demoBootSearch = null;
+    this.demoBoot = null;
     this.editorHost = config.editor && this.companions.has(EDITOR_COMPANION)
       ? new BrowserEditorHost(this, config.editor)
       : null;
@@ -1872,7 +1881,10 @@ class Player {
   }
 
   syncDemoControls() {
-    const root = document.querySelector("[data-demo-controls]");
+    if (this.demoControls === undefined) {
+      this.demoControls = document.querySelector("[data-demo-controls]");
+    }
+    const root = this.demoControls;
     if (!root) return;
     const hook = this.demoHook();
     let current = null;
@@ -1883,13 +1895,20 @@ class Player {
         current = null;
       }
     }
-    const boot = rpgkitBootFromSearch(location.search);
-    const chapter = typeof current?.chapter === "string"
-      ? current.chapter
-      : typeof boot.chapter === "string"
+    const search = location.search;
+    const currentChapter = typeof current?.chapter === "string" ? current.chapter : null;
+    if ((!currentChapter || current?.speed === undefined) && this.demoBootSearch !== search) {
+      this.demoBootSearch = search;
+      this.demoBoot = rpgkitBootFromSearch(search);
+    }
+    const boot = this.demoBoot;
+    const chapter = currentChapter
+      ?? (typeof boot?.chapter === "string"
         ? boot.chapter
-        : typeof boot.autoplay === "string" ? boot.autoplay : null;
-    const speed = current?.speed ?? (boot.speed === "2" ? 2 : boot.speed === "4" ? 4 : 1);
+        : typeof boot?.autoplay === "string" ? boot.autoplay : null);
+    const speed = current?.speed ?? (boot?.speed === "2" ? 2 : boot?.speed === "4" ? 4 : 1);
+    const key = `${hook ? "ready" : "fallback"}\u0000${chapter ?? ""}\u0000${speed}\u0000${search}`;
+    if (key === this.demoControlsKey) return;
     root.dataset.hook = hook ? "ready" : "fallback";
     root.dataset.chapter = chapter ?? "";
     root.dataset.speed = String(speed);
@@ -1913,6 +1932,7 @@ class Player {
         button.href = this.demoHref({ autoplay: fallbackChapter, speed: button.dataset.demoSpeed });
       }
     }
+    this.demoControlsKey = key;
   }
 
   bindDemoControls() {
