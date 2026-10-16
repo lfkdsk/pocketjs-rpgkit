@@ -23,18 +23,19 @@ afterEach(() => {
 
 function button(dataset: Record<string, string>) {
   const attributes = new Map<string, string>();
+  let writes = 0;
   return {
     dataset,
     href: "",
-    writes: 0,
-    classList: { toggle() { this.writes++; } },
+    get writes() { return writes; },
+    classList: { toggle() { writes++; } },
     setAttribute(name: string, value: string) {
       attributes.set(name, value);
-      this.writes++;
+      writes++;
     },
     removeAttribute(name: string) {
       attributes.delete(name);
-      this.writes++;
+      writes++;
     },
   };
 }
