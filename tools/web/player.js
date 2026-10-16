@@ -48,6 +48,7 @@
 //            schema-checked inline document or replacement pack.
 
 import { createWasmUi } from "../../vendor/pocketjs/hosts/web/wasm-ops.js";
+import { createCanvasPresenter } from "../../vendor/pocketjs/hosts/web/canvas-presenter.js";
 import { createAudioHost } from "../../vendor/pocketjs/hosts/web/audio.js";
 import { createNetHost } from "../../vendor/pocketjs/hosts/web/net.js";
 import { createSocketHost } from "../../vendor/pocketjs/hosts/web/socket.js";
@@ -1300,9 +1301,13 @@ export class BrowserEditorHost {
 export class Player {
   constructor(config) {
     this.config = config;
+    const query = new URLSearchParams(location.search);
     // ?embed: the page shows only the game screen, sized to the window, for
     // a page that frames the player (Studio's play-test panel).
-    this.embedded = new URLSearchParams(location.search).has("embed");
+    this.embedded = query.has("embed");
+    // The full mode is a parity/performance oracle; production defaults to
+    // damage uploads and keeps the old mode available without another build.
+    this.uploadMode = query.get("upload") === "full" ? "full" : "dirty";
     if (this.embedded) document.body.classList.add("embedded");
     this.stage = $("stage");
     this.canvas = $("screen");
@@ -1323,7 +1328,7 @@ export class Player {
     this.pool = new ContactPool();
     this.width = 0;
     this.height = 0;
-    this.image = null;
+    this.presenter = null;
     this.companions = new Set(config.companions ?? []);
     this.svc = [];
     this.serviceOut = [];
@@ -1363,6 +1368,25 @@ export class Player {
       ? new BrowserEditorHost(this, config.editor)
       : null;
     this.tick = this.tick.bind(this);
+    this.canvas.addEventListener("contextlost", (event) => {
+      event.preventDefault();
+      this.presenter?.invalidate();
+    });
+    this.canvas.addEventListener("contextrestored", () => {
+      this.context = this.canvas.getContext("2d");
+      this.context.imageSmoothingEnabled = false;
+      if (this.presenter) {
+        this.presenter.reset(this.context, this.canvas.width, this.canvas.height);
+      } else if (this.canvas.width > 0 && this.canvas.height > 0) {
+        this.presenter = createCanvasPresenter(
+          this.context,
+          this.canvas.width,
+          this.canvas.height,
+          { mode: this.uploadMode },
+        );
+      }
+      if (this.state === "running" && this.wasm) this.paint();
+    });
   }
 
   setState(state, message = "") {
@@ -1597,8 +1621,9 @@ export class Player {
   }
 
   paint() {
-    this.image.data.set(this.wasm.renderScaledIncremental(this.config.rasterDensity ?? 1));
-    this.context.putImageData(this.image, 0, 0);
+    const density = this.config.rasterDensity ?? 1;
+    const pixels = this.wasm.renderScaledIncremental(density);
+    this.presenter.present(pixels, this.wasm.damageRects(density));
   }
 
   onServiceLine(line) {
@@ -2206,7 +2231,16 @@ export class Player {
     this.canvas.width = width * density;
     this.canvas.height = height * density;
     this.context.imageSmoothingEnabled = false;
-    this.image = this.context.createImageData(width * density, height * density);
+    if (this.presenter) {
+      this.presenter.reset(this.context, width * density, height * density);
+    } else {
+      this.presenter = createCanvasPresenter(
+        this.context,
+        width * density,
+        height * density,
+        { mode: this.uploadMode },
+      );
+    }
     this.pool.resize(width, height);
     this.pool.clear();
     this.stage.dataset.logical = `${width}x${height}`;
