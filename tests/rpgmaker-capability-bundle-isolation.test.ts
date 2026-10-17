@@ -74,9 +74,13 @@ const EXPECTED_BYTES = {
   // The synced PocketJS style ABI and capability table add 146 B to each app
   // for contain, its enum values, and text.glyphs.runtime; graph reachability
   // and the implementation needles below remain unchanged.
+  // Optional connected-world actor projection adds 1,795 B to GameView-only
+  // Sunstone and 2,169 B to the travel-enabled positive control. The branch
+  // is dormant unless a world renderer supplies an actor space; Meadow does
+  // not reach GameView, and the capability needles below remain unchanged.
   meadow: 684_525,
-  sunstone: 1_108_708,
-  "rmi-play": 1_298_060,
+  sunstone: 1_110_503,
+  "rmi-play": 1_300_229,
 } as const;
 
 function implementationModules(app: string): string[] {
