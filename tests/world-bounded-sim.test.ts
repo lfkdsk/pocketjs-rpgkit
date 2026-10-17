@@ -60,6 +60,9 @@ interface ResidencySnapshot {
   upperResident: number;
   upperPooled: number;
   upperCreated: number;
+  upperRows: number;
+  upperSlices: number;
+  upperBindings: number;
   // Renderer.
   visibleMaps: number;
   driverVisible: number;
@@ -88,6 +91,9 @@ const snapshot = (mapId: string, handoffPhase: number | null): ResidencySnapshot
     upperResident: s.upper?.resident ?? 0,
     upperPooled: s.upper?.pooled ?? 0,
     upperCreated: s.upper?.created ?? 0,
+    upperRows: s.upper?.rowNodes ?? 0,
+    upperSlices: s.upper?.sliceNodes ?? 0,
+    upperBindings: s.upper?.textureBindings ?? 0,
     visibleMaps: s.ground?.visibleMaps.length ?? 0,
     driverVisible: s.driver?.visible.length ?? 0,
   };
@@ -116,6 +122,7 @@ const REVISIT_LAYERS = [
   "maps", "worlds", "tables", "staged", "pending", "preparing", "runtime", "repoCached",
   "groundTextures", "groundResident", "groundPooled", "groundCreated",
   "upperTextures", "upperResident", "upperPooled", "upperCreated",
+  "upperRows", "upperSlices", "upperBindings",
 ] as const;
 type RevisitLayer = (typeof REVISIT_LAYERS)[number];
 
@@ -242,6 +249,14 @@ simDescribe("connected world + cache driver bounded residency", () => {
     // The upper fixture really loads upper resources.
     expect(max(all.map((s) => s.upperTextures))).toBeGreaterThan(0);
     expect(max(all.map((s) => s.upperResident))).toBeGreaterThan(0);
+
+    // Row/slice nodes are a viewport high-water pool, not a per-map cache.
+    // This component is only four tiles high; at most ten 4-tile maps fit
+    // in the viewport plus its one-tile ring.
+    expect(max(all.map((s) => s.upperRows))).toBeLessThanOrEqual(MAP_SIZE);
+    expect(max(all.map((s) => s.upperSlices))).toBeLessThanOrEqual(MAP_SIZE * 10);
+    expect(max(all.map((s) => s.upperBindings))).toBeGreaterThan(0);
+    for (const s of all) expect(s.upperBindings).toBeLessThanOrEqual(s.upperSlices);
 
     // --- Node accounting: every created node is either live or pooled ---
     // Nodes are never destroyed, so resident + pooled must equal the

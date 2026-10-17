@@ -16,6 +16,7 @@ import {
 import { WorldAnimatedTiles } from "../WorldAnimatedTiles.tsx";
 import { WorldNpcPreview, type WorldNpcPreviewOptions } from "../WorldNpcPreview.tsx";
 import { WorldStreamedTerrain } from "../WorldStreamedTerrain.tsx";
+import type { ActorRenderSpace } from "../occlusion-depth.ts";
 import type {
   GameViewWorldConfig,
   GameViewWorldFactoryHost,
@@ -129,6 +130,17 @@ function createRuntime(host: GameViewWorldFactoryHost, options: WorldRendererOpt
     });
     const activeMapId = (): string => binding().placement.mapId;
     const component = (): WorldComponent => binding().render.component;
+    const actorSpace = createMemo<ActorRenderSpace>(() => {
+      const current = binding();
+      const bounds = current.render.component.bounds;
+      return {
+        offsetX: current.placement.originTileX * host.tileSize,
+        offsetY: current.placement.originTileY * host.tileSize,
+        minX: bounds.minTileX * host.tileSize,
+        minY: bounds.minTileY * host.tileSize,
+        width: (bounds.maxTileX - bounds.minTileX) * host.tileSize,
+      };
+    });
     const visibleMaps = (): readonly WorldPlacement[] => {
       const groundMargin = props.ground.margin() ?? props.stream.margin ?? TILE;
       const upperMargin = props.upper.margin() ?? props.stream.margin ?? TILE;
@@ -188,47 +200,44 @@ function createRuntime(host: GameViewWorldFactoryHost, options: WorldRendererOpt
             <ActiveMapPlane debugName="rpgkit-world-active-below">{props.below}</ActiveMapPlane>
           </>
         )}
-        actors={(() => {
-          const actors = (
-            <ActiveMapPlane debugName="rpgkit-world-active-actors">
-              <View
-                class="absolute"
-                nodeRef={props.actorHost}
-                debugName="rpgkit-world-actors"
-              >
-                {props.actors}
-              </View>
-            </ActiveMapPlane>
-          );
-          return props.preview && options.npcPreview !== false ? (
+        occlusion={(hostNode) => {
+          props.actorHost?.(hostNode, actorSpace);
+          const actors = props.preview && options.npcPreview !== false ? (
             <WorldNpcPreview
               source={props.preview}
               component={component}
               placements={visibleMaps}
               options={typeof options.npcPreview === "object" ? options.npcPreview : undefined}
+              host={hostNode}
             >
-              {actors}
+              {props.actors}
             </WorldNpcPreview>
-          ) : actors;
-        })()}
+          ) : props.actors;
+          return (
+            <>
+              {actors}
+              {props.animated ? (
+                <WorldAnimatedTiles
+                  activeMapId={activeMapId}
+                  component={component}
+                  visibleMaps={visibleMaps}
+                  tiles={props.animated}
+                  sourceKey={props.animatedSourceKey}
+                  above
+                  camera={props.camera}
+                  viewport={props.viewport}
+                  active={props.active}
+                  visible={props.upper.visible}
+                  debugName="rpgkit-world-anim-above"
+                  onStats={(stats) => props.onAnimatedStats?.("above", stats)}
+                  host={hostNode}
+                />
+              ) : null}
+            </>
+          );
+        }}
         above={(
           <>
-            {props.animated ? (
-              <WorldAnimatedTiles
-                activeMapId={activeMapId}
-                component={component}
-                visibleMaps={visibleMaps}
-                tiles={props.animated}
-                sourceKey={props.animatedSourceKey}
-                above
-                camera={props.camera}
-                viewport={props.viewport}
-                active={props.active}
-                visible={props.upper.visible}
-                debugName="rpgkit-world-anim-above"
-                onStats={(stats) => props.onAnimatedStats?.("above", stats)}
-              />
-            ) : null}
             <ActiveMapPlane debugName="rpgkit-world-active-above">{props.above}</ActiveMapPlane>
           </>
         )}

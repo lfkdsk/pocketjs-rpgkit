@@ -12,6 +12,14 @@
     "file": "assets/stream/preview-north-ground.pkts"
   },
   {
+    "key": "ui:tile.preview-occlusion-lab-ground",
+    "file": "assets/stream/preview-occlusion-lab-ground.pkts"
+  },
+  {
+    "key": "ui:tile.preview-occlusion-lab-upper",
+    "file": "assets/stream/preview-occlusion-lab-upper.pkts"
+  },
+  {
     "key": "ui:tile.preview-south-ground",
     "file": "assets/stream/preview-south-ground.pkts"
   },

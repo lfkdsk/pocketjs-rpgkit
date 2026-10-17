@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { TILE } from "../src/engine/tiles.ts";
-import { actorDepth, upperRowDepth } from "../src/ui/OccludingUpperLayer.tsx";
+import { actorDepth, actorDepthInSpace, upperRowDepth } from "../src/ui/occlusion-depth.ts";
 
 const REFERENCE_CELLS = [
   [7, 9], [10, 7], [19, 13], [8, 3], [20, 16], [24, 5], [21, 9],
@@ -38,5 +38,18 @@ describe("pyscroll-compatible actor depth", () => {
         ).toBe(hitsFeet);
       }
     }
+  });
+
+  test("normalizes signed component placements into the same depth plane", () => {
+    const space = { offsetX: -384, offsetY: -256, minX: -384, minY: -256, width: 768 };
+    const localX = 24 * TILE;
+    const row = 16;
+    expect(actorDepthInSpace(localX, row * TILE + 1, space))
+      .toBeLessThan(upperRowDepth(row, space.width));
+    expect(actorDepthInSpace(localX, row * TILE + 2, space))
+      .toBeGreaterThan(upperRowDepth(row, space.width));
+    expect(actorDepthInSpace(localX, row * TILE + 2, space)).toBe(
+      actorDepth(localX, row * TILE + 2, space.width),
+    );
   });
 });

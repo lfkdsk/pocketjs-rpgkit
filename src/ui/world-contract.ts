@@ -43,6 +43,7 @@ import type { WorldHandoffResolver } from "../engine/world-handoff-contract.ts";
 import type { AnimatedTilesStats } from "./AnimatedTiles.tsx";
 import type { StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
 import type { AnimatedTile, GameAssets, StreamedGameAssets } from "./game-assets.ts";
+import type { ActorRenderSpace } from "./occlusion-depth.ts";
 
 export type GameViewWorldBand = "ground" | "upper";
 
@@ -163,7 +164,9 @@ export interface GameViewWorldRenderProps {
   below?: JSX.Element;
   actors?: JSX.Element;
   above?: JSX.Element;
-  actorHost?: (node: NodeMirror) => void;
+  /** Receives the flat occlusion host and the active map's live projection
+   * into that host. Legacy renderers omit the space and remain map-local. */
+  actorHost?: (node: NodeMirror, space?: Accessor<ActorRenderSpace>) => void;
   /** Inputs for the read-only character preview of visible neighbour maps. */
   preview?: GameViewWorldPreviewSource;
   onStreamStats?: (layer: GameViewWorldBand, stats: StreamedChunkLayerStats) => void;

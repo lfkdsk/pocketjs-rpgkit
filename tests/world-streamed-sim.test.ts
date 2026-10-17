@@ -18,7 +18,10 @@ import {
   installGameSimIsolation,
   type BoundGameWorld,
 } from "./helpers/sim-session.ts";
-import type { WorldStreamedTransitionApi } from "./fixtures/world-streamed/world-streamed.tsx";
+import type {
+  WorldStreamedTileLoads,
+  WorldStreamedTransitionApi,
+} from "./fixtures/world-streamed/world-streamed.tsx";
 
 const preflight = appPreflight("world-streamed");
 if (!preflight.ok) console.warn(`world-streamed sim tests skipped: ${preflight.reason}`);
@@ -87,6 +90,12 @@ const fixtureStats = (): FixtureStats =>
   structuredClone(
     (globalThis as { __worldStreamedStats?: FixtureStats }).__worldStreamedStats ??
       { worldView: { mounts: 0, unmounts: 0 } },
+  );
+
+const tileLoads = (): WorldStreamedTileLoads =>
+  structuredClone(
+    (globalThis as { __worldStreamedTileLoads?: WorldStreamedTileLoads }).__worldStreamedTileLoads ??
+      { ground: 0, upper: 0 },
   );
 
 const preFrameCleanupReads = (): number | undefined =>
@@ -442,3 +451,28 @@ for (const viewport of [{ width: 480, height: 272 }, { width: 960, height: 544 }
     }, 60_000);
   });
 }
+
+simDescribe("connected world upper-row resources", () => {
+  test("shares one uploaded handle across viewport-bounded row slices", async () => {
+    const viewport = { width: 480, height: 272 } as const;
+    const camera = SHOTS.find((shot) => shot.name === "four-corner")!.camera(viewport);
+    const world = await bootGameWorld(
+      appBundle("world-streamed"),
+      60,
+      { __worldStreamedCamera: camera },
+      undefined,
+      viewport,
+    );
+    step(world);
+    const upper = fixtureStats().upper!;
+    const loads = tileLoads();
+    expect(upper.pending).toBe(0);
+    expect(upper.uploads).toBe(loads.upper);
+    expect(upper.uploads).toBe(upper.textures);
+    expect(upper.resident).toBe(upper.textures);
+    expect(upper.textureBindings).toBeGreaterThan(upper.textures);
+    expect(upper.sliceNodes).toBeGreaterThanOrEqual(upper.textureBindings!);
+    expect(upper.rowNodes).toBeLessThanOrEqual(Math.ceil(viewport.height / 16) + 3);
+    expect(upper.sliceNodes).toBeLessThanOrEqual(upper.rowNodes! * 4);
+  });
+});

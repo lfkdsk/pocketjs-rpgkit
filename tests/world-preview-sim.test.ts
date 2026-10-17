@@ -8,10 +8,12 @@ import { decodePng } from "../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import type { WorldNpcPreviewStats } from "../src/ui/WorldNpcPreview.tsx";
 import {
+  ABOVE_ANIM_COLOUR,
   COLOURS,
   FACER_COLOURS,
   MAP_H,
   MAP_W,
+  OCCLUSION_MAP,
   PLACED,
   PLAYER_COLOUR,
   SPAWNED_AUTHORED,
@@ -81,9 +83,18 @@ function lastPreview(): WorldNpcPreviewStats {
 async function boot(
   viewport: Viewport,
   hz = 60,
-  mode: "preview" | "sandbox" | "spawn-static" | "off" | "legacy" = "preview",
+  mode:
+    | "preview" | "sandbox" | "spawn-static" | "off" | "legacy"
+    | "occlusion" | "occlusion-legacy" = "preview",
+  initialPlayer?: { px: number; py: number },
 ): Promise<BoundGameWorld> {
-  return bootGameWorld(appBundle("world-preview"), hz, { __worldPreviewMode: mode }, undefined, viewport);
+  return bootGameWorld(
+    appBundle("world-preview"),
+    hz,
+    { __worldPreviewMode: mode, __worldPreviewInitialPlayer: initialPlayer },
+    undefined,
+    viewport,
+  );
 }
 
 function step(world: BoundGameWorld, buttons = 0, frames = 1): void {
@@ -216,7 +227,9 @@ simDescribe("world renderer neighbour preview", () => {
       expect(at(east(3, 9))).toEqual([...ground("east")]);
       expect(at(east(1, 3))).toEqual([...ground("east")]);
       expect(at(east(1, 8))).toEqual([...ground("east")]);
-      // Within one band, world (y, x) depth orders overlapping previews.
+      // World depth keeps the tall row-3 preview in front of both the short
+      // row-2 preview and row-2 upper terrain. A whole-upper overlay would
+      // expose the upper marker here instead.
       expect(at(east(8, 2))).toEqual([...COLOURS.atall]);
       expect(at(east(8, 3))).toEqual([...COLOURS.atall]);
       expect(at(east(8, 1))).toEqual([...ground("east")]);
@@ -264,6 +277,9 @@ simDescribe("world renderer neighbour preview", () => {
         expect(countColour(frame, COLOURS.wander), `${label} wanderer`).toBe(256);
         expect(tilePixel(world, frame, viewport, east(2, 6)), `${label} static cell`).toEqual([...FACER_LEFT]);
         expect(tilePixel(world, frame, viewport, east(3, 9)), `${label} gated cell`).toEqual([...COLOURS.gated]);
+        // This tall actor crosses the row-2 upper marker. It must remain in
+        // front before, on, and after the preview-to-live handoff.
+        expect(tilePixel(world, frame, viewport, east(8, 2)), `${label} row occlusion`).toEqual([...COLOURS.atall]);
         if (!live) {
           // Until the commit frame the wanderer is the static snapshot.
           expect(tilePixel(world, frame, viewport, east(4, 3)), `${label} wanderer cell`).toEqual([...COLOURS.wander]);
@@ -559,6 +575,83 @@ simDescribe("world renderer neighbour preview", () => {
     expect(countColour(legacyFrame, FACER_LEFT)).toBe(0);
     expect(countColour(legacyFrame, COLOURS.tall)).toBe(0);
   });
+});
+
+simDescribe("connected-world upper-row parity", () => {
+  const viewport = { width: 240, height: 160 } as const;
+  const tile = 16;
+  const playerX = 24 * tile;
+  const rowY = 16 * tile;
+  const originX = OCCLUSION_MAP.originTileX * tile;
+  const originY = OCCLUSION_MAP.originTileY * tile;
+
+  async function capture(
+    mode: "occlusion" | "occlusion-legacy",
+    py: number,
+  ): Promise<{ frame: Uint8Array; camera: { x: number; y: number; facing: number }; state: string }> {
+    const world = await boot(viewport, 60, mode, { px: playerX, py });
+    step(world);
+    expect(probe().error).toBeNull();
+    return {
+      frame: world.render().slice(),
+      camera: { ...world.probes().camera },
+      state: JSON.stringify(world.probes().state),
+    };
+  }
+
+  test("matches the legacy plane above, below, and on both two-pixel boundaries", async () => {
+    const samples = new Map<number, { frame: Uint8Array; camera: { x: number; y: number; facing: number } }>();
+    for (const py of [rowY - tile, rowY + 1, rowY + 2, rowY + tile]) {
+      const legacy = await capture("occlusion-legacy", py);
+      const connected = await capture("occlusion", py);
+      expect(connected.state, `state at py=${py}`).toBe(legacy.state);
+      expect({
+        x: connected.camera.x - originX,
+        y: connected.camera.y - originY,
+        facing: connected.camera.facing,
+      }, `local camera at py=${py}`).toEqual(legacy.camera);
+      expect(
+        connected.frame.findIndex((value, index) => value !== legacy.frame[index]),
+        `first differing pixel at py=${py}`,
+      ).toBe(-1);
+      samples.set(py, { frame: connected.frame, camera: legacy.camera });
+    }
+
+    const sampleAtUpper = (py: number): number[] => {
+      const sample = samples.get(py)!;
+      return rgbaAt(
+        sample.frame,
+        viewport,
+        playerX + tile / 2 - sample.camera.x,
+        rowY + tile / 2 - sample.camera.y,
+      );
+    };
+    const noOverlap = sampleAtUpper(rowY - tile);
+    const rowAboveActor = sampleAtUpper(rowY + 1);
+    const actorAboveRow = sampleAtUpper(rowY + 2);
+    const actorBelowRow = sampleAtUpper(rowY + tile);
+    expect(noOverlap).not.toEqual([...PLAYER_COLOUR]);
+    expect(rowAboveActor).not.toEqual([...PLAYER_COLOUR]);
+    expect(rowAboveActor).not.toEqual(noOverlap);
+    expect(rowAboveActor[3]).toBe(255);
+    expect(actorAboveRow).toEqual([...PLAYER_COLOUR]);
+    expect(actorBelowRow).toEqual([...PLAYER_COLOUR]);
+
+    // One frame also covers same-column actor ordering and above-animation
+    // row depth on both sides of the boundary.
+    const sample = samples.get(rowY + 2)!;
+    const at = (tileX: number, tileY: number): number[] => rgbaAt(
+      sample.frame,
+      viewport,
+      tileX * tile + tile / 2 - sample.camera.x,
+      tileY * tile + tile / 2 - sample.camera.y,
+    );
+    expect(at(26, 15)).toEqual([...COLOURS.wtall]);
+    expect(at(26, 16)).toEqual([...COLOURS.atall]);
+    expect(at(26, 17)).toEqual([...COLOURS.atall]);
+    expect(at(28, 16)).toEqual([...COLOURS.tall]);
+    expect(at(29, 16)).toEqual([...ABOVE_ANIM_COLOUR]);
+  }, 60_000);
 });
 
 /** Pixels of the spawned character's colour (the "row" sprite; west's own

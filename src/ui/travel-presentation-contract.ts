@@ -5,6 +5,7 @@ import type { ExtensionRuntime } from "../engine/extensions.ts";
 import type { SessionState } from "../engine/session.ts";
 import type { SpriteDef } from "../engine/types.ts";
 import type { GameAssets } from "./game-assets.ts";
+import type { ActorRenderSpace } from "./occlusion-depth.ts";
 
 export interface PlayerRenderFrame {
   src: string;
@@ -27,6 +28,7 @@ export interface TravelActorsProps {
   sprites: Readonly<Record<string, SpriteDef>>;
   npcSrc: GameAssets["npcSrc"];
   worldWidth: number;
+  space?: Accessor<ActorRenderSpace>;
   active?: Accessor<boolean>;
   /** Kept in the contract for future game-owned travel art decisions. */
   extensions?: ExtensionRuntime;

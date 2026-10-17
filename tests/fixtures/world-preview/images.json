@@ -2,6 +2,12 @@
   "assets/player.png": {
     "psm": 3
   },
+  "assets/player-tall.png": {
+    "psm": 3
+  },
+  "assets/anim/above.png": {
+    "psm": 3
+  },
   "assets/npc/wander.png": {
     "psm": 3
   },

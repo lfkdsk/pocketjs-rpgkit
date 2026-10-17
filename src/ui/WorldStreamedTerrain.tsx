@@ -9,10 +9,12 @@ import { getOps } from "@pocketjs/framework/host";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import {
   createElement,
+  insert,
   insertNode,
   setProp,
   type NodeMirror,
 } from "@pocketjs/framework/renderer";
+import { ENUMS } from "../../vendor/pocketjs/contracts/spec/spec.ts";
 import { freeTileTexture, loadTileTexture } from "../../vendor/pocketjs/framework/src/tiles.ts";
 import {
   chunkWindow,
@@ -24,6 +26,7 @@ import {
 import { TILE } from "../engine/tiles.ts";
 import type { WorldComponent, WorldPlacement } from "../engine/types.ts";
 import type { StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
+import { upperRowDepth } from "./occlusion-depth.ts";
 
 export type WorldStreamedTerrainBand = "ground" | "upper";
 
@@ -47,6 +50,10 @@ export interface WorldStreamedTerrainStats extends StreamedChunkLayerStats {
   componentId: string;
   /** Sorted map ids offered by visiblePlacements for this sync. */
   visibleMaps: readonly string[];
+  /** Upper-only row compositor high-water marks. */
+  rowNodes?: number;
+  sliceNodes?: number;
+  textureBindings?: number;
 }
 
 export interface WorldStreamedTerrainProps {
@@ -67,18 +74,22 @@ export interface WorldStreamedTerrainProps {
   /** While false, residency and uploads pause with the kept-alive world. */
   active?: Accessor<boolean>;
   debugName?: string;
-  /** Slots are deliberately siblings: ground -> below -> actors -> upper -> above. */
+  /** Slots are deliberately siblings: ground -> below -> flat upper/actors -> above. */
   below?: SolidJSX.Element;
-  actors?: SolidJSX.Element;
+  /** Insert actors, preview actors and above animated cells into the flat
+   * upper-row host. */
+  occlusion?: (host: NodeMirror) => SolidJSX.Element;
   above?: SolidJSX.Element;
   onStats?: (band: WorldStreamedTerrainBand, stats: WorldStreamedTerrainStats) => void;
 }
 
 interface LiveChunk {
-  node: NodeMirror;
+  node?: NodeMirror;
   handle: number;
   mapId: string;
   index: number;
+  x: number;
+  y: number;
 }
 
 interface BandState {
@@ -100,6 +111,19 @@ interface BandState {
   created: number;
   uploads: number;
   frees: number;
+  virtualPooled: number;
+}
+
+interface UpperSlice {
+  node: NodeMirror;
+  key: string;
+}
+
+interface UpperRow {
+  node: NodeMirror;
+  worldY: number;
+  slices: UpperSlice[];
+  used: boolean;
 }
 
 interface MissingChunk {
@@ -176,7 +200,8 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       insetT: 0,
       width: 0,
       height: 0,
-      display: visible ? 0 : 1,
+      // Upper rows share this root with actors, so only their row nodes hide.
+      display: band === "upper" || visible ? 0 : 1,
     });
     setProp(root, "debugName", `${props.debugName ?? "rpgkit-world-terrain"}-${band}`);
     return {
@@ -197,6 +222,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       created: 0,
       uploads: 0,
       frees: 0,
+      virtualPooled: 0,
     };
   };
 
@@ -206,24 +232,176 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
   let currentComponent: WorldComponent | undefined;
   let reportedPlacements: readonly WorldPlacement[] | undefined;
   let visibleMapIds: readonly string[] = [];
+  const upperRows: UpperRow[] = [];
+  const upperUsers = new Map<string, Set<NodeMirror>>();
+  let upperRowsDirty = true;
+  let upperWindowX0 = Number.NaN;
+  let upperWindowY0 = Number.NaN;
+  let upperWindowX1 = Number.NaN;
+  let upperWindowY1 = Number.NaN;
+
+  const clearUpperSlice = (slice: UpperSlice): void => {
+    if (slice.key === "") return;
+    const users = upperUsers.get(slice.key);
+    users?.delete(slice.node);
+    if (users?.size === 0) upperUsers.delete(slice.key);
+    getOps().setImage(slice.node.id, -1);
+    slice.key = "";
+  };
+
+  const clearUpperRows = (): void => {
+    for (const row of upperRows) {
+      for (const slice of row.slices) clearUpperSlice(slice);
+      row.used = false;
+    }
+    upperWindowX0 = upperWindowY0 = upperWindowX1 = upperWindowY1 = Number.NaN;
+    upperRowsDirty = true;
+  };
+
+  const makeUpperRow = (component: WorldComponent, worldY: number): UpperRow => {
+    const minX = component.bounds.minTileX * TILE;
+    const minY = component.bounds.minTileY * TILE;
+    const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
+    const node = createElement("view");
+    setProp(node, "style", {
+      posType: 1,
+      insetL: 0,
+      insetT: 0,
+      translateX: minX,
+      translateY: worldY,
+      width,
+      height: TILE,
+      overflow: ENUMS.Overflow.Hidden,
+      zIndex: upperRowDepth((worldY - minY) / TILE, width),
+      display: upper.visible ? 0 : 1,
+    });
+    insertNode(upper.root, node);
+    return { node, worldY, slices: [], used: false };
+  };
+
+  const makeUpperSlice = (row: UpperRow): UpperSlice => {
+    const node = createElement("image");
+    setProp(node, "style", {
+      posType: 1,
+      insetL: 0,
+      insetT: 0,
+      width: props.chunkPx,
+      height: props.chunkPx,
+    });
+    insertNode(row.node, node);
+    const slice = { node, key: "" };
+    row.slices.push(slice);
+    return slice;
+  };
+
+  const bindUpperSlice = (
+    row: UpperRow,
+    slice: UpperSlice,
+    key: string,
+    chunk: LiveChunk | undefined,
+    component: WorldComponent,
+  ): void => {
+    if (slice.key === key && key !== "" && upperUsers.get(key)?.has(slice.node)) return;
+    clearUpperSlice(slice);
+    if (!chunk || key === "") return;
+    const minX = component.bounds.minTileX * TILE;
+    setProp(slice.node, "style", {
+      translateX: chunk.x - minX,
+      translateY: chunk.y - row.worldY,
+    }, slice.node.domAttrs?.style);
+    setProp(slice.node, "debugName", `rpgkit-world-upper-row-${row.worldY / TILE}-${chunk.mapId}-${chunk.index}`);
+    slice.key = key;
+    const users = upperUsers.get(key) ?? new Set<NodeMirror>();
+    users.add(slice.node);
+    upperUsers.set(key, users);
+    getOps().setImage(slice.node.id, chunk.handle);
+  };
+
+  const syncUpperRows = (
+    component: WorldComponent,
+    camera: ChunkPoint,
+    viewport: ChunkViewport,
+  ): boolean => {
+    const x0 = camera.x - TILE;
+    const x1 = camera.x + viewport.w + TILE;
+    const y0 = Math.max(component.bounds.minTileY, Math.floor((camera.y - TILE) / TILE));
+    const y1 = Math.min(component.bounds.maxTileY - 1, Math.ceil((camera.y + viewport.h + TILE) / TILE) - 1);
+    if (!upperRowsDirty && x0 === upperWindowX0 && y0 === upperWindowY0 &&
+        x1 === upperWindowX1 && y1 === upperWindowY1) return false;
+    upperWindowX0 = x0;
+    upperWindowY0 = y0;
+    upperWindowX1 = x1;
+    upperWindowY1 = y1;
+    const count = Math.max(0, y1 - y0 + 1);
+    while (upperRows.length < count) upperRows.push(makeUpperRow(component, (y0 + upperRows.length) * TILE));
+    for (const row of upperRows) row.used = false;
+    const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
+    const minX = component.bounds.minTileX * TILE;
+    const minY = component.bounds.minTileY * TILE;
+    for (let tileY = y0; tileY <= y1; tileY++) {
+      const slot = ((tileY % upperRows.length) + upperRows.length) % upperRows.length;
+      const row = upperRows[slot]!;
+      const worldY = tileY * TILE;
+      row.used = true;
+      if (row.worldY !== worldY) {
+        for (const slice of row.slices) clearUpperSlice(slice);
+        row.worldY = worldY;
+      }
+      setProp(row.node, "style", {
+        translateX: minX,
+        translateY: worldY,
+        width,
+        zIndex: upperRowDepth((worldY - minY) / TILE, width),
+        display: upper.visible ? 0 : 1,
+      }, row.node.domAttrs?.style);
+      setProp(row.node, "debugName", `rpgkit-world-upper-row-${tileY}`);
+      const wanted = [...upper.live.entries()]
+        .filter(([, chunk]) =>
+          chunk.x < x1 && chunk.x + props.chunkPx > x0 &&
+          worldY >= chunk.y && worldY < chunk.y + props.chunkPx
+        )
+        .sort((a, b) => a[1].x - b[1].x || compareText(a[1].mapId, b[1].mapId) || a[1].index - b[1].index);
+      while (row.slices.length < wanted.length) makeUpperSlice(row);
+      for (let index = 0; index < row.slices.length; index++) {
+        const entry = wanted[index];
+        bindUpperSlice(row, row.slices[index]!, entry?.[0] ?? "", entry?.[1], component);
+      }
+    }
+    for (const row of upperRows) {
+      if (!row.used) for (const slice of row.slices) clearUpperSlice(slice);
+    }
+    upperRowsDirty = false;
+    return true;
+  };
+
+  insert(upper.root, () => props.occlusion?.(upper.root));
 
   const release = (state: BandState, key: string, chunk: LiveChunk): void => {
-    getOps().setImage(chunk.node.id, -1);
+    if (chunk.node) {
+      getOps().setImage(chunk.node.id, -1);
+      state.pool.push(chunk.node);
+    } else {
+      for (const node of upperUsers.get(key) ?? []) getOps().setImage(node.id, -1);
+      upperUsers.delete(key);
+      state.virtualPooled++;
+      upperRowsDirty = true;
+    }
     if (chunk.handle >= 0) {
       freeTileTexture(chunk.handle);
       state.frees++;
     }
     state.live.delete(key);
-    state.pool.push(chunk.node);
   };
 
   const clear = (state: BandState): void => {
     for (const [key, chunk] of [...state.live]) release(state, key, chunk);
+    if (state.band === "upper") clearUpperRows();
     state.windows.clear();
     state.pending = false;
   };
 
   const nodeFor = (state: BandState, mapId: string, index: number): NodeMirror => {
+    if (state.band !== "ground") throw new Error("WorldStreamedTerrain: upper chunks use row slices");
     const reused = state.pool.pop();
     if (reused) {
       setProp(
@@ -260,11 +438,18 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       resident: state.live.size,
       textures,
       textureBytes: textures * (1024 + props.chunkPx * props.chunkPx),
-      pooled: state.pool.length,
+      pooled: state.band === "upper" ? state.virtualPooled : state.pool.length,
       created: state.created,
       uploads: state.uploads,
       frees: state.frees,
       pending,
+      ...(state.band === "upper"
+        ? {
+            rowNodes: upperRows.length,
+            sliceNodes: upperRows.reduce((sum, row) => sum + row.slices.length, 0),
+            textureBindings: [...upperUsers.values()].reduce((sum, users) => sum + users.size, 0),
+          }
+        : {}),
     });
   };
 
@@ -409,17 +594,24 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       if (visible !== state.visible) {
         state.visible = visible;
         visibilityChanged = true;
-        setProp(state.root, "style", { display: visible ? 0 : 1 }, state.root.domAttrs?.style);
+        if (state.band === "upper") {
+          for (const row of upperRows) {
+            setProp(row.node, "style", { display: visible ? 0 : 1 }, row.node.domAttrs?.style);
+          }
+        } else {
+          setProp(state.root, "style", { display: visible ? 0 : 1 }, state.root.domAttrs?.style);
+        }
       }
     }
 
     const groundMissing = workFor(ground, component, placements, camera, viewport, componentChanged);
     const upperMissing = workFor(upper, component, placements, camera, viewport, componentChanged);
     if (groundMissing === undefined && upperMissing === undefined) {
+      const rowsChanged = syncUpperRows(component, camera, viewport);
       if (visibilityChanged) {
         report(ground, component, 0);
         report(upper, component, 0);
-      }
+      } else if (rowsChanged) report(upper, component, 0);
       return;
     }
     const missing = groundMissing === undefined
@@ -444,20 +636,30 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       if (loaded[entry.band] >= budget[entry.band]) continue;
       const state = entry.band === "ground" ? ground : upper;
       const parsed = parseRef(entry.ref);
-      const node = nodeFor(state, entry.mapId, entry.index);
-      jump(node, "translateX", entry.x);
-      jump(node, "translateY", entry.y);
+      const node = state.band === "ground" ? nodeFor(state, entry.mapId, entry.index) : undefined;
+      if (node) {
+        jump(node, "translateX", entry.x);
+        jump(node, "translateY", entry.y);
+      } else if (state.virtualPooled > 0) {
+        state.virtualPooled--;
+      } else {
+        state.created++;
+      }
       const handle = load(parsed.key, parsed.index);
       if (handle >= 0) {
-        getOps().setImage(node.id, handle);
+        if (node) getOps().setImage(node.id, handle);
         state.uploads++;
       }
-      state.live.set(liveKey(entry.mapId, entry.band, entry.index), {
+      const key = liveKey(entry.mapId, entry.band, entry.index);
+      state.live.set(key, {
         node,
         handle,
         mapId: entry.mapId,
         index: entry.index,
+        x: entry.x,
+        y: entry.y,
       });
+      if (state.band === "upper") upperRowsDirty = true;
       loaded[entry.band]++;
     }
     if (captureLoaded) {
@@ -472,11 +674,13 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       ground.pending = pending > 0;
       report(ground, component, pending);
     } else if (visibilityChanged) report(ground, component, 0);
+    let upperReportPending: number | undefined;
     if (upperMissing !== undefined) {
-      const pending = Math.max(0, upperMissing.length - loaded.upper);
-      upper.pending = pending > 0;
-      report(upper, component, pending);
-    } else if (visibilityChanged) report(upper, component, 0);
+      upperReportPending = Math.max(0, upperMissing.length - loaded.upper);
+      upper.pending = upperReportPending > 0;
+    } else if (visibilityChanged) upperReportPending = 0;
+    syncUpperRows(component, camera, viewport);
+    if (upperReportPending !== undefined) report(upper, component, upperReportPending);
   };
 
   // A Show branch can mount after the host froze this frame's callback list
@@ -499,13 +703,14 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       if (component) report(state, component, 0);
       state.pool.length = 0;
     }
+    upperRows.length = 0;
+    upperUsers.clear();
   });
 
   return (
     <>
       {ground.root as unknown as SolidJSX.Element}
       {props.below}
-      {props.actors}
       {upper.root as unknown as SolidJSX.Element}
       {props.above}
     </>

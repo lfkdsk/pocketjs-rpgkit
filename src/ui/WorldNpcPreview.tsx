@@ -46,6 +46,7 @@ import {
   type WorldMapPreview,
 } from "../engine/world-preview.ts";
 import { npcArt, npcArtHeight, npcArtKey } from "./npc-art.ts";
+import { actorDepth } from "./occlusion-depth.ts";
 import type {
   GameViewWorldPreviewSource,
   WorldNpcPreviewStats,
@@ -140,6 +141,9 @@ export function WorldNpcPreview(props: {
   component: Accessor<WorldComponent>;
   placements: Accessor<readonly WorldPlacement[]>;
   options?: WorldNpcPreviewOptions;
+  /** Flat connected-world occlusion host. When present, preview nodes and
+   * active actor children are siblings of upper terrain rows. */
+  host?: NodeMirror;
   children?: JSX.Element;
 }): JSX.Element {
   const source = props.source;
@@ -166,8 +170,8 @@ export function WorldNpcPreview(props: {
       return index.rejected.has(eventId) ? undefined : null;
     };
   }
-  let behindHost: NodeMirror | undefined;
-  let frontHost: NodeMirror | undefined;
+  let behindHost: NodeMirror | undefined = props.host;
+  let frontHost: NodeMirror | undefined = props.host;
   const behindSlots: PreviewSlot[] = [];
   const frontSlots: PreviewSlot[] = [];
   let lastActive = "";
@@ -263,7 +267,7 @@ export function WorldNpcPreview(props: {
     const component = props.component();
     const minX = component.bounds.minTileX * TILE;
     const minY = component.bounds.minTileY * TILE;
-    const stride = (component.bounds.maxTileX - component.bounds.minTileX) * TILE + 1;
+    const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
     const activePlacement = component.placements.find((placement) => placement.mapId === active);
     const activeTop = activePlacement ? activePlacement.originTileY * TILE : -Infinity;
     behind.length = 0;
@@ -299,7 +303,7 @@ export function WorldNpcPreview(props: {
           height: npcArtHeight(art),
           x,
           y,
-          depth: (y - minY) * stride + (x - minX),
+          depth: actorDepth(x - minX, y - minY, width),
           opacity,
         });
       };
@@ -377,7 +381,7 @@ export function WorldNpcPreview(props: {
     });
   });
 
-  return (
+  return props.host ? (props.children ?? null) : (
     <>
       <View
         class="absolute"

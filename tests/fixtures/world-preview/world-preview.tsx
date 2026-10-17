@@ -5,8 +5,9 @@ import type { SaveSnapshot } from "../../../src/engine/save.ts";
 import type { SessionState } from "../../../src/engine/session.ts";
 import { loadIntoView } from "../../../src/ui/session-saves.ts";
 import { createWorldRenderer, type WorldNpcPreviewStats } from "../../../src/ui/world/index.ts";
-import { GAME_ASSETS } from "./assets-game.ts";
+import { GAME_ASSETS, OCCLUSION_GAME_ASSETS } from "./assets-game.ts";
 import {
+  OCCLUSION_PROJECT,
   WORLD_PREVIEW_LEGACY_PROJECT,
   WORLD_PREVIEW_PROJECT,
   WORLD_PREVIEW_SANDBOX_PROJECT,
@@ -33,9 +34,14 @@ declare global {
   /** "preview" (default), "sandbox" (sandboxed-entry preview of the
    * spawning project), "spawn-static" (static preview of that project),
    * "off" (renderer with npcPreview: false) or "legacy" (no connected-world
-   * renderer at all). */
+   * renderer at all), or the signed single-map occlusion fixture with or
+   * without the connected renderer. */
   // eslint-disable-next-line no-var
-  var __worldPreviewMode: "preview" | "sandbox" | "spawn-static" | "off" | "legacy" | undefined;
+  var __worldPreviewMode:
+    | "preview" | "sandbox" | "spawn-static" | "off" | "legacy"
+    | "occlusion" | "occlusion-legacy" | undefined;
+  // eslint-disable-next-line no-var
+  var __worldPreviewInitialPlayer: { px: number; py: number } | undefined;
 }
 
 const probe: WorldPreviewFixtureProbe = { queue: [], error: null, previews: [] };
@@ -43,7 +49,8 @@ globalThis.__worldPreviewProbe = probe;
 const mode = globalThis.__worldPreviewMode ?? "preview";
 globalThis.__worldPreviewMode = undefined;
 
-const world = mode === "legacy"
+const occlusion = mode === "occlusion" || mode === "occlusion-legacy";
+const world = mode === "legacy" || mode === "occlusion-legacy"
   ? undefined
   : createWorldRenderer(
     mode === "off" ? { npcPreview: false } : mode === "sandbox" ? { npcPreview: { sandbox: true } } : {},
@@ -53,6 +60,24 @@ let saved: SaveSnapshot | undefined;
 let kept: SessionState | undefined;
 const overlay: GameViewOverlayConfig = {
   create(host) {
+    const initialPlayer = globalThis.__worldPreviewInitialPlayer;
+    globalThis.__worldPreviewInitialPlayer = undefined;
+    if (initialPlayer) {
+      const current = host.getState();
+      host.replaceState({
+        ...current,
+        move: {
+          ...current.move,
+          tx: Math.floor(initialPlayer.px / 16),
+          ty: Math.floor(initialPlayer.py / 16),
+          px: initialPlayer.px,
+          py: initialPlayer.py,
+          moving: false,
+          walking: false,
+          stepDir: 0,
+        },
+      });
+    }
     return {
       step() {
         const command = probe.queue.shift();
@@ -83,10 +108,12 @@ const overlay: GameViewOverlayConfig = {
 
 mount(() => (
   <GameView
-    project={mode === "legacy"
+    project={occlusion
+      ? OCCLUSION_PROJECT
+      : mode === "legacy"
       ? WORLD_PREVIEW_LEGACY_PROJECT
       : mode === "sandbox" || mode === "spawn-static" ? WORLD_PREVIEW_SANDBOX_PROJECT : WORLD_PREVIEW_PROJECT}
-    assets={GAME_ASSETS}
+    assets={occlusion ? OCCLUSION_GAME_ASSETS : GAME_ASSETS}
     world={world}
     overlay={overlay}
     onWorldPreviewStats={(stats) => { probe.previews.push(stats); }}

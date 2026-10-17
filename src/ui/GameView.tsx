@@ -146,7 +146,12 @@ import {
 import { ChunkLayer } from "./ChunkLayer.tsx";
 import { npcArt, npcArtHeight, npcArtKey, spritePaints } from "./npc-art.ts";
 import { StreamedChunkLayer, type StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
-import { actorDepth, OccludingUpperLayer } from "./OccludingUpperLayer.tsx";
+import { OccludingUpperLayer } from "./OccludingUpperLayer.tsx";
+import {
+  actorDepth,
+  actorDepthInSpace,
+  type ActorRenderSpace,
+} from "./occlusion-depth.ts";
 import { startupProfileMark } from "../startup-profile.ts";
 import { frameProfileMark } from "../frame-profile.ts";
 import { attractRewindOptions, type GameViewDemoConfig, type GameViewOverlayConfig, type GameViewSessionHost } from "./demo-contract.ts";
@@ -386,6 +391,8 @@ function CurrentMapActors(props: {
    *  nodes there so they stay siblings of the clipped upper rows. */
   host: () => NodeMirror | undefined;
   worldWidth: number;
+  /** Connected-world projection. Omitted by the legacy map-local plane. */
+  space?: Accessor<ActorRenderSpace>;
   sprites: Sprites;
   npcSrc: GameAssets["npcSrc"];
   tileEventVariants?: GameAssets["tileEventVariants"];
@@ -429,7 +436,18 @@ function CurrentMapActors(props: {
   const renderPlayerY = travelPresentation?.playerY ?? ordinaryPlayerY;
   const TravelActors = travelPresentation?.Actors;
   let slots = props.slots();
-  const stride = props.worldWidth;
+  const localSpace: ActorRenderSpace = {
+    offsetX: 0,
+    offsetY: 0,
+    minX: 0,
+    minY: 0,
+    width: props.worldWidth,
+  };
+  let space = props.space?.() ?? localSpace;
+  const depthPoint = (x: number, y: number): readonly [number, number] => [
+    space.offsetX + x - space.minX,
+    space.offsetY + y - space.minY,
+  ];
   let created = 0;
   /** Create one pool slot. At mount `slots` holds the start map and the
    *  initial state is current, so slots bind their event's art directly.
@@ -451,7 +469,7 @@ function CurrentMapActors(props: {
       : HIDDEN_NPC_FRAME;
     const node = createElement("image");
     setProp(node, "style", npcStyle(
-      frame[3], actorDepth(frame[0], frame[1], stride), frame[4], frame[5],
+      frame[3], actorDepthInSpace(frame[0], frame[1], space), frame[4], frame[5],
     ));
     setProp(node, "src", frame[2]);
     if (source) setProp(node, "debugName", `rpgkit-npc-${source.id}`);
@@ -501,7 +519,7 @@ function CurrentMapActors(props: {
     }
   };
 
-  const [playerDepth, setPlayerDepth] = createSignal(actorDepth(initial.move.px, initial.move.py, stride));
+  const [playerDepth, setPlayerDepth] = createSignal(actorDepthInSpace(initial.move.px, initial.move.py, space));
   const [playerVisual, setPlayerVisual] = createSignal(
     renderPlayer(initial, props.sprites, props.npcSrc, props.player, props.playerHeight),
   );
@@ -512,10 +530,10 @@ function CurrentMapActors(props: {
   let { x: cx, y: cy } = props.camera();
   let order = depthOrder(
     [
-      [initial.move.px, heroPy],
-      ...npcs.slice(0, slots.length).map((npc) => [npc.px, npc.py] as const),
+      depthPoint(initial.move.px, heroPy),
+      ...npcs.slice(0, slots.length).map((npc) => depthPoint(npc.px, npc.py)),
     ],
-    stride,
+    space.width,
   );
 
   const compilePositions = (): void => {
@@ -536,12 +554,12 @@ function CurrentMapActors(props: {
     const camera = props.camera();
     positions.set(0, -camera.x);
     positions.set(1, -camera.y);
-    positions.set(2, state.move.px);
-    positions.set(3, renderPlayerY(state));
+    positions.set(2, space.offsetX + state.move.px);
+    positions.set(3, space.offsetY + renderPlayerY(state));
     for (let index = 0; index < slots.length; index++) {
       const npc = npcs[index]!;
-      positions!.set(4 + index * 2, npc.px);
-      positions!.set(5 + index * 2, npc.py);
+      positions!.set(4 + index * 2, space.offsetX + npc.px);
+      positions!.set(5 + index * 2, space.offsetY + npc.py);
     }
     positions.commit();
     px = state.move.px;
@@ -579,6 +597,26 @@ function CurrentMapActors(props: {
     }
     let moved = false;
     let dirty = transfer;
+    const nextSpace = props.space?.() ?? localSpace;
+    const spaceChanged = nextSpace.offsetX !== space.offsetX || nextSpace.offsetY !== space.offsetY ||
+      nextSpace.minX !== space.minX || nextSpace.minY !== space.minY || nextSpace.width !== space.width;
+    if (spaceChanged) {
+      space = nextSpace;
+      dirty = true;
+      // A transfer can grow the actor pool. Its existing jump batch still
+      // describes the source map until compilePositions() rebuilds it below,
+      // so do not address destination slots through that stale batch.
+      if (!transfer) {
+        positions?.set(2, space.offsetX + state.move.px);
+        positions?.set(3, space.offsetY + renderPlayerY(state));
+        for (let index = 0; index < slots.length; index++) {
+          const npc = npcs[index]!;
+          positions?.set(4 + index * 2, space.offsetX + npc.px);
+          positions?.set(5 + index * 2, space.offsetY + npc.py);
+        }
+        moved = true;
+      }
+    }
     const camera = props.camera();
     if (!transfer && (camera.x !== cx || camera.y !== cy)) {
       positions?.set(0, -camera.x);
@@ -587,8 +625,8 @@ function CurrentMapActors(props: {
     }
     const nextHeroPy = renderPlayerY(state);
     if (!transfer && (state.move.px !== px || nextHeroPy !== heroPy)) {
-      positions?.set(2, state.move.px);
-      positions?.set(3, nextHeroPy);
+      positions?.set(2, space.offsetX + state.move.px);
+      positions?.set(3, space.offsetY + nextHeroPy);
       moved = true;
       dirty = true;
     }
@@ -635,8 +673,8 @@ function CurrentMapActors(props: {
       npc.character = character;
       npc.appearance = appearance;
       if (!transfer && source && (npc.px !== frame[0] || npc.py !== frame[1])) {
-        positions?.set(4 + index * 2, frame[0]);
-        positions?.set(5 + index * 2, frame[1]);
+        positions?.set(4 + index * 2, space.offsetX + frame[0]);
+        positions?.set(5 + index * 2, space.offsetY + frame[1]);
         moved = true;
         dirty = true;
       }
@@ -646,19 +684,19 @@ function CurrentMapActors(props: {
     previousCharacters = state.chars.chars;
     previousAppearances = state.interp.eventAppearances;
     previousTileset = state.interp.tileset;
-    let reorder = transfer;
+    let reorder = transfer || spaceChanged;
     if (dirty) {
       const nextOrder = depthOrder([
-        [state.move.px, nextHeroPy],
-        ...npcs.slice(0, slots.length).map((npc) => npc.frame),
-      ], stride);
+        depthPoint(state.move.px, nextHeroPy),
+        ...npcs.slice(0, slots.length).map((npc) => depthPoint(npc.frame[0], npc.frame[1])),
+      ], space.width);
       reorder ||= order !== nextOrder;
       order = nextOrder;
     }
     if (transfer) compilePositions();
     else if (moved) positions?.commit();
     if (reorder || (initial.travel?.vehicles !== undefined && nextHeroPy !== heroPy)) {
-      setPlayerDepth(actorDepth(state.move.px, nextHeroPy, stride));
+      setPlayerDepth(actorDepthInSpace(state.move.px, nextHeroPy, space));
     }
     const paintAll = transfer || reorder;
     const paintCount = paintAll ? touched : scanCount;
@@ -675,7 +713,7 @@ function CurrentMapActors(props: {
         changed = true;
       }
       const depth = slots[index] && reorder
-        ? actorDepth(frame[0], frame[1], stride)
+        ? actorDepthInSpace(frame[0], frame[1], space)
         : oldStyle?.zIndex ?? 0;
       const display = frame[5] ? 0 : 1;
       if (!oldStyle || oldStyle.height !== frame[3] || oldStyle.zIndex !== depth ||
@@ -733,7 +771,8 @@ function CurrentMapActors(props: {
           state={props.state}
           sprites={props.sprites}
           npcSrc={props.npcSrc}
-          worldWidth={stride}
+          worldWidth={space.width}
+          space={() => space}
           active={props.active}
         />
       ) : null}
@@ -1393,6 +1432,13 @@ export function GameView(props: GameViewProps) {
     : project.maps.map((map) => ({ id: map.id, width: map.width, height: map.height }));
   const dimensionsById = new Map(dimensions.map((map) => [map.id, map]));
   const worldWidth = Math.max(1, ...dimensions.map((map) => map.width * TILE));
+  const localActorSpace: ActorRenderSpace = {
+    offsetX: 0,
+    offsetY: 0,
+    minX: 0,
+    minY: 0,
+    width: worldWidth,
+  };
   const currentSlots = (): readonly GameEvent[] => {
     for (const id of [...slotCache.keys()]) if (!mapsById.has(id)) slotCache.delete(id);
     let slots = slotCache.get(state.mapId);
@@ -1764,6 +1810,7 @@ export function GameView(props: GameViewProps) {
   let worldNode: NodeMirror | undefined;
   // The upper-plane root the actor pool mounts under; growth inserts there.
   let actorHost: NodeMirror | undefined;
+  let actorSpace: Accessor<ActorRenderSpace> | undefined;
   let blocked: {
     buttons: number;
     input?: SessionInput;
@@ -2188,6 +2235,7 @@ export function GameView(props: GameViewProps) {
                 cap={actorSlotCap}
                 host={() => actorHost}
                 worldWidth={worldWidth}
+                space={worldRenderer ? () => actorSpace?.() ?? localActorSpace : undefined}
                 sprites={sprites}
                 npcSrc={assets.npcSrc}
                 tileEventVariants={assets.tileEventVariants}
@@ -2383,7 +2431,10 @@ export function GameView(props: GameViewProps) {
                 below={<ActiveBelow />}
                 actors={<ActiveActors />}
                 above={<ActiveAbove />}
-                actorHost={(node) => { actorHost = node; }}
+                actorHost={(node, space) => {
+                  actorHost = node;
+                  actorSpace = space;
+                }}
                 preview={worldPreview}
                 onStreamStats={props.onStreamStats}
                 onAnimatedStats={props.onAnimatedStats}

@@ -42,27 +42,14 @@ import type { AnimatedTilesStats } from "./AnimatedTiles.tsx";
 import type { GameAssets, MapLayerVariant } from "./game-assets.ts";
 import type { StreamedChunkLayerStats } from "./StreamedChunkLayer.tsx";
 import { startupProfileMark } from "../startup-profile.ts";
+import { actorDepth, upperRowDepth } from "./occlusion-depth.ts";
+
+export { actorDepth, upperRowDepth } from "./occlusion-depth.ts";
 
 const EMPTY_WINDOW: ChunkWindow = { x0: 0, y0: 0, x1: -1, y1: -1 };
 
 function sameWindow(a: ChunkWindow, b: ChunkWindow): boolean {
   return a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1;
-}
-
-function depthStride(worldWidth: number): number {
-  return Math.max(1, Math.floor(worldWidth) + 1);
-}
-
-/** Paint order for one actor, lexicographically sorted by (y, x). */
-export function actorDepth(px: number, py: number, worldWidth: number): number {
-  return Math.floor(py) * depthStride(worldWidth) + Math.floor(px);
-}
-
-/** Paint order for one upper row under the two-pixel foot-damage model.
- *  It falls strictly after every actor at rowY + 1 and strictly before every
- *  actor at rowY + 2. */
-export function upperRowDepth(tileY: number, worldWidth: number): number {
-  return (tileY * TILE + 2) * depthStride(worldWidth) - 1;
 }
 
 interface AboveTile {

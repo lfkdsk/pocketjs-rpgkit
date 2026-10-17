@@ -4,6 +4,7 @@
 // its own solid colour so pixel probes can tell exactly which one painted.
 
 import type { GameEvent, MapDef, Project, TileId, WorldLayout } from "../../../src/engine/types.ts";
+import type { AnimatedTile } from "../../../src/ui/game-assets.ts";
 
 export type Rgba = readonly [number, number, number, number];
 
@@ -14,21 +15,39 @@ export const OPENING = "west:east:row-6";
 export const RETURN_OPENING = "east:west:row-7";
 
 export const PLACED = [
-  { id: "west", originTileX: 0, originTileY: 0, ground: [46, 92, 60, 255] as Rgba, upper: [240, 220, 120, 255] as Rgba },
-  { id: "east", originTileX: MAP_W, originTileY: 0, ground: [60, 70, 120, 255] as Rgba, upper: [250, 250, 250, 255] as Rgba },
-  { id: "south", originTileX: 0, originTileY: MAP_H, ground: [110, 80, 50, 255] as Rgba, upper: [200, 120, 220, 255] as Rgba },
-  { id: "north", originTileX: 0, originTileY: -MAP_H, ground: [70, 110, 110, 255] as Rgba, upper: [90, 90, 40, 255] as Rgba },
+  { id: "west", width: MAP_W, height: MAP_H, originTileX: 0, originTileY: 0, ground: [46, 92, 60, 255] as Rgba, upper: [240, 220, 120, 255] as Rgba },
+  { id: "east", width: MAP_W, height: MAP_H, originTileX: MAP_W, originTileY: 0, ground: [60, 70, 120, 255] as Rgba, upper: [250, 250, 250, 255] as Rgba },
+  { id: "south", width: MAP_W, height: MAP_H, originTileX: 0, originTileY: MAP_H, ground: [110, 80, 50, 255] as Rgba, upper: [200, 120, 220, 255] as Rgba },
+  { id: "north", width: MAP_W, height: MAP_H, originTileX: 0, originTileY: -MAP_H, ground: [70, 110, 110, 255] as Rgba, upper: [90, 90, 40, 255] as Rgba },
 ] as const;
+
+/** A separate one-map signed component used to compare the legacy and
+ * connected renderers without camera clamping. */
+export const OCCLUSION_MAP = {
+  id: "occlusion-lab",
+  width: 48,
+  height: 32,
+  originTileX: -24,
+  originTileY: -16,
+  ground: [28, 54, 82, 255] as Rgba,
+  upper: [80, 220, 120, 128] as Rgba,
+} as const;
+
+export const COOKED_MAPS = [...PLACED, OCCLUSION_MAP] as const;
 
 /** Upper-band markers (map-local tiles) that paint above characters. */
 export const UPPER_MARKERS: Readonly<Record<string, readonly (readonly [number, number])[]>> = {
   west: [],
-  east: [[6, 6]],
+  // e-a-tall's lower foot row is 3, so row 2 must stay behind it. The
+  // e-under marker on row 6 must stay in front of its same-row actor.
+  east: [[6, 6], [8, 2]],
   south: [],
   north: [],
+  "occlusion-lab": [[24, 16], [26, 16]],
 };
 
 export const PLAYER_COLOUR: Rgba = [250, 244, 248, 255];
+export const ABOVE_ANIM_COLOUR: Rgba = [246, 64, 214, 255];
 /** One idle colour per facing (down, left, up, right) for the walker. */
 export const FACER_COLOURS: readonly Rgba[] = [
   [220, 40, 40, 255],
@@ -228,15 +247,34 @@ const SOUTH_EVENTS: GameEvent[] = [
   { id: "s-tall", x: 5, y: 0, pages: [{ trigger: "action", sprite: "tall", dir: "down", commands: [] }] },
 ];
 
-const ground = (): TileId[] => Array.from({ length: MAP_W * MAP_H }, () => "fixture.0");
+const LAB_EVENTS: GameEvent[] = [
+  // Two tall actors share a column. The row-17 actor overlaps and must paint
+  // in front of both the row-16 actor and row-16 upper terrain.
+  { id: "lab-back", x: 26, y: 16, pages: [{ trigger: "action", sprite: "wtall", commands: [] }] },
+  { id: "lab-front", x: 26, y: 17, pages: [{ trigger: "action", sprite: "atall", commands: [] }] },
+  // Above-animation boundary pair: row 16 is behind the tall row-17 actor,
+  // but in front of the short actor whose feet remain on row 16.
+  { id: "lab-anim-front", x: 28, y: 17, pages: [{ trigger: "action", sprite: "tall", commands: [] }] },
+  { id: "lab-anim-back", x: 29, y: 16, pages: [{ trigger: "action", sprite: "under", commands: [] }] },
+];
 
-const mapDef = (id: string, events: GameEvent[]): MapDef => ({
+export const ANIMATED: Readonly<Record<string, readonly AnimatedTile[]>> = {
+  "occlusion-lab": [
+    { x: 28, y: 16, above: true, sprite: "assets/anim/above.png" },
+    { x: 29, y: 16, above: true, sprite: "assets/anim/above.png" },
+  ],
+};
+
+const ground = (width = MAP_W, height = MAP_H): TileId[] =>
+  Array.from({ length: width * height }, () => "fixture.0");
+
+const mapDef = (id: string, events: GameEvent[], width = MAP_W, height = MAP_H): MapDef => ({
   id,
   name: id,
-  width: MAP_W,
-  height: MAP_H,
+  width,
+  height,
   sheets: ["fixture"],
-  ground: ground(),
+  ground: ground(width, height),
   events,
 });
 
@@ -271,6 +309,35 @@ export const WORLD_PREVIEW_PROJECT: Project = {
     mapDef("north", NORTH_EVENTS),
     mapDef("south", SOUTH_EVENTS),
   ],
+};
+
+export const OCCLUSION_PROJECT: Project = {
+  ...WORLD_PREVIEW_PROJECT,
+  title: "Connected-world row occlusion fixture",
+  start: { map: OCCLUSION_MAP.id, x: 24, y: 16, dir: "down" },
+  worldLayout: {
+    topologyHash: "6".repeat(64),
+    components: [{
+      worldId: "occlusion-world",
+      componentId: "signed-single-map",
+      bounds: {
+        minTileX: OCCLUSION_MAP.originTileX,
+        minTileY: OCCLUSION_MAP.originTileY,
+        maxTileX: OCCLUSION_MAP.originTileX + OCCLUSION_MAP.width,
+        maxTileY: OCCLUSION_MAP.originTileY + OCCLUSION_MAP.height,
+      },
+      placements: [{
+        mapId: OCCLUSION_MAP.id,
+        originTileX: OCCLUSION_MAP.originTileX,
+        originTileY: OCCLUSION_MAP.originTileY,
+        width: OCCLUSION_MAP.width,
+        height: OCCLUSION_MAP.height,
+      }],
+      seams: [],
+      openings: [],
+    }],
+  },
+  maps: [mapDef(OCCLUSION_MAP.id, LAB_EVENTS, OCCLUSION_MAP.width, OCCLUSION_MAP.height)],
 };
 
 /** The legacy view's project: east also holds walkers authored facing up

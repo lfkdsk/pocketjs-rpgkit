@@ -6,7 +6,11 @@ import { walkPose } from "../engine/movement.ts";
 import type { SessionState } from "../engine/session.ts";
 import type { SpriteDef } from "../engine/types.ts";
 import type { GameAssets, NpcArt } from "./game-assets.ts";
-import { actorDepth } from "./OccludingUpperLayer.tsx";
+import {
+  actorDepth,
+  actorDepthInSpace,
+  type ActorRenderSpace,
+} from "./occlusion-depth.ts";
 
 type Sprites = Readonly<Record<string, SpriteDef>>;
 
@@ -53,17 +57,20 @@ export interface AirshipShadowFrame {
 export function airshipShadowFrame(
   state: Readonly<SessionState>,
   worldWidth: number,
+  space?: ActorRenderSpace,
 ): AirshipShadowFrame {
   const vehicles = state.travel?.vehicles;
   const riding = vehicles?.riding;
   const vehicle = riding ? vehicles!.entries.find((entry) => entry.id === riding) : undefined;
   const altitude = vehicle?.kind === "airship" ? vehicles!.airshipAltitude : 0;
   return {
-    px: state.move.px + 2,
-    py: state.move.py + 11,
+    px: (space?.offsetX ?? 0) + state.move.px + 2,
+    py: (space?.offsetY ?? 0) + state.move.py + 11,
     opacity: Math.max(0, Math.min(1, altitude / 16)),
     visible: vehicle?.kind === "airship" && vehicle.mapId === state.mapId && altitude > 0,
-    depth: actorDepth(state.move.px, state.move.py, worldWidth) - 1,
+    depth: (space
+      ? actorDepthInSpace(state.move.px, state.move.py, space)
+      : actorDepth(state.move.px, state.move.py, worldWidth)) - 1,
   };
 }
 
@@ -80,16 +87,19 @@ function travelFrame(
   sprites: Sprites,
   npcSrc: GameAssets["npcSrc"],
   worldWidth: number,
+  space?: ActorRenderSpace,
 ): TravelActorFrame {
   const art = actorArt(sprite, sprites, npcSrc);
   return {
     id,
-    px: move.px,
-    py: move.py,
+    px: (space?.offsetX ?? 0) + move.px,
+    py: (space?.offsetY ?? 0) + move.py,
     src: actorArtKey(art, move.phase, move.facing),
     height: typeof art === "string" ? 16 : art.h,
     visible: visible && art !== "",
-    depth: actorDepth(move.px, move.py, worldWidth),
+    depth: space
+      ? actorDepthInSpace(move.px, move.py, space)
+      : actorDepth(move.px, move.py, worldWidth),
   };
 }
 
@@ -100,6 +110,7 @@ export function travelActorFrames(
   sprites: Sprites,
   npcSrc: GameAssets["npcSrc"],
   worldWidth: number,
+  space?: ActorRenderSpace,
 ): { followers: TravelActorFrame[]; vehicles: TravelActorFrame[] } {
   const riding = state.travel?.vehicles?.riding ?? null;
   const followers = state.travel?.followers;
@@ -112,6 +123,7 @@ export function travelActorFrames(
       sprites,
       npcSrc,
       worldWidth,
+      space,
     )),
     vehicles: (state.travel?.vehicles?.entries ?? []).map((vehicle) => travelFrame(
       vehicle.id,
@@ -121,6 +133,7 @@ export function travelActorFrames(
       sprites,
       npcSrc,
       worldWidth,
+      space,
     )),
   };
 }

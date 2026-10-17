@@ -1,4 +1,5 @@
 import { mount } from "@pocketjs/framework";
+import { loadTileTexture } from "../../../vendor/pocketjs/framework/src/tiles.ts";
 import { onCleanup, onMount, type Component } from "solid-js";
 import {
   GameView,
@@ -33,6 +34,11 @@ export interface WorldStreamedTransitionApi {
   error: string | null;
 }
 
+export interface WorldStreamedTileLoads {
+  ground: number;
+  upper: number;
+}
+
 declare global {
   // eslint-disable-next-line no-var
   var __worldStreamedCamera: { x: number; y: number } | undefined;
@@ -46,6 +52,8 @@ declare global {
   var __worldStreamedLegacy: boolean | undefined;
   // eslint-disable-next-line no-var
   var __worldStreamedTransition: WorldStreamedTransitionApi | undefined;
+  // eslint-disable-next-line no-var
+  var __worldStreamedTileLoads: WorldStreamedTileLoads | undefined;
 }
 
 // Regression probe: disposing the terrain subtree before its first frame must
@@ -75,6 +83,18 @@ globalThis.__worldStreamedPreFrameCleanupReads = cleanupReads;
 
 const stats: WorldStreamedFixtureStats = { worldView: { mounts: 0, unmounts: 0 } };
 globalThis.__worldStreamedStats = stats;
+const tileLoads: WorldStreamedTileLoads = { ground: 0, upper: 0 };
+globalThis.__worldStreamedTileLoads = tileLoads;
+const trackedAssets = {
+  ...GAME_ASSETS,
+  stream: {
+    ...GAME_ASSETS.stream!,
+    loadTile(key: string, index: number): number {
+      tileLoads[key.includes("-upper") ? "upper" : "ground"]++;
+      return loadTileTexture(key, index);
+    },
+  },
+};
 
 function trackedWorldRenderer(): GameViewWorldConfig {
   const factory = createWorldRenderer();
@@ -156,7 +176,7 @@ globalThis.__worldStreamedLegacy = undefined;
 mount(() => (
   <GameView
     project={WORLD_STREAMED_PROJECT}
-    assets={GAME_ASSETS}
+    assets={trackedAssets}
     world={world}
     overlay={transitions}
     debugWorldCamera={() => globalThis.__worldStreamedCamera}

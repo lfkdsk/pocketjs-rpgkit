@@ -17,6 +17,7 @@ import { TILE } from "../engine/tiles.ts";
 import type { ChunkPoint, ChunkViewport } from "../engine/chunk-window.ts";
 import type { AnimatedTile } from "./game-assets.ts";
 import type { AnimatedTilesStats } from "./AnimatedTiles.tsx";
+import { upperRowDepth } from "./occlusion-depth.ts";
 
 export interface WorldAnimatedTilesProps {
   activeMapId: () => string;
@@ -33,6 +34,9 @@ export interface WorldAnimatedTilesProps {
   visible?: () => boolean;
   debugName?: string;
   onStats?: (stats: AnimatedTilesStats) => void;
+  /** Optional flat upper/actor host. Used only by above tiles so their row
+   * depth can interleave with characters. */
+  host?: NodeMirror;
 }
 
 interface LiveTile {
@@ -50,18 +54,23 @@ const mapIsVisible = (placements: readonly WorldPlacement[], mapId: string): boo
 
 /** One z-band of component-qualified animated tiles. */
 export function WorldAnimatedTiles(props: WorldAnimatedTilesProps): SolidJSX.Element {
-  const root = createElement("view");
+  if (props.host && !props.above) {
+    throw new Error("WorldAnimatedTiles: a flat occlusion host is only valid for above tiles");
+  }
+  const root = props.host ?? createElement("view");
   let paintedVisible = props.visible?.() ?? true;
-  setProp(root, "style", {
-    posType: 1,
-    insetL: 0,
-    insetT: 0,
-    width: 0,
-    height: 0,
-    display: paintedVisible ? 0 : 1,
-  });
+  if (!props.host) {
+    setProp(root, "style", {
+      posType: 1,
+      insetL: 0,
+      insetT: 0,
+      width: 0,
+      height: 0,
+      display: paintedVisible ? 0 : 1,
+    });
+  }
   const baseName = props.debugName ?? (props.above ? "rpgkit-world-anim-above" : "rpgkit-world-anim-below");
-  setProp(root, "debugName", baseName);
+  if (!props.host) setProp(root, "debugName", baseName);
 
   const live = new Map<string, LiveTile>();
   const pool: NodeMirror[] = [];
@@ -108,7 +117,13 @@ export function WorldAnimatedTiles(props: WorldAnimatedTilesProps): SolidJSX.Ele
     const nextVisible = props.visible?.() ?? true;
     if (nextVisible !== paintedVisible) {
       paintedVisible = nextVisible;
-      setProp(root, "style", { display: paintedVisible ? 0 : 1 }, root.domAttrs?.style);
+      if (props.host) {
+        for (const tile of live.values()) {
+          setProp(tile.node, "style", { display: paintedVisible ? 0 : 1 }, tile.node.domAttrs?.style);
+        }
+      } else {
+        setProp(root, "style", { display: paintedVisible ? 0 : 1 }, root.domAttrs?.style);
+      }
     }
     const component = props.component();
     const componentKey = `${component.worldId}\0${component.componentId}`;
@@ -170,6 +185,13 @@ export function WorldAnimatedTiles(props: WorldAnimatedTilesProps): SolidJSX.Ele
           continue;
         }
         const node = nodeFor();
+        if (props.host) {
+          const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
+          setProp(node, "style", {
+            zIndex: upperRowDepth(worldY - component.bounds.minTileY, width),
+            display: paintedVisible ? 0 : 1,
+          }, node.domAttrs?.style);
+        }
         jump(node, "translateX", worldX * TILE);
         jump(node, "translateY", worldY * TILE);
         setProp(node, "debugName", `${baseName}-${placement.mapId}-${tile.x},${tile.y}`);
@@ -188,5 +210,5 @@ export function WorldAnimatedTiles(props: WorldAnimatedTilesProps): SolidJSX.Ele
     clear();
     report();
   });
-  return root as unknown as SolidJSX.Element;
+  return (props.host ? null : root) as unknown as SolidJSX.Element;
 }
