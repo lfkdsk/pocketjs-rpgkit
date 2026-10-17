@@ -381,6 +381,7 @@ export function OccludingUpperLayer(props: OccludingUpperLayerProps): SolidJSX.E
       zIndex: upperRowDepth(y, worldWidth),
       display: upperVisible ? 0 : 1,
     });
+    setProp(node, "debugName", `rpgkit-upper-row-${y}`);
     insertNode(root, node);
     const row: LiveRow = { node, y, images: [], indices: [], animations: new Map(), used: false };
     for (let x = 0; x < slices; x++) makeImage(row, x);
@@ -510,8 +511,8 @@ export function OccludingUpperLayer(props: OccludingUpperLayerProps): SolidJSX.E
           translateY: y * TILE,
           zIndex: upperRowDepth(y, worldWidth),
         }, row.node.domAttrs?.style);
+        setProp(row.node, "debugName", `rpgkit-upper-row-${y}`, row.node.domAttrs?.debugName);
       }
-      setProp(row.node, "debugName", `rpgkit-upper-row-${y}`);
       syncRow(row, tileWin, chunkWin);
     }
     for (const row of rows) if (!row.used) clearRow(row);

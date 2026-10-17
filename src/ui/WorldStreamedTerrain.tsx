@@ -54,6 +54,12 @@ export interface WorldStreamedTerrainStats extends StreamedChunkLayerStats {
   rowNodes?: number;
   sliceNodes?: number;
   textureBindings?: number;
+  /** Cumulative upper compositor work counters for diagnostics/regression tests. */
+  rowSyncs?: number;
+  chunkSorts?: number;
+  rowStyleWrites?: number;
+  rowNameWrites?: number;
+  imageWrites?: number;
 }
 
 export interface WorldStreamedTerrainProps {
@@ -84,6 +90,7 @@ export interface WorldStreamedTerrainProps {
 }
 
 interface LiveChunk {
+  key: string;
   node?: NodeMirror;
   handle: number;
   mapId: string;
@@ -122,6 +129,11 @@ interface UpperSlice {
 interface UpperRow {
   node: NodeMirror;
   worldY: number;
+  minX: number;
+  width: number;
+  zIndex: number;
+  display: number;
+  debugName: string;
   slices: UpperSlice[];
   used: boolean;
 }
@@ -234,11 +246,18 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
   let visibleMapIds: readonly string[] = [];
   const upperRows: UpperRow[] = [];
   const upperUsers = new Map<string, Set<NodeMirror>>();
+  const upperVisibleChunks: LiveChunk[] = [];
+  const upperRowBuckets: LiveChunk[][] = [];
   let upperRowsDirty = true;
   let upperWindowX0 = Number.NaN;
   let upperWindowY0 = Number.NaN;
   let upperWindowX1 = Number.NaN;
   let upperWindowY1 = Number.NaN;
+  let upperRowSyncs = 0;
+  let upperChunkSorts = 0;
+  let upperRowStyleWrites = 0;
+  let upperRowNameWrites = 0;
+  let upperImageWrites = 0;
 
   const clearUpperSlice = (slice: UpperSlice): void => {
     if (slice.key === "") return;
@@ -246,6 +265,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     users?.delete(slice.node);
     if (users?.size === 0) upperUsers.delete(slice.key);
     getOps().setImage(slice.node.id, -1);
+    upperImageWrites++;
     slice.key = "";
   };
 
@@ -262,6 +282,9 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     const minX = component.bounds.minTileX * TILE;
     const minY = component.bounds.minTileY * TILE;
     const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
+    const zIndex = upperRowDepth((worldY - minY) / TILE, width);
+    const display = upper.visible ? 0 : 1;
+    const debugName = `rpgkit-world-upper-row-${worldY / TILE}`;
     const node = createElement("view");
     setProp(node, "style", {
       posType: 1,
@@ -272,11 +295,14 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       width,
       height: TILE,
       overflow: ENUMS.Overflow.Hidden,
-      zIndex: upperRowDepth((worldY - minY) / TILE, width),
-      display: upper.visible ? 0 : 1,
+      zIndex,
+      display,
     });
+    upperRowStyleWrites++;
+    setProp(node, "debugName", debugName);
+    upperRowNameWrites++;
     insertNode(upper.root, node);
-    return { node, worldY, slices: [], used: false };
+    return { node, worldY, minX, width, zIndex, display, debugName, slices: [], used: false };
   };
 
   const makeUpperSlice = (row: UpperRow): UpperSlice => {
@@ -315,6 +341,45 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     users.add(slice.node);
     upperUsers.set(key, users);
     getOps().setImage(slice.node.id, chunk.handle);
+    upperImageWrites++;
+  };
+
+  const updateUpperRow = (
+    row: UpperRow,
+    component: WorldComponent,
+    tileY: number,
+  ): void => {
+    const worldY = tileY * TILE;
+    const minX = component.bounds.minTileX * TILE;
+    const minY = component.bounds.minTileY * TILE;
+    const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
+    const zIndex = upperRowDepth((worldY - minY) / TILE, width);
+    const display = upper.visible ? 0 : 1;
+    if (row.worldY !== worldY) {
+      for (const slice of row.slices) clearUpperSlice(slice);
+    }
+    if (row.worldY !== worldY || row.minX !== minX || row.width !== width ||
+        row.zIndex !== zIndex || row.display !== display) {
+      setProp(row.node, "style", {
+        translateX: minX,
+        translateY: worldY,
+        width,
+        zIndex,
+        display,
+      }, row.node.domAttrs?.style);
+      upperRowStyleWrites++;
+      row.worldY = worldY;
+      row.minX = minX;
+      row.width = width;
+      row.zIndex = zIndex;
+      row.display = display;
+    }
+    const debugName = `rpgkit-world-upper-row-${tileY}`;
+    if (row.debugName !== debugName) {
+      setProp(row.node, "debugName", debugName, row.node.domAttrs?.debugName);
+      upperRowNameWrites++;
+      row.debugName = debugName;
+    }
   };
 
   const syncUpperRows = (
@@ -322,12 +387,16 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     camera: ChunkPoint,
     viewport: ChunkViewport,
   ): boolean => {
-    const x0 = camera.x - TILE;
-    const x1 = camera.x + viewport.w + TILE;
+    // The clip and camera already hide anything outside the exact viewport.
+    // Keep a conservative tile-aligned horizontal window so walking one pixel
+    // does not resubmit every row and image binding.
+    const x0 = Math.floor((camera.x - TILE) / TILE) * TILE;
+    const x1 = Math.ceil((camera.x + viewport.w + TILE) / TILE) * TILE;
     const y0 = Math.max(component.bounds.minTileY, Math.floor((camera.y - TILE) / TILE));
     const y1 = Math.min(component.bounds.maxTileY - 1, Math.ceil((camera.y + viewport.h + TILE) / TILE) - 1);
     if (!upperRowsDirty && x0 === upperWindowX0 && y0 === upperWindowY0 &&
         x1 === upperWindowX1 && y1 === upperWindowY1) return false;
+    upperRowSyncs++;
     upperWindowX0 = x0;
     upperWindowY0 = y0;
     upperWindowX1 = x1;
@@ -335,36 +404,36 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     const count = Math.max(0, y1 - y0 + 1);
     while (upperRows.length < count) upperRows.push(makeUpperRow(component, (y0 + upperRows.length) * TILE));
     for (const row of upperRows) row.used = false;
-    const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
-    const minX = component.bounds.minTileX * TILE;
-    const minY = component.bounds.minTileY * TILE;
+    while (upperRowBuckets.length < count) upperRowBuckets.push([]);
+    for (let index = 0; index < count; index++) upperRowBuckets[index]!.length = 0;
+    upperVisibleChunks.length = 0;
+    for (const chunk of upper.live.values()) {
+      if (chunk.x < x1 && chunk.x + props.chunkPx > x0 &&
+          chunk.y < (y1 + 1) * TILE && chunk.y + props.chunkPx > y0 * TILE) {
+        upperVisibleChunks.push(chunk);
+      }
+    }
+    upperVisibleChunks.sort((a, b) =>
+      a.x - b.x || compareText(a.mapId, b.mapId) || a.index - b.index
+    );
+    upperChunkSorts++;
+    for (const chunk of upperVisibleChunks) {
+      const first = Math.max(y0, Math.ceil(chunk.y / TILE));
+      const last = Math.min(y1, Math.ceil((chunk.y + props.chunkPx) / TILE) - 1);
+      for (let tileY = first; tileY <= last; tileY++) {
+        upperRowBuckets[tileY - y0]!.push(chunk);
+      }
+    }
     for (let tileY = y0; tileY <= y1; tileY++) {
       const slot = ((tileY % upperRows.length) + upperRows.length) % upperRows.length;
       const row = upperRows[slot]!;
-      const worldY = tileY * TILE;
       row.used = true;
-      if (row.worldY !== worldY) {
-        for (const slice of row.slices) clearUpperSlice(slice);
-        row.worldY = worldY;
-      }
-      setProp(row.node, "style", {
-        translateX: minX,
-        translateY: worldY,
-        width,
-        zIndex: upperRowDepth((worldY - minY) / TILE, width),
-        display: upper.visible ? 0 : 1,
-      }, row.node.domAttrs?.style);
-      setProp(row.node, "debugName", `rpgkit-world-upper-row-${tileY}`);
-      const wanted = [...upper.live.entries()]
-        .filter(([, chunk]) =>
-          chunk.x < x1 && chunk.x + props.chunkPx > x0 &&
-          worldY >= chunk.y && worldY < chunk.y + props.chunkPx
-        )
-        .sort((a, b) => a[1].x - b[1].x || compareText(a[1].mapId, b[1].mapId) || a[1].index - b[1].index);
+      updateUpperRow(row, component, tileY);
+      const wanted = upperRowBuckets[tileY - y0]!;
       while (row.slices.length < wanted.length) makeUpperSlice(row);
       for (let index = 0; index < row.slices.length; index++) {
-        const entry = wanted[index];
-        bindUpperSlice(row, row.slices[index]!, entry?.[0] ?? "", entry?.[1], component);
+        const chunk = wanted[index];
+        bindUpperSlice(row, row.slices[index]!, chunk?.key ?? "", chunk, component);
       }
     }
     for (const row of upperRows) {
@@ -381,7 +450,10 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       getOps().setImage(chunk.node.id, -1);
       state.pool.push(chunk.node);
     } else {
-      for (const node of upperUsers.get(key) ?? []) getOps().setImage(node.id, -1);
+      for (const node of upperUsers.get(key) ?? []) {
+        getOps().setImage(node.id, -1);
+        upperImageWrites++;
+      }
       upperUsers.delete(key);
       state.virtualPooled++;
       upperRowsDirty = true;
@@ -448,6 +520,11 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
             rowNodes: upperRows.length,
             sliceNodes: upperRows.reduce((sum, row) => sum + row.slices.length, 0),
             textureBindings: [...upperUsers.values()].reduce((sum, users) => sum + users.size, 0),
+            rowSyncs: upperRowSyncs,
+            chunkSorts: upperChunkSorts,
+            rowStyleWrites: upperRowStyleWrites,
+            rowNameWrites: upperRowNameWrites,
+            imageWrites: upperImageWrites,
           }
         : {}),
     });
@@ -596,7 +673,12 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
         visibilityChanged = true;
         if (state.band === "upper") {
           for (const row of upperRows) {
-            setProp(row.node, "style", { display: visible ? 0 : 1 }, row.node.domAttrs?.style);
+            const display = visible ? 0 : 1;
+            if (row.display !== display) {
+              setProp(row.node, "style", { display }, row.node.domAttrs?.style);
+              upperRowStyleWrites++;
+              row.display = display;
+            }
           }
         } else {
           setProp(state.root, "style", { display: visible ? 0 : 1 }, state.root.domAttrs?.style);
@@ -652,6 +734,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       }
       const key = liveKey(entry.mapId, entry.band, entry.index);
       state.live.set(key, {
+        key,
         node,
         handle,
         mapId: entry.mapId,

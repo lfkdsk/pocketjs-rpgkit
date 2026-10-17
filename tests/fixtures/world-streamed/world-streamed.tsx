@@ -30,6 +30,7 @@ export interface WorldStreamedFixtureStats {
 export interface WorldStreamedTransitionApi {
   /** Queue one or more save-backed map replacements for the next host frame. */
   transition(...mapIds: string[]): void;
+  setCamera(x: number, y: number): void;
   loads: number;
   error: string | null;
 }
@@ -116,6 +117,9 @@ let queuedMaps: string[] = [];
 const transitionApi: WorldStreamedTransitionApi = {
   transition(...mapIds) {
     queuedMaps = [...mapIds];
+  },
+  setCamera(x, y) {
+    globalThis.__worldStreamedCamera = { x, y };
   },
   loads: 0,
   error: null,

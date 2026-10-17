@@ -453,6 +453,35 @@ for (const viewport of [{ width: 480, height: 272 }, { width: 960, height: 544 }
 }
 
 simDescribe("connected world upper-row resources", () => {
+  test("quantizes row syncs and performs one sorted, zero-write pass per tile window", async () => {
+    const viewport = { width: 480, height: 272 } as const;
+    const camera = { x: -200, y: -136 };
+    const world = await bootGameWorld(
+      appBundle("world-streamed"),
+      60,
+      { __worldStreamedCamera: camera },
+      undefined,
+      viewport,
+    );
+    step(world);
+    const before = fixtureStats().upper!;
+
+    transitionApi().setCamera(camera.x + 1, camera.y);
+    step(world);
+    const subTile = fixtureStats().upper!;
+    expect(subTile.rowSyncs).toBe(before.rowSyncs);
+    expect(subTile.chunkSorts).toBe(before.chunkSorts);
+
+    transitionApi().setCamera(camera.x + 16, camera.y);
+    step(world);
+    const nextTile = fixtureStats().upper!;
+    expect(nextTile.rowSyncs).toBe(before.rowSyncs! + 1);
+    expect(nextTile.chunkSorts).toBe(before.chunkSorts! + 1);
+    expect(nextTile.rowStyleWrites).toBe(before.rowStyleWrites);
+    expect(nextTile.rowNameWrites).toBe(before.rowNameWrites);
+    expect(nextTile.imageWrites).toBe(before.imageWrites);
+  });
+
   test("shares one uploaded handle across viewport-bounded row slices", async () => {
     const viewport = { width: 480, height: 272 } as const;
     const camera = SHOTS.find((shot) => shot.name === "four-corner")!.camera(viewport);
