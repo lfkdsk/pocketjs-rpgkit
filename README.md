@@ -913,8 +913,13 @@ import { createWorldRenderer } from "pocket-rpgkit/ui/world";
 With streamed assets, that renderer clamps the camera to the connected
 component and draws the viewport-resident ground, upper and animated tiles of
 every visible placement. Actors, events and other dynamic map bands remain
-owned by the active map. The upper layer is currently one component-wide band
-above actors rather than row-interleaved outdoor canopies.
+owned by the active map. Static upper terrain and above-tile animations are
+clipped into visible 16 px rows and share one paint plane with active,
+neighbour-preview and frozen-left-map actors. Each row uses the same
+two-pixel-foot boundary as the ordinary `GameView`: an actor whose foot is at
+`rowY + 1` stays behind that row, while `rowY + 2` is in front. A resident
+upper chunk is uploaded once and its texture handle is shared by every visible
+row slice; row and slice nodes form a viewport-bounded high-water pool.
 
 #### Neighbour character preview
 
@@ -932,10 +937,11 @@ switch bank (with `local.*` switches and variables cleared, as entry clears
 them), drawn at its authored cell, facing the page's `dir`, with the page
 sprite. It never moves, collides, responds to input or writes state, and the
 neighbour's autorun/parallel pages do not run before the handoff. It is drawn
-in the same component-world coordinates as the active actors and below the
-upper band; characters whose feet are above the active map are ordered behind
-the active actors and the rest in front, so a 32-pixel sprite overlapping a
-horizontal seam keeps the usual y order. Only already-resident maps are
+in the same component-world coordinates and row-interleaved paint plane as
+the active actors and upper terrain; characters whose feet are above the
+active map keep their usual y order with active actors, rows and above-tile
+animations, so a 32-pixel sprite overlapping a horizontal seam is not flattened
+behind the whole upper band. Only already-resident maps are
 previewed — the preview never loads a map (the left-map snapshot below needs
 no MapDef at all).
 
@@ -2729,11 +2735,13 @@ stream: {
 Only chunks intersecting the camera plus the prefetch margin are loaded
 through `loadTileTexture`. Chunks remain resident for one extra chunk of
 hysteresis, then their texture is freed; image nodes are pooled across
-scrolling and map transfers. Ground stays below characters and upper stays
-above them. Pass `onStreamStats` to `GameView` for per-layer resident,
-texture-byte, upload, free, pool and pending counts. `chunkWindow` from the
-engine package exposes the same clamped viewport arithmetic for tooling and
-tests.
+scrolling and map transfers. Ground stays below characters. Upper chunks are
+uploaded once, then their handles are rebound into clipped 16 px rows which
+interleave with bottom-anchored actors at the two-pixel foot boundary; animated
+above tiles use the same row depth. Pass `onStreamStats` to `GameView` for
+per-layer resident, texture-byte, upload, free, pool and pending counts.
+`chunkWindow` from the engine package exposes the same clamped viewport
+arithmetic for tooling and tests.
 
 Runtime layer variants use the same two source shapes. For example:
 
