@@ -310,9 +310,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // The synced PocketJS style ABI and capability table add 146 B to each app
 // for contain, its enum values, and text.glyphs.runtime; decoder reachability
 // remains unchanged.
+// Optional connected-world actor projection adds 1,795 B to both GameView
+// graphs. Its branch is dormant without a world renderer; Meadow does not
+// reach GameView, and the decoder reachability assertions below stay fixed.
 const EXPECTED_MEADOW_BYTES = 684_525;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_108_708;
-const EXPECTED_WAV_FIXTURE_BYTES = 871_074;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_503;
+const EXPECTED_WAV_FIXTURE_BYTES = 872_869;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",
