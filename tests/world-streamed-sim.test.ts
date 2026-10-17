@@ -501,7 +501,9 @@ simDescribe("connected world upper-row resources", () => {
     expect(upper.resident).toBe(upper.textures);
     expect(upper.textureBindings).toBeGreaterThan(upper.textures);
     expect(upper.sliceNodes).toBeGreaterThanOrEqual(upper.textureBindings!);
-    expect(upper.rowNodes).toBeLessThanOrEqual(Math.ceil(viewport.height / 16) + 3);
+    // Four visible above-animation depths plus the player require at most six
+    // clip bands. A per-tile-row compositor creates twenty rows here.
+    expect(upper.rowNodes).toBeLessThanOrEqual(6);
     expect(upper.sliceNodes).toBeLessThanOrEqual(upper.rowNodes! * 4);
   });
 });

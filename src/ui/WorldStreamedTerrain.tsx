@@ -129,6 +129,7 @@ interface UpperSlice {
 interface UpperRow {
   node: NodeMirror;
   worldY: number;
+  height: number;
   minX: number;
   width: number;
   zIndex: number;
@@ -248,6 +249,11 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
   const upperUsers = new Map<string, Set<NodeMirror>>();
   const upperVisibleChunks: LiveChunk[] = [];
   const upperRowBuckets: LiveChunk[][] = [];
+  const upperGroupStarts: number[] = [];
+  const upperGroupEnds: number[] = [];
+  const upperCuts: number[] = [];
+  const nextUpperCuts: number[] = [];
+  const upperRowNodes = new Set<NodeMirror>();
   let upperRowsDirty = true;
   let upperWindowX0 = Number.NaN;
   let upperWindowY0 = Number.NaN;
@@ -265,6 +271,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     users?.delete(slice.node);
     if (users?.size === 0) upperUsers.delete(slice.key);
     getOps().setImage(slice.node.id, -1);
+    setProp(slice.node, "style", { display: 1 }, slice.node.domAttrs?.style);
     upperImageWrites++;
     slice.key = "";
   };
@@ -273,18 +280,31 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     for (const row of upperRows) {
       for (const slice of row.slices) clearUpperSlice(slice);
       row.used = false;
+      if (row.display !== 1) {
+        setProp(row.node, "style", { display: 1 }, row.node.domAttrs?.style);
+        upperRowStyleWrites++;
+        row.display = 1;
+      }
     }
     upperWindowX0 = upperWindowY0 = upperWindowX1 = upperWindowY1 = Number.NaN;
     upperRowsDirty = true;
   };
 
-  const makeUpperRow = (component: WorldComponent, worldY: number): UpperRow => {
+  const makeUpperRow = (
+    component: WorldComponent,
+    firstTileY: number,
+    lastTileY: number,
+  ): UpperRow => {
+    const worldY = firstTileY * TILE;
+    const height = (lastTileY - firstTileY + 1) * TILE;
     const minX = component.bounds.minTileX * TILE;
     const minY = component.bounds.minTileY * TILE;
     const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
     const zIndex = upperRowDepth((worldY - minY) / TILE, width);
     const display = upper.visible ? 0 : 1;
-    const debugName = `rpgkit-world-upper-row-${worldY / TILE}`;
+    const debugName = lastTileY === firstTileY
+      ? `rpgkit-world-upper-row-${firstTileY}`
+      : `rpgkit-world-upper-row-${firstTileY}-${lastTileY}`;
     const node = createElement("view");
     setProp(node, "style", {
       posType: 1,
@@ -293,7 +313,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       translateX: minX,
       translateY: worldY,
       width,
-      height: TILE,
+      height,
       overflow: ENUMS.Overflow.Hidden,
       zIndex,
       display,
@@ -302,7 +322,8 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     setProp(node, "debugName", debugName);
     upperRowNameWrites++;
     insertNode(upper.root, node);
-    return { node, worldY, minX, width, zIndex, display, debugName, slices: [], used: false };
+    upperRowNodes.add(node);
+    return { node, worldY, height, minX, width, zIndex, display, debugName, slices: [], used: false };
   };
 
   const makeUpperSlice = (row: UpperRow): UpperSlice => {
@@ -313,6 +334,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
       insetT: 0,
       width: props.chunkPx,
       height: props.chunkPx,
+      display: 1,
     });
     insertNode(row.node, node);
     const slice = { node, key: "" };
@@ -334,6 +356,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     setProp(slice.node, "style", {
       translateX: chunk.x - minX,
       translateY: chunk.y - row.worldY,
+      display: 0,
     }, slice.node.domAttrs?.style);
     setProp(slice.node, "debugName", `rpgkit-world-upper-row-${row.worldY / TILE}-${chunk.mapId}-${chunk.index}`);
     slice.key = key;
@@ -347,9 +370,11 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
   const updateUpperRow = (
     row: UpperRow,
     component: WorldComponent,
-    tileY: number,
+    firstTileY: number,
+    lastTileY: number,
   ): void => {
-    const worldY = tileY * TILE;
+    const worldY = firstTileY * TILE;
+    const height = (lastTileY - firstTileY + 1) * TILE;
     const minX = component.bounds.minTileX * TILE;
     const minY = component.bounds.minTileY * TILE;
     const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
@@ -358,23 +383,27 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     if (row.worldY !== worldY) {
       for (const slice of row.slices) clearUpperSlice(slice);
     }
-    if (row.worldY !== worldY || row.minX !== minX || row.width !== width ||
+    if (row.worldY !== worldY || row.height !== height || row.minX !== minX || row.width !== width ||
         row.zIndex !== zIndex || row.display !== display) {
       setProp(row.node, "style", {
         translateX: minX,
         translateY: worldY,
         width,
+        height,
         zIndex,
         display,
       }, row.node.domAttrs?.style);
       upperRowStyleWrites++;
       row.worldY = worldY;
+      row.height = height;
       row.minX = minX;
       row.width = width;
       row.zIndex = zIndex;
       row.display = display;
     }
-    const debugName = `rpgkit-world-upper-row-${tileY}`;
+    const debugName = lastTileY === firstTileY
+      ? `rpgkit-world-upper-row-${firstTileY}`
+      : `rpgkit-world-upper-row-${firstTileY}-${lastTileY}`;
     if (row.debugName !== debugName) {
       setProp(row.node, "debugName", debugName, row.node.domAttrs?.debugName);
       upperRowNameWrites++;
@@ -394,18 +423,70 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     const x1 = Math.ceil((camera.x + viewport.w + TILE) / TILE) * TILE;
     const y0 = Math.max(component.bounds.minTileY, Math.floor((camera.y - TILE) / TILE));
     const y1 = Math.min(component.bounds.maxTileY - 1, Math.ceil((camera.y + viewport.h + TILE) / TILE) - 1);
+    const rowCount = Math.max(0, y1 - y0 + 1);
+    const minY = component.bounds.minTileY;
+    const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
+
+    // Upper art only needs a separate clip band when a visible actor or
+    // above-animation depth falls between two tile-row depths. Rows on the
+    // same side of every sibling can share one taller clip without changing
+    // painter order. Quantize moving actor depths to this boundary mask so
+    // sub-tile motion does not turn back into a per-frame row resync.
+    const cutCount = Math.max(0, rowCount - 1);
+    nextUpperCuts.length = cutCount;
+    for (let index = 0; index < cutCount; index++) nextUpperCuts[index] = 0;
+    if (cutCount > 0) {
+      for (const child of upper.root.children) {
+        if (upperRowNodes.has(child)) continue;
+        const style = child.domAttrs?.style as { zIndex?: unknown; display?: unknown } | undefined;
+        const depth = style?.zIndex;
+        if (style?.display === 1 || typeof depth !== "number" || !Number.isFinite(depth)) continue;
+        for (let boundary = 1; boundary < rowCount; boundary++) {
+          const before = upperRowDepth(y0 + boundary - 1 - minY, width);
+          const after = upperRowDepth(y0 + boundary - minY, width);
+          if (depth >= before && depth <= after) nextUpperCuts[boundary - 1] = 1;
+        }
+      }
+    }
+    let cutsChanged = upperCuts.length !== nextUpperCuts.length;
+    if (!cutsChanged) {
+      for (let index = 0; index < cutCount; index++) {
+        if (upperCuts[index] !== nextUpperCuts[index]) {
+          cutsChanged = true;
+          break;
+        }
+      }
+    }
     if (!upperRowsDirty && x0 === upperWindowX0 && y0 === upperWindowY0 &&
-        x1 === upperWindowX1 && y1 === upperWindowY1) return false;
+        x1 === upperWindowX1 && y1 === upperWindowY1 && !cutsChanged) return false;
     upperRowSyncs++;
     upperWindowX0 = x0;
     upperWindowY0 = y0;
     upperWindowX1 = x1;
     upperWindowY1 = y1;
-    const count = Math.max(0, y1 - y0 + 1);
-    while (upperRows.length < count) upperRows.push(makeUpperRow(component, (y0 + upperRows.length) * TILE));
+    upperCuts.length = cutCount;
+    for (let index = 0; index < cutCount; index++) upperCuts[index] = nextUpperCuts[index]!;
+    upperGroupStarts.length = 0;
+    upperGroupEnds.length = 0;
+    if (rowCount > 0) {
+      let first = y0;
+      for (let boundary = 1; boundary < rowCount; boundary++) {
+        if (upperCuts[boundary - 1] !== 1) continue;
+        upperGroupStarts.push(first);
+        upperGroupEnds.push(y0 + boundary - 1);
+        first = y0 + boundary;
+      }
+      upperGroupStarts.push(first);
+      upperGroupEnds.push(y1);
+    }
+    const groupCount = upperGroupStarts.length;
+    while (upperRows.length < groupCount) {
+      const index = upperRows.length;
+      upperRows.push(makeUpperRow(component, upperGroupStarts[index]!, upperGroupEnds[index]!));
+    }
     for (const row of upperRows) row.used = false;
-    while (upperRowBuckets.length < count) upperRowBuckets.push([]);
-    for (let index = 0; index < count; index++) upperRowBuckets[index]!.length = 0;
+    while (upperRowBuckets.length < groupCount) upperRowBuckets.push([]);
+    for (let index = 0; index < groupCount; index++) upperRowBuckets[index]!.length = 0;
     upperVisibleChunks.length = 0;
     for (const chunk of upper.live.values()) {
       if (chunk.x < x1 && chunk.x + props.chunkPx > x0 &&
@@ -418,26 +499,32 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     );
     upperChunkSorts++;
     for (const chunk of upperVisibleChunks) {
-      const first = Math.max(y0, Math.ceil(chunk.y / TILE));
-      const last = Math.min(y1, Math.ceil((chunk.y + props.chunkPx) / TILE) - 1);
-      for (let tileY = first; tileY <= last; tileY++) {
-        upperRowBuckets[tileY - y0]!.push(chunk);
+      for (let index = 0; index < groupCount; index++) {
+        if (chunk.y < (upperGroupEnds[index]! + 1) * TILE &&
+            chunk.y + props.chunkPx > upperGroupStarts[index]! * TILE) {
+          upperRowBuckets[index]!.push(chunk);
+        }
       }
     }
-    for (let tileY = y0; tileY <= y1; tileY++) {
-      const slot = ((tileY % upperRows.length) + upperRows.length) % upperRows.length;
-      const row = upperRows[slot]!;
+    for (let index = 0; index < groupCount; index++) {
+      const row = upperRows[index]!;
       row.used = true;
-      updateUpperRow(row, component, tileY);
-      const wanted = upperRowBuckets[tileY - y0]!;
+      updateUpperRow(row, component, upperGroupStarts[index]!, upperGroupEnds[index]!);
+      const wanted = upperRowBuckets[index]!;
       while (row.slices.length < wanted.length) makeUpperSlice(row);
-      for (let index = 0; index < row.slices.length; index++) {
-        const chunk = wanted[index];
-        bindUpperSlice(row, row.slices[index]!, chunk?.key ?? "", chunk, component);
+      for (let slot = 0; slot < row.slices.length; slot++) {
+        const chunk = wanted[slot];
+        bindUpperSlice(row, row.slices[slot]!, chunk?.key ?? "", chunk, component);
       }
     }
     for (const row of upperRows) {
-      if (!row.used) for (const slice of row.slices) clearUpperSlice(slice);
+      if (row.used) continue;
+      for (const slice of row.slices) clearUpperSlice(slice);
+      if (row.display !== 1) {
+        setProp(row.node, "style", { display: 1 }, row.node.domAttrs?.style);
+        upperRowStyleWrites++;
+        row.display = 1;
+      }
     }
     upperRowsDirty = false;
     return true;
@@ -673,7 +760,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
         visibilityChanged = true;
         if (state.band === "upper") {
           for (const row of upperRows) {
-            const display = visible ? 0 : 1;
+            const display = visible && row.used ? 0 : 1;
             if (row.display !== display) {
               setProp(row.node, "style", { display }, row.node.domAttrs?.style);
               upperRowStyleWrites++;
