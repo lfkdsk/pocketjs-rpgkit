@@ -313,11 +313,12 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Optional connected-world actor projection adds 1,795 B to both GameView
 // graphs. Its branch is dormant without a world renderer; Meadow does not
 // reach GameView, and the decoder reachability assertions below stay fixed.
-// Tile-aligned, bucketed upper-row synchronization and its regression counters
-// add 91 B to each audio-enabled GameView graph without reaching either decoder.
+// Tile-aligned, bucketed upper-row synchronization, regression counters and
+// ordinary-row debug write suppression add 159 B to each audio-enabled
+// GameView graph without reaching either decoder.
 const EXPECTED_MEADOW_BYTES = 684_525;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_594;
-const EXPECTED_WAV_FIXTURE_BYTES = 872_960;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_662;
+const EXPECTED_WAV_FIXTURE_BYTES = 873_028;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

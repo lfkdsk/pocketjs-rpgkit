@@ -279,9 +279,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Optional connected-world actor projection adds 1,795 B to GameView. Its
 // branch is dormant without a world renderer and the battle needles remain
 // absent, so this is shared presentation plumbing rather than battle UI.
-// Tile-aligned, bucketed upper-row synchronization and its regression counters
-// add 91 B to the shared GameView graph without admitting battle UI.
-const EXPECTED_BYTES = 1_110_594;
+// Tile-aligned, bucketed upper-row synchronization, regression counters and
+// ordinary-row debug write suppression add 159 B to the shared GameView graph
+// without admitting battle UI.
+const EXPECTED_BYTES = 1_110_662;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
