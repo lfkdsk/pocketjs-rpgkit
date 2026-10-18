@@ -177,7 +177,7 @@ describe("Web pak chunk loader", () => {
 
   test("contains advisory fetch failures, retries them, and still rejects demand prepares", async () => {
     const startup = new Uint8Array([1]);
-    const chunks = ["prefetch", "background", "demand"].map((id) => ({
+    const chunks = ["prefetch", "ignored", "background", "demand"].map((id) => ({
       id,
       bytes: pack([{ key: `maps/${id}`, dtype: 0, data: new Uint8Array([id.length]) }]),
     }));
@@ -219,13 +219,21 @@ describe("Web pak chunk loader", () => {
       await waitUntil(() => loader.stats().failures.background?.includes("fixture background fetch failed") === true);
       expect(loader.ready("maps/background")).toBeFalse();
 
-      await expect(loader.prefetch("maps/prefetch")).resolves.toBeUndefined();
+      void loader.prefetch("maps/ignored");
+      await waitUntil(() => loader.stats().failures.ignored?.includes("fixture ignored fetch failed") === true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(loader.ready("maps/ignored")).toBeFalse();
+      expect(unhandled).toEqual([]);
+
+      await expect(loader.prefetch("maps/prefetch")).rejects.toThrow("fixture prefetch fetch failed");
       expect(loader.stats().failures.prefetch).toContain("fixture prefetch fetch failed");
       expect(loader.ready("maps/prefetch")).toBeFalse();
 
       await loader.prefetch("maps/background");
+      await loader.prefetch("maps/ignored");
       await loader.prefetch("maps/prefetch");
       expect(loader.ready("maps/background")).toBeTrue();
+      expect(loader.ready("maps/ignored")).toBeTrue();
       expect(loader.ready("maps/prefetch")).toBeTrue();
       expect(loader.stats().failures).toEqual({});
 

@@ -344,12 +344,14 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
   const prefetch = (key) => {
     const id = entryToChunk.get(key);
     if (!id) return Promise.resolve();
-    // Prefetch is advisory: load() has already recorded the failure, and the
-    // scheduler removes the failed job so a later prefetch or demand prepare
-    // can retry it. Keep this fire-and-forget API from leaking a rejection to
-    // per-frame working-set callers.
-    return Promise.all(closure(id).map((candidate) => schedule(candidate, true)))
-      .then(() => undefined, () => undefined);
+    const promise = Promise.all(closure(id).map((candidate) => schedule(candidate, true)))
+      .then(() => undefined);
+    // Prefetch callers that care about failure can still await this rejecting
+    // promise (the world working-set does, so it will retry after leaving and
+    // re-entering the set). Also mark the rejection handled for deliberately
+    // fire-and-forget callers; load() has already recorded it in stats.
+    void promise.catch(() => undefined);
+    return promise;
   };
 
   return {
