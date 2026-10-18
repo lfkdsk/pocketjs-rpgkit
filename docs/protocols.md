@@ -96,13 +96,16 @@ of already-published shards if a later rename fails; this is **not**
 crash-atomic. See `editor/api/file.ts` and
 [`edit-api.md`](edit-api.md#response-envelope) (the atomicity paragraph).
 
-- **Operations** (59): `open`, `list-maps`, `list-events`, `list-pages`,
-  `list-commands`, `validate`, `update-map`, `add-map`, `duplicate-map`,
+- **Operations** (65): `open`, `list-maps`, `list-events`, `list-pages`,
+  `list-common-events`, `get-common-event`, `list-commands`, `validate`,
+  `update-map`, `add-map`, `duplicate-map`,
   `delete-map`, `move-map`, `paint-tile`, `paint-rect`, `fill-region`,
   `paint-passage`, `paint-cells`, `paint-edges`, `add-event` (optional
   `index` places the event in the map's event list), `update-event`,
   `delete-event`, `add-page`, `update-page`, `delete-page`,
-  `insert-command`, `delete-command`, `update-command`, `batch` (several
+  `add-common-event`, `update-common-event`, `duplicate-common-event`,
+  `delete-common-event`, `insert-command`, `delete-command`,
+  `update-command`, `batch` (several
   operations as one all-or-nothing transaction), `save`, plus
   `list-items`, `get-item`, `add-item`, `update-item`, `remove-item`,
   `list-sprites`, `get-sprite`, `add-sprite`, `update-sprite`,

@@ -301,6 +301,62 @@ describe("Studio desktop", () => {
     console.log(`# agent proposal ${id}: (8,5) ${tileBefore} -> ${tileAfter}, undone`);
   });
 
+  test("common events and tile-sheet passage edit through the shared Studio UI", async () => {
+    await answerDialogs({ box: 0 });
+    await openMenuItem("Example: The Sunstone of Bramble Hollow");
+    await page.waitForFunction(() => window.__studio.app.session?.kind === "inline" && window.__studio.app.currentMap()?.id === "village", null, { timeout: 15_000 });
+
+    await page.click('[data-action="new-common-event"]');
+    await page.waitForFunction(() => window.__studio.app.selection.kind === "common");
+    await page.fill('[data-field="common.id"]', "desktop-common");
+    await page.locator('[data-field="common.id"]').blur();
+    await page.waitForFunction(() => window.__studio.app.selection.commonId === "desktop-common");
+    await page.selectOption('[data-field="common.trigger"]', "parallel");
+    await page.fill('[data-field="common.conditionSwitch"]', "desktop-enabled");
+    await page.locator('[data-field="common.conditionSwitch"]').blur();
+    await page.click('[data-action="add-command"]');
+    await page.fill('[data-field="command-picker"]', "text");
+    await page.click('button[data-op="text"]:not([data-action])');
+    await page.fill('[data-field="command.lines"]', "Desktop shared line");
+    await page.locator('[data-field="command.lines"]').blur();
+    await page.waitForFunction(() => window.__studio.app.session.globals().commonEvents
+      .find((item) => item.id === "desktop-common")?.commands[0]?.lines?.[0] === "Desktop shared line");
+    const explain = await page.locator("#inspector .ins-section").filter({ has: page.locator("h2", { hasText: "Explain" }) }).textContent();
+    assert.match(explain, /background/);
+    assert.match(explain, /desktop-enabled/);
+    assert.match(explain, /Desktop shared line/);
+
+    await studio(() => window.__studio.app.run("insert-command", {
+      map: "village", event: "elder", page: 0,
+      address: { path: [], index: 0 }, command: { op: "common", id: "desktop-common" },
+    }, "Call desktop common"));
+    await page.click('[data-action="delete-common-event"]');
+    const prompt = page.locator('[data-role="common-delete-confirm"]');
+    await prompt.waitFor();
+    assert.match(await prompt.textContent(), /map:village\/event:elder\/page:0/);
+    assert.equal(await studio(() => window.__studio.app.session.globals().commonEvents.some((item) => item.id === "desktop-common")), true);
+    await page.click('[data-action="cancel-common-delete"]');
+    await prompt.waitFor({ state: "detached" });
+
+    await page.click('[data-action="close-common-event"]');
+    await page.click('[data-layer="passage"]');
+    await page.selectOption('[data-testid="sheet-default-passage"]', "block");
+    await page.click('[data-testid="sheet-dir-block-right"]');
+    const passage = await studio(() => {
+      const sheet = window.__studio.app.session.sheets().find((item) => item.id === "town");
+      const last = window.__studio.app.session.history().slice(-2).map((step) => step.commands);
+      return { defaultPassage: sheet.defaultPassage, dirBlock: sheet.dirBlock?.["0"], last };
+    });
+    assert.equal(passage.defaultPassage, "block");
+    assert.deepEqual(passage.dirBlock, ["right"]);
+    assert.deepEqual(passage.last, [["update-sheet"], ["update-sheet"]]);
+    await studio(() => window.__studio.app.undo());
+    assert.equal(await studio(() => window.__studio.app.session.sheets().find((item) => item.id === "town").dirBlock?.["0"]), undefined);
+    await studio(() => window.__studio.app.redo());
+    assert.deepEqual(await studio(() => window.__studio.app.session.sheets().find((item) => item.id === "town").dirBlock?.["0"]), ["right"]);
+    await shot("common-and-sheet-passage");
+  });
+
   test("engine checks run on this computer and their findings join the problems list", async () => {
     await answerDialogs({ open: BROKEN, box: 0 });
     await openMenuItem("Open file");

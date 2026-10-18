@@ -6,7 +6,7 @@
 import type { StudioApp } from "./app.ts";
 import { emptyState, h, icon, replace } from "./dom.ts";
 
-export type CommandSection = "Actions" | "Maps" | "Events" | "Commands";
+export type CommandSection = "Actions" | "Maps" | "Common events" | "Events" | "Commands";
 
 export interface StudioCommand {
   id: string;
@@ -25,7 +25,7 @@ export interface RankedCommand {
   recent: number;
 }
 
-const SECTIONS: readonly CommandSection[] = ["Actions", "Maps", "Events", "Commands"];
+const SECTIONS: readonly CommandSection[] = ["Actions", "Maps", "Common events", "Events", "Commands"];
 
 /** A compact fuzzy score: word/exact matches lead, then ordered characters
  * with penalties for gaps and late starts. `null` means no match. */

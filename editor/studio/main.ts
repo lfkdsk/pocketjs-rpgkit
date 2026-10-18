@@ -26,7 +26,7 @@ import type {
 import { BrowserHost } from "./host-browser.ts";
 import { rpgMakerImportLocale, rpgMakerImportText, type RpgMakerImportLocale } from "./import-i18n.ts";
 import { mountInspector } from "./inspector.ts";
-import { eventCopyOp, insertionAddress, insertCommandOp, opLabel, PICKER_ENTRIES } from "./inspector-model.ts";
+import { eventCopyOp, insertionAddress, insertCommandOp, opLabel, PICKER_ENTRIES, type CommandRef } from "./inspector-model.ts";
 import { defaultCommand, flattenCommands } from "../engine/commands.ts";
 import { uniqueEventId } from "../engine/model.ts";
 import { mountLayersPanel } from "./layers-panel.ts";
@@ -39,7 +39,7 @@ import { mountPalette } from "./palette.ts";
 import { keyLabel, SHORTCUT_GROUPS } from "./shortcuts.ts";
 import { doctorProblems, mergeCheckAndDoctor, schemaProblems, type StudioProblem } from "./problems.ts";
 import { LintScheduler } from "./problem-lint.ts";
-import type { VehicleDef, VehicleKind } from "../../src/engine/types.ts";
+import type { Command, VehicleDef, VehicleKind } from "../../src/engine/types.ts";
 
 const host: StudioHost = (globalThis as { studioHost?: StudioHost }).studioHost ?? new BrowserHost();
 const app = new StudioApp();
@@ -160,17 +160,42 @@ function addEventFromPalette(): void {
 
 function addCommandFromPalette(op: string): void {
   const selection = app.selection;
-  const map = app.currentMap();
-  if (!map || selection.kind !== "event") return;
-  const event = map.events?.find((item) => item.id === selection.eventId);
-  const page = event?.pages[selection.page];
-  if (!event || !page) return;
-  const address = insertionAddress(page.commands, selection.command);
+  let commands: readonly Command[];
+  let ref: CommandRef;
+  if (selection.kind === "common") {
+    const common = app.session?.globals().commonEvents?.find((item) => item.id === selection.commonId);
+    if (!common) return;
+    commands = common.commands;
+    ref = { common: common.id };
+  } else if (selection.kind === "event") {
+    const map = app.currentMap();
+    const event = map?.events?.find((item) => item.id === selection.eventId);
+    const page = event?.pages[selection.page];
+    if (!map || !event || !page) return;
+    commands = page.commands;
+    ref = { map: map.id, event: event.id, page: selection.page };
+  } else {
+    return;
+  }
+  const address = insertionAddress(commands, selection.command);
   if (!address) return;
-  const operation = insertCommandOp({ map: map.id, event: event.id, page: selection.page }, address, defaultCommand(op as Parameters<typeof defaultCommand>[0]));
+  const operation = insertCommandOp(ref, address, defaultCommand(op as Parameters<typeof defaultCommand>[0]));
   const response = app.run(operation.command, operation.args ?? {}, `Add ${op} command`);
   if (response?.ok) {
     app.select({ ...selection, command: address });
+    selectTab("inspector");
+  }
+}
+
+function addCommonEventFromPalette(): void {
+  const commonEvents = app.session?.globals().commonEvents ?? [];
+  const used = new Set(commonEvents.map((common) => common.id));
+  let suffix = 1;
+  while (used.has(`common-${suffix}`)) suffix++;
+  const commonEvent = { id: `common-${suffix}`, trigger: "none" as const, commands: [] };
+  const response = app.run("add-common-event", { commonEvent }, `New common event ${commonEvent.id}`);
+  if (response?.ok) {
+    app.select({ kind: "common", commonId: commonEvent.id });
     selectTab("inspector");
   }
 }
@@ -189,6 +214,7 @@ function studioCommands(): StudioCommand[] {
     { id: "edit:undo", label: "Undo", shortcut: `${MOD}+Z`, section: "Actions", disabled: session?.canUndo() ? undefined : "Nothing to undo", run: () => app.undo() },
     { id: "edit:redo", label: "Redo", shortcut: `${MOD}+Shift+Z`, section: "Actions", disabled: session?.canRedo() ? undefined : "Nothing to redo", run: () => app.redo() },
     { id: "event:new", label: "New event", detail: selection.kind === "cell" ? `At (${selection.x}, ${selection.y})` : "Activate the event tool", keywords: "create npc", shortcut: "N", section: "Actions", disabled: noDocument, run: addEventFromPalette },
+    { id: "common:new", label: "New common event", detail: "Reusable project-wide command list", keywords: "create common event", section: "Actions", disabled: noDocument, run: addCommonEventFromPalette },
     { id: "view:fit", label: "Fit map", detail: "Center the whole map", shortcut: "0", section: "Actions", disabled: noDocument, run: () => canvas?.fit() },
     { id: "view:settings", label: "View settings", detail: "Motion and camera behavior", section: "Actions", run: openViewSettings },
     { id: "project:mobility", label: "Followers & vehicles…", detail: "Party trail and vehicle starts", keywords: "project followers boat ship airship", section: "Actions", disabled: noDocument, run: openMobilitySettings },
@@ -212,6 +238,14 @@ function studioCommands(): StudioCommand[] {
     id: `map:${item.id}`, label: item.name ?? item.id, detail: `${item.id} · ${item.width}×${item.height}`, keywords: `map ${item.id}`, section: "Maps",
     run: () => { app.openMap(item.id); canvas?.canvas.focus(); },
   })));
+  commands.push(...(session.globals().commonEvents ?? []).map((common): StudioCommand => ({
+    id: `common:${common.id}`,
+    label: common.name ?? common.id,
+    detail: `${common.id} · ${common.commands.length} command${common.commands.length === 1 ? "" : "s"} · ${common.trigger === "parallel" ? "parallel" : "called"}`,
+    keywords: `common event ${common.id}`,
+    section: "Common events",
+    run: () => { app.select({ kind: "common", commonId: common.id }); selectTab("inspector"); },
+  })));
   if (!map) return commands;
   commands.push(...(map.events ?? []).map((event): StudioCommand => ({
     id: `event:${map.id}:${event.id}`, label: event.name ?? event.id, detail: `${event.id} · (${event.x}, ${event.y}) · ${event.pages.length} page${event.pages.length === 1 ? "" : "s"}`, keywords: "event npc", section: "Events",
@@ -231,6 +265,22 @@ function studioCommands(): StudioCommand[] {
         label: opLabel(String(row.command.op)),
         detail: `${event.name ?? event.id} · ${row.summary}`,
         keywords: `existing command ${String(row.command.op)} ${row.branchLabel ?? ""}`,
+        section: "Commands",
+        run: () => { app.select({ ...selection, command: row.address }); selectTab("inspector"); },
+      })));
+      commands.push(...PICKER_ENTRIES.map((entry): StudioCommand => ({
+        id: `command:add:${entry.op}`, label: `Add ${entry.label}`, detail: entry.description,
+        keywords: `${entry.op} ${entry.category} insert`, section: "Commands", run: () => addCommandFromPalette(entry.op),
+      })));
+    }
+  } else if (selection.kind === "common") {
+    const common = session.globals().commonEvents?.find((item) => item.id === selection.commonId);
+    if (common) {
+      commands.push(...flattenCommands(common.commands).map((row): StudioCommand => ({
+        id: `command:common:${common.id}:${row.key}`,
+        label: opLabel(String(row.command.op)),
+        detail: `${common.name ?? common.id} · ${row.summary}`,
+        keywords: `existing common command ${String(row.command.op)} ${row.branchLabel ?? ""}`,
         section: "Commands",
         run: () => { app.select({ ...selection, command: row.address }); selectTab("inspector"); },
       })));
@@ -399,6 +449,13 @@ function scheduleProblems(): void {
 }
 
 function locate(problem: StudioProblem): void {
+  if (problem.common) {
+    app.select({ kind: "common", commonId: problem.common, ...(problem.command ? { command: problem.command } : {}) });
+    app.pulse = true;
+    selectTab("inspector");
+    app.emit("selection");
+    return;
+  }
   if (problem.map) app.openMap(problem.map);
   const event = problem.event ? app.currentMap()?.events?.find((item) => item.id === problem.event) : undefined;
   if (problem.event) app.select({ kind: "event", eventId: problem.event, page: problem.page ?? 0 });
@@ -454,7 +511,7 @@ function renderProblems(): void {
         },
         h("span", { class: `sev ${problem.severity}` }, problem.severity),
         h("span", { class: "problem-message" }, problem.message),
-        h("span", { class: "problem-where" }, [problem.map, problem.event, problem.page === undefined ? undefined : `page ${problem.page + 1}`].filter(Boolean).join(" › ") || problem.code)),
+        h("span", { class: "problem-where" }, [problem.common ? `common ${problem.common}` : problem.map, problem.event, problem.page === undefined ? undefined : `page ${problem.page + 1}`].filter(Boolean).join(" › ") || problem.code)),
         problem.fix
           ? h("button", {
               type: "button",
@@ -496,7 +553,11 @@ function renderStatus(): void {
     hoverText = `(${hover.x}, ${hover.y}) ${ground}${upper ? ` / ${upper}` : ""}${region ? ` · region ${region}` : ""}`;
   }
   const selection = app.selection;
-  const selectionText = selection.kind === "event" ? `event ${selection.eventId} · page ${selection.page + 1}` : selection.kind === "cell" ? `cell (${selection.x}, ${selection.y})` : "nothing selected";
+  const selectionText = selection.kind === "event"
+    ? `event ${selection.eventId} · page ${selection.page + 1}`
+    : selection.kind === "common"
+      ? `common event ${selection.commonId}`
+      : selection.kind === "cell" ? `cell (${selection.x}, ${selection.y})` : "nothing selected";
   const errors = problems.filter((problem) => problem.severity === "error").length;
   const warnings = problems.length - errors;
   const dirty = session?.isDirty();
