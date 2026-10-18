@@ -316,9 +316,11 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Tile-aligned, bucketed upper-row synchronization, regression counters and
 // ordinary-row debug write suppression add 159 B to each audio-enabled
 // GameView graph without reaching either decoder.
-const EXPECTED_MEADOW_BYTES = 684_525;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_662;
-const EXPECTED_WAV_FIXTURE_BYTES = 873_028;
+// The shared Japanese kinsoku codepoint table adds 216 B to every graph;
+// decoder reachability remains unchanged.
+const EXPECTED_MEADOW_BYTES = 684_741;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_878;
+const EXPECTED_WAV_FIXTURE_BYTES = 873_244;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

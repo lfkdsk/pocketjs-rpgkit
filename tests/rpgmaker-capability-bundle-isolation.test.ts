@@ -78,11 +78,13 @@ const EXPECTED_BYTES = {
   // Sunstone and 2,169 B to the travel-enabled positive control. The branch
   // is dormant unless a world renderer supplies an actor space; Meadow does
   // not reach GameView, and the capability needles below remain unchanged.
-  meadow: 684_525,
+  // The shared Japanese kinsoku codepoint table adds 216 B to every graph;
+  // the capability reachability checks below remain unchanged.
+  meadow: 684_741,
   // Bucketed upper rows and ordinary-row write suppression add 159 B to both
   // GameView graphs without changing their capability boundaries.
-  sunstone: 1_110_662,
-  "rmi-play": 1_300_388,
+  sunstone: 1_110_878,
+  "rmi-play": 1_300_604,
 } as const;
 
 function implementationModules(app: string): string[] {

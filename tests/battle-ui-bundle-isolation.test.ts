@@ -282,7 +282,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Tile-aligned, bucketed upper-row synchronization, regression counters and
 // ordinary-row debug write suppression add 159 B to the shared GameView graph
 // without admitting battle UI.
-const EXPECTED_BYTES = 1_110_662;
+// The shared Japanese kinsoku codepoint table adds 216 B without admitting
+// battle UI.
+const EXPECTED_BYTES = 1_110_878;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
