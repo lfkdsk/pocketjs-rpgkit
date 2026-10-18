@@ -2,7 +2,7 @@
 // This module is reachable only through `./ui/rpgmaker-battle`; games that
 // do not import it pay no bundle or per-frame cost.
 
-import { For, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 import { Text, View } from "@pocketjs/framework/components";
 import type { BattleSceneComponent, BattleSceneViewProps } from "../GameView.tsx";
 import { BoundedLine } from "../BoundedLine.tsx";
@@ -34,10 +34,27 @@ import type {
 } from "../../rpgmaker-battle/types.ts";
 import { ScreenToneWeatherLayer } from "../ScreenToneWeatherLayer.tsx";
 import { screenToneWeatherActive } from "../screen-presentation.ts";
+import { LazyImage } from "../LazyImage.tsx";
+import {
+  battleAnimationPlacement,
+  battleAnimationPresentationAt,
+  type BattleAnimationTargetRect,
+  type RpgMakerBattleAnimationAsset,
+} from "./animation-presentation.ts";
+
+export type {
+  RpgMakerBattleAnimationAsset,
+  RpgMakerBattleAnimationTiming,
+} from "./animation-presentation.ts";
 
 export interface RpgMakerBattleSceneOptions {
   /** Normalized enemy image id -> baked image source. */
   enemyImages?: Readonly<Record<string, RpgImageSource>>;
+  /** Exact RPG Maker battleback basename -> baked image source. */
+  battlebacks1?: Readonly<Record<string, RpgImageSource>>;
+  battlebacks2?: Readonly<Record<string, RpgImageSource>>;
+  /** Cooked legacy MV animation id -> deterministic render assets. */
+  animations?: Readonly<Record<string, RpgMakerBattleAnimationAsset>>;
   background?: string;
   /** Words absent from RPG Maker's own System.terms table. */
   text?: Partial<RpgMakerBattleUiText>;
@@ -99,6 +116,38 @@ function targetRows(db: RpgMakerBattleDatabase, state: Readonly<RpgMakerBattleSt
   };
 }
 
+type BattleAnimationMarker = NonNullable<RpgMakerBattleState["battleAnimation"]> & {
+  /** Absent on v1 saves and troop-event animations, which target enemies. */
+  targetSide?: "actor" | "enemy";
+};
+
+interface IndexedBattleTarget extends BattleAnimationTargetRect {
+  side: "actor" | "enemy";
+  index: number;
+}
+
+function enemyTargetRect(
+  screen: Readonly<{ width: number; height: number }>,
+  member: Readonly<{ x: number; y: number }> | undefined,
+  index: number,
+  count: number,
+  width: number,
+  height: number,
+): BattleAnimationTargetRect {
+  const size = Math.max(48, Math.min(96, Math.floor(height * 0.24)));
+  const x = member
+    ? clampPosition(member.x / screen.width * width - size / 2, 8, width - size - 8)
+    : (index + 1) * width / (count + 1) - size / 2;
+  const y = member
+    ? clampPosition(
+        member.y / screen.height * height - size / 2,
+        20,
+        Math.min(height * 0.48, height - 104 - size),
+      )
+    : 32;
+  return { x, y, width: size, height: size };
+}
+
 function FrontViewScene(
   db: RpgMakerBattleDatabase,
   options: RpgMakerBattleSceneOptions,
@@ -119,6 +168,76 @@ function FrontViewScene(
   const targets = () => targetRows(db, state());
   const menuWidth = () => Math.min(232, Math.max(160, props.width - 16));
   const actorWidth = () => Math.min(210, Math.max(120, props.width * 0.42));
+  const battleback1 = () => {
+    const name = state().settings?.battleback1Name;
+    return name ? options.battlebacks1?.[name] : undefined;
+  };
+  const battleback2 = () => {
+    const name = state().settings?.battleback2Name;
+    return name ? options.battlebacks2?.[name] : undefined;
+  };
+  const enemyRect = (index: number): BattleAnimationTargetRect => enemyTargetRect(
+    db.screen,
+    troop()?.members[index],
+    index,
+    state().enemies.length,
+    props.width,
+    props.height,
+  );
+  const actorRect = (index: number): BattleAnimationTargetRect => ({
+    x: 8,
+    y: props.height - 8 - state().actors.length * 30 + index * 30,
+    width: actorWidth(),
+    height: 30,
+  });
+  const animationMarker = (): BattleAnimationMarker | undefined =>
+    state().battleAnimation ?? undefined;
+  const animationTargetSide = (): "actor" | "enemy" => animationMarker()?.targetSide ?? "enemy";
+  const animationAsset = () => {
+    const marker = animationMarker();
+    return marker ? options.animations?.[marker.id] : undefined;
+  };
+  const animationPresentation = createMemo(() => {
+    const marker = animationMarker();
+    const asset = animationAsset();
+    return marker && asset
+      ? battleAnimationPresentationAt(asset, marker.startTick, state().nowTick)
+      : undefined;
+  });
+  const animationTargetRects = (): readonly IndexedBattleTarget[] => {
+    const marker = animationMarker();
+    if (!marker) return [];
+    const side = animationTargetSide();
+    return marker.targets.flatMap((index): IndexedBattleTarget[] => {
+      if (side === "enemy") {
+        const enemy = state().enemies[index];
+        return !enemy || enemy.hidden ? [] : [{ ...enemyRect(index), side, index }];
+      }
+      return state().actors[index] ? [{ ...actorRect(index), side, index }] : [];
+    });
+  };
+  const animationPlacements = () => {
+    const asset = animationAsset();
+    if (!asset) return [];
+    if (asset.position === 3) {
+      return [{ ...battleAnimationPlacement(asset, props), key: "screen" }];
+    }
+    return animationTargetRects().map((target) => ({
+      ...battleAnimationPlacement(asset, props, target),
+      key: `${target.side}-${target.index}`,
+    }));
+  };
+  const animationFrameSource = () => {
+    const asset = animationAsset();
+    const index = animationPresentation()?.frameIndex ?? -1;
+    return asset && index >= 0 ? asset.frames[index] : undefined;
+  };
+  const animationHidesTarget = (side: "actor" | "enemy", index: number): boolean =>
+    animationPresentation()?.hideTargets === true &&
+    animationTargetSide() === side &&
+    animationMarker()?.targets.includes(index) === true;
+  const targetFlash = () => animationPresentation()?.targetFlash;
+  const screenFlash = () => animationPresentation()?.screenFlash;
 
   return (
     <View
@@ -146,74 +265,139 @@ function FrontViewScene(
         debugName="rpgmaker-battle-floor"
       />
 
+      <Show when={battleback1()}>
+        <LazyImage
+          class="absolute"
+          src={battleback1()!}
+          cache={imageCache}
+          active={props.active}
+          style={{ posType: 1, insetL: 0, insetT: 0, width: props.width, height: props.height }}
+          debugName="rpgmaker-battleback-1"
+        />
+      </Show>
+      <Show when={battleback2()}>
+        <LazyImage
+          class="absolute"
+          src={battleback2()!}
+          cache={imageCache}
+          active={props.active}
+          style={{ posType: 1, insetL: 0, insetT: 0, width: props.width, height: props.height }}
+          debugName="rpgmaker-battleback-2"
+        />
+      </Show>
+
       <For each={state().enemies}>
         {(enemy, index) => {
-          const member = () => troop()?.members[index()];
-          const size = () => Math.max(48, Math.min(96, Math.floor(props.height * 0.24)));
-          const x = () => member()
-            ? clampPosition(member()!.x / db.screen.width * props.width - size() / 2, 8, props.width - size() - 8)
-            : (index() + 1) * props.width / (state().enemies.length + 1) - size() / 2;
-          const y = () => member()
-            ? clampPosition(
-                member()!.y / db.screen.height * props.height - size() / 2,
-                20,
-                Math.min(props.height * 0.48, props.height - 104 - size()),
-              )
-            : 32;
+          const rect = () => enemyRect(index());
           const source = () => enemy.image ? options.enemyImages?.[enemy.image] : undefined;
           return (
             <Show when={!enemy.hidden}>
               <View
                 class="absolute flex-col"
-                style={{ posType: 1, insetL: x(), insetT: Math.max(4, y() - 16), width: size() }}
+                style={{ posType: 1, insetL: rect().x, insetT: Math.max(4, rect().y - 16), width: rect().width }}
                 debugName={`rpgmaker-enemy-hud-${index()}`}
               >
                 <BoundedLine
-                  cell={fitBounded(enemy.name, size(), 1, slotMeasure())}
+                  cell={fitBounded(enemy.name, rect().width, 1, slotMeasure())}
                   tick={() => state().nowTick}
                   textColor="#ffffff"
                   rowH={12}
-                  width={size()}
+                  width={rect().width}
                   debugName={`rpgmaker-enemy-name-${index()}`}
                 />
                 <StatBar
                   current={shownHp(state(), "enemy", index())}
                   max={rpgMakerCombatantParam(db, enemy, 0)}
-                  width={size()}
+                  width={rect().width}
                   fill="#e85d75"
                   theme={props.theme}
                   debugName={`rpgmaker-enemy-hp-${index()}`}
                 />
               </View>
-              <Show
-                when={source()}
-                fallback={(
-                  <View
-                    class="absolute items-center justify-center"
-                    style={{ posType: 1, insetL: x(), insetT: y(), width: size(), height: size(), bgColor: "#6a7180" }}
-                    debugName={`rpgmaker-enemy-placeholder-${index()}`}
-                  >
-                    <Text class="text-xs" style={{ textColor: "#ffffff" }}>{enemy.name}</Text>
-                  </View>
-                )}
-              >
-                <SpriteSlot
-                  src={source()!}
-                  cache={imageCache}
-                  active={props.active}
-                  x={x()}
-                  y={y()}
-                  width={size()}
-                  height={size()}
-                  effect={effectFor(state(), "enemy", index())}
-                  nowTick={state().nowTick}
-                  debugName={`rpgmaker-enemy-sprite-${index()}`}
-                />
+              <Show when={!animationHidesTarget("enemy", index())}>
+                <Show
+                  when={source()}
+                  fallback={(
+                    <View
+                      class="absolute items-center justify-center"
+                      style={{
+                        posType: 1,
+                        insetL: rect().x,
+                        insetT: rect().y,
+                        width: rect().width,
+                        height: rect().height,
+                        bgColor: "#6a7180",
+                      }}
+                      debugName={`rpgmaker-enemy-placeholder-${index()}`}
+                    >
+                      <Text class="text-xs" style={{ textColor: "#ffffff" }}>{enemy.name}</Text>
+                    </View>
+                  )}
+                >
+                  <SpriteSlot
+                    src={source()!}
+                    cache={imageCache}
+                    active={props.active}
+                    x={rect().x}
+                    y={rect().y}
+                    width={rect().width}
+                    height={rect().height}
+                    effect={effectFor(state(), "enemy", index())}
+                    nowTick={state().nowTick}
+                    debugName={`rpgmaker-enemy-sprite-${index()}`}
+                  />
+                </Show>
               </Show>
             </Show>
           );
         }}
       </For>
+
+      {/* Target-local flash is a deterministic source-over approximation:
+          PocketJS has no portable colour-matrix primitive for tinting only
+          the non-transparent battler pixels. Keep it below animation cells. */}
+      <Show when={targetFlash() && animationTargetSide() === "enemy"}>
+        <For each={animationTargetRects()}>
+          {(target) => (
+            <View
+              class="absolute"
+              style={{
+                posType: 1,
+                insetL: target.x,
+                insetT: target.y,
+                width: target.width,
+                height: target.height,
+                bgColor: targetFlash()!.color,
+                opacity: targetFlash()!.opacity,
+              }}
+              debugName={`rpgmaker-battle-animation-target-flash-${target.side}-${target.index}`}
+            />
+          )}
+        </For>
+      </Show>
+
+      <Show when={animationFrameSource()}>
+        <For each={animationPlacements()}>
+          {(placement) => (
+            <LazyImage
+              class="absolute"
+              src={animationFrameSource()!}
+              cache={imageCache}
+              active={props.active}
+              style={{
+                posType: 1,
+                insetL: 0,
+                insetT: 0,
+                translateX: placement.x,
+                translateY: placement.y,
+                width: animationAsset()!.w,
+                height: animationAsset()!.h,
+              }}
+              debugName={`rpgmaker-battle-animation-frame-${placement.key}`}
+            />
+          )}
+        </For>
+      </Show>
 
       <View
         class="absolute flex-col"
@@ -222,7 +406,11 @@ function FrontViewScene(
       >
         <For each={state().actors}>
           {(actor, index) => (
-            <View class="flex-col" style={{ height: 30 }} debugName={`rpgmaker-actor-hud-${index()}`}>
+            <View
+              class="flex-col"
+              style={animationHidesTarget("actor", index()) ? { height: 30, opacity: 0 } : { height: 30 }}
+              debugName={`rpgmaker-actor-hud-${index()}`}
+            >
               <BoundedLine
                 cell={fitBounded([
                   actor.name,
@@ -250,6 +438,26 @@ function FrontViewScene(
         </For>
       </View>
 
+      <Show when={targetFlash() && animationTargetSide() === "actor"}>
+        <For each={animationTargetRects()}>
+          {(target) => (
+            <View
+              class="absolute"
+              style={{
+                posType: 1,
+                insetL: target.x,
+                insetT: target.y,
+                width: target.width,
+                height: target.height,
+                bgColor: targetFlash()!.color,
+                opacity: targetFlash()!.opacity,
+              }}
+              debugName={`rpgmaker-battle-animation-target-flash-${target.side}-${target.index}`}
+            />
+          )}
+        </For>
+      </Show>
+
       {/* RPG Maker's spriteset-wide presentation covers battlers and the
           in-scene HUD, while command/message windows remain readable above
           it. The shared layer is absent until one sparse descriptor exists. */}
@@ -258,6 +466,22 @@ function FrontViewScene(
           screen={() => props.screen}
           width={() => props.width}
           height={() => props.height}
+        />
+      </Show>
+
+      <Show when={screenFlash()}>
+        <View
+          class="absolute"
+          style={{
+            posType: 1,
+            insetL: 0,
+            insetT: 0,
+            width: props.width,
+            height: props.height,
+            bgColor: screenFlash()!.color,
+            opacity: screenFlash()!.opacity,
+          }}
+          debugName="rpgmaker-battle-animation-screen-flash"
         />
       </Show>
 
