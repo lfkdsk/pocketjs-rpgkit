@@ -78,7 +78,8 @@ const water = (r: number, g: number, b: number) => b > 150 && b > r + 60 && b > 
 const grass = (r: number, g: number, b: number) => g > 120 && g > r + 30 && g > b + 30;
 /** The kit dialog paper (#0b1626). */
 const navy = (r: number, g: number, b: number) => r === 11 && g === 22 && b === 38;
-const battleBg = (r: number, g: number, b: number) => r === 0x16 && g === 0x25 && b === 0x36;
+const battleFloor = (r: number, g: number, b: number) => r === 24 && g === 56 && b === 72;
+const battleWall = (r: number, g: number, b: number) => r === 118 && g === 80 && b === 128;
 const curtain = (r: number, g: number, b: number) => r > 60 && r > 2 * g && r > 2 * b;
 /** Mean green lead over red/blue above the dialog box (x 104..375, y 32..169). */
 const stageGreenBias = (rgba: Uint8Array): number => {
@@ -258,9 +259,12 @@ describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", ()
       shots.get("shop-icons")!, 240, 68, 258, 92,
       (r, g, b) => r === 255 && g === 144 && b === 176,
     )).toBeGreaterThanOrEqual(4);
-    // The real front-view battle paints its upper backdrop and the imported
-    // Golem sprite before any command is selected.
-    expect(census(shots.get("battle")!, battleBg)).toBeGreaterThan(W * H * 0.25);
+    // The real front-view battle paints both imported backdrops in order: the
+    // opaque checker floor remains visible through the wall's transparent
+    // arches, while the purple wall proves the second layer stayed on top.
+    // Reversing the layers erases every wall-colour pixel.
+    expect(census(shots.get("battle")!, battleFloor)).toBeGreaterThan(W * H * 0.2);
+    expect(census(shots.get("battle")!, battleWall)).toBeGreaterThan(W * H * 0.1);
     expect(censusRect(
       shots.get("battle")!, 192, 40, 288, 152,
       (r, g, b) => r > 90 && g > 90 && b > 90,

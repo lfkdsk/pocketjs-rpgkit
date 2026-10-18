@@ -84,7 +84,10 @@ const EXPECTED_BYTES = {
   // Bucketed upper rows and ordinary-row write suppression add 159 B to both
   // GameView graphs without changing their capability boundaries.
   sunstone: 1_110_878,
-  "rmi-play": 1_300_604,
+  // The positive control also opts into imported battlebacks, legacy battle
+  // animations, changed actor faces and result audio. Their complete optional
+  // presentation adds a measured 45,162 B; neither negative control changes.
+  "rmi-play": 1_345_766,
 } as const;
 
 function implementationModules(app: string): string[] {
