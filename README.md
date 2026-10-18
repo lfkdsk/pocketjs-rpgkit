@@ -439,10 +439,9 @@ What it does today:
   scenes use a visible placeholder, and screen backdrops use placeholders
   instead of crashing the editor.
 
-Not yet: common-event lists, an interactive asset importer, or sheet-level `dirBlock` /
-`defaultPassage` editing. The grow example's generated settlement is not
-wired in: its sheet is synthesized by its cooker rather than cut from a
-source PNG.
+Not yet: an interactive asset importer. The grow example's generated
+settlement is not wired in: its sheet is synthesized by its cooker rather
+than cut from a source PNG.
 
 ```sh
 bun run editor                    # Sunstone, on a working copy in dist/editor/

@@ -114,11 +114,15 @@ the first folder, its notice names that folder, and the project now open
 is not marked as saved. Download still produces a complete pack.
 
 Sharded packs keep their map catalog fixed: Studio disables adding,
-duplicating, deleting, renaming, resizing and reordering maps, and editing one-way edges
-(they live on project-wide tile sheets), each with a note saying why. Use
-the inline project or `rpgkit-edit` for those. Schema validation of a whole
-pack reads every shard, so it runs when you press **Validate all shards**
-in the problems list.
+duplicating, deleting, renaming, resizing and reordering maps. One-way edge
+strokes are also unavailable because the stroke resolves map cells into a
+project-wide tile-sheet edit. Direct tile-sheet passage controls remain
+available: `defaultPassage`, per-cell pass/block exceptions and symmetric
+`dirBlock` walls are shell-only `update-sheet` edits and do not load or dirty
+a map shard. Each unavailable control carries a note saying why. Use the
+inline project or `rpgkit-edit` for the fixed operations. Schema validation of
+a whole pack reads every shard, so it runs when you press **Validate all
+shards** in the problems list.
 
 ## Layout
 
@@ -159,13 +163,13 @@ theme button. Below 900 px the panels stack under the canvas.
 ### Command palette and navigation
 
 Press Ctrl/Command+K or the toolbar's **Command palette** button to search
-every Studio action, map, event and command on the open map, plus every
-insertable command kind when an event page is selected. Search is fuzzy over
-labels, ids and context. Recently run results appear first; Up/Down selects,
-Enter runs and Escape closes the palette. Pointer hover changes only the
-active row and does not scroll the result list; keyboard movement scrolls as
-needed to reveal its active row. Opening the palette does not eagerly load the
-other maps in a sharded project.
+every Studio action, map, event, common event and command on the open map,
+plus every insertable command kind when an event page or common event is
+selected. Search is fuzzy over labels, ids and context. Recently run results
+appear first; Up/Down selects, Enter runs and Escape closes the palette.
+Pointer hover changes only the active row and does not scroll the result list;
+keyboard movement scrolls as needed to reveal its active row. Opening the
+palette does not eagerly load the other maps in a sharded project.
 
 ![The command palette filtered to an event in the light theme](screenshots/studio/studio-command-palette-light.png)
 
@@ -210,6 +214,18 @@ one-way edges (enter/exit rules on the tile sheet cell under the stroke).
 **G** toggles the grid and **P** the passage overlay, which tints tiles the
 sheet blocks, marks overrides, and draws edge arrows (blue: no entry from
 that side, orange: no exit).
+
+With the passage layer active, the palette also edits the selected tile-sheet
+cells. **Sheet default** sets the fallback to pass, block or unset; **Use
+default**, **Pass exception** and **Block exception** edit the per-cell sheet
+tables. At run time and in the overlay, pass exceptions win over block
+exceptions, then `defaultPassage` applies. The four **Two-way wall on edge**
+buttons edit `dirBlock`: a wall blocks crossing that edge in either direction
+and is drawn as a solid purple line. Blue/orange arrows remain the separate
+one-way `dirEdges` rules. A pattern selection updates all of its distinct
+sheet cells in one `update-sheet` history step. These rules affect every map
+that uses the tile, so the panel says so explicitly; direct sheet controls
+also work in sharded packs even though one-way map strokes do not.
 
 A whole stroke is one operation (`paint-cells`, `paint-rect`, `fill-region`
 or `paint-edges`) and one undo step. While you drag, Studio previews the
@@ -294,6 +310,26 @@ instead of truncating, so the tail of a long message stays visible. The
 section collapses to leave room for the command tree.
 
 ![The event explanation in the inspector](screenshots/studio/studio-event-explain-light.png)
+
+## Common events
+
+The inspector's **Common events** list browses project-global command lists.
+Create, rename, duplicate or delete one there, then edit its trigger, optional
+parallel switch gate and recursive commands with the same command-tree editor
+used for map pages. **Explain**, the command palette and the Problems panel
+also understand common events; a problem row opens the common event and
+selects its nested command.
+
+Renaming a common event atomically rewrites every `common` call in map pages
+and other common events. Deleting an unreferenced event is immediate. If it is
+still called, Studio first shows every stable caller path and changes nothing;
+Cancel keeps it, while **Confirm delete** performs the explicit forced delete.
+All of these actions are `editor/api` operations, appear in History and are
+undoable/redoable. For a sharded project, list/create/duplicate/body edits stay
+shell-only; reference lookup, rename and protected deletion scan the indexed
+map shards so no caller is silently missed.
+
+![Common-event editing and tile-sheet passage in the desktop app](screenshots/studio-desktop/common-and-sheet-passage.png)
 
 ## Art
 
