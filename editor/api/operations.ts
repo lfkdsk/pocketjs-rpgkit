@@ -12,6 +12,7 @@
 
 import type {
   Command,
+  CommonEvent,
   Dir,
   GameEvent,
   MapDef,
@@ -153,6 +154,10 @@ const WRITE_COMMANDS: ReadonlySet<EditCommandName> = new Set([
   "add-page",
   "update-page",
   "delete-page",
+  "add-common-event",
+  "update-common-event",
+  "duplicate-common-event",
+  "delete-common-event",
   "insert-command",
   "delete-command",
   "update-command",
@@ -165,7 +170,9 @@ const ARGUMENT_KEYS: Record<EditCommandName, readonly string[]> = {
   "list-maps": [],
   "list-events": ["map"],
   "list-pages": ["map", "event"],
-  "list-commands": ["map", "event", "page"],
+  "list-common-events": [],
+  "get-common-event": ["common"],
+  "list-commands": ["map", "event", "page", "common"],
   "list-items": [],
   "get-item": ["item"],
   "add-item": ["item"],
@@ -214,15 +221,20 @@ const ARGUMENT_KEYS: Record<EditCommandName, readonly string[]> = {
   "add-page": ["map", "event", "page", "index"],
   "update-page": ["map", "event", "page", "value"],
   "delete-page": ["map", "event", "page"],
-  "insert-command": ["map", "event", "page", "address", "command"],
-  "delete-command": ["map", "event", "page", "address"],
-  "update-command": ["map", "event", "page", "address", "field", "value"],
+  "add-common-event": ["commonEvent", "index"],
+  "update-common-event": ["common", "changes"],
+  "duplicate-common-event": ["common", "id"],
+  "delete-common-event": ["common", "force"],
+  "insert-command": ["map", "event", "page", "common", "address", "command"],
+  "delete-command": ["map", "event", "page", "common", "address"],
+  "update-command": ["map", "event", "page", "common", "address", "field", "value"],
   batch: ["operations"],
   validate: ["map"],
   save: ["patch", "direction"],
 };
 
 const EVENT_ID_RE = /^[A-Za-z0-9_-]+$/;
+const COMMON_EVENT_ID_RE = /^[a-z0-9_-]+$/;
 
 export class EditApiError extends Error {
   constructor(
@@ -467,6 +479,13 @@ interface DocumentError {
  * reject duplicate ids so every advertised map/event address is unambiguous. */
 function structuralErrors(project: ProjectSource, checkedMaps?: WeakSet<object>, trace?: DiffTrace): DocumentError[] {
   const errors: DocumentError[] = [];
+  const commonIds = new Set<string>();
+  (project.commonEvents ?? []).forEach((common, index) => {
+    if (commonIds.has(common.id)) {
+      errors.push({ path: `$.commonEvents[${index}].id`, msg: `duplicate common event id ${JSON.stringify(common.id)}` });
+    }
+    commonIds.add(common.id);
+  });
   if (!isInlineProject(project)) {
     const seen = new Set<string>();
     project.mapIndex.forEach((map, index) => {
@@ -592,6 +611,21 @@ function findPage(event: GameEvent, pageIndex: number): Page {
   return page;
 }
 
+function findCommonEvent(project: ProjectSource, commonId: string): { commonEvent: CommonEvent; index: number } {
+  const commonEvents = project.commonEvents ?? [];
+  const index = commonEvents.findIndex((common) => common.id === commonId);
+  if (index < 0) {
+    throw new EditApiError(
+      "COMMON_EVENT_NOT_FOUND",
+      `common event ${JSON.stringify(commonId)} does not exist; choose one of: ${commonEvents.map((common) => common.id).join(", ") || "(none)"}`,
+      "$.common",
+      commonEvents.map((common) => common.id),
+      commonId,
+    );
+  }
+  return { commonEvent: commonEvents[index]!, index };
+}
+
 function mapAddress(mapId: string): string {
   return `map:${mapId}`;
 }
@@ -604,6 +638,10 @@ function pageAddress(mapId: string, eventId: string, pageIndex: number): string 
   return `${eventAddress(mapId, eventId)}/page:${pageIndex}`;
 }
 
+function commonEventAddress(commonId: string): string {
+  return `common:${commonId}`;
+}
+
 function commandStableAddress(
   mapId: string,
   eventId: string,
@@ -611,6 +649,89 @@ function commandStableAddress(
   address: CommandAddress,
 ): string {
   return `${pageAddress(mapId, eventId, pageIndex)}/command:${commandAddressKey(address)}`;
+}
+
+function commonCommandStableAddress(commonId: string, address: CommandAddress): string {
+  return `${commonEventAddress(commonId)}/command:${commandAddressKey(address)}`;
+}
+
+interface MapCommonEventReference {
+  owner: { map: string; event: string; page: number };
+  address: CommandAddress;
+  path: string;
+}
+
+interface CommonCommonEventReference {
+  owner: { common: string };
+  address: CommandAddress;
+  path: string;
+}
+
+type CommonEventReference = MapCommonEventReference | CommonCommonEventReference;
+
+/** Concrete authoring locations that invoke a common event. The structured
+ * command address is reusable by Studio/CLI and the text address is suitable
+ * for an error list without any map-index coupling. */
+function commonEventReferences(project: Project, commonId: string): CommonEventReference[] {
+  const references: CommonEventReference[] = [];
+  for (const map of project.maps) {
+    for (const event of map.events ?? []) {
+      event.pages.forEach((page, pageIndex) => {
+        for (const row of flattenCommands(page.commands)) {
+          if (row.command.op !== "common" || row.command.id !== commonId) continue;
+          references.push({
+            owner: { map: map.id, event: event.id, page: pageIndex },
+            address: cloneJson(row.address),
+            path: commandStableAddress(map.id, event.id, pageIndex, row.address),
+          });
+        }
+      });
+    }
+  }
+  for (const common of project.commonEvents ?? []) {
+    for (const row of flattenCommands(common.commands)) {
+      if (row.command.op !== "common" || row.command.id !== commonId) continue;
+      references.push({
+        owner: { common: common.id },
+        address: cloneJson(row.address),
+        path: commonCommandStableAddress(common.id, row.address),
+      });
+    }
+  }
+  return references;
+}
+
+function rewriteCommonCalls(commands: readonly Command[], from: string, to: string): Command[] {
+  let edited = commands as Command[];
+  for (const row of flattenCommands(commands)) {
+    if (row.command.op !== "common" || row.command.id !== from) continue;
+    edited = updateCommand(edited, row.address, { ...row.command, id: to });
+  }
+  return edited;
+}
+
+function rewriteCommonEventReferences(project: Project, from: string, to: string): Project {
+  const maps = project.maps.map((map) => {
+    let mapChanged = false;
+    const events = (map.events ?? []).map((event) => {
+      let eventChanged = false;
+      const pages = event.pages.map((page) => {
+        const commands = rewriteCommonCalls(page.commands, from, to);
+        if (commands === page.commands) return page;
+        eventChanged = true;
+        return { ...page, commands };
+      });
+      if (!eventChanged) return event;
+      mapChanged = true;
+      return { ...event, pages };
+    });
+    return mapChanged ? { ...map, events } : map;
+  });
+  const commonEvents = (project.commonEvents ?? []).map((common) => {
+    const commands = rewriteCommonCalls(common.commands, from, to);
+    return commands === common.commands ? common : { ...common, commands };
+  });
+  return { ...project, maps, commonEvents };
 }
 
 function tileAddress(mapId: string, layer: Layer, x: number, y: number): string {
@@ -1433,9 +1554,66 @@ function pageArgs(project: Project, args: Record<string, unknown>): {
   return { mapId, map, mapIndex, eventId, event, pageIndex, page: findPage(event, pageIndex) };
 }
 
-function commandArgs(project: Project, args: Record<string, unknown>): ReturnType<typeof pageArgs> & { address: CommandAddress } {
+type CommandTarget =
+  | ({ kind: "map"; commands: readonly Command[] } & ReturnType<typeof pageArgs>)
+  | {
+      kind: "common";
+      commonId: string;
+      commonIndex: number;
+      commonEvent: CommonEvent;
+      commands: readonly Command[];
+    };
+
+function commandTargetArgs(project: Project, args: Record<string, unknown>): CommandTarget {
+  const hasCommon = own(args, "common");
+  const mapKeys = ["map", "event", "page"] as const;
+  const hasMapTarget = mapKeys.some((key) => own(args, key));
+  if (hasCommon && hasMapTarget) {
+    throw new EditApiError(
+      "INVALID_ARGUMENT",
+      "command target must be exactly one of {map,event,page} or {common}",
+      "$",
+      ["map/event/page", "common"],
+      { common: true, map: own(args, "map"), event: own(args, "event"), page: own(args, "page") },
+    );
+  }
+  if (hasCommon) {
+    const commonId = stringArg(args, "common");
+    const { commonEvent, index: commonIndex } = findCommonEvent(project, commonId);
+    return { kind: "common", commonId, commonIndex, commonEvent, commands: commonEvent.commands };
+  }
+  if (!mapKeys.every((key) => own(args, key))) {
+    throw new EditApiError(
+      "INVALID_ARGUMENT",
+      "command target must be exactly one of {map,event,page} or {common}",
+      "$",
+      ["map/event/page", "common"],
+      { common: false, map: own(args, "map"), event: own(args, "event"), page: own(args, "page") },
+    );
+  }
   const selected = pageArgs(project, args);
-  return { ...selected, address: parseCommandAddress(args.address) };
+  return { kind: "map", ...selected, commands: selected.page.commands };
+}
+
+function commandArgs(project: Project, args: Record<string, unknown>): CommandTarget & { address: CommandAddress } {
+  return { ...commandTargetArgs(project, args), address: parseCommandAddress(args.address) };
+}
+
+function commandTargetAddress(target: CommandTarget, address: CommandAddress): string {
+  return target.kind === "common"
+    ? commonCommandStableAddress(target.commonId, address)
+    : commandStableAddress(target.mapId, target.eventId, target.pageIndex, address);
+}
+
+function replaceTargetCommands(project: Project, target: CommandTarget, commands: Command[]): Project {
+  if (target.kind === "common") {
+    const commonEvents = (project.commonEvents ?? []).slice();
+    commonEvents[target.commonIndex] = { ...target.commonEvent, commands };
+    return { ...project, commonEvents };
+  }
+  let state = editorAt(project, target.mapIndex, target.eventId, target.pageIndex);
+  state = updateSelectedPage(state, (page) => ({ ...page, commands }));
+  return exportProject(state);
 }
 
 interface MutationResult {
@@ -2098,6 +2276,124 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
     return { project: exportProject(state), addresses: [eventAddress(mapId, eventId)], result: { deleted: cloneJson(event) } };
   }
 
+  if (command === "add-common-event") {
+    const raw = objectArg(args, "commonEvent");
+    if (typeof raw.id !== "string" || !COMMON_EVENT_ID_RE.test(raw.id)) {
+      throw new EditApiError(
+        "INVALID_ARGUMENT",
+        "commonEvent.id must match ^[a-z0-9_-]+$",
+        "$.commonEvent.id",
+        "lowercase letters, digits, underscore, or hyphen",
+        raw.id,
+      );
+    }
+    if ((project.commonEvents ?? []).some((common) => common.id === raw.id)) {
+      throw new EditApiError("DUPLICATE_COMMON_EVENT", `common event ${JSON.stringify(raw.id)} already exists`, "$.commonEvent.id", "unique id", raw.id);
+    }
+    const commonEvent = cloneJson(raw) as unknown as CommonEvent;
+    const commonEvents = (project.commonEvents ?? []).slice();
+    const index = integerArg(args, "index", { min: 0, max: commonEvents.length, optional: true }) ?? commonEvents.length;
+    commonEvents.splice(index, 0, commonEvent);
+    return {
+      project: { ...project, commonEvents },
+      addresses: [commonEventAddress(commonEvent.id)],
+      result: cloneJson(commonEvent),
+    };
+  }
+
+  if (command === "update-common-event") {
+    const commonId = stringArg(args, "common");
+    const { commonEvent, index } = findCommonEvent(project, commonId);
+    const changes = objectArg(args, "changes");
+    const allowed = new Set(["id", "name", "trigger", "conditionSwitch"]);
+    const unknown = Object.keys(changes).filter((key) => !allowed.has(key));
+    if (unknown.length > 0) {
+      throw new EditApiError("INVALID_ARGUMENT", `unsupported common event field(s): ${unknown.join(", ")}`, "$.changes", [...allowed], unknown);
+    }
+    const candidate = cloneJson(commonEvent) as CommonEvent & Record<string, unknown>;
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null && (key === "name" || key === "conditionSwitch")) delete candidate[key];
+      else candidate[key] = cloneJson(value);
+    }
+    if (typeof candidate.id !== "string" || !COMMON_EVENT_ID_RE.test(candidate.id)) {
+      throw new EditApiError(
+        "INVALID_ARGUMENT",
+        "common event id must match ^[a-z0-9_-]+$",
+        "$.changes.id",
+        "lowercase letters, digits, underscore, or hyphen",
+        candidate.id,
+      );
+    }
+    if (candidate.id !== commonId && (project.commonEvents ?? []).some((common) => common.id === candidate.id)) {
+      throw new EditApiError("DUPLICATE_COMMON_EVENT", `common event ${JSON.stringify(candidate.id)} already exists`, "$.changes.id", "unique id", candidate.id);
+    }
+    const commonEvents = (project.commonEvents ?? []).slice();
+    commonEvents[index] = candidate;
+    let edited: Project = { ...project, commonEvents };
+    if (candidate.id !== commonId) edited = rewriteCommonEventReferences(edited, commonId, candidate.id);
+    return {
+      project: edited,
+      addresses: [commonEventAddress(commonId), ...(candidate.id === commonId ? [] : [commonEventAddress(candidate.id)])],
+      result: cloneJson(candidate),
+    };
+  }
+
+  if (command === "duplicate-common-event") {
+    const commonId = stringArg(args, "common");
+    const { commonEvent, index } = findCommonEvent(project, commonId);
+    const used = new Set((project.commonEvents ?? []).map((common) => common.id));
+    let id: string;
+    if (args.id !== undefined) {
+      id = stringArg(args, "id");
+      if (!COMMON_EVENT_ID_RE.test(id)) {
+        throw new EditApiError("INVALID_ARGUMENT", "id must match ^[a-z0-9_-]+$", "$.id", "lowercase letters, digits, underscore, or hyphen", id);
+      }
+      if (used.has(id)) throw new EditApiError("DUPLICATE_COMMON_EVENT", `common event ${JSON.stringify(id)} already exists`, "$.id", "unique id", id);
+    } else {
+      const base = `${commonId}-copy`;
+      id = base;
+      for (let suffix = 2; used.has(id); suffix++) id = `${base}-${suffix}`;
+    }
+    const copy = { ...cloneJson(commonEvent), id };
+    const commonEvents = (project.commonEvents ?? []).slice();
+    commonEvents.splice(index + 1, 0, copy);
+    return {
+      project: { ...project, commonEvents },
+      addresses: [commonEventAddress(id)],
+      result: cloneJson(copy),
+    };
+  }
+
+  if (command === "delete-common-event") {
+    const commonId = stringArg(args, "common");
+    const { commonEvent, index } = findCommonEvent(project, commonId);
+    let force = false;
+    if (args.force !== undefined) {
+      if (typeof args.force !== "boolean") {
+        throw new EditApiError("INVALID_ARGUMENT", "force must be true or false", "$.force", "boolean", args.force);
+      }
+      force = args.force;
+    }
+    const references = commonEventReferences(project, commonId);
+    if (references.length > 0 && !force) {
+      throw new EditApiError(
+        "RESOURCE_IN_USE",
+        `common event ${JSON.stringify(commonId)} is referenced ${references.length} time(s); inspect details and retry with force:true to confirm deletion`,
+        "$.common",
+        "unreferenced common event or force:true",
+        commonId,
+        { common: commonId, references },
+      );
+    }
+    const commonEvents = (project.commonEvents ?? []).slice();
+    commonEvents.splice(index, 1);
+    return {
+      project: { ...project, commonEvents },
+      addresses: [commonEventAddress(commonId)],
+      result: { deleted: cloneJson(commonEvent), references },
+    };
+  }
+
   if (command === "add-page") {
     const mapId = stringArg(args, "map");
     const { map, index: mapIndex } = findMap(project, mapId);
@@ -2152,39 +2448,35 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
     // the whole-project schema gate below decides whether the payload is a
     // valid Command. Only field-level updates are limited to editor-owned ops.
     const commandValue = cloneJson(commandRecord) as unknown as Command;
-    const list = getCommandList(selected.page.commands, selected.address.path);
+    const list = getCommandList(selected.commands, selected.address.path);
     if (!list || selected.address.index > list.length) {
       throw new EditApiError("COMMAND_ADDRESS_NOT_FOUND", "command insertion address does not resolve to a list slot", "$.address", `index 0..${list?.length ?? 0}`, selected.address);
     }
-    const commands = insertCommand(selected.page.commands, selected.address, commandValue);
-    let state = editorAt(project, selected.mapIndex, selected.eventId, selected.pageIndex);
-    state = updateSelectedPage(state, (page) => ({ ...page, commands }));
+    const commands = insertCommand(selected.commands, selected.address, commandValue);
     return {
-      project: exportProject(state),
-      addresses: [commandStableAddress(selected.mapId, selected.eventId, selected.pageIndex, selected.address)],
+      project: replaceTargetCommands(project, selected, commands),
+      addresses: [commandTargetAddress(selected, selected.address)],
       result: cloneJson(commandValue),
     };
   }
 
   if (command === "delete-command") {
     const selected = commandArgs(project, args);
-    const before = getCommand(selected.page.commands, selected.address);
+    const before = getCommand(selected.commands, selected.address);
     if (!before) {
       throw new EditApiError("COMMAND_ADDRESS_NOT_FOUND", "command deletion address does not resolve to a command", "$.address", "existing command", selected.address);
     }
-    const commands = deleteCommand(selected.page.commands, selected.address);
-    let state = editorAt(project, selected.mapIndex, selected.eventId, selected.pageIndex);
-    state = updateSelectedPage(state, (page) => ({ ...page, commands }));
+    const commands = deleteCommand(selected.commands, selected.address);
     return {
-      project: exportProject(state),
-      addresses: [commandStableAddress(selected.mapId, selected.eventId, selected.pageIndex, selected.address)],
+      project: replaceTargetCommands(project, selected, commands),
+      addresses: [commandTargetAddress(selected, selected.address)],
       result: { deleted: cloneJson(before) },
     };
   }
 
   if (command === "update-command") {
     const selected = commandArgs(project, args);
-    const before = getCommand(selected.page.commands, selected.address);
+    const before = getCommand(selected.commands, selected.address);
     if (!before) {
       throw new EditApiError("COMMAND_ADDRESS_NOT_FOUND", "command update address does not resolve to a command", "$.address", "existing command", selected.address);
     }
@@ -2197,7 +2489,7 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
     if (typeof value !== "string") {
       throw new EditApiError("INVALID_ARGUMENT", "command field values use their editor text spelling", "$.value", "string", value);
     }
-    const resources = eventEditorResources(project, selected.map);
+    const resources = eventEditorResources(project, selected.kind === "map" ? selected.map : undefined);
     const editedField = editCommandField(before, field, value);
     if (!editedField.ok) {
       const fields = commandFields(before, resources).map((item) => item.key);
@@ -2209,12 +2501,10 @@ function mutate(command: EditCommandName, project: Project, args: Record<string,
         value,
       );
     }
-    const commands = updateCommand(selected.page.commands, selected.address, editedField.value);
-    let state = editorAt(project, selected.mapIndex, selected.eventId, selected.pageIndex);
-    state = updateSelectedPage(state, (page) => ({ ...page, commands }));
+    const commands = updateCommand(selected.commands, selected.address, editedField.value);
     return {
-      project: exportProject(state),
-      addresses: [commandStableAddress(selected.mapId, selected.eventId, selected.pageIndex, selected.address)],
+      project: replaceTargetCommands(project, selected, commands),
+      addresses: [commandTargetAddress(selected, selected.address)],
       result: cloneJson(editedField.value),
     };
   }
@@ -2262,6 +2552,16 @@ function readOperation(command: EditCommandName, project: ProjectSource, args: R
       sha256: map.sha256,
     }));
   }
+  if (command === "list-common-events") {
+    return (project.commonEvents ?? []).map((common) => ({
+      address: commonEventAddress(common.id),
+      id: common.id,
+      ...(common.name === undefined ? {} : { name: common.name }),
+      trigger: common.trigger,
+      ...(common.conditionSwitch === undefined ? {} : { conditionSwitch: common.conditionSwitch }),
+      commandCount: flattenCommands(common.commands).length,
+    }));
+  }
   const catalog = catalogCommandSpec(command);
   if (catalog && (catalog.action === "list" || catalog.action === "get")) {
     const inline = requireInline(project);
@@ -2269,6 +2569,15 @@ function readOperation(command: EditCommandName, project: ProjectSource, args: R
     return readCatalog(inline, catalog.kind, catalog.action, id);
   }
   const inline = requireInline(project);
+  if (command === "get-common-event") {
+    const commonId = stringArg(args, "common");
+    const { commonEvent } = findCommonEvent(inline, commonId);
+    return {
+      address: commonEventAddress(commonId),
+      ...cloneJson(commonEvent),
+      references: commonEventReferences(inline, commonId),
+    };
+  }
   if (command === "list-events") {
     const mapId = stringArg(args, "map");
     const { map } = findMap(inline, mapId);
@@ -2299,9 +2608,9 @@ function readOperation(command: EditCommandName, project: ProjectSource, args: R
     }));
   }
   if (command === "list-commands") {
-    const selected = pageArgs(inline, args);
-    return flattenCommands(selected.page.commands).map((row) => ({
-      address: commandStableAddress(selected.mapId, selected.eventId, selected.pageIndex, row.address),
+    const selected = commandTargetArgs(inline, args);
+    return flattenCommands(selected.commands).map((row) => ({
+      address: commandTargetAddress(selected, row.address),
       commandAddress: cloneJson(row.address),
       key: row.key,
       depth: row.depth,

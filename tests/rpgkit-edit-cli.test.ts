@@ -336,6 +336,45 @@ describe("rpgkit-edit file and CLI adapter", () => {
     expect(runCliJson("list-commands", file, at).body.result.map((row: any) => row.key)).toEqual(["root#0", "l0:body#0", "root#1"]);
   });
 
+  test("CLI exposes common-event CRUD, references, and common command targets through the edit registry", () => {
+    const file = tempFile("cli-common-events");
+    expect(runCliJson("add-common-event", file, {
+      commonEvent: { id: "shared", name: "Shared", trigger: "none", commands: [] },
+    })).toMatchObject({ exitCode: 0, body: { ok: true, addresses: ["common:shared"] } });
+    expect(runCliJson("insert-command", file, {
+      common: "shared",
+      address: { path: [], index: 0 },
+      command: { op: "text", lines: ["Hello"] },
+    })).toMatchObject({ exitCode: 0, body: { ok: true, addresses: ["common:shared/command:root#0"] } });
+    expect(runCliJson("add-common-event", file, {
+      commonEvent: { id: "caller", trigger: "none", commands: [{ op: "common", id: "shared" }] },
+    }).exitCode).toBe(0);
+    expect(runCliJson("list-common-events", file, {}).body.result).toEqual([
+      { address: "common:shared", id: "shared", name: "Shared", trigger: "none", commandCount: 1 },
+      { address: "common:caller", id: "caller", trigger: "none", commandCount: 1 },
+    ]);
+    expect(runCliJson("list-commands", file, { common: "shared" }).body.result[0]).toMatchObject({
+      address: "common:shared/command:root#0",
+      command: { op: "text", lines: ["Hello"] },
+    });
+    expect(runCliJson("update-common-event", file, { common: "shared", changes: { id: "renamed" } }))
+      .toMatchObject({ exitCode: 0, body: { ok: true, addresses: ["common:shared", "common:renamed"] } });
+    expect(runCliJson("get-common-event", file, { common: "renamed" }).body.result).toMatchObject({
+      id: "renamed",
+      references: [{ owner: { common: "caller" }, address: { path: [], index: 0 }, path: "common:caller/command:root#0" }],
+    });
+    expect(runCliJson("duplicate-common-event", file, { common: "renamed", id: "copy" }))
+      .toMatchObject({ exitCode: 0, body: { ok: true, result: { id: "copy", commands: [{ op: "text", lines: ["Hello"] }] } } });
+
+    const refused = runCliJson("delete-common-event", file, { common: "renamed" });
+    expect(refused).toMatchObject({
+      exitCode: 1,
+      body: { ok: false, error: { code: "RESOURCE_IN_USE", details: { common: "renamed", references: [{ owner: { common: "caller" } }] } } },
+    });
+    expect(runCliJson("delete-common-event", file, { common: "renamed", force: true }))
+      .toMatchObject({ exitCode: 0, body: { ok: true, written: true } });
+  });
+
   for (const entry of CLI_MUTATIONS) {
     describe(`CLI ${entry.command}`, () => {
       test("--dry-run returns a patch-v1 patch and leaves the file bytes unchanged", () => {
