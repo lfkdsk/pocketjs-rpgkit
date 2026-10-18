@@ -4,7 +4,12 @@
 
 import { deepClone } from "../engine/clone.ts";
 import { rngNext } from "../engine/interpreter.ts";
-import type { BattleCompletion, BattleRules } from "../engine/battle.ts";
+import type {
+  BattleAudio,
+  BattleCompletion,
+  BattleCompletionAudio,
+  BattleRules,
+} from "../engine/battle.ts";
 import type { ExtensionOptions, ExtensionReadContext } from "../engine/extensions.ts";
 import type { ExtensionCommandContext, ExtensionCommandResult } from "../engine/extensions.ts";
 import type { JsonValue, VariableValue } from "../engine/types.ts";
@@ -71,6 +76,35 @@ const partyOutSwitchKey = (id: number): string => `party-out-actor${String(id).p
 
 function jsonState(state: RpgMakerBattleState): JsonValue {
   return state as unknown as JsonValue;
+}
+
+function projectedBattleAudio(settings: Readonly<RpgMakerBattleSettings> | undefined): BattleAudio {
+  const source = settings?.battleBgm;
+  if (!source?.id) return { bgm: null };
+  return {
+    bgm: {
+      id: source.id,
+      volume: clamp(Math.round(source.volume), 0, 100),
+      pitch: clamp(Math.round(source.pitch), 50, 150),
+      pan: clamp(Math.round(source.pan), -100, 100),
+    },
+  };
+}
+
+function completionAudio(state: Readonly<RpgMakerBattleState>): BattleCompletionAudio | undefined {
+  if (state.result !== "win" && state.result !== "lose") return undefined;
+  const source = state.result === "win" ? state.settings?.victoryMe : state.settings?.defeatMe;
+  if (!source?.id || !Number.isSafeInteger(source.durationTicks) || source.durationTicks <= 0) return undefined;
+  return {
+    cue: {
+      id: source.id,
+      volume: clamp(Math.round(source.volume), 0, 100),
+      pitch: clamp(Math.round(source.pitch), 50, 150),
+      pan: clamp(Math.round(source.pan), -100, 100),
+      durationTicks: source.durationTicks,
+    },
+    ...(state.result === "lose" && !state.canLose ? { restore: "none" as const } : {}),
+  };
 }
 
 export function rpgMakerBattleState(value: JsonValue): Readonly<RpgMakerBattleState> {
@@ -2545,7 +2579,11 @@ export function createRpgMakerBattleRules(db: RpgMakerBattleDatabase): BattleRul
     },
     start(ext, setup, seed, context) {
       const started = createInitialState(db, ext, setup, seed, context);
-      return started ? { state: jsonState(started.state), ext: started.ext } : null;
+      return started ? {
+        state: jsonState(started.state),
+        ext: started.ext,
+        audio: projectedBattleAudio(started.state.settings),
+      } : null;
     },
     step(raw, input, ticks) {
       const state = mutableState(raw);
@@ -2554,6 +2592,11 @@ export function createRpgMakerBattleRules(db: RpgMakerBattleDatabase): BattleRul
       stepState(db, state, input);
       return jsonState(state);
     },
+    audio(raw) {
+      const state = rpgMakerBattleState(raw);
+      if (state.format !== "rpgmaker-battle-state/v1" || state.databaseHash !== db.databaseHash) return undefined;
+      return projectedBattleAudio(state.settings);
+    },
     done(raw): BattleCompletion | null {
       const state = rpgMakerBattleState(raw);
       if (state.format !== "rpgmaker-battle-state/v1" || state.phase !== "done" || state.result === null) return null;
@@ -2561,6 +2604,7 @@ export function createRpgMakerBattleRules(db: RpgMakerBattleDatabase): BattleRul
       const writes = changed(state.initialVariables, state.variables);
       const switches = changed(state.initialSwitches, state.switches);
       const items = changed(state.initialItems, state.items);
+      const audio = completionAudio(state);
       return {
         result: state.result,
         ext: withRuntime(state.ext, runtime),
@@ -2568,6 +2612,7 @@ export function createRpgMakerBattleRules(db: RpgMakerBattleDatabase): BattleRul
         ...(Object.keys(switches).length > 0 ? { switches } : {}),
         ...(Object.keys(items).length > 0 ? { items } : {}),
         ...(state.gold !== state.initialGold ? { gold: state.gold } : {}),
+        ...(audio ? { audio } : {}),
       };
     },
   };

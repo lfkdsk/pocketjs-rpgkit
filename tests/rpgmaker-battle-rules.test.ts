@@ -688,6 +688,43 @@ describe("RPG Maker battle rules", () => {
     expect(step.writes).toEqual({ [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 });
   });
 
+  test("battle BGM projects with pan and result ME selects the stock restore policy", () => {
+    const db = cloneDb();
+    db.settings = {
+      battleBgm: { name: "Battle", id: "bgm-battle", volume: 81, pitch: 104, pan: -17 },
+      victoryMe: { name: "Victory", id: "me-victory", volume: 90, pitch: 110, pan: 8, durationTicks: 75 },
+      defeatMe: { name: "Defeat", id: "me-defeat", volume: 70, pitch: 95, pan: -3, durationTicks: 90 },
+    };
+    const rules = createRpgMakerBattleRules(db);
+    const started = rules.start({}, setup(db), 1, CONTEXT)!;
+    expect(started.audio).toEqual({
+      bgm: { id: "bgm-battle", volume: 81, pitch: 104, pan: -17 },
+    });
+    expect(rules.audio?.(started.state)).toEqual(started.audio);
+
+    const finished = (result: "win" | "lose" | "escape", canLose: boolean) => {
+      const next = mutable(started.state);
+      next.phase = "done";
+      next.result = result;
+      next.canLose = canLose;
+      return rules.done(json(next))!;
+    };
+    expect(finished("win", false).audio).toEqual({
+      cue: { id: "me-victory", volume: 90, pitch: 110, pan: 8, durationTicks: 75 },
+    });
+    expect(finished("lose", true).audio).toEqual({
+      cue: { id: "me-defeat", volume: 70, pitch: 95, pan: -3, durationTicks: 90 },
+    });
+    expect(finished("lose", false).audio).toEqual({
+      restore: "none",
+      cue: { id: "me-defeat", volume: 70, pitch: 95, pan: -3, durationTicks: 90 },
+    });
+    expect(finished("escape", true).audio).toBeUndefined();
+
+    db.settings = { battleBgm: { name: "", volume: 90, pitch: 100, pan: 0 } };
+    expect(createRpgMakerBattleRules(db).start({}, setup(db), 2, CONTEXT)?.audio).toEqual({ bgm: null });
+  });
+
   test("battle start resolves explicit empty, terrain, and vehicle battlebacks", () => {
     const db = cloneDb();
     db.mapSettings = [
