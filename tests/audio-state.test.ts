@@ -11,7 +11,13 @@ import {
 import { AttractController } from "../src/engine/attract.ts";
 import { createSession, startSession, stepSession, type SessionState } from "../src/engine/session.ts";
 import { createSessionSnapshot, decodeEnvelopeText, encodeEnvelope } from "../src/engine/save.ts";
-import type { BattleRules, BattleStart, BattleTransfer } from "../src/engine/battle.ts";
+import type {
+  BattleCompletion,
+  BattleRules,
+  BattleStart,
+  BattleTransfer,
+} from "../src/engine/battle.ts";
+import { travelRuntime } from "../src/travel.ts";
 import type { Command, GameEvent, MapDef, Project } from "../src/engine/types.ts";
 
 /** Only battle scenes carry the suspended map audio snapshot. */
@@ -77,6 +83,7 @@ function audioBattleRules(options: {
   decline?: boolean;
   transfer?: BattleTransfer;
   immutable?: boolean;
+  completionAudio?: BattleCompletion["audio"];
 } = {}): BattleRules {
   return {
     ...(options.immutable ? { immutableState: true } : {}),
@@ -95,7 +102,12 @@ function audioBattleRules(options: {
     done(rawState) {
       const state = rawState as { done: boolean };
       return state.done
-        ? { ext: null, result: "win", ...(options.transfer ? { transfer: options.transfer } : {}) }
+        ? {
+          ext: null,
+          result: "win",
+          ...(options.transfer ? { transfer: options.transfer } : {}),
+          ...(options.completionAudio ? { audio: options.completionAudio } : {}),
+        }
         : null;
     },
   };
@@ -465,7 +477,7 @@ describe("battle audio lifecycle", () => {
   test("battle BGM suspends the surviving map mix and restores it atomically", () => {
     const p = battleProject(fullMapAudio);
     const session = createSession(p, 60, {
-      battle: audioBattleRules({ audio: { bgm: { id: "combat", volume: 88, pitch: 105 } } }),
+      battle: audioBattleRules({ audio: { bgm: { id: "combat", volume: 88, pitch: 105, pan: -27 } } }),
     });
     const entered = sessionStep(session, startSession(p, session), true);
     expect(battleReturnAudio(entered)).toEqual({
@@ -481,7 +493,7 @@ describe("battle audio lifecycle", () => {
     });
     const suspended = structuredClone(battleReturnAudio(entered)!);
     expect(entered.interp.audio).toEqual({
-      bgm: { id: "combat", volume: 88, pitch: 105, positionTicks: 0 },
+      bgm: { id: "combat", volume: 88, pitch: 105, pan: -27, positionTicks: 0 },
     });
 
     const played = sessionStep(session, entered);
@@ -537,6 +549,139 @@ describe("battle audio lifecycle", () => {
     expect(completed.interp.audio?.bgm).toEqual({
       id: "map", volume: 73, pitch: 100, positionTicks: 0,
     });
+  });
+
+  test("a pan-only battle BGM projection replaces the track once", () => {
+    const p = battleProject([]);
+    const rules: BattleRules = {
+      start: (ext) => ({
+        ext,
+        state: { shifted: false },
+        audio: { bgm: { id: "combat", volume: 88, pitch: 105, pan: -20 } },
+      }),
+      step(rawState, input) {
+        return input.confirmEdge ? { shifted: true } : rawState;
+      },
+      audio(rawState) {
+        return (rawState as { shifted: boolean }).shifted
+          ? { bgm: { id: "combat", volume: 88, pitch: 105, pan: 35 } }
+          : undefined;
+      },
+      done: () => null,
+    };
+    const session = createSession(p, 60, { battle: rules });
+    const entered = sessionStep(session, startSession(p, session), true);
+    expect(entered.interp.audio?.bgm).toMatchObject({ pan: -20, positionTicks: 0 });
+
+    const shifted = sessionStep(session, entered, true);
+    expect(shifted.interp.audio?.bgm).toEqual({
+      id: "combat", volume: 88, pitch: 105, pan: 35, positionTicks: 0,
+    });
+    const held = sessionStep(session, shifted);
+    expect(held.interp.audio?.bgm?.positionTicks).toBe(1);
+  });
+
+  test("completion ME overlays the restored map mix once and survives save/load", () => {
+    const p = battleProject([
+      { op: "playBgm", id: "map", volume: 73, pitch: 110, pan: 12 },
+      { op: "playBgs", id: "rain", volume: 61 },
+    ]);
+    const session = createSession(p, 60, {
+      battle: audioBattleRules({
+        audio: { bgm: { id: "combat" } },
+        completionAudio: {
+          cue: { id: "victory", volume: 82, pitch: 115, pan: -30, durationTicks: 2 },
+        },
+      }),
+    });
+    const entered = sessionStep(session, startSession(p, session), true);
+    const completed = sessionStep(session, entered, true);
+    expect(completed.scene).toBeNull();
+    expect(completed.interp.audio).toEqual({
+      bgm: { id: "map", volume: 73, pitch: 110, pan: 12, positionTicks: 0 },
+      bgs: { id: "rain", volume: 61, pitch: 100, positionTicks: 0 },
+      me: {
+        id: "victory", volume: 82, pitch: 115, pan: -30, positionTicks: 0,
+        durationTicks: 2, leftTicks: 2,
+      },
+    });
+    const playing = sessionStep(session, completed);
+    expect(playing.interp.audio?.bgm?.positionTicks).toBe(0);
+    expect(playing.interp.audio?.bgs?.positionTicks).toBe(1);
+    expect(playing.interp.audio?.me?.leftTicks).toBe(1);
+    const restored = decodeEnvelopeText(encodeEnvelope(createSessionSnapshot(session, playing, 0)));
+    expect(restored.interp.audio).toEqual(playing.interp.audio);
+    const released = sessionStep(session, playing);
+    expect(released.interp.audio?.me).toBeUndefined();
+    expect(released.interp.audio?.bgm).toMatchObject({
+      id: "map",
+      positionTicks: 0,
+      fade: {
+        totalTicks: ME_REPLAY_FADE_TICKS,
+        leftTicks: ME_REPLAY_FADE_TICKS,
+        direction: "in",
+      },
+    });
+    const after = sessionStep(session, released);
+    expect(after.interp.audio?.me).toBeUndefined();
+    expect(after.interp.audio?.bgm).toMatchObject({
+      id: "map", positionTicks: 1,
+      fade: { leftTicks: ME_REPLAY_FADE_TICKS - 1 },
+    });
+  });
+
+  test("completion ME can discard every prior track and finish in silence", () => {
+    const p = battleProject([
+      { op: "playBgm", id: "map" },
+      { op: "playBgs", id: "rain" },
+    ]);
+    const session = createSession(p, 60, {
+      battle: audioBattleRules({
+        audio: { bgm: { id: "combat" } },
+        completionAudio: {
+          restore: "none",
+          cue: { id: "defeat", durationTicks: 1 },
+        },
+      }),
+    });
+    const entered = sessionStep(session, startSession(p, session), true);
+    const completed = sessionStep(session, entered, true);
+    expect(completed.interp.audio).toEqual({
+      me: {
+        id: "defeat", volume: 100, pitch: 100, positionTicks: 0,
+        durationTicks: 1, leftTicks: 1,
+      },
+    });
+    const silent = sessionStep(session, completed);
+    expect(silent.interp.audio).toBeUndefined();
+  });
+
+  test("completion ME rewind refolds to the identical one-shot cursor", () => {
+    const p = battleProject([{ op: "playBgm", id: "map" }]);
+    const battle = audioBattleRules({
+      audio: { bgm: { id: "combat" } },
+      completionAudio: { cue: { id: "victory", durationTicks: 4 } },
+    });
+    const rewound = new AttractController(p, [], {
+      hz: 60,
+      attractEnabled: false,
+      rewindSeconds: 1 / 60,
+      keyframeIntervalFrames: 1,
+      battle,
+    });
+    rewound.startPlay();
+    for (const mask of [0x2000, 0, 0x2000]) rewound.step(mask);
+    expect(rewound.state.scene).toBeNull();
+    expect(rewound.state.interp.audio?.me?.leftTicks).toBe(4);
+    const completed = structuredClone(rewound.state);
+
+    rewound.step(0);
+    const forward = structuredClone(rewound.state);
+    expect(forward.interp.audio?.me?.leftTicks).toBe(3);
+    rewound.step(0x0100);
+    expect(rewound.state).toEqual(completed);
+    rewound.step(0);
+    expect(rewound.state).toEqual(forward);
   });
 
   for (const hz of [60, 30, 20, 4] as const) {
@@ -639,6 +784,37 @@ describe("battle audio lifecycle", () => {
     expect(state.interp.audio?.bgm?.id).toBe("map");
   });
 
+  test("battle start context reports the currently ridden vehicle", () => {
+    const p = project([testMap("m", [{
+      id: "battle",
+      x: 0,
+      y: 0,
+      pages: [{ trigger: "autorun", commands: [{ op: "battle", setup: null }] }],
+    }])]);
+    p.vehicles = [{
+      id: "skiff",
+      kind: "boat",
+      sprite: "base",
+      start: { map: "m", x: 1, y: 1, dir: "up" },
+    }];
+    let seenVehicle: string | null | undefined;
+    const rules: BattleRules = {
+      start(_ext, _setup, _seed, context) {
+        seenVehicle = context.vehicle;
+        return null;
+      },
+      step: (state) => state,
+      done: () => null,
+    };
+    const session = createSession(p, 60, { battle: rules, travel: travelRuntime });
+    let state = startSession(p, session);
+    state.travel!.vehicles!.riding = "skiff";
+    for (let i = 0; i < 3 && seenVehicle === undefined; i++) {
+      state = sessionStep(session, state);
+    }
+    expect(seenVehicle).toBe("skiff");
+  });
+
   test("malformed game-owned battle tracks fail at the reducer boundary", () => {
     const p = battleProject([]);
     const invalidAudio = { bgm: { id: "combat", volume: 101 } } as unknown as BattleStart["audio"];
@@ -647,6 +823,24 @@ describe("battle audio lifecycle", () => {
     });
     expect(() => sessionStep(session, startSession(p, session), true)).toThrow(
       "battle start audio.bgm.volume: integer 0..100 required",
+    );
+
+    const invalidPan = { bgm: { id: "combat", pan: 101 } } as unknown as BattleStart["audio"];
+    const panSession = createSession(p, 60, {
+      battle: audioBattleRules({ audio: invalidPan }),
+    });
+    expect(() => sessionStep(panSession, startSession(p, panSession), true)).toThrow(
+      "battle start audio.bgm.pan: integer -100..100 required",
+    );
+
+    const cueSession = createSession(p, 60, {
+      battle: audioBattleRules({
+        completionAudio: { cue: { id: "broken", durationTicks: 0 } },
+      }),
+    });
+    const entered = sessionStep(cueSession, startSession(p, cueSession), true);
+    expect(() => sessionStep(cueSession, entered, true)).toThrow(
+      "battle completion audio.cue.durationTicks: positive integer required",
     );
   });
 });

@@ -1944,18 +1944,23 @@ function battleAudioState(value: unknown): AudioState | null | undefined {
   if (!Number.isInteger(pitch) || (pitch as number) < 50 || (pitch as number) > 150) {
     throw new Error("battle start audio.bgm.pitch: integer 50..150 required");
   }
+  const pan = bgm.pan ?? 0;
+  if (!Number.isInteger(pan) || (pan as number) < -100 || (pan as number) > 100) {
+    throw new Error("battle start audio.bgm.pan: integer -100..100 required");
+  }
   return {
     bgm: {
       id: bgm.id,
       volume: volume as number,
       pitch: pitch as number,
+      ...((pan as number) !== 0 ? { pan: pan as number } : {}),
       positionTicks: 0,
     },
   };
 }
 
 /** A battle audio projection is a desired track, not a replay command. Keep
- * the existing position when the projected id/volume/pitch already match. */
+ * the existing position when the projected id/volume/pitch/pan already match. */
 function battleAudioMatches(
   current: Readonly<AudioState> | undefined,
   projected: Readonly<AudioState> | null,
@@ -1967,7 +1972,63 @@ function battleAudioMatches(
     currentBgm.id === projectedBgm.id &&
     currentBgm.volume === projectedBgm.volume &&
     currentBgm.pitch === projectedBgm.pitch &&
+    (currentBgm.pan ?? 0) === (projectedBgm.pan ?? 0) &&
     current?.bgs === undefined && current?.me === undefined && current?.savedBgm === undefined;
+}
+
+interface CompiledBattleCompletionAudio {
+  restore: "map" | "none";
+  cue: NonNullable<AudioState["me"]>;
+}
+
+/** Validate a terminal battle cue and compile it into the same durable ME
+ * state used by playMe. Installing it after the base-mix decision makes the
+ * cue a one-shot reducer fact: save/load and rewind need no side channel. */
+function battleCompletionAudioState(value: unknown): CompiledBattleCompletionAudio | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("battle completion audio: object required");
+  }
+  const audio = value as Record<string, unknown>;
+  const restore = audio.restore ?? "map";
+  if (restore !== "map" && restore !== "none") {
+    throw new Error("battle completion audio.restore: map or none required");
+  }
+  const cueValue = audio.cue;
+  if (cueValue === null || typeof cueValue !== "object" || Array.isArray(cueValue)) {
+    throw new Error("battle completion audio.cue: object required");
+  }
+  const cue = cueValue as Record<string, unknown>;
+  if (typeof cue.id !== "string" || cue.id.length === 0) {
+    throw new Error("battle completion audio.cue.id: non-empty string required");
+  }
+  const volume = cue.volume ?? 100;
+  if (!Number.isInteger(volume) || (volume as number) < 0 || (volume as number) > 100) {
+    throw new Error("battle completion audio.cue.volume: integer 0..100 required");
+  }
+  const pitch = cue.pitch ?? 100;
+  if (!Number.isInteger(pitch) || (pitch as number) < 50 || (pitch as number) > 150) {
+    throw new Error("battle completion audio.cue.pitch: integer 50..150 required");
+  }
+  const pan = cue.pan ?? 0;
+  if (!Number.isInteger(pan) || (pan as number) < -100 || (pan as number) > 100) {
+    throw new Error("battle completion audio.cue.pan: integer -100..100 required");
+  }
+  if (!Number.isInteger(cue.durationTicks) || (cue.durationTicks as number) <= 0) {
+    throw new Error("battle completion audio.cue.durationTicks: positive integer required");
+  }
+  return {
+    restore,
+    cue: {
+      id: cue.id,
+      volume: volume as number,
+      pitch: pitch as number,
+      ...((pan as number) !== 0 ? { pan: pan as number } : {}),
+      positionTicks: 0,
+      durationTicks: cue.durationTicks as number,
+      leftTicks: cue.durationTicks as number,
+    },
+  };
 }
 
 /** Consume one queued Battle Processing request. One draw
@@ -2005,6 +2066,7 @@ function startBattleScene(sess: Session, s: SessionState, request: PendingBattle
       ...(s.interp.sw.partyOrder ? { partyOrder: [...s.interp.sw.partyOrder] } : {}),
       mapId: s.mapId,
       playerCell: { x: s.move.tx, y: s.move.ty, region: playerRegion },
+      ...(s.travel !== undefined ? { vehicle: s.travel.vehicles?.riding ?? null } : {}),
       ...(s.interp.sw.playerAppearance
         ? { playerAppearance: s.interp.sw.playerAppearance }
         : {}),
@@ -2454,6 +2516,7 @@ function advanceBattleScene(
     gold = Math.max(0, clampFiniteVar(completion.gold));
   }
   const transfer = completionTransfer(completion.transfer);
+  const completionAudio = battleCompletionAudioState(completion.audio);
   const items = itemReplacements === undefined
     ? undefined
     : replaceItemCounts(s.interp.sw.items, itemReplacements, sess.worldOptions.inventory);
@@ -2476,11 +2539,17 @@ function advanceBattleScene(
   if (gold !== undefined) s.interp.sw.gold = gold;
   shiftFrozenWorldClocks(sess, s, scene);
   // Battle-owned audio is a presentation scene resource, but its intent is
-  // reducer state. Restore it before resuming the parked branch so the
-  // completion is one atomic state transition (including instant battles).
-  if (scene.returnAudio !== undefined) {
+  // reducer state. Select the completion's base mix, then install its ME so
+  // the restored map BGM is held at its saved cursor until the cue ends.
+  // With no completion audio this is the historical atomic restore path.
+  if (completionAudio?.restore === "none") {
+    delete s.interp.audio;
+  } else if (scene.returnAudio !== undefined) {
     if (scene.returnAudio === null) delete s.interp.audio;
     else s.interp.audio = cloneAudioState(scene.returnAudio);
+  }
+  if (completionAudio !== undefined) {
+    (s.interp.audio ??= {}).me = completionAudio.cue;
   }
   s.interp = continueBattle(s.interp, scene.fiber, completion.result, transfer);
   s.sw = s.interp.sw;

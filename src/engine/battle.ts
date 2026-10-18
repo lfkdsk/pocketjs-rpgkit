@@ -45,6 +45,27 @@ export interface BattleCompletion {
   /** Replacement for the session wallet. */
   gold?: number;
   transfer?: BattleTransfer;
+  /** Optional one-shot result cue. The selected base mix is installed before
+   * the cue, so an ME can hold and later fade the restored map BGM exactly
+   * like an authored playMe command. */
+  audio?: BattleCompletionAudio;
+}
+
+export interface BattleCompletionCue {
+  id: string;
+  volume?: number;
+  pitch?: number;
+  pan?: number;
+  /** Decoded one-shot length in fixed 60 Hz reference ticks. */
+  durationTicks: number;
+}
+
+export interface BattleCompletionAudio {
+  cue: BattleCompletionCue;
+  /** `map` restores the mix suspended by BattleStart.audio before playing
+   * the cue (and is the default). `none` discards every prior track, leaving
+   * silence after the cue finishes. */
+  restore?: "map" | "none";
 }
 
 /** One battle-owned BGM intent. Battle music deliberately owns only BGM:
@@ -54,6 +75,7 @@ export interface BattleAudio {
     id: string;
     volume?: number;
     pitch?: number;
+    pan?: number;
   } | null;
 }
 
@@ -96,7 +118,7 @@ export interface BattleRules {
   step(state: JsonValue, input: Readonly<BattleInput>, ticks: number): JsonValue;
   /** Optional desired BGM projection for a battle that returned
    * `BattleStart.audio`. The engine samples it after each step, changes the
-   * owned track only when id/volume/pitch differ, and still restores the
+   * owned track only when id/volume/pitch/pan differ, and still restores the
    * suspended map mix on completion. `undefined` keeps the current battle
    * track; `{ bgm: null }` selects silence. */
   audio?(state: JsonValue): BattleAudio | undefined;
