@@ -13,7 +13,8 @@
     "e2e": "bun e2e/run.ts",
     "dist": "bun build.ts && electron-builder --publish never",
     "dist:linux": "bun build.ts && electron-builder --linux dir --publish never",
-    "dist:mac": "bun build.ts && electron-builder --mac --universal --publish never"
+    "dist:mac": "bun build.ts && electron-builder --mac --universal --publish never",
+    "dist:win": "bun build.ts && electron-builder --win nsis --x64 --publish never"
   },
   "devDependencies": {
     "electron": "44.5.1",
