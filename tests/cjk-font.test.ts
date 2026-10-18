@@ -3,16 +3,20 @@
 // demo subset stands in for the pinned Simplified Chinese source.
 
 import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bakeSlot } from "../vendor/pocketjs/framework/compiler/bake-font.ts";
 import { FONT_CMAP_ENTRY_SIZE, FONT_HEADER_SIZE } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import {
+  CJK_FONT_SOURCES,
+  CJK_FONT_VARIANTS,
   LICENSE_PAK_KEY,
   OFL_TITLE,
   REPO_ROOT,
   checkAppCjkFont,
+  cjkAppFontFiles,
   fallbackCharacters,
   opentype,
   pakManifestWithLicense,
@@ -161,6 +165,8 @@ describe("writeAppCjkFont / checkAppCjkFont", () => {
     const charset = readFileSync(join(appDir, "fonts/cjk-charset.txt"), "utf8");
     expect(cps(charset)).toEqual(fallbackCharacters(texts));
     expect(result.fontBytes).toBe(readFileSync(join(appDir, "fonts/NotoSansCJKsc-subset.otf")).length);
+    expect(createHash("sha256").update(readFileSync(join(appDir, "fonts/NotoSansCJKsc-subset.otf"))).digest("hex"))
+      .toBe("48c817bc1b8a7f46a27e99a5118805110e3f24518b1859023ba1e22d1f85d23d");
     // The notice: the source's copyright line, then the OFL text verbatim.
     const notice = readFileSync(join(appDir, "fonts/LICENSE-NotoSansCJK.txt"), "utf8");
     const ofl = readFileSync(join(REPO_ROOT, "vendor/pocketjs/assets/fonts/LICENSE-NotoSansCJK.txt"), "utf8");
@@ -197,6 +203,33 @@ describe("writeAppCjkFont / checkAppCjkFont", () => {
   test("a missing fonts.json is reported", () => {
     expect(checkAppCjkFont(join(scratch, "none"), ["一"])).toContain("fonts.json is missing");
   });
+
+  for (const variant of CJK_FONT_VARIANTS) {
+    test(`${variant} writes and checks the selected regional face`, async () => {
+      const appDir = join(scratch, `variant-${variant}`);
+      const files = cjkAppFontFiles(variant);
+      const texts = ["一丁ア"];
+      await writeAppCjkFont({ appDir, texts, source: DEMO, variant });
+
+      expect(JSON.parse(readFileSync(join(appDir, "fonts.json"), "utf8"))).toEqual({
+        fallback: [`fonts/${files.font}`],
+        characterFiles: [`fonts/${files.charset}`],
+      });
+      expect(parseFontFile(join(appDir, "fonts", files.font)).getEnglishName("fontFamily")).toBe(files.subsetFamily);
+      const notice = readFileSync(join(appDir, "fonts", files.license), "utf8");
+      expect(notice).toContain(`${files.subsetFamily}: a subset`);
+      expect(notice).toContain(`of ${CJK_FONT_SOURCES[variant].family},`);
+      expect(notice).toContain(CJK_FONT_SOURCES[variant].revision);
+      expect(notice).toContain(OFL_TITLE);
+      const note = readFileSync(join(appDir, "fonts", files.provenance), "utf8");
+      expect(note).toContain(`/Sans/OTF/${CJK_FONT_SOURCES[variant].directory}/${CJK_FONT_SOURCES[variant].file}`);
+      expect(note).toContain(CJK_FONT_SOURCES[variant].sha256);
+      expect(checkAppCjkFont(appDir, texts, variant)).toEqual([]);
+
+      const wrong = variant === "sc" ? "jp" : "sc";
+      expect(checkAppCjkFont(appDir, texts, wrong).some(problem => problem.includes("fonts.json does not list"))).toBe(true);
+    });
+  }
 });
 
 describe("license shipping", () => {
@@ -338,6 +371,12 @@ describe("--check sees escaped characters", () => {
     return { code: proc.exitCode, out: proc.stdout.toString() + proc.stderr.toString() };
   };
 
+  test("rejects an unknown regional variant", () => {
+    const result = run(`--app=${scratch}`, "--variant=wrong");
+    expect(result.code).toBe(2);
+    expect(result.out).toContain("expected sc|tc|jp|kr");
+  });
+
   test("a character only written as an escape fails --check until the subset is regenerated", async () => {
     const appDir = join(scratch, "escaped-app");
     mkdirSync(appDir, { recursive: true });
@@ -383,5 +422,20 @@ describe("committed app subsets", () => {
 
   test("the committed charset is exactly the inventory's fallback characters", () => {
     expect(cps(readFileSync(join(app, "fonts/cjk-charset.txt"), "utf8"))).toEqual(fallbackCharacters(inventory()));
+  });
+
+  test("the undeclared SC app files retain their reviewed bytes", () => {
+    const digest = (file: string) => createHash("sha256").update(readFileSync(join(app, file))).digest("hex");
+    expect({
+      font: digest("fonts/NotoSansCJKsc-subset.otf"),
+      charset: digest("fonts/cjk-charset.txt"),
+      config: digest("fonts.json"),
+      pak: digest("pak.json"),
+    }).toEqual({
+      font: "92da6341be4d84473e9bbd13c8d2eb1c94b32dd30c6547f048f3c9168dda70e8",
+      charset: "e0f88a185dd59090942c48cf3c13c33c3f36ca12b59542f47696ccba7b86cbb9",
+      config: "3175f6980d75770e083e3c64b134cc5c16359d5ee82f6405678e6d0656e7a538",
+      pak: "27db709343804904b1ccd177dd6a715011d83e4f30b3b9b4969b1c3599f34419",
+    });
   });
 });

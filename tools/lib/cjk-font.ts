@@ -1,10 +1,10 @@
-// tools/lib/cjk-font.ts — per-app Simplified Chinese fallback font.
+// tools/lib/cjk-font.ts — per-language-app regional CJK fallback font.
 //
 // PocketJS bakes text from Inter. A codepoint Inter does not map comes from
 // the fallback faces an app lists in its `fonts.json` (vendor/pocketjs/
 // framework/compiler/font-config.ts). This module derives that fallback from
-// the pinned Noto Sans CJK SC source: it collects the characters an app's
-// text needs that Inter lacks, subsets the source down to exactly those
+// one pinned regional Noto Sans CJK source: it collects the characters an
+// app's text needs that Inter lacks, subsets the source down to exactly those
 // glyphs, and writes the subset, its charset file, the license notice
 // (copyright line + OFL), a provenance note, the `fonts.json` that wires them
 // into the build and a `pak.json` row that ships the notice inside the pak.
@@ -29,20 +29,98 @@ export const REPO_ROOT = resolve(import.meta.dir, "../..");
 /** opentype.js is installed only under the vendored PocketJS. */
 export const opentype: any = createRequire(join(REPO_ROOT, "vendor/pocketjs/package.json"))("opentype.js");
 
-export const CJK_FONT_SOURCE = {
-  url: "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
-  revision: "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
-  sha256: "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
-  bytes: 16437364,
-  file: "NotoSansCJKsc-Regular.otf",
-} as const;
+export type CjkFontVariant = "sc" | "tc" | "jp" | "kr";
+
+export const CJK_FONT_VARIANTS = ["sc", "tc", "jp", "kr"] as const satisfies readonly CjkFontVariant[];
+export const DEFAULT_CJK_FONT_VARIANT: CjkFontVariant = "sc";
+
+const NOTO_CJK_REVISION = "f8d157532fbfaeda587e826d4cd5b21a49186f7c";
+const NOTO_CJK_RAW = `https://raw.githubusercontent.com/notofonts/noto-cjk/${NOTO_CJK_REVISION}/Sans/OTF`;
+
+export interface CjkFontSource {
+  readonly url: string;
+  readonly revision: string;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly file: string;
+  readonly directory: "SimplifiedChinese" | "TraditionalChinese" | "Japanese" | "Korean";
+  readonly family: string;
+  readonly suffix: CjkFontVariant;
+}
+
+/** Regional faces from one immutable noto-cjk revision. Each download is
+ * checked by both length and SHA-256 before it can enter the cache. */
+export const CJK_FONT_SOURCES: Readonly<Record<CjkFontVariant, CjkFontSource>> = {
+  sc: {
+    url: `${NOTO_CJK_RAW}/SimplifiedChinese/NotoSansCJKsc-Regular.otf`,
+    revision: NOTO_CJK_REVISION,
+    sha256: "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+    bytes: 16437364,
+    file: "NotoSansCJKsc-Regular.otf",
+    directory: "SimplifiedChinese",
+    family: "Noto Sans CJK SC",
+    suffix: "sc",
+  },
+  tc: {
+    url: `${NOTO_CJK_RAW}/TraditionalChinese/NotoSansCJKtc-Regular.otf`,
+    revision: NOTO_CJK_REVISION,
+    sha256: "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4",
+    bytes: 16435884,
+    file: "NotoSansCJKtc-Regular.otf",
+    directory: "TraditionalChinese",
+    family: "Noto Sans CJK TC",
+    suffix: "tc",
+  },
+  jp: {
+    url: `${NOTO_CJK_RAW}/Japanese/NotoSansCJKjp-Regular.otf`,
+    revision: NOTO_CJK_REVISION,
+    sha256: "68a3fc98800b2a27b371f2fb79991daf3633bd89309d4ffaa6946fd587f375b5",
+    bytes: 16467736,
+    file: "NotoSansCJKjp-Regular.otf",
+    directory: "Japanese",
+    family: "Noto Sans CJK JP",
+    suffix: "jp",
+  },
+  kr: {
+    url: `${NOTO_CJK_RAW}/Korean/NotoSansCJKkr-Regular.otf`,
+    revision: NOTO_CJK_REVISION,
+    sha256: "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a",
+    bytes: 16433112,
+    file: "NotoSansCJKkr-Regular.otf",
+    directory: "Korean",
+    family: "Noto Sans CJK KR",
+    suffix: "kr",
+  },
+};
+
+/** Backward-compatible name for the original Simplified Chinese source. */
+export const CJK_FONT_SOURCE = CJK_FONT_SOURCES.sc;
+
+export interface CjkAppFontFiles {
+  readonly font: string;
+  readonly charset: string;
+  readonly license: string;
+  readonly provenance: string;
+  readonly subsetFamily: string;
+}
+
+export function cjkAppFontFiles(variant: CjkFontVariant = DEFAULT_CJK_FONT_VARIANT): CjkAppFontFiles {
+  const upper = variant.toUpperCase();
+  return {
+    font: `NotoSansCJK${variant}-subset.otf`,
+    charset: "cjk-charset.txt",
+    license: "LICENSE-NotoSansCJK.txt",
+    provenance: `NotoSansCJK${variant}-subset.md`,
+    subsetFamily: `Noto Sans CJK ${upper} Subset`,
+  };
+}
 
 /** Files written into `<appDir>/fonts/` and referenced from `<appDir>/fonts.json`. */
-export const APP_FONT_FILE = "NotoSansCJKsc-subset.otf";
-export const APP_CHARSET_FILE = "cjk-charset.txt";
-export const APP_LICENSE_FILE = "LICENSE-NotoSansCJK.txt";
-export const APP_PROVENANCE_FILE = "NotoSansCJKsc-subset.md";
-export const SUBSET_FAMILY = "Noto Sans CJK SC Subset";
+export const APP_FONT_FILE = cjkAppFontFiles().font;
+export const APP_CHARSET_FILE = cjkAppFontFiles().charset;
+export const APP_LICENSE_FILE = cjkAppFontFiles().license;
+export const APP_PROVENANCE_FILE = cjkAppFontFiles().provenance;
+export const SUBSET_FAMILY = cjkAppFontFiles().subsetFamily;
 /** Pak entry that carries the license notice inside every build of the app
  *  (web, desktop and PSP all embed or load the same pak). */
 export const LICENSE_PAK_KEY = "license:NotoSansCJK.txt";
@@ -89,31 +167,32 @@ function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function verified(bytes: Uint8Array): boolean {
-  return bytes.length === CJK_FONT_SOURCE.bytes && sha256(bytes) === CJK_FONT_SOURCE.sha256;
+function verified(bytes: Uint8Array, source: CjkFontSource): boolean {
+  return bytes.length === source.bytes && sha256(bytes) === source.sha256;
 }
 
 /** Path of the cached, checksum-verified source font. Downloads it when the
  *  cache has no valid copy. */
-export async function cjkSourceFont(): Promise<string> {
+export async function cjkSourceFont(variant: CjkFontVariant = DEFAULT_CJK_FONT_VARIANT): Promise<string> {
+  const source = CJK_FONT_SOURCES[variant];
   const dir = fontCacheDir();
-  const path = join(dir, CJK_FONT_SOURCE.file);
-  if (existsSync(path) && verified(readFileSync(path))) return path;
+  const path = join(dir, source.file);
+  if (existsSync(path) && verified(readFileSync(path), source)) return path;
   let bytes: Uint8Array;
   try {
-    const response = await fetch(CJK_FONT_SOURCE.url);
+    const response = await fetch(source.url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     bytes = new Uint8Array(await response.arrayBuffer());
   } catch (error) {
     throw new Error(
-      `cjk-font: could not download ${CJK_FONT_SOURCE.url} (${(error as Error).message}). ` +
-        `Download it by hand and place it at ${path}, or point RPGKIT_FONT_CACHE at a directory holding ${CJK_FONT_SOURCE.file}.`,
+      `cjk-font: could not download ${source.url} (${(error as Error).message}). ` +
+        `Download it by hand and place it at ${path}, or point RPGKIT_FONT_CACHE at a directory holding ${source.file}.`,
     );
   }
-  if (!verified(bytes)) {
+  if (!verified(bytes, source)) {
     throw new Error(
-      `cjk-font: ${CJK_FONT_SOURCE.url} returned ${bytes.length} bytes with SHA-256 ${sha256(bytes)}; ` +
-        `expected ${CJK_FONT_SOURCE.bytes} bytes with SHA-256 ${CJK_FONT_SOURCE.sha256}`,
+      `cjk-font: ${source.url} returned ${bytes.length} bytes with SHA-256 ${sha256(bytes)}; ` +
+        `expected ${source.bytes} bytes with SHA-256 ${source.sha256}`,
     );
   }
   mkdirSync(dir, { recursive: true });
@@ -249,7 +328,7 @@ export function subsetFont(
     manufacturer: english("manufacturer"),
     designer: english("designer"),
     version: english("version"),
-    description: `Subset of ${english("fullName") ?? "Noto Sans CJK SC"} for ${family === SUBSET_FAMILY ? "one app's text" : family}`,
+    description: `Subset of ${english("fullName") ?? "Noto Sans CJK SC"} for ${/^Noto Sans CJK (?:SC|TC|JP|KR) Subset$/.test(family) ? "one app's text" : family}`,
     createdTimestamp: SUBSET_TIMESTAMP,
     glyphs,
   });
@@ -274,10 +353,15 @@ function describe(codepoints: number[]): string {
 /** The notice shipped with the subset: what it is, where it comes from, the
  *  source font's copyright line (from its name table), then the OFL text as
  *  noto-cjk publishes it. */
-export function licenseNotice(copyright: string): string {
+export function licenseNotice(
+  copyright: string,
+  variant: CjkFontVariant = DEFAULT_CJK_FONT_VARIANT,
+): string {
+  const source = CJK_FONT_SOURCES[variant];
+  const files = cjkAppFontFiles(variant);
   return (
-    `${SUBSET_FAMILY}: a subset (a Modified Version under the license below) of Noto Sans CJK SC,\n` +
-    `from https://github.com/notofonts/noto-cjk at commit ${CJK_FONT_SOURCE.revision}.\n\n` +
+    `${files.subsetFamily}: a subset (a Modified Version under the license below) of ${source.family},\n` +
+    `from https://github.com/notofonts/noto-cjk at commit ${source.revision}.\n\n` +
     `Copyright notice: ${copyright}\n\n` +
     readFileSync(LICENSE_SOURCE, "utf8")
   );
@@ -292,21 +376,28 @@ export function pakManifestWithLicense(appDir: string, licensePath = `fonts/${AP
   return [...kept, { key: LICENSE_PAK_KEY, file: licensePath }];
 }
 
-const FONTS_JSON = {
-  fallback: [`fonts/${APP_FONT_FILE}`],
-  characterFiles: [`fonts/${APP_CHARSET_FILE}`],
-};
+function fontsJson(variant: CjkFontVariant): { fallback: string[]; characterFiles: string[] } {
+  const files = cjkAppFontFiles(variant);
+  return {
+    fallback: [`fonts/${files.font}`],
+    characterFiles: [`fonts/${files.charset}`],
+  };
+}
 
-function provenance(characters: number, fontBytes: number): string {
-  return `# Noto Sans CJK SC subset
+function provenance(characters: number, fontBytes: number, variant: CjkFontVariant): string {
+  const source = CJK_FONT_SOURCES[variant];
+  const files = cjkAppFontFiles(variant);
+  const textKind = variant === "sc" ? "Chinese" : variant === "tc" ? "Traditional Chinese" : variant === "jp" ? "Japanese" : "Korean";
+  const flag = variant === DEFAULT_CJK_FONT_VARIANT ? "" : ` --variant=${variant}`;
+  return `# ${source.family} subset
 
-\`${APP_FONT_FILE}\` is the fallback face for this app's Chinese text. The PocketJS build
-reads \`../fonts.json\`, which lists this font as a fallback and \`${APP_CHARSET_FILE}\` as a
+\`${files.font}\` is the fallback face for this app's ${textKind} text. The PocketJS build
+reads \`../fonts.json\`, which lists this font as a fallback and \`${files.charset}\` as a
 character file, so every listed character is baked into the app's font atlases from this face.
 
-- Source: [${CJK_FONT_SOURCE.file}](https://github.com/notofonts/noto-cjk/blob/${CJK_FONT_SOURCE.revision}/Sans/OTF/SimplifiedChinese/${CJK_FONT_SOURCE.file})
-  at commit \`${CJK_FONT_SOURCE.revision}\`.
-- Source SHA-256: \`${CJK_FONT_SOURCE.sha256}\` (${CJK_FONT_SOURCE.bytes} bytes).
+- Source: [${source.file}](https://github.com/notofonts/noto-cjk/blob/${source.revision}/Sans/OTF/${source.directory}/${source.file})
+  at commit \`${source.revision}\`.
+- Source SHA-256: \`${source.sha256}\` (${source.bytes} bytes).
 - Characters: ${characters} (the characters of this app's text that Inter does not map).
 - Subset size: ${fontBytes} bytes.
 
@@ -317,15 +408,15 @@ Hinting and OpenType layout tables are not carried over.
 Regenerate after the app's text changes (the source font is downloaded once and cached):
 
 \`\`\`sh
-bun tools/cjk-font.ts --app=<app dir> [--scan=<project file> ...]
+bun tools/cjk-font.ts --app=<app dir> [--scan=<project file> ...]${flag}
 \`\`\`
 
 Add \`--check\` to verify, without network access, that the committed subset covers the text.
 
 The font is licensed under the SIL Open Font License 1.1; the copyright notice and the
-license text are in \`${APP_LICENSE_FILE}\`. \`../pak.json\` ships that file inside the app's pak
+license text are in \`${files.license}\`. \`../pak.json\` ships that file inside the app's pak
 as \`${LICENSE_PAK_KEY}\`, and the web and desktop packaging tools copy it beside the build.
-The subset is a Modified Version under that license and is renamed "${SUBSET_FAMILY}".
+The subset is a Modified Version under that license and is renamed "${files.subsetFamily}".
 `;
 }
 
@@ -336,29 +427,38 @@ export async function writeAppCjkFont(opts: {
   appDir: string;
   texts: string[];
   source?: string;
+  variant?: CjkFontVariant;
 }): Promise<{ characters: number; fontBytes: number }> {
+  const variant = opts.variant ?? DEFAULT_CJK_FONT_VARIANT;
+  const files = cjkAppFontFiles(variant);
   const codepoints = fallbackCharacters(opts.texts);
   if (codepoints.length === 0) return { characters: 0, fontBytes: 0 };
-  const source = opts.source ?? (await cjkSourceFont());
-  const { bytes, missing } = subsetFont(source, codepoints);
+  const source = opts.source ?? (await cjkSourceFont(variant));
+  const { bytes, missing } = subsetFont(source, codepoints, files.subsetFamily);
   if (missing.length) {
     throw new Error(`cjk-font: the source font does not map ${missing.length} character(s): ${describe(missing)}`);
   }
   const fontsDir = join(opts.appDir, "fonts");
   mkdirSync(fontsDir, { recursive: true });
-  writeFileSync(join(fontsDir, APP_FONT_FILE), bytes);
-  writeFileSync(join(fontsDir, APP_CHARSET_FILE), charsOf(codepoints));
+  writeFileSync(join(fontsDir, files.font), bytes);
+  writeFileSync(join(fontsDir, files.charset), charsOf(codepoints));
   const copyright = parseFontFile(source).getEnglishName("copyright") || "see the license below";
-  writeFileSync(join(fontsDir, APP_LICENSE_FILE), licenseNotice(copyright));
-  writeFileSync(join(fontsDir, APP_PROVENANCE_FILE), provenance(codepoints.length, bytes.length));
-  writeFileSync(join(opts.appDir, "fonts.json"), JSON.stringify(FONTS_JSON, null, 2) + "\n");
+  writeFileSync(join(fontsDir, files.license), licenseNotice(copyright, variant));
+  writeFileSync(join(fontsDir, files.provenance), provenance(codepoints.length, bytes.length, variant));
+  writeFileSync(join(opts.appDir, "fonts.json"), JSON.stringify(fontsJson(variant), null, 2) + "\n");
   writeFileSync(join(opts.appDir, "pak.json"), JSON.stringify(pakManifestWithLicense(opts.appDir), null, 2) + "\n");
   return { characters: codepoints.length, fontBytes: bytes.length };
 }
 
 /** Problems with the committed fallback font for `texts` (empty = covered).
  *  Reads only the app's files; no network. */
-export function checkAppCjkFont(appDir: string, texts: string[]): string[] {
+export function checkAppCjkFont(
+  appDir: string,
+  texts: string[],
+  variant: CjkFontVariant = DEFAULT_CJK_FONT_VARIANT,
+): string[] {
+  const files = cjkAppFontFiles(variant);
+  const expectedFonts = fontsJson(variant);
   const needed = fallbackCharacters(texts);
   if (needed.length === 0) return [];
   const problems: string[] = [];
@@ -369,21 +469,21 @@ export function checkAppCjkFont(appDir: string, texts: string[]): string[] {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       const lists = (key: string, entry: string) => Array.isArray(manifest?.[key]) && manifest[key].includes(entry);
-      if (!lists("fallback", FONTS_JSON.fallback[0]!)) problems.push(`fonts.json does not list ${FONTS_JSON.fallback[0]} in "fallback"`);
-      if (!lists("characterFiles", FONTS_JSON.characterFiles[0]!)) {
-        problems.push(`fonts.json does not list ${FONTS_JSON.characterFiles[0]} in "characterFiles"`);
+      if (!lists("fallback", expectedFonts.fallback[0]!)) problems.push(`fonts.json does not list ${expectedFonts.fallback[0]} in "fallback"`);
+      if (!lists("characterFiles", expectedFonts.characterFiles[0]!)) {
+        problems.push(`fonts.json does not list ${expectedFonts.characterFiles[0]} in "characterFiles"`);
       }
     } catch (error) {
       problems.push(`fonts.json is not valid JSON: ${(error as Error).message}`);
     }
   }
-  const licensePath = join(appDir, "fonts", APP_LICENSE_FILE);
+  const licensePath = join(appDir, "fonts", files.license);
   if (!existsSync(licensePath)) {
-    problems.push(`fonts/${APP_LICENSE_FILE} is missing`);
+    problems.push(`fonts/${files.license} is missing`);
   } else {
     const notice = readFileSync(licensePath, "utf8");
-    if (!notice.includes(OFL_TITLE) || !notice.includes("Copyright notice: ")) {
-      problems.push(`fonts/${APP_LICENSE_FILE} lacks the copyright notice or the OFL text`);
+    if (!notice.includes(OFL_TITLE) || !notice.includes("Copyright notice: ") || !notice.includes(`${files.subsetFamily}:`)) {
+      problems.push(`fonts/${files.license} lacks the ${variant.toUpperCase()} source, copyright notice or the OFL text`);
     }
   }
   const pakPath = join(appDir, "pak.json");
@@ -396,32 +496,36 @@ export function checkAppCjkFont(appDir: string, texts: string[]): string[] {
   const licenseRow = Array.isArray(pakRows) ? pakRows.find(row => row?.key === LICENSE_PAK_KEY) : undefined;
   if (!licenseRow) problems.push(`pak.json does not ship the license (no "${LICENSE_PAK_KEY}" entry)`);
   else if (resolve(appDir, licenseRow.file) !== licensePath) {
-    problems.push(`pak.json "${LICENSE_PAK_KEY}" points at ${licenseRow.file}, not fonts/${APP_LICENSE_FILE}`);
+    problems.push(`pak.json "${LICENSE_PAK_KEY}" points at ${licenseRow.file}, not fonts/${files.license}`);
   }
-  const charsetPath = join(appDir, "fonts", APP_CHARSET_FILE);
+  const charsetPath = join(appDir, "fonts", files.charset);
   if (!existsSync(charsetPath)) {
-    problems.push(`fonts/${APP_CHARSET_FILE} is missing`);
+    problems.push(`fonts/${files.charset} is missing`);
   } else {
     const listed = new Set<number>();
     for (const ch of readFileSync(charsetPath, "utf8")) listed.add(ch.codePointAt(0)!);
     const absent = needed.filter(cp => !listed.has(cp));
-    if (absent.length) problems.push(`fonts/${APP_CHARSET_FILE} lacks ${absent.length} character(s): ${describe(absent)}`);
+    if (absent.length) problems.push(`fonts/${files.charset} lacks ${absent.length} character(s): ${describe(absent)}`);
   }
-  const fontPath = join(appDir, "fonts", APP_FONT_FILE);
+  const fontPath = join(appDir, "fonts", files.font);
   if (!existsSync(fontPath)) {
-    problems.push(`fonts/${APP_FONT_FILE} is missing`);
+    problems.push(`fonts/${files.font} is missing`);
   } else {
     let font;
     try {
       font = parseFontFile(fontPath);
     } catch (error) {
-      problems.push(`fonts/${APP_FONT_FILE} does not parse: ${(error as Error).message}`);
+      problems.push(`fonts/${files.font} does not parse: ${(error as Error).message}`);
     }
     if (font) {
+      if (font.getEnglishName("fontFamily") !== files.subsetFamily) {
+        problems.push(`fonts/${files.font} is ${JSON.stringify(font.getEnglishName("fontFamily"))}, expected ${JSON.stringify(files.subsetFamily)}`);
+      }
       const unmapped = needed.filter(cp => font.charToGlyphIndex(String.fromCodePoint(cp)) <= 0);
-      if (unmapped.length) problems.push(`fonts/${APP_FONT_FILE} does not map ${unmapped.length} character(s): ${describe(unmapped)}`);
+      if (unmapped.length) problems.push(`fonts/${files.font} does not map ${unmapped.length} character(s): ${describe(unmapped)}`);
     }
   }
-  if (problems.length) problems.push("regenerate with: bun tools/cjk-font.ts --app=<app dir> [--scan=<project file> ...]");
+  const flag = variant === DEFAULT_CJK_FONT_VARIANT ? "" : ` --variant=${variant}`;
+  if (problems.length) problems.push(`regenerate with: bun tools/cjk-font.ts --app=<app dir> [--scan=<project file> ...]${flag}`);
   return problems;
 }
