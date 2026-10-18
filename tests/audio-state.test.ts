@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ME_REPLAY_FADE_TICKS, audioTrackVolume, type AudioState } from "../src/engine/audio.ts";
+import { battleEffectsRuntime } from "../src/engine/battle-effects.ts";
 import {
   evalCondition,
   createInterpState,
@@ -87,6 +88,7 @@ function audioBattleRules(options: {
   completionAudio?: BattleCompletion["audio"];
 } = {}): BattleRules {
   return {
+    effects: battleEffectsRuntime,
     ...(options.immutable ? { immutableState: true } : {}),
     start(ext) {
       if (options.decline) return null;
@@ -465,9 +467,22 @@ describe("session audio clock", () => {
 });
 
 describe("battle one-shot cue projection", () => {
+  test("requires the opt-in effects runtime before accepting a cue projector", () => {
+    const rules: BattleRules = {
+      start: (ext) => ({ ext, state: null }),
+      step: (state) => state,
+      cues: () => undefined,
+      done: () => null,
+    };
+    expect(() => createSession(battleProject([]), 60, { battle: rules })).toThrow(
+      "BattleRules.cues requires a battle effects runtime",
+    );
+  });
+
   test("protects mutable previous state, preserves cue order, and keeps silent projects cold", () => {
     let projections = 0;
     const rules: BattleRules = {
+      effects: battleEffectsRuntime,
       start: (ext) => ({ ext, state: { tick: 0 } }),
       step(raw, _input, ticks) {
         const state = raw as { tick: number };
@@ -532,6 +547,7 @@ describe("battle one-shot cue projection", () => {
   ] as const) {
     test(`rejects malformed projected cues: ${message}`, () => {
       const rules: BattleRules = {
+        effects: battleEffectsRuntime,
         start: (ext) => ({ ext, state: { tick: 0 } }),
         step: () => ({ tick: 1 }),
         cues: (() => value) as BattleRules["cues"],
@@ -546,6 +562,7 @@ describe("battle one-shot cue projection", () => {
 
   test("save/load drains historical cues while a rewind can cross the edge again", () => {
     const rules: BattleRules = {
+      effects: battleEffectsRuntime,
       save: {
         encode: (state) => structuredClone(state),
         decode: (state) => structuredClone(state),
@@ -972,6 +989,19 @@ describe("battle audio lifecycle", () => {
     const entered = sessionStep(cueSession, startSession(p, cueSession), true);
     expect(() => sessionStep(cueSession, entered, true)).toThrow(
       "battle completion audio.cue.durationTicks: positive integer required",
+    );
+
+    const missingRuntime: BattleRules = {
+      start: (ext) => ({ ext, state: false }),
+      step: () => true,
+      done: (done) => done
+        ? { ext: null, result: "win", audio: { cue: { id: "victory", durationTicks: 1 } } }
+        : null,
+    };
+    const missingSession = createSession(p, 60, { battle: missingRuntime });
+    const missingEntered = sessionStep(missingSession, startSession(p, missingSession), true);
+    expect(() => sessionStep(missingSession, missingEntered)).toThrow(
+      "battle completion audio requires a battle effects runtime",
     );
   });
 });

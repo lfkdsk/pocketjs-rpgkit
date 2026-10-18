@@ -3,6 +3,7 @@
 // and animation clock lives in this JSON state so replay/rewind are exact.
 
 import { deepClone } from "../engine/clone.ts";
+import { battleEffectsRuntime } from "../engine/battle-effects.ts";
 import { compileAnim, rngNext } from "../engine/interpreter.ts";
 import type {
   BattleAudio,
@@ -2669,6 +2670,7 @@ export function createRpgMakerBattleRules(
 ): BattleRules {
   const cues = battleCueProjector(db, options.animations);
   return {
+    effects: battleEffectsRuntime,
     ...(cues ? { cues } : {}),
     save: {
       encode: (state) => decodeSavedBattleState(db, state),

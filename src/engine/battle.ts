@@ -9,6 +9,7 @@ import { cloneAudioState, type AudioState } from "./audio.ts";
 import { assertJsonValue } from "./extensions.ts";
 import type { ExtensionReadContext } from "./extensions.ts";
 import type { GameScene } from "./scene.ts";
+import type { BattleEffectsRuntime } from "./battle-effects-contract.ts";
 import type { Dir, JsonValue, VariableValue } from "./types.ts";
 
 export interface BattleInput {
@@ -117,6 +118,9 @@ export interface BattleRules {
   readonly immutableState?: boolean;
   /** Opt in to manual saves while this battle owns the full-screen scene. */
   readonly save?: BattleSaveCodec;
+  /** Optional pure validator/projector for transient cues and completion ME.
+   * Its concrete implementation is deliberately outside the engine barrel. */
+  readonly effects?: BattleEffectsRuntime;
   start(
     ext: JsonValue,
     setup: JsonValue,

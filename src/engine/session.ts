@@ -1031,6 +1031,9 @@ export function createSession(
     );
   }
   const travelRuntime = hasTravel ? options.travel!.bind(project) : null;
+  if (options.battle?.cues !== undefined && options.battle.effects === undefined) {
+    throw new Error("createSession: BattleRules.cues requires a battle effects runtime");
+  }
   const preparedRpgMakerText = project.system?.rpgMakerText
     ? options.rpgMakerText!.prepare(project.actors ?? [], project.system.rpgMakerText)
     : undefined;
@@ -1959,46 +1962,6 @@ function battleAudioState(value: unknown): AudioState | null | undefined {
   };
 }
 
-/** Validate game-owned transient battle cues and compile them into the
- * interpreter's established one-shot sequence. */
-function battleSoundCues(value: unknown): SoundCue[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error("battle cues: array required");
-  }
-  if (value.length === 0) return undefined;
-  const out: SoundCue[] = [];
-  for (let index = 0; index < value.length; index++) {
-    const entry = value[index];
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`battle cue ${index}: object required`);
-    }
-    const cue = entry as Record<string, unknown>;
-    if (typeof cue.id !== "string" || cue.id.length === 0) {
-      throw new Error(`battle cue ${index}.id: non-empty string required`);
-    }
-    const volume = cue.volume ?? 100;
-    if (!Number.isInteger(volume) || (volume as number) < 0 || (volume as number) > 100) {
-      throw new Error(`battle cue ${index}.volume: integer 0..100 required`);
-    }
-    const pitch = cue.pitch ?? 100;
-    if (!Number.isInteger(pitch) || (pitch as number) < 50 || (pitch as number) > 150) {
-      throw new Error(`battle cue ${index}.pitch: integer 50..150 required`);
-    }
-    const pan = cue.pan ?? 0;
-    if (!Number.isInteger(pan) || (pan as number) < -100 || (pan as number) > 100) {
-      throw new Error(`battle cue ${index}.pan: integer -100..100 required`);
-    }
-    out.push({
-      name: cue.id,
-      volume: volume as number,
-      pitch: pitch as number,
-      ...((pan as number) !== 0 ? { pan: pan as number } : {}),
-    });
-  }
-  return out;
-}
-
 /** A battle audio projection is a desired track, not a replay command. Keep
  * the existing position when the projected id/volume/pitch/pan already match. */
 function battleAudioMatches(
@@ -2014,61 +1977,6 @@ function battleAudioMatches(
     currentBgm.pitch === projectedBgm.pitch &&
     (currentBgm.pan ?? 0) === (projectedBgm.pan ?? 0) &&
     current?.bgs === undefined && current?.me === undefined && current?.savedBgm === undefined;
-}
-
-interface CompiledBattleCompletionAudio {
-  restore: "map" | "none";
-  cue: NonNullable<AudioState["me"]>;
-}
-
-/** Validate a terminal battle cue and compile it into the same durable ME
- * state used by playMe. Installing it after the base-mix decision makes the
- * cue a one-shot reducer fact: save/load and rewind need no side channel. */
-function battleCompletionAudioState(value: unknown): CompiledBattleCompletionAudio | undefined {
-  if (value === undefined) return undefined;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("battle completion audio: object required");
-  }
-  const audio = value as Record<string, unknown>;
-  const restore = audio.restore ?? "map";
-  if (restore !== "map" && restore !== "none") {
-    throw new Error("battle completion audio.restore: map or none required");
-  }
-  const cueValue = audio.cue;
-  if (cueValue === null || typeof cueValue !== "object" || Array.isArray(cueValue)) {
-    throw new Error("battle completion audio.cue: object required");
-  }
-  const cue = cueValue as Record<string, unknown>;
-  if (typeof cue.id !== "string" || cue.id.length === 0) {
-    throw new Error("battle completion audio.cue.id: non-empty string required");
-  }
-  const volume = cue.volume ?? 100;
-  if (!Number.isInteger(volume) || (volume as number) < 0 || (volume as number) > 100) {
-    throw new Error("battle completion audio.cue.volume: integer 0..100 required");
-  }
-  const pitch = cue.pitch ?? 100;
-  if (!Number.isInteger(pitch) || (pitch as number) < 50 || (pitch as number) > 150) {
-    throw new Error("battle completion audio.cue.pitch: integer 50..150 required");
-  }
-  const pan = cue.pan ?? 0;
-  if (!Number.isInteger(pan) || (pan as number) < -100 || (pan as number) > 100) {
-    throw new Error("battle completion audio.cue.pan: integer -100..100 required");
-  }
-  if (!Number.isInteger(cue.durationTicks) || (cue.durationTicks as number) <= 0) {
-    throw new Error("battle completion audio.cue.durationTicks: positive integer required");
-  }
-  return {
-    restore,
-    cue: {
-      id: cue.id,
-      volume: volume as number,
-      pitch: pitch as number,
-      ...((pan as number) !== 0 ? { pan: pan as number } : {}),
-      positionTicks: 0,
-      durationTicks: cue.durationTicks as number,
-      leftTicks: cue.durationTicks as number,
-    },
-  };
 }
 
 /** Consume one queued Battle Processing request. One draw
@@ -2482,7 +2390,7 @@ function advanceBattleScene(
     // only when one-shot battle audio is both supported by the project and
     // published by these rules. Immutable rules already promise to preserve
     // every published state, so their previous value can remain shared.
-    const previous = sess.audioCues && rules.cues !== undefined
+    const previous = sess.audioCues && rules.effects !== undefined && rules.cues !== undefined
       ? rules.immutableState ? scene.state : deepClone(scene.state)
       : undefined;
     // stepSession already cloned the scene for this frame, so the rules own
@@ -2493,7 +2401,9 @@ function advanceBattleScene(
     if (rules.immutableState) assertImmutableJsonValue(stepped, "battle step state");
     else assertJsonValue(stepped, "battle step state");
     scene.state = stepped;
-    if (previous !== undefined) frameCues = battleSoundCues(rules.cues!(previous, stepped));
+    if (previous !== undefined) {
+      frameCues = rules.effects!.soundCues(rules.cues!(previous, stepped));
+    }
   }
   // Dynamic battle BGM remains reducer state. Sampling is opt-in twice: the
   // battle must have claimed audio at start, and the rules must publish a
@@ -2565,7 +2475,12 @@ function advanceBattleScene(
     gold = Math.max(0, clampFiniteVar(completion.gold));
   }
   const transfer = completionTransfer(completion.transfer);
-  const completionAudio = battleCompletionAudioState(completion.audio);
+  if (completion.audio !== undefined && rules.effects === undefined) {
+    throw new Error("battle completion audio requires a battle effects runtime");
+  }
+  const completionAudio = completion.audio === undefined
+    ? undefined
+    : rules.effects!.completeAudio(completion.audio, scene.returnAudio, s.interp.audio);
   const items = itemReplacements === undefined
     ? undefined
     : replaceItemCounts(s.interp.sw.items, itemReplacements, sess.worldOptions.inventory);
@@ -2591,14 +2506,11 @@ function advanceBattleScene(
   // reducer state. Select the completion's base mix, then install its ME so
   // the restored map BGM is held at its saved cursor until the cue ends.
   // With no completion audio this is the historical atomic restore path.
-  if (completionAudio?.restore === "none") {
-    delete s.interp.audio;
+  if (completionAudio !== undefined) {
+    s.interp.audio = completionAudio;
   } else if (scene.returnAudio !== undefined) {
     if (scene.returnAudio === null) delete s.interp.audio;
     else s.interp.audio = cloneAudioState(scene.returnAudio);
-  }
-  if (completionAudio !== undefined) {
-    (s.interp.audio ??= {}).me = completionAudio.cue;
   }
   s.interp = continueBattle(s.interp, scene.fiber, completion.result, transfer);
   s.sw = s.interp.sw;
