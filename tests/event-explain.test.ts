@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   classifyCommand,
+  explainCommonEvent,
   explainEffectsDigest,
   explainEvent,
   explainPageHeadline,
@@ -9,13 +10,37 @@ import {
   type CommandWriteClass,
   type EventExplanation,
 } from "../editor/engine/event-explain.ts";
-import type { Command, GameEvent } from "../src/engine/types.ts";
+import type { Command, CommonEvent, GameEvent } from "../src/engine/types.ts";
 
 function event(pages: GameEvent["pages"]): GameEvent {
   return { id: "test", x: 1, y: 2, pages };
 }
 
 describe("event explanation", () => {
+  test("explains called and gated parallel common events without expanding calls", () => {
+    const called: CommonEvent = {
+      id: "heal",
+      trigger: "none",
+      commands: [{ op: "switch", id: "healed", value: true }, { op: "common", id: "heal" }],
+    };
+    const calledExplanation = explainCommonEvent(called);
+    expect(calledExplanation.trigger).toBe("Runs when called");
+    expect(calledExplanation.pages[0]!.condition).toBe("When called");
+    expect(calledExplanation.pages[0]!.commandCount).toBe(2);
+    expect(calledExplanation.switches).toEqual(["healed"]);
+    expect(calledExplanation.commonEvents).toEqual(["heal"]);
+
+    const parallel = explainCommonEvent({
+      id: "weather",
+      trigger: "parallel",
+      conditionSwitch: "rain-enabled",
+      commands: [{ op: "wait", seconds: 0.2 }],
+    });
+    expect(parallel.trigger).toContain("background");
+    expect(parallel.conditionSwitch).toBe("rain-enabled");
+    expect(parallel.pages[0]!.condition).toBe("Switch rain-enabled is on");
+  });
+
   test("describes every trigger kind", () => {
     expect(explainTrigger("action")).toContain("confirms facing");
     expect(explainTrigger("playerTouch")).toContain("walks onto");

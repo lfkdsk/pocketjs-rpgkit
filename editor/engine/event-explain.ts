@@ -11,7 +11,7 @@
 // says. The compact 64-character commandSummary stays the default for list
 // rows and hover cards; this module asks for the full text explicitly.
 
-import type { Command, GameEvent, Trigger } from "../../src/engine/types.ts";
+import type { Command, CommonEvent, GameEvent, Trigger } from "../../src/engine/types.ts";
 import { flattenCommands, pageConditionSummary } from "./commands.ts";
 
 export interface ExplainStep {
@@ -66,6 +66,13 @@ export interface EventExplanation {
    *  variable-target `transfer`, may write variables, switches, items, gold
    *  or transfer the player when it resolves. */
   runtimeWrites: string[];
+}
+
+export interface CommonEventExplanation extends EventExplanation {
+  /** The common event's authored execution mode. */
+  commonTrigger: CommonEvent["trigger"];
+  /** Optional switch gate for a parallel common event. */
+  conditionSwitch?: string;
 }
 
 const TRIGGER_WORDS: Record<Trigger, string> = {
@@ -374,26 +381,39 @@ function collectCommandEffect(command: Command, into: Effects): void {
   collectVariableWrite(value, into);
 }
 
-/** Build a deterministic explanation of an event from its command tree. */
-export function explainEvent(event: GameEvent): EventExplanation {
+function explainCommands(commands: readonly Command[]): { count: number; steps: ExplainStep[]; effects: Effects } {
   const effects = newEffects();
-  const pages: ExplainPage[] = event.pages.map((page, index) => {
-    const rows = flattenCommands(page.commands, { fullSummary: true });
-    for (const row of rows) collectCommandEffect(row.command, effects);
-    return {
-      index,
-      trigger: explainTrigger(page.trigger),
-      condition: pageConditionSummary(page.condition, { full: true }),
-      commandCount: rows.length,
-      steps: rows.map((row) => ({
-        depth: row.depth,
-        summary: row.summary,
-        ...(row.branchLabel === undefined ? {} : { branch: row.branchLabel }),
-      })),
-    };
-  });
+  const rows = flattenCommands(commands, { fullSummary: true });
+  for (const row of rows) collectCommandEffect(row.command, effects);
   return {
-    trigger: pages[0]?.trigger ?? explainTrigger("action"),
+    count: rows.length,
+    steps: rows.map((row) => ({
+      depth: row.depth,
+      summary: row.summary,
+      ...(row.branchLabel === undefined ? {} : { branch: row.branchLabel }),
+    })),
+    effects,
+  };
+}
+
+function mergeEffects(into: Effects, from: Effects): void {
+  for (const value of from.switches) into.switches.add(value);
+  for (const value of from.selfSwitches) into.selfSwitches.add(value);
+  for (const value of from.variables) into.variables.add(value);
+  for (const [id, direction] of from.items) {
+    const prior = into.items.get(id);
+    into.items.set(id, prior && prior !== direction ? "loses" : direction);
+  }
+  if (from.gold) into.gold = into.gold === null ? from.gold : into.gold === from.gold ? from.gold : "both";
+  for (const value of from.transfers) into.transfers.add(value);
+  for (const value of from.commonEvents) into.commonEvents.add(value);
+  for (const value of from.runtimeWrites) into.runtimeWrites.add(value);
+  into.writesStatically ||= from.writesStatically;
+}
+
+function finishExplanation(trigger: string, pages: ExplainPage[], effects: Effects): EventExplanation {
+  return {
+    trigger,
     pages,
     switches: sorted(effects.switches),
     selfSwitches: sorted(effects.selfSwitches),
@@ -406,6 +426,49 @@ export function explainEvent(event: GameEvent): EventExplanation {
     commonEvents: sorted(effects.commonEvents),
     runtimeWrites: sorted(effects.runtimeWrites),
     writesStatically: effects.writesStatically,
+  };
+}
+
+/** Build a deterministic explanation of an event from its command tree. */
+export function explainEvent(event: GameEvent): EventExplanation {
+  const effects = newEffects();
+  const pages: ExplainPage[] = event.pages.map((page, index) => {
+    const explained = explainCommands(page.commands);
+    mergeEffects(effects, explained.effects);
+    return {
+      index,
+      trigger: explainTrigger(page.trigger),
+      condition: pageConditionSummary(page.condition, { full: true }),
+      commandCount: explained.count,
+      steps: explained.steps,
+    };
+  });
+  return finishExplanation(pages[0]?.trigger ?? explainTrigger("action"), pages, effects);
+}
+
+/** Build the same deterministic explanation for a common event. A called
+ * common event has one command list; a parallel one additionally reports its
+ * switch gate. Calls are deliberately not expanded here, so recursive common
+ * event graphs cannot recurse while rendering Explain. */
+export function explainCommonEvent(common: CommonEvent): CommonEventExplanation {
+  const explained = explainCommands(common.commands);
+  const trigger = common.trigger === "parallel"
+    ? "Runs automatically in the background"
+    : "Runs when called";
+  const condition = common.conditionSwitch
+    ? `Switch ${common.conditionSwitch} is on`
+    : common.trigger === "parallel" ? "No switch gate" : "When called";
+  const page: ExplainPage = {
+    index: 0,
+    trigger,
+    condition,
+    commandCount: explained.count,
+    steps: explained.steps,
+  };
+  return {
+    ...finishExplanation(trigger, [page], explained.effects),
+    commonTrigger: common.trigger,
+    ...(common.conditionSwitch === undefined ? {} : { conditionSwitch: common.conditionSwitch }),
   };
 }
 
