@@ -426,6 +426,9 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     const rowCount = Math.max(0, y1 - y0 + 1);
     const minY = component.bounds.minTileY;
     const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
+    const depthStride = Math.max(1, Math.floor(width) + 1);
+    const depthPerRow = TILE * depthStride;
+    const firstRelativeRow = y0 - minY;
 
     // Upper art only needs a separate clip band when a visible actor or
     // above-animation depth falls between two tile-row depths. Rows on the
@@ -441,10 +444,18 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
         const style = child.domAttrs?.style as { zIndex?: unknown; display?: unknown } | undefined;
         const depth = style?.zIndex;
         if (style?.display === 1 || typeof depth !== "number" || !Number.isFinite(depth)) continue;
-        for (let boundary = 1; boundary < rowCount; boundary++) {
-          const before = upperRowDepth(y0 + boundary - 1 - minY, width);
-          const after = upperRowDepth(y0 + boundary - minY, width);
-          if (depth >= before && depth <= after) nextUpperCuts[boundary - 1] = 1;
+        // upperRowDepth(r) = (r * TILE + 2) * stride - 1. Invert that
+        // monotonic sequence instead of comparing every sibling with every
+        // visible boundary. A depth strictly between two rows marks one cut;
+        // a depth exactly on a row (an above-animation) marks both adjacent
+        // cuts, preserving the inclusive comparisons used by the row model.
+        const fromFirstRowDepth = depth + 1 - 2 * depthStride;
+        const relativeRow = Math.floor(fromFirstRowDepth / depthPerRow);
+        const cut = relativeRow - firstRelativeRow;
+        if (cut >= 0 && cut < cutCount) nextUpperCuts[cut] = 1;
+        if (fromFirstRowDepth % depthPerRow === 0) {
+          const previous = cut - 1;
+          if (previous >= 0 && previous < cutCount) nextUpperCuts[previous] = 1;
         }
       }
     }
