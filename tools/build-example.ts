@@ -28,7 +28,7 @@ export const APPS = [...EXAMPLES, "editor"] as const;
  *  page that cannot connect; name one explicitly to build it. */
 export const LOCAL_ONLY_APPS: readonly string[] = [];
 /** Small apps that exist only for the sim suites. */
-export const FIXTURES = ["ui-theme", "streamed", "world-streamed", "world-bounded", "world-preview", "event-model", "r2-ui", "kb4-battle", "rpgkit-shot", "km1-move-control", "ka1-anim", "kg1-name-input", "krm2-ui", "krm3-select", "kau1-audio", "ks2-save", "rmi-play", "cjk-text", "no-truncation", "map-blocked", "ui-text", "text-tokens", "text-layout"] as const;
+export const FIXTURES = ["ui-theme", "streamed", "world-streamed", "world-bounded", "world-preview", "event-model", "r2-ui", "kb4-battle", "rpgkit-shot", "km1-move-control", "ka1-anim", "kg1-name-input", "krm2-ui", "krm3-select", "kau1-audio", "ks2-save", "rmi-play", "cjk-text", "cjk-multi-jp", "cjk-multi-tc", "no-truncation", "map-blocked", "ui-text", "text-tokens", "text-layout"] as const;
 /** Kit tools that are apps too: the project preview host (tools/preview),
  *  which the preview/Studio tests boot in the sim. */
 export const TOOL_APPS = ["preview"] as const;
@@ -50,6 +50,10 @@ function isFixture(name: string): boolean {
 function appDir(name: string): string {
   if (name === "editor") return join(root, "editor");
   if ((TOOL_APPS as readonly string[]).includes(name)) return join(root, "tools", name);
+  // Two separately baked language apps make one regional-glyph example.
+  // Each build has one fonts.json, so the selected face alone is resident.
+  if (name === "cjk-multi-jp") return join(root, "examples", "cjk-multi", "jp");
+  if (name === "cjk-multi-tc") return join(root, "examples", "cjk-multi", "tc");
   return isFixture(name) ? join(root, "tests", "fixtures", name) : join(root, "examples", name);
 }
 
@@ -88,7 +92,8 @@ async function buildExamples(wanted: string[]): Promise<void> {
       `--outdir=${join(root, "dist")}`,
       `--inputs-file=${join(root, "dist", `${name}.inputs.json`)}`,
     ]);
-    if (name === "ui-theme" || name === "meadow" || name === "cjk-text" || name === "preview") {
+    if (name === "ui-theme" || name === "meadow" || name === "cjk-text" || name === "cjk-multi-jp" ||
+      name === "cjk-multi-tc" || name === "preview") {
       // The preview runs at the web site's density 2 only.
       for (const density of name === "preview" ? [2] : WEB_DENSITY_FIXTURES) {
         await run([

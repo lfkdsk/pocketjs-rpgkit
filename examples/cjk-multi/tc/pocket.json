@@ -1,0 +1,24 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.lfkdsk.pocket-rpgkit-cjk-multi-tc",
+  "name": "pocket-rpgkit-cjk-multi-tc",
+  "title": "Pocket RPG Kit — Traditional Chinese text",
+  "version": "0.1.0",
+  "engine": {
+    "capabilities": {
+      "requires": ["text.glyphs.baked", "input.buttons"]
+    }
+  },
+  "app": {
+    "entry": "examples/cjk-multi/tc/cjk-multi-tc.tsx",
+    "output": "cjk-multi-tc",
+    "framework": "solid",
+    "viewport": {
+      "fixed": {
+        "logical": [480, 272],
+        "presentation": "integer-fit"
+      }
+    }
+  }
+}

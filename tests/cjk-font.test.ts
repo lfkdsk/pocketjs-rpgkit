@@ -411,6 +411,10 @@ describe("--check sees escaped characters", () => {
 describe("committed app subsets", () => {
   const app = join(REPO_ROOT, "tests/fixtures/cjk-text");
   const inventory = () => appTextInventory({ entries: [join(app, "cjk-text.tsx")] });
+  const regionalApps = [
+    { app: join(REPO_ROOT, "examples/cjk-multi/jp"), entry: "cjk-multi-jp.tsx", variant: "jp" },
+    { app: join(REPO_ROOT, "examples/cjk-multi/tc"), entry: "cjk-multi-tc.tsx", variant: "tc" },
+  ] as const;
 
   test("the CJK text fixture's subset covers its decoded text (U+20BB7 is only an escape there)", () => {
     expect(readFileSync(join(app, "fixture-data.ts"), "utf8")).not.toContain("𠮷");
@@ -422,6 +426,18 @@ describe("committed app subsets", () => {
 
   test("the committed charset is exactly the inventory's fallback characters", () => {
     expect(cps(readFileSync(join(app, "fonts/cjk-charset.txt"), "utf8"))).toEqual(fallbackCharacters(inventory()));
+  });
+
+  test("the regional examples have exact inventories, report missing glyphs, and expose their OFL", () => {
+    for (const regional of regionalApps) {
+      const texts = appTextInventory({ entries: [join(regional.app, regional.entry)] });
+      expect(cps(readFileSync(join(regional.app, "fonts/cjk-charset.txt"), "utf8"))).toEqual(fallbackCharacters(texts));
+      expect(checkAppCjkFont(regional.app, texts, regional.variant)).toEqual([]);
+      const missing = checkAppCjkFont(regional.app, [...texts, "龘"], regional.variant);
+      expect(missing.some(problem => problem.includes("cjk-charset.txt") && problem.includes("U+9F98"))).toBe(true);
+      expect(missing.some(problem => problem.includes("does not map") && problem.includes("U+9F98"))).toBe(true);
+      expect(fontLicenseFiles(regional.app)).toEqual([join(regional.app, "fonts/LICENSE-NotoSansCJK.txt")]);
+    }
   });
 
   test("the undeclared SC app files retain their reviewed bytes", () => {
@@ -436,6 +452,19 @@ describe("committed app subsets", () => {
       charset: "e0f88a185dd59090942c48cf3c13c33c3f36ca12b59542f47696ccba7b86cbb9",
       config: "3175f6980d75770e083e3c64b134cc5c16359d5ee82f6405678e6d0656e7a538",
       pak: "27db709343804904b1ccd177dd6a715011d83e4f30b3b9b4969b1c3599f34419",
+    });
+  });
+
+  test("the undeclared SC app retains its reviewed pak bytes at every density", () => {
+    const digest = (file: string) => createHash("sha256").update(readFileSync(join(REPO_ROOT, file))).digest("hex");
+    expect({
+      density1: digest("dist/cjk-text.pak"),
+      density2: digest("dist/density-2/cjk-text.pak"),
+      density3: digest("dist/density-3/cjk-text.pak"),
+    }).toEqual({
+      density1: "f04a87d82c742de6b58835f4132f93973db8005d8e787cbda6b2580be5c73308",
+      density2: "b8b5dd2b07bd51ac275de2a2fbe807bf8db2bba9a46df69679cdbfd394081419",
+      density3: "2f84a7245a784f544c3e755c19bfdb433306eb35228b8b993a7013b1e0aad225",
     });
   });
 });

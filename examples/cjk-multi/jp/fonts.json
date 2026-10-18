@@ -1,0 +1,8 @@
+{
+  "fallback": [
+    "fonts/NotoSansCJKjp-subset.otf"
+  ],
+  "characterFiles": [
+    "fonts/cjk-charset.txt"
+  ]
+}
