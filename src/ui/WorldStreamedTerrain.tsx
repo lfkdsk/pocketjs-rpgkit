@@ -254,6 +254,9 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
   const upperCuts: number[] = [];
   const nextUpperCuts: number[] = [];
   const upperRowNodes = new Set<NodeMirror>();
+  const upperOccluders: NodeMirror[] = [];
+  const upperOccluderStyles: unknown[] = [];
+  let upperRootChildCount = -1;
   let upperRowsDirty = true;
   let upperWindowX0 = Number.NaN;
   let upperWindowY0 = Number.NaN;
@@ -411,6 +414,29 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     }
   };
 
+  const upperOcclusionChanged = (): boolean => {
+    const children = upper.root.children;
+    if (children.length !== upperRootChildCount) {
+      upperRootChildCount = children.length;
+      upperOccluders.length = 0;
+      upperOccluderStyles.length = 0;
+      for (const child of children) {
+        if (upperRowNodes.has(child)) continue;
+        upperOccluders.push(child);
+        upperOccluderStyles.push(child.domAttrs?.style);
+      }
+      return true;
+    }
+    let changed = false;
+    for (let index = 0; index < upperOccluders.length; index++) {
+      const style = upperOccluders[index]!.domAttrs?.style;
+      if (style === upperOccluderStyles[index]) continue;
+      upperOccluderStyles[index] = style;
+      changed = true;
+    }
+    return changed;
+  };
+
   const syncUpperRows = (
     component: WorldComponent,
     camera: ChunkPoint,
@@ -424,6 +450,10 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     const y0 = Math.max(component.bounds.minTileY, Math.floor((camera.y - TILE) / TILE));
     const y1 = Math.min(component.bounds.maxTileY - 1, Math.ceil((camera.y + viewport.h + TILE) / TILE) - 1);
     const rowCount = Math.max(0, y1 - y0 + 1);
+    const windowChanged = x0 !== upperWindowX0 || y0 !== upperWindowY0 ||
+      x1 !== upperWindowX1 || y1 !== upperWindowY1;
+    const occlusionChanged = upperOcclusionChanged();
+    if (!upperRowsDirty && !windowChanged && !occlusionChanged) return false;
     const minY = component.bounds.minTileY;
     const width = (component.bounds.maxTileX - component.bounds.minTileX) * TILE;
     const depthStride = Math.max(1, Math.floor(width) + 1);
@@ -439,8 +469,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
     nextUpperCuts.length = cutCount;
     for (let index = 0; index < cutCount; index++) nextUpperCuts[index] = 0;
     if (cutCount > 0) {
-      for (const child of upper.root.children) {
-        if (upperRowNodes.has(child)) continue;
+      for (const child of upperOccluders) {
         const style = child.domAttrs?.style as { zIndex?: unknown; display?: unknown } | undefined;
         const depth = style?.zIndex;
         if (style?.display === 1 || typeof depth !== "number" || !Number.isFinite(depth)) continue;
@@ -468,8 +497,7 @@ export function WorldStreamedTerrain(props: WorldStreamedTerrainProps): SolidJSX
         }
       }
     }
-    if (!upperRowsDirty && x0 === upperWindowX0 && y0 === upperWindowY0 &&
-        x1 === upperWindowX1 && y1 === upperWindowY1 && !cutsChanged) return false;
+    if (!upperRowsDirty && !windowChanged && !cutsChanged) return false;
     upperRowSyncs++;
     upperWindowX0 = x0;
     upperWindowY0 = y0;
