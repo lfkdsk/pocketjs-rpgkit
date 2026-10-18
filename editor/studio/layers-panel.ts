@@ -8,6 +8,7 @@ import { emptyState, h, icon, replace } from "./dom.ts";
 interface LayerDefinition {
   key: PresentedLayer;
   label: string;
+  title?: string;
   /** Events are presented here, but selected with the event tool. */
   editable?: PaintLayer;
 }
@@ -15,7 +16,7 @@ interface LayerDefinition {
 const LAYERS: readonly LayerDefinition[] = [
   { key: "ground", label: "Ground", editable: "ground" },
   { key: "upper", label: "Upper", editable: "upper" },
-  { key: "passage", label: "Passage", editable: "passage" },
+  { key: "passage", label: "Passage", title: "Edit map overrides and tile-sheet defaults or symmetric walls", editable: "passage" },
   { key: "regions", label: "Regions", editable: "regions" },
   { key: "events", label: "Events" },
 ];
@@ -62,6 +63,7 @@ export function mountLayersPanel(root: HTMLElement, app: StudioApp): void {
             dataset: { layer: key },
             "data-testid": `layer-${key}-select`,
             "aria-label": `Edit ${label} layer`,
+            title: definition.title,
             onclick: () => app.setLayer(editable),
           }, label)
         : h("span", { class: "layer-name", dataset: { layer: key } }, label);
@@ -107,7 +109,7 @@ export function mountLayersPanel(root: HTMLElement, app: StudioApp): void {
     });
 
     syncControls = () => {
-      // One-way edge painting shares the passage overlay and row.
+      // Map overrides plus symmetric and one-way sheet edges share this row.
       const activeLayer: string = app.layer === "edges" ? "passage" : app.layer;
       for (const control of controls) {
         const { key, label, editable } = control.definition;

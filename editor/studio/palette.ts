@@ -7,6 +7,15 @@ import type { Sheet, TileId } from "../../src/engine/types.ts";
 import type { EdgeBrushValue, StudioApp, TileSelection } from "./app.ts";
 import { ArtRegistry, TILE, parseTileId } from "./art.ts";
 import { emptyState, h, icon, replace } from "./dom.ts";
+import {
+  clearSheetCellsDirBlock,
+  resolveSheetCellPassage,
+  setSheetCellsDirBlocked,
+  setSheetCellsPassage,
+  setSheetDefaultPassage,
+  updateSheetPassageOperation,
+  type SheetPassageChanges,
+} from "./sheet-passage.ts";
 
 const DIRS = ["up", "down", "left", "right"] as const;
 const ARROWS: Record<string, string> = { up: "↑", down: "↓", left: "←", right: "→" };
@@ -392,21 +401,138 @@ export function mountPalette(root: HTMLElement, app: StudioApp, art: ArtRegistry
   }
 
   function renderPassage(): void {
-    replace(header, h("span", { class: "panel-title" }, "Passage brush"));
+    const sheets = sheetsOfMap();
+    if (!sheets.some((sheet) => sheet.id === sheetId)) {
+      const brushSheet = app.brush ? parseTileId(app.brush)?.sheet : undefined;
+      sheetId = sheets.find((sheet) => sheet.id === brushSheet)?.id ?? sheets[0]?.id ?? "";
+    }
+    const sheet = sheets.find((item) => item.id === sheetId);
+    replace(header,
+      h("span", { class: "panel-title" }, "Passage"),
+      h("div", { class: "segmented small", role: "tablist", "aria-label": "Tile sheet passage" },
+        sheets.map((item) => h("button", {
+          type: "button",
+          role: "tab",
+          class: item.id === sheetId ? "active" : "",
+          "aria-selected": String(item.id === sheetId),
+          title: `Edit passage for sheet ${item.id}`,
+          onclick: () => {
+            sheetId = item.id;
+            app.setBrush(`${item.id}.0`);
+          },
+        }, item.id))),
+    );
     const options: [typeof app.passageBrush, string, string][] = [
       ["block", "Block", "Cells cannot be entered"],
       ["pass", "Pass", "Cells can always be entered"],
       ["clear", "Clear", "Remove the per-cell override"],
     ];
-    replace(body, h("div", { class: "brush-grid" }, options.map(([value, label, hint]) => h("button", {
+    const mapBrushes = h("div", null,
+      h("div", { class: "brush-grid" }, options.map(([value, label, hint]) => h("button", {
+        type: "button",
+        class: `brush-choice passage-${value}${app.passageBrush === value ? " active" : ""}`,
+        "aria-pressed": String(app.passageBrush === value),
+        title: hint,
+        dataset: { brush: value },
+        onclick: () => { app.passageBrush = value; app.emit("brush"); },
+      }, h("span", { class: "swatch" }), label))),
+      h("p", { class: "hint" }, "Map override brush. Right-click clears; X = block and ○ = pass."));
+    if (!sheet) {
+      replace(body, mapBrushes, emptyState("image", "No tile sheets", "Add a sheet to this map before editing sheet passage."));
+      return;
+    }
+
+    const selection = app.tileSelection?.sheet === sheet.id ? app.tileSelection : null;
+    const brush = app.brush ? parseTileId(app.brush) : null;
+    const selectedTargets = selection
+      ? [...new Set(selection.tiles.flatMap((tile) => {
+          const parsed = typeof tile === "string" ? parseTileId(tile) : null;
+          return parsed?.sheet === sheet.id ? [parsed.cell] : [];
+        }))]
+      : [];
+    const targets = selectedTargets.length > 0
+      ? selectedTargets
+      : brush?.sheet === sheet.id && brush.cell < sheet.cols * sheet.rows
+        ? [brush.cell]
+        : [0];
+    const resolved = targets.map((cell) => resolveSheetCellPassage(sheet, cell));
+    const allSource = (source: "default" | "pass" | "block") => resolved.every((entry) => entry.source === source);
+    const allBlocked = (dir: typeof DIRS[number]) => resolved.every((entry) => entry.dirBlock.includes(dir));
+    const anyBlocked = (dir: typeof DIRS[number]) => resolved.some((entry) => entry.dirBlock.includes(dir));
+    const runUpdate = (changes: SheetPassageChanges, label: string): void => {
+      const operation = updateSheetPassageOperation(sheet.id, changes);
+      app.run(operation.command, operation.args, label);
+    };
+    const defaultSelect = h("select", {
+      dataset: { testid: "sheet-default-passage" },
+      "aria-label": `Default passage for sheet ${sheet.id}`,
+      onchange: (event: Event) => {
+        const value = (event.currentTarget as HTMLSelectElement).value;
+        runUpdate(setSheetDefaultPassage(value === "" ? null : value as "pass" | "block"), `Default passage for ${sheet.id}`);
+      },
+    },
+    h("option", { value: "", selected: sheet.defaultPassage === undefined }, "Unset (pass)"),
+    h("option", { value: "pass", selected: sheet.defaultPassage === "pass" }, "Pass"),
+    h("option", { value: "block", selected: sheet.defaultPassage === "block" }, "Block"));
+    const cellInput = h("input", {
+      type: "number",
+      min: 0,
+      max: sheet.cols * sheet.rows - 1,
+      value: targets[0],
+      dataset: { testid: "sheet-passage-cell" },
+      "aria-label": `Tile cell in sheet ${sheet.id}`,
+      onchange: (event: Event) => {
+        const raw = Number((event.currentTarget as HTMLInputElement).value);
+        const cell = Number.isFinite(raw) ? Math.max(0, Math.min(sheet.cols * sheet.rows - 1, Math.trunc(raw))) : 0;
+        app.setBrush(`${sheet.id}.${cell}`);
+      },
+    });
+    const passageChoice = (value: "default" | "pass" | "block", label: string) => h("button", {
       type: "button",
-      class: `brush-choice passage-${value}${app.passageBrush === value ? " active" : ""}`,
-      "aria-pressed": String(app.passageBrush === value),
-      title: hint,
-      dataset: { brush: value },
-      onclick: () => { app.passageBrush = value; app.emit("brush"); },
-    }, h("span", { class: "swatch" }), label))),
-    h("p", { class: "hint" }, "Paints per-cell overrides on this map. Right-click clears. Red tint = blocked by the tile sheet; X = blocked override; ○ = pass override."));
+      class: `brush-choice${allSource(value) ? " active" : ""}`,
+      "aria-pressed": allSource(value) ? "true" : "false",
+      dataset: { testid: `sheet-cell-passage-${value}` },
+      onclick: () => runUpdate(setSheetCellsPassage(sheet, targets, value), `${label} ${sheet.id} sheet cell passage`),
+    }, label);
+    const wallChoice = (dir: typeof DIRS[number]) => {
+      const every = allBlocked(dir);
+      const some = anyBlocked(dir);
+      return h("button", {
+        type: "button",
+        class: `brush-choice${every ? " active" : ""}`,
+        "aria-pressed": every ? "true" : some ? "mixed" : "false",
+        dataset: { testid: `sheet-dir-block-${dir}` },
+        title: `${every ? "Open" : "Block"} the ${dir} edge in both directions`,
+        onclick: () => runUpdate(setSheetCellsDirBlocked(sheet, targets, dir, !every), `${every ? "Open" : "Block"} ${dir} edge on ${sheet.id}`),
+      }, `${ARROWS[dir]} ${dir}`);
+    };
+    const resolvedValue = new Set(resolved.map((entry) => entry.value));
+    const targetLabel = targets.length === 1 ? `${sheet.id}.${targets[0]}` : `${targets.length} selected ${sheet.id} cells`;
+    const sheetControls = h("div", { class: "palette-scroll", dataset: { testid: "sheet-passage-controls" } },
+      h("div", { class: "brush-line" },
+        h("span", { class: "muted" }, "Sheet default"),
+        defaultSelect),
+      h("div", { class: "brush-line" },
+        h("span", { class: "muted" }, selection ? "Atlas selection" : "Sheet cell"),
+        selection ? h("code", null, targetLabel) : cellInput,
+        h("div", { class: "spacer" }),
+        h("code", null, `resolved: ${resolvedValue.size === 1 ? [...resolvedValue][0] : "mixed"}`)),
+      h("div", { class: "brush-grid" },
+        passageChoice("default", "Use default"),
+        passageChoice("pass", "Pass exception"),
+        passageChoice("block", "Block exception")),
+      h("p", { class: "hint" }, "These are tile-sheet rules: every map using the selected tile changes. Pass wins over block, then the sheet default applies."),
+      h("div", { class: "edge-grid", role: "group", "aria-label": `Symmetric walls for ${targetLabel}` },
+        h("span", { class: "muted" }, "Two-way wall on edge"),
+        DIRS.map(wallChoice),
+        h("button", {
+          type: "button",
+          class: "brush-choice",
+          dataset: { testid: "sheet-dir-block-clear" },
+          onclick: () => runUpdate(clearSheetCellsDirBlock(sheet, targets), `Clear two-way walls on ${sheet.id}`),
+        }, "Clear walls")),
+      h("p", { class: "hint" }, "Purple solid edges are authored dirBlock walls and block crossing both ways. Blue/orange arrows remain one-way enter/exit rules."));
+    replace(body, mapBrushes, sheetControls);
   }
 
   function renderRegions(): void {
@@ -447,7 +573,7 @@ export function mountPalette(root: HTMLElement, app: StudioApp, art: ArtRegistry
       onclick: () => { app.edgeBrush = brush; app.emit("brush"); },
     }, label);
     replace(body,
-      isPack ? h("p", { class: "art-missing" }, icon("warn"), " Edges live on project-wide tile sheets; sharded packs cannot change them here.") : null,
+      isPack ? h("p", { class: "art-missing" }, icon("warn"), " One-way map strokes are unavailable in sharded packs. Symmetric sheet walls remain editable under Passage.") : null,
       h("div", { class: "edge-grid" },
         h("span", { class: "muted" }, "No entry from"),
         DIRS.map((dir) => choice({ kind: "enter", dir }, `${ARROWS[dir]} ${dir}`, `Forbid entering the tile from ${dir}`)),
