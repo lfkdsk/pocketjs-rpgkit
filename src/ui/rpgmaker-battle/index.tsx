@@ -3,7 +3,7 @@
 // do not import it pay no bundle or per-frame cost.
 
 import { createMemo, For, Show } from "solid-js";
-import { Text, View } from "@pocketjs/framework/components";
+import { Image, Text, View } from "@pocketjs/framework/components";
 import type { BattleSceneComponent, BattleSceneViewProps } from "../GameView.tsx";
 import { BoundedLine } from "../BoundedLine.tsx";
 import { fitBounded } from "../list-window.ts";
@@ -35,6 +35,7 @@ import type {
 import { ScreenToneWeatherLayer } from "../ScreenToneWeatherLayer.tsx";
 import { screenToneWeatherActive } from "../screen-presentation.ts";
 import { LazyImage } from "../LazyImage.tsx";
+import { rpgMakerFaceSource } from "../rpgmaker-face.ts";
 import {
   battleAnimationPlacement,
   battleAnimationPresentationAt,
@@ -50,6 +51,8 @@ export type {
 export interface RpgMakerBattleSceneOptions {
   /** Normalized enemy image id -> baked image source. */
   enemyImages?: Readonly<Record<string, RpgImageSource>>;
+  /** Exact `faceName:faceIndex` -> importer-cut actor face cell. */
+  faces?: Readonly<Record<string, string>>;
   /** Exact RPG Maker battleback basename -> baked image source. */
   battlebacks1?: Readonly<Record<string, RpgImageSource>>;
   battlebacks2?: Readonly<Record<string, RpgImageSource>>;
@@ -238,6 +241,38 @@ function FrontViewScene(
     animationMarker()?.targets.includes(index) === true;
   const targetFlash = () => animationPresentation()?.targetFlash;
   const screenFlash = () => animationPresentation()?.screenFlash;
+  const actorFace = (actor: Readonly<RpgMakerBattleCombatant>): string | undefined =>
+    rpgMakerFaceSource(options.faces, actor.actor?.faceName, actor.actor?.faceIndex);
+  const ActorHudLines = (lineProps: {
+    actor: RpgMakerBattleCombatant;
+    index: number;
+    width: number;
+  }) => (
+    <>
+      <BoundedLine
+        cell={fitBounded([
+          lineProps.actor.name,
+          `${db.terms.basic.levelAbbr} ${lineProps.actor.actor?.level ?? 1}`,
+          `${db.terms.basic.mpAbbr} ${lineProps.actor.mp}`,
+          ...(db.displayTp ? [`${db.terms.basic.tpAbbr} ${lineProps.actor.tp}`] : []),
+        ].join("  "), lineProps.width, 1, slotMeasure())}
+        tick={() => state().nowTick}
+        textColor="#ffffff"
+        rowH={14}
+        width={lineProps.width}
+        debugName={`rpgmaker-actor-name-${lineProps.index}`}
+      />
+      <StatBar
+        current={shownHp(state(), "actor", lineProps.index)}
+        max={rpgMakerCombatantParam(db, lineProps.actor, 0)}
+        width={lineProps.width}
+        showNumbers
+        uiText={props.uiText}
+        theme={props.theme}
+        debugName={`rpgmaker-actor-hp-${lineProps.index}`}
+      />
+    </>
+  );
 
   return (
     <View
@@ -405,36 +440,43 @@ function FrontViewScene(
         debugName="rpgmaker-party-hud"
       >
         <For each={state().actors}>
-          {(actor, index) => (
-            <View
-              class="flex-col"
-              style={animationHidesTarget("actor", index()) ? { height: 30, opacity: 0 } : { height: 30 }}
-              debugName={`rpgmaker-actor-hud-${index()}`}
-            >
-              <BoundedLine
-                cell={fitBounded([
-                  actor.name,
-                  `${db.terms.basic.levelAbbr} ${actor.actor?.level ?? 1}`,
-                  `${db.terms.basic.mpAbbr} ${actor.mp}`,
-                  ...(db.displayTp ? [`${db.terms.basic.tpAbbr} ${actor.tp}`] : []),
-                ].join("  "), actorWidth(), 1, slotMeasure())}
-                tick={() => state().nowTick}
-                textColor="#ffffff"
-                rowH={14}
-                width={actorWidth()}
-                debugName={`rpgmaker-actor-name-${index()}`}
-              />
-              <StatBar
-                current={shownHp(state(), "actor", index())}
-                max={rpgMakerCombatantParam(db, actor, 0)}
-                width={actorWidth()}
-                showNumbers
-                uiText={props.uiText}
-                theme={props.theme}
-                debugName={`rpgmaker-actor-hp-${index()}`}
-              />
-            </View>
-          )}
+          {(actor, index) => {
+            const face = () => actorFace(actor);
+            const rowStyle = () => animationHidesTarget("actor", index())
+              ? { height: 30, opacity: 0 }
+              : { height: 30 };
+            return (
+              <Show
+                when={face()}
+                fallback={(
+                  <View
+                    class="flex-col"
+                    style={rowStyle()}
+                    debugName={`rpgmaker-actor-hud-${index()}`}
+                  >
+                    <ActorHudLines actor={actor} index={index()} width={actorWidth()} />
+                  </View>
+                )}
+              >
+                <View
+                  class="flex-row"
+                  style={rowStyle()}
+                  debugName={`rpgmaker-actor-hud-${index()}`}
+                >
+                  <View style={{ width: 32, height: 30 }}>
+                    <Image
+                      src={face()!}
+                      style={{ width: 28, height: 28 }}
+                      debugName={`rpgmaker-actor-face-${index()}`}
+                    />
+                  </View>
+                  <View class="flex-col" style={{ width: actorWidth() - 32, height: 30 }}>
+                    <ActorHudLines actor={actor} index={index()} width={actorWidth() - 32} />
+                  </View>
+                </View>
+              </Show>
+            );
+          }}
         </For>
       </View>
 

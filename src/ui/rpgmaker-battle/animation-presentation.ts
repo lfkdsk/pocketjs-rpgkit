@@ -2,29 +2,16 @@
 // importer/cooker supplies immutable per-frame images; every visible choice
 // below is derived from the saved start tick and the fixed reference clock.
 
-import type { ScreenColor } from "../../engine/types.ts";
+import type { AnimationTimingDef, ScreenColor } from "../../engine/types.ts";
 import type { RpgImageSource } from "../LazyImage.tsx";
 
 export const RPGMAKER_MV_ANIMATION_FRAME_TICKS = 4;
 const REFERENCE_TICKS_PER_SECOND = 60;
 
-export interface RpgMakerBattleAnimationTiming {
-  /** Authored MV frame on which the cue begins. */
-  frame: number;
-  /** Current project timings omit scope and therefore mean screen flash. */
-  flash?: {
-    scope?: "target" | "screen";
-    color: ScreenColor;
-    intensity: number;
-    /** Virtual seconds, matching AnimationTimingDef. */
-    duration: number;
-  };
-  /** Additive battle-only spelling for MV flashScope 3. */
-  hide?: {
-    /** Virtual seconds for which the selected targets stay hidden. */
-    duration: number;
-  };
-}
+/** The renderer consumes the shared additive timing contract. Sound cues are
+ * projected by battle rules/session audio; this pure pixel projection reads
+ * only flash and hide windows from the same authored timeline. */
+export type RpgMakerBattleAnimationTiming = AnimationTimingDef;
 
 /** Immutable render assets combined from Project.animations and the
  * importer's placement table. Frames are already sliced static images: the

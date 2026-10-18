@@ -2,7 +2,7 @@
 // games that explicitly pass its config to GameView's overlay prop.
 
 import { createMemo, createSignal, Show } from "solid-js";
-import { View } from "@pocketjs/framework/components";
+import { Image, View } from "@pocketjs/framework/components";
 import { BTN } from "@pocketjs/framework/input";
 import { deepClone } from "../../engine/clone.ts";
 import type { SessionState } from "../../engine/session.ts";
@@ -13,16 +13,20 @@ import type {
   GameViewSessionHost,
 } from "../demo-contract.ts";
 import { ListMenu, type ListMenuRow } from "../battle/ListMenu.tsx";
+import { rpgMakerRuntimeActorFaceSource } from "../rpgmaker-face.ts";
 import { resolveUiTheme, type UiTheme } from "../theme.ts";
 
 export interface RpgMakerFormationOptions {
   /** Raw PocketJS button mask. Defaults to the map cancel button (CROSS). */
   openButton?: number;
+  /** Exact `faceName:faceIndex` -> importer-cut actor face cell. */
+  faces?: Readonly<Record<string, string>>;
 }
 
 interface FormationMember {
   actorId: number;
   name: string;
+  face?: string;
 }
 
 interface FormationViewProps {
@@ -54,6 +58,7 @@ function FormationView(props: FormationViewProps) {
       .filter(Boolean)
       .join(" / "),
   })));
+  const selectedFace = () => props.members()[props.cursor()]?.face;
 
   return (
     <Show when={props.open()}>
@@ -62,6 +67,19 @@ function FormationView(props: FormationViewProps) {
         style={{ posType: 1, bgColor: theme().backdrop }}
         debugName="rpgmaker-formation-overlay"
       >
+        <Show when={selectedFace()}>
+          <View
+            class="items-center justify-center"
+            style={{ width: 68, height: 68, marginR: 8, bgColor: theme().border }}
+            debugName="rpgmaker-formation-face-frame"
+          >
+            <Image
+              src={selectedFace()!}
+              style={{ width: 64, height: 64 }}
+              debugName="rpgmaker-formation-face"
+            />
+          </View>
+        </Show>
         <ListMenu
           title="Formation"
           description="Choose two party members to swap. Walking sprite art stays fixed."
@@ -77,7 +95,10 @@ function FormationView(props: FormationViewProps) {
   );
 }
 
-function partyMembers(host: GameViewSessionHost): FormationMember[] {
+function partyMembers(
+  host: GameViewSessionHost,
+  faces: Readonly<Record<string, string>> | undefined,
+): FormationMember[] {
   const state = host.getState();
   const world = host.session.worlds.get(state.mapId);
   if (!world) return [];
@@ -85,10 +106,14 @@ function partyMembers(host: GameViewSessionHost): FormationMember[] {
     (host.project.actors ?? []).flatMap((actor) =>
       actor.databaseId === undefined ? [] : [[actor.databaseId, actor.name] as const]),
   );
-  return partyOrder(host).map((actorId) => ({
-    actorId,
-    name: names.get(actorId) ?? `Actor ${actorId}`,
-  }));
+  return partyOrder(host).map((actorId) => {
+    const face = rpgMakerRuntimeActorFaceSource(faces, state.ext, actorId);
+    return {
+      actorId,
+      name: names.get(actorId) ?? `Actor ${actorId}`,
+      ...(face ? { face } : {}),
+    };
+  });
 }
 
 function canOpenFormation(state: Readonly<SessionState>): boolean {
@@ -107,7 +132,7 @@ function makeRuntime(
   const [first, setFirst] = createSignal<number | null>(null);
 
   const refresh = (): void => {
-    const next = partyMembers(host);
+    const next = partyMembers(host, options.faces);
     setMembers(next);
     setCursor((index) => Math.max(0, Math.min(index, next.length - 1)));
   };
