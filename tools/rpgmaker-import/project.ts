@@ -119,6 +119,10 @@ export interface ImportAssets {
   animatedVariants?: Record<string, Record<string, ImportAnimatedCell[]>>;
   /** Logical audio id -> converted output-relative QOA path. */
   audio: Record<string, string>;
+  /** Exact `faceName:faceIndex` -> one cell cut from a stock 4x2 face sheet. */
+  faces: Record<string, string>;
+  /** Exact side-view actor battler basename -> imported source PNG. */
+  actorBattlers: Record<string, string>;
   /** Enemy database id -> imported front-view battler PNG. */
   battlers: Record<string, { png: string; w: number; h: number }>;
   /** Exact RPG Maker battleback basename -> imported source image. */
@@ -479,6 +483,8 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     animations: {},
     animated: {},
     audio: {},
+    faces: {},
+    actorBattlers: {},
     battlers: {},
     battlebacks1: {},
     battlebacks2: {},
@@ -496,6 +502,118 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     audioRequests.set(key, { kind, name, id });
     return id;
   };
+
+  // --- actor faces and side-view battlers --------------------------------
+  // Change Actor Images can select art that no database actor uses initially,
+  // so gather every exact candidate before importing any pixels. Source lists
+  // are flat and therefore include commands nested under branches and loops.
+  const faceCandidates = new Set<string>();
+  const actorBattlerCandidates = new Set<string>();
+  const rememberFace = (rawName: unknown, rawIndex: unknown): void => {
+    const name = String(rawName ?? "");
+    if (!name) return;
+    const numeric = Number(rawIndex);
+    const index = Math.trunc(Number.isFinite(numeric) ? numeric : 0);
+    faceCandidates.add(`${name}:${index}`);
+  };
+  const rememberActorBattler = (rawName: unknown): void => {
+    const name = String(rawName ?? "");
+    if (name) actorBattlerCandidates.add(name);
+  };
+  const collectActorImages = (list: readonly RmCommand[]): void => {
+    for (const command of list) {
+      if (command.code !== 322) continue;
+      rememberFace(command.parameters?.[3], command.parameters?.[4]);
+      rememberActorBattler(command.parameters?.[5]);
+    }
+  };
+  for (const actor of rm.actors) {
+    if (!actor) continue;
+    rememberFace(actor.faceName, actor.faceIndex);
+    rememberActorBattler(actor.battlerName);
+  }
+  for (const map of rm.maps.values()) {
+    for (const event of map.events) for (const page of event?.pages ?? []) collectActorImages(page.list);
+  }
+  for (const common of rm.commonEvents) if (common) collectActorImages(common.list);
+  for (const troop of rm.troops) {
+    if (!troop) continue;
+    for (const page of troop.pages ?? []) collectActorImages(page.list);
+  }
+
+  const faceSheets = new Map<string, { image?: RgbaImage; reason?: string }>();
+  const loadFaceSheet = async (name: string): Promise<{ image?: RgbaImage; reason?: string }> => {
+    const known = faceSheets.get(name);
+    if (known) return known;
+    const path = findNamedPng(environment, environment.join(rm.root, "img", "faces"), name, rm.mediaEncryption);
+    if (!path) {
+      const missing = { reason: `img/faces/${name}.png is missing` };
+      faceSheets.set(name, missing);
+      return missing;
+    }
+    const image = await environment.readPng(path, rm.mediaEncryption);
+    const cellW = image.width / 4;
+    const cellH = image.height / 2;
+    if (image.width <= 0 || image.height <= 0 || !Number.isInteger(cellW) || !Number.isInteger(cellH) || cellW !== cellH) {
+      const malformed = {
+        reason: `img/faces/${name}.png must be a non-empty 4x2 grid of square cells (got ${image.width}x${image.height})`,
+      };
+      faceSheets.set(name, malformed);
+      return malformed;
+    }
+    const loaded = { image };
+    faceSheets.set(name, loaded);
+    return loaded;
+  };
+  const usedFacePngs = new Set<string>();
+  for (const key of [...faceCandidates].sort()) {
+    const colon = key.lastIndexOf(":");
+    const name = key.slice(0, colon);
+    const index = Number(key.slice(colon + 1));
+    let reason: string | undefined;
+    let sheet: RgbaImage | undefined;
+    if (!Number.isInteger(index) || index < 0 || index >= 8) {
+      reason = `face index ${index} is outside the stock 4x2 sheet`;
+    } else {
+      ({ image: sheet, reason } = await loadFaceSheet(name));
+    }
+    if (!sheet) {
+      const detail = `face ${key}: ${reason}`;
+      cov.record("battle", `face ${key}`, "Degraded", reason);
+      warnings.push(detail);
+      continue;
+    }
+    const cell = blankImage(sheet.width / 4, sheet.height / 2);
+    blit(cell, 0, 0, sheet, (index % 4) * cell.width, Math.floor(index / 4) * cell.height, cell.width, cell.height);
+    const base = `${slug(name) || "face"}-${index}`;
+    let id = base;
+    for (let suffix = 2; usedFacePngs.has(`faces/${id}.png`); suffix++) id = `${base}-${suffix}`;
+    const png = `faces/${id}.png`;
+    usedFacePngs.add(png);
+    images.set(png, cell);
+    assets.faces[key] = png;
+    cov.record("battle", `face ${key}`, "Native");
+  }
+
+  const usedActorBattlerPngs = new Set<string>();
+  for (const name of [...actorBattlerCandidates].sort()) {
+    const path = findNamedPng(environment, environment.join(rm.root, "img", "sv_actors"), name, rm.mediaEncryption);
+    if (!path) {
+      const reason = `img/sv_actors/${name}.png is missing`;
+      cov.record("battle", `actor battler ${name}`, "Degraded", reason);
+      warnings.push(`actor battler ${name}: ${reason}`);
+      continue;
+    }
+    const image = await environment.readPng(path, rm.mediaEncryption);
+    const base = slug(name) || "battler";
+    let id = base;
+    for (let suffix = 2; usedActorBattlerPngs.has(`actor-battlers/${id}.png`); suffix++) id = `${base}-${suffix}`;
+    const png = `actor-battlers/${id}.png`;
+    usedActorBattlerPngs.add(png);
+    images.set(png, image);
+    assets.actorBattlers[name] = png;
+    cov.record("battle", `actor battler ${name}`, "Native");
+  }
 
   // --- front-view battlers and normalized battle database -----------------
   const enemyImages = new Map<number, string>();

@@ -46,7 +46,7 @@ describe("RPG Maker battle database import", () => {
       importRmProject(loadRmProject(STAGE)),
     ]);
     expect(hollow.cov.totals("command")).toEqual({
-      Native: 113, Degraded: 9, Placeholder: 2, Dropped: 0, total: 124,
+      Native: 113, Degraded: 10, Placeholder: 2, Dropped: 0, total: 125,
     });
     expect(stage.cov.totals("command")).toEqual({
       Native: 51, Degraded: 9, Placeholder: 1, Dropped: 0, total: 61,
@@ -150,6 +150,59 @@ describe("RPG Maker battle database import", () => {
     });
     expect(result.images.has("battlebacks1/hollowfloor.png")).toBe(true);
     expect(result.images.has("battlebacks2/hollowwall.png")).toBe(true);
+  });
+
+  test("imports default and Change Actor Images art deterministically and reports every missing candidate", async () => {
+    const fixture = () => {
+      const project = loadRmProject(HOLLOW);
+      const mapList = project.maps.get(1)!.events.find((event) => event !== null)!.pages[0]!.list;
+      mapList.splice(mapList.length - 1, 0, {
+        code: 322,
+        indent: 0,
+        parameters: [1, "People", 0, "MissingMapFaces", 1, "MissingMapBattler"],
+      });
+      const troopList = project.troops[1]!.pages[0]!.list;
+      troopList.splice(troopList.length - 1, 0, {
+        code: 322,
+        indent: 0,
+        parameters: [1, "People", 0, "MissingTroopFaces", 2, "MissingTroopBattler"],
+      });
+      return project;
+    };
+    const [first, second] = await Promise.all([importRmProject(fixture()), importRmProject(fixture())]);
+
+    expect(first.assets.faces).toEqual({
+      "WrenFaces:0": "faces/wrenfaces-0.png",
+      "WrenFaces:5": "faces/wrenfaces-5.png",
+    });
+    expect(first.assets.actorBattlers).toEqual({
+      WrenBattler: "actor-battlers/wrenbattler.png",
+      WrenBattlerAlt: "actor-battlers/wrenbattleralt.png",
+    });
+    expect(first.images.get(first.assets.faces["WrenFaces:0"]!)).toMatchObject({ width: 144, height: 144 });
+    expect(first.images.get(first.assets.faces["WrenFaces:5"]!)).toMatchObject({ width: 144, height: 144 });
+    expect(first.images.get(first.assets.actorBattlers.WrenBattler!)).toMatchObject({ width: 576, height: 384 });
+    expect(first.images.get(first.assets.actorBattlers.WrenBattlerAlt!)).toMatchObject({ width: 576, height: 384 });
+
+    const imported = [...Object.values(first.assets.faces), ...Object.values(first.assets.actorBattlers)];
+    for (const path of imported) expect(second.images.get(path)?.data).toEqual(first.images.get(path)?.data);
+    expect(second.assets.faces).toEqual(first.assets.faces);
+    expect(second.assets.actorBattlers).toEqual(first.assets.actorBattlers);
+
+    expect(first.warnings).toEqual(expect.arrayContaining([
+      "face MissingMapFaces:1: img/faces/MissingMapFaces.png is missing",
+      "face MissingTroopFaces:2: img/faces/MissingTroopFaces.png is missing",
+      "actor battler MissingMapBattler: img/sv_actors/MissingMapBattler.png is missing",
+      "actor battler MissingTroopBattler: img/sv_actors/MissingTroopBattler.png is missing",
+    ]));
+    const battleCoverage = new Map(first.cov.list("battle").map((row) => [row.key, row]));
+    expect(battleCoverage.get("face MissingMapFaces:1")?.counts.Degraded).toBe(1);
+    expect(battleCoverage.get("face MissingTroopFaces:2")?.counts.Degraded).toBe(1);
+    expect(battleCoverage.get("actor battler MissingMapBattler")?.counts.Degraded).toBe(1);
+    expect(battleCoverage.get("actor battler MissingTroopBattler")?.counts.Degraded).toBe(1);
+    const imageCommand = first.cov.list("command").find((row) => row.key === "322")!;
+    expect(imageCommand.reasons.join(" ")).toContain("imported faces can update live");
+    expect(imageCommand.reasons.join(" ")).toContain("map walking images are not wired");
   });
 
   test("binds cooked legacy animations to MZ skills and items by record shape", async () => {

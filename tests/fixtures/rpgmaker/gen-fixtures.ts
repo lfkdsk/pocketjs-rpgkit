@@ -521,15 +521,22 @@ function armor(id: number, name: string, description: string, price: number, def
   } as RmItem;
 }
 
-function actor(id: number, name: string, sheet: string, index: number, equips: number[]): RmActor {
+function actor(
+  id: number,
+  name: string,
+  sheet: string,
+  index: number,
+  equips: number[],
+  images: Partial<Pick<RmActor, "faceName" | "faceIndex" | "battlerName">> = {},
+): RmActor {
   return {
-    battlerName: "",
+    battlerName: images.battlerName ?? "",
     characterIndex: index,
     characterName: sheet,
     classId: 1,
     equips,
-    faceIndex: 0,
-    faceName: "",
+    faceIndex: images.faceIndex ?? 0,
+    faceName: images.faceName ?? "",
     id,
     initialLevel: 1,
     maxLevel: 99,
@@ -1127,6 +1134,54 @@ function fixtureIconSet(): Canvas {
   return c;
 }
 
+/** Original 4x2 face sheet using RPG Maker's stock 144 px cell geometry. */
+function fixtureFaceSheet(): Canvas {
+  const cell = 144;
+  const c = new Canvas(cell * 4, cell * 2);
+  const palettes = [
+    ["#203848", "#d8aa78", "#6a3a1a"], ["#403050", "#e8c090", "#e8e8e8"],
+    ["#304838", "#c89068", "#2a2a2a"], ["#504028", "#e0b080", "#8a6a3a"],
+    ["#283858", "#d8a070", "#a05a2a"], ["#402848", "#e8b888", "#3a2a1a"],
+    ["#483028", "#c88860", "#5a5a5a"], ["#304048", "#d8a878", "#d0a040"],
+  ] as const;
+  palettes.forEach(([back, skin, hair], index) => {
+    const ox = (index % 4) * cell;
+    const oy = Math.floor(index / 4) * cell;
+    c.rect(ox, oy, cell, cell, rgb(back));
+    c.rect(ox + 24, oy + 112, 96, 32, shade(rgb(back), 1.3));
+    c.rect(ox + 39, oy + 30, 66, 82, rgb(skin));
+    c.rect(ox + 33, oy + 20, 78, 35, rgb(hair));
+    c.rect(ox + 33, oy + 42, 12, 42, rgb(hair));
+    c.rect(ox + 99, oy + 42, 12, 42, rgb(hair));
+    c.rect(ox + 53, oy + 63, 10, 7, rgb("#202030"));
+    c.rect(ox + 81, oy + 63, 10, 7, rgb("#202030"));
+    c.rect(ox + 63, oy + 91, 18, 5, shade(rgb(skin), 0.65));
+    c.frame(ox + 5, oy + 5, cell - 10, cell - 10, shade(rgb(back), 1.5));
+  });
+  return c;
+}
+
+/** Original 9x6 side-view actor sheet with stock 64 px frame geometry. */
+function fixtureActorBattler(coat: string, accent: string): Canvas {
+  const frame = 64;
+  const c = new Canvas(frame * 9, frame * 6);
+  for (let row = 0; row < 6; row++) {
+    for (let col = 0; col < 9; col++) {
+      const ox = col * frame;
+      const oy = row * frame;
+      const step = (col + row) % 3;
+      c.rect(ox + 22, oy + 9 + step, 20, 17, rgb("#6a3a1a"));
+      c.rect(ox + 24, oy + 19 + step, 16, 14, rgb("#d8aa78"));
+      c.rect(ox + 19, oy + 31 + step, 26, 21, rgb(coat));
+      c.rect(ox + 17, oy + 35 + step, 4, 15, rgb(accent));
+      c.rect(ox + 43, oy + 35 + step, 4, 15, rgb(accent));
+      c.rect(ox + 23, oy + 52 + step, 7, 9, rgb("#303848"));
+      c.rect(ox + 34, oy + 52 + step, 7, 9, rgb("#303848"));
+    }
+  }
+  return c;
+}
+
 function hollowArt(files: Files): void {
   const m = hollowMaterials();
   const img = (path: string, canvas: Canvas) => files.set(`${HOLLOW}/img/${path}`, canvas.png());
@@ -1155,6 +1210,9 @@ function hollowArt(files: Files): void {
   img("characters/$Golem.png", singleSheet(golem(rgb("#7a746c"), rgb("#f0a030"))));
   img("system/Balloon.png", balloonSheet());
   img("system/IconSet.png", fixtureIconSet());
+  img("faces/WrenFaces.png", fixtureFaceSheet());
+  img("sv_actors/WrenBattler.png", fixtureActorBattler("#3a8a4a", "#d8c060"));
+  img("sv_actors/WrenBattlerAlt.png", fixtureActorBattler("#6a3a8a", "#e8e8e8"));
   // Front-view battler for the placeholder battle (Enemies.json).
   const battler = new Canvas(64, 64);
   const rock = material(rgb("#7a746c"), "rock", 400);
@@ -1597,6 +1655,13 @@ function hollowData(files: Files): void {
       trigger: 0,
     },
     { id: 2, list: list(cmd(250, SE.drip), cmd(230, 90)), name: "Cave Drip", switchId: S_IN_CAVE, trigger: 2 },
+    {
+      id: 3,
+      list: list(cmd(322, 1, "People", 0, "WrenFaces", 5, "WrenBattlerAlt")),
+      name: "Wardrobe Preview",
+      switchId: 1,
+      trigger: 0,
+    },
   ];
   put("CommonEvents.json", recordsJson(common));
   put(
@@ -1614,7 +1679,13 @@ function hollowData(files: Files): void {
   put("Armors.json", recordsJson([null, armor(1, "Cloth Vest", "Padded and warm.", 40, 5)]));
   put(
     "Actors.json",
-    recordsJson([null, actor(1, "Wren", "People", 0, [1, 0, 0, 1, 0]), actor(2, "Moss", "People", 4, [2, 0, 0, 0, 0])]),
+    recordsJson([
+      null,
+      actor(1, "Wren", "People", 0, [1, 0, 0, 1, 0], {
+        faceName: "WrenFaces", faceIndex: 0, battlerName: "WrenBattler",
+      }),
+      actor(2, "Moss", "People", 4, [2, 0, 0, 0, 0]),
+    ]),
   );
   put("Classes.json", recordsJson(classes("Wanderer")));
   put("Skills.json", recordsJson(skills()));

@@ -1,5 +1,6 @@
 [
 null,
 {"id":1,"list":[{"code":250,"indent":0,"parameters":[{"name":"hollow-chime","pan":0,"pitch":100,"volume":90}]},{"code":230,"indent":0,"parameters":[30]},{"code":101,"indent":0,"parameters":["",0,0,2,""]},{"code":401,"indent":0,"parameters":["A clear chime rings through the house."]},{"code":0,"indent":0,"parameters":[]}],"name":"Chime","switchId":1,"trigger":0},
-{"id":2,"list":[{"code":250,"indent":0,"parameters":[{"name":"hollow-drip","pan":0,"pitch":100,"volume":60}]},{"code":230,"indent":0,"parameters":[90]},{"code":0,"indent":0,"parameters":[]}],"name":"Cave Drip","switchId":4,"trigger":2}
+{"id":2,"list":[{"code":250,"indent":0,"parameters":[{"name":"hollow-drip","pan":0,"pitch":100,"volume":60}]},{"code":230,"indent":0,"parameters":[90]},{"code":0,"indent":0,"parameters":[]}],"name":"Cave Drip","switchId":4,"trigger":2},
+{"id":3,"list":[{"code":322,"indent":0,"parameters":[1,"People",0,"WrenFaces",5,"WrenBattlerAlt"]},{"code":0,"indent":0,"parameters":[]}],"name":"Wardrobe Preview","switchId":1,"trigger":0}
 ]

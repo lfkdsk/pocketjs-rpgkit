@@ -1069,7 +1069,7 @@ function emitActorChange(code: number, p: readonly unknown[], st: State): Comman
         battlerName: String(p[5] ?? ""),
       };
       disposition = "Degraded";
-      reason = "actor images persist, but map, face, and side-view presentation do not update live";
+      reason = "actor images persist and imported faces can update live, but map walking images are not wired and front-view battle does not draw side-view battlers";
       break;
     }
     case 324:

@@ -1,5 +1,5 @@
 [
 null,
-{"battlerName":"","characterIndex":0,"characterName":"People","classId":1,"equips":[1,0,0,1,0],"faceIndex":0,"faceName":"","id":1,"initialLevel":1,"maxLevel":99,"name":"Wren","nickname":"","note":"","profile":"","traits":[]},
+{"battlerName":"WrenBattler","characterIndex":0,"characterName":"People","classId":1,"equips":[1,0,0,1,0],"faceIndex":0,"faceName":"WrenFaces","id":1,"initialLevel":1,"maxLevel":99,"name":"Wren","nickname":"","note":"","profile":"","traits":[]},
 {"battlerName":"","characterIndex":4,"characterName":"People","classId":1,"equips":[2,0,0,0,0],"faceIndex":0,"faceName":"","id":2,"initialLevel":1,"maxLevel":99,"name":"Moss","nickname":"","note":"","profile":"","traits":[]}
 ]
