@@ -15,6 +15,7 @@ import { uniqueEventId } from "../engine/model.ts";
 import type { StudioApp, ViewState } from "./app.ts";
 import { ArtRegistry, TILE, parseTileId } from "./art.ts";
 import { emptyState } from "./dom.ts";
+import { resolveSheetCellPassage, sheetDirBlockLine } from "./sheet-passage.ts";
 
 export const ZOOM_LEVELS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8] as const;
 
@@ -622,6 +623,7 @@ export class MapCanvas {
         const tile = map.ground[index] ?? null;
         const parsed = tile ? parseTileId(tile) : null;
         const sheet = parsed ? sheets.get(parsed.sheet) : undefined;
+        const sheetPassage = sheet && parsed ? resolveSheetCellPassage(sheet, parsed.cell) : undefined;
         const override = overrides.get(index);
         const px = x * TILE;
         const py = y * TILE;
@@ -642,10 +644,11 @@ export class MapCanvas {
           ctx.beginPath();
           ctx.arc(px + 8, py + 8, 3.5, 0, Math.PI * 2);
           ctx.stroke();
-        } else if (sheet && parsed && baseBlocked(sheet, parsed.cell)) {
+        } else if (sheetPassage?.blocked) {
           ctx.fillStyle = "rgba(255,72,72,0.20)";
           ctx.fillRect(px, py, TILE, TILE);
         }
+        if (sheetPassage) for (const dir of sheetPassage.dirBlock) drawDirBlockEdge(ctx, px, py, dir);
         const edges = sheet && parsed ? sheet.dirEdges?.[String(parsed.cell)] : undefined;
         if (edges) {
           for (const dir of edges.enter ?? []) drawEdgeArrow(ctx, px, py, dir, true);
@@ -1202,9 +1205,25 @@ export class MapCanvas {
   }
 }
 
-function baseBlocked(sheet: Sheet, cell: number): boolean {
-  if (sheet.defaultPassage === "block") return !(sheet.pass ?? []).includes(cell);
-  return (sheet.block ?? []).includes(cell);
+function drawDirBlockEdge(ctx: CanvasRenderingContext2D, px: number, py: number, dir: "down" | "left" | "right" | "up"): void {
+  const line = sheetDirBlockLine(dir, px, py, TILE);
+  ctx.save();
+  ctx.lineCap = "butt";
+  // A dark keyline keeps the authored symmetric wall legible over bright art;
+  // purple deliberately differs from the blue/orange one-sided arrows.
+  ctx.strokeStyle = "rgba(22,16,34,0.90)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(line.x1, line.y1);
+  ctx.lineTo(line.x2, line.y2);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(202,142,255,0.98)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(line.x1, line.y1);
+  ctx.lineTo(line.x2, line.y2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawEdgeArrow(ctx: CanvasRenderingContext2D, px: number, py: number, dir: string, enter: boolean): void {
