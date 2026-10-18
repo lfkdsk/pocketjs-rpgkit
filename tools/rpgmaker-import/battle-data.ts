@@ -148,17 +148,25 @@ function effects(source: readonly RmEffect[] | undefined): RpgMakerEffect[] {
 function equipmentCatalog(
   source: readonly (RmItem | null)[],
   kind: RpgMakerBattleEquipment["kind"],
+  animation?: BattleDatabaseOptions["animation"],
 ): RpgMakerBattleEquipment[] {
-  return source.flatMap((entry) => entry ? [{
-    id: nonNegative(entry.id),
-    kind,
-    name: String(entry.name ?? ""),
-    etypeId: nonNegative(entry.etypeId),
-    typeId: nonNegative(kind === "weapon" ? entry.wtypeId : entry.atypeId),
-    params: Array.from({ length: 8 }, (_, index) => integer(entry.params?.[index])) as
-      [number, number, number, number, number, number, number, number],
-    traits: traits(entry.traits),
-  }] : []);
+  return source.flatMap((entry) => {
+    if (!entry) return [];
+    const animationId = kind === "weapon" ? nonNegative(entry.animationId) : 0;
+    const cooked = animationId > 0 ? animation?.(animationId) : undefined;
+    return [{
+      id: nonNegative(entry.id),
+      kind,
+      name: String(entry.name ?? ""),
+      etypeId: nonNegative(entry.etypeId),
+      typeId: nonNegative(kind === "weapon" ? entry.wtypeId : entry.atypeId),
+      params: Array.from({ length: 8 }, (_, index) => integer(entry.params?.[index])) as
+        [number, number, number, number, number, number, number, number],
+      traits: traits(entry.traits),
+      ...(animationId > 0 ? { animationId } : {}),
+      ...(cooked ? { animation: cooked } : {}),
+    }];
+  });
 }
 
 function audioSetting(
@@ -460,8 +468,8 @@ export function importBattleDatabase(
       equipment: initial.aggregate,
     }];
   });
-  const weapons = equipmentCatalog(rm.weapons, "weapon");
-  const armors = equipmentCatalog(rm.armors, "armor");
+  const weapons = equipmentCatalog(rm.weapons, "weapon", options.animation);
+  const armors = equipmentCatalog(rm.armors, "armor", options.animation);
   const classes = rm.classes.flatMap((entry) => {
     if (!entry) return [];
     const params = Array.from({ length: 8 }, (_, param) =>

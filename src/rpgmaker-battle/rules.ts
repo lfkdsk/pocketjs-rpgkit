@@ -9,6 +9,7 @@ import type { ExtensionOptions, ExtensionReadContext } from "../engine/extension
 import type { ExtensionCommandContext, ExtensionCommandResult } from "../engine/extensions.ts";
 import type { JsonValue, VariableValue } from "../engine/types.ts";
 import { evaluateRpgMakerDamageBase, type RpgMakerFormulaBattler } from "./formula.ts";
+import { resolveRpgMakerBattlebacks } from "./battleback.ts";
 import type {
   RpgMakerActorRuntime,
   RpgMakerActorCommand,
@@ -936,6 +937,9 @@ function actorCombatant(
       level,
       exp: Math.max(0, integer(runtime.exp)),
       skills: [...new Set(runtime.skills ?? [])].sort((a, b) => a - b),
+      faceName: runtime.faceName ?? actor.faceName ?? "",
+      faceIndex: Math.max(0, integer(runtime.faceIndex, actor.faceIndex ?? 0)),
+      battlerName: runtime.battlerName ?? actor.battlerName ?? "",
       ...(runtime.paramPlus ? { paramPlus: [...runtime.paramPlus] as NonNullable<RpgMakerActorRuntime["paramPlus"]> } : {}),
       ...(runtime.equips ? { equips: runtime.equips.map((entry) => entry ? { ...entry } : null) } : {}),
       ...(runtime.classExp ? { classExp: { ...runtime.classExp } } : {}),
@@ -1228,7 +1232,12 @@ function applyTroopPageEffect(
       const targets = (effect.entireTroop ? troopEffectEnemies(state, -1) : troopEffectEnemies(state, effect.index))
         .filter(({ enemy }) => alive(enemy))
         .map(({ index }) => index);
-      state.battleAnimation = { id: effect.animation, targets, startTick: state.nowTick };
+      state.battleAnimation = {
+        id: effect.animation,
+        targets,
+        targetSide: "enemy",
+        startTick: state.nowTick,
+      };
     }
     return [];
   }
@@ -1874,6 +1883,20 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
     updateActionEndStates(db, user);
     return formatTerm(db, db.terms.messages.useItem, user.name, usable.name);
   }
+  let animation = usable.animation;
+  if (!animation && usable.animationId !== undefined && usable.animationId < 0 && action.kind === "skill" &&
+      action.id === attackSkillId(db, user) && user.side === "actor") {
+    const firstWeapon = user.actor?.equips?.find((entry) => entry?.kind === "weapon");
+    animation = equipmentFor(db, firstWeapon)?.animation;
+  }
+  if (animation) {
+    state.battleAnimation = {
+      id: animation,
+      targetSide: targets[0]!.side,
+      targets: targets.map((target) => target.index),
+      startTick: state.nowTick,
+    };
+  }
   const messages: string[] = [];
   state.effect = null;
   const repeats = usable.repeats + (action.kind === "skill" && action.id === attackSkillId(db, user)
@@ -2119,16 +2142,16 @@ function changed<T extends number | string | boolean>(
 function effectiveBattleSettings(
   db: RpgMakerBattleDatabase,
   runtime: RpgMakerBattleRuntime,
-  mapId: string | undefined,
+  context: Pick<ExtensionReadContext, "mapId" | "playerCell" | "vehicle">,
 ): RpgMakerBattleSettings {
+  const mapId = context.mapId;
   const authored = mapId ? db.mapSettings?.find((entry) => entry.map === mapId) : undefined;
   const override = mapId ? runtime.mapSettings?.[mapId] : undefined;
+  const battleback = resolveRpgMakerBattlebacks(authored, context.playerCell, context.vehicle);
   return {
     ...(runtime.settings ?? db.settings ?? {}),
-    ...(authored ? {
-      battleback1Name: authored.battleback1Name,
-      battleback2Name: authored.battleback2Name,
-    } : {}),
+    battleback1Name: battleback.battleback1Name,
+    battleback2Name: battleback.battleback2Name,
     ...(override ?? {}),
   };
 }
@@ -2216,7 +2239,10 @@ function createInitialState(
     gold: context.gold,
     initialGold: context.gold,
     reward: { exp: 0, gold: 0, items: {}, levels: [] },
-    settings: effectiveBattleSettings(db, runtime, typeof setup.map === "string" ? setup.map : context.mapId),
+    settings: effectiveBattleSettings(db, runtime, {
+      ...context,
+      mapId: typeof setup.map === "string" ? setup.map : context.mapId,
+    }),
     ext: startedExt,
   };
   for (const battler of [...state.actors, ...state.enemies]) {
@@ -2478,7 +2504,9 @@ function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): 
   if (value.battleAnimation !== undefined && value.battleAnimation !== null) {
     if (!savedStateRecord(value.battleAnimation) || typeof value.battleAnimation.id !== "string" ||
         !Array.isArray(value.battleAnimation.targets) || !value.battleAnimation.targets.every(savedInteger) ||
-        !savedInteger(value.battleAnimation.startTick)) return "battleAnimation is malformed";
+        !savedInteger(value.battleAnimation.startTick) ||
+        (value.battleAnimation.targetSide !== undefined && value.battleAnimation.targetSide !== "actor" &&
+          value.battleAnimation.targetSide !== "enemy")) return "battleAnimation is malformed";
   }
   const troop = db.troops.find((entry) => entry.id === value.troopId)!;
   if (!Array.isArray(value.pageRuns) || value.pageRuns.length !== troop.pages.length || !value.pageRuns.every((run) =>

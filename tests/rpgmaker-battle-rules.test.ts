@@ -381,7 +381,9 @@ describe("RPG Maker battle rules", () => {
       image: "sprites/crystal-golem.png",
       lastTargetIndex: 1,
     });
-    expect(started.battleAnimation).toEqual({ id: "anim004", targets: [0, 1], startTick: 0 });
+    expect(started.battleAnimation).toEqual({
+      id: "anim004", targets: [0, 1], targetSide: "enemy", startTick: 0,
+    });
     expect(started.actors[0]!.hp).toBe(rpgMakerCombatantParam(db, started.actors[0]!, 0));
     expect(started.actors[1]!.hp).toBeLessThan(rpgMakerCombatantParam(db, started.actors[1]!, 0));
   });
@@ -684,6 +686,74 @@ describe("RPG Maker battle rules", () => {
       playerStep: { dx: 1, dy: 0, kind: "step" },
     });
     expect(step.writes).toEqual({ [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 });
+  });
+
+  test("battle start resolves explicit empty, terrain, and vehicle battlebacks", () => {
+    const db = cloneDb();
+    db.mapSettings = [
+      {
+        map: "map001", specified: false, overworld: true, width: 10,
+        battleback1Name: "", battleback2Name: "", autotileKinds: [[32, 34]],
+      },
+      {
+        map: "map003", specified: true, overworld: false, width: 20,
+        battleback1Name: "", battleback2Name: "",
+      },
+    ];
+
+    const empty = state(start(db, 1, {}, { ...CONTEXT, mapId: "map003" }).state);
+    expect(empty.settings).toMatchObject({ battleback1Name: "", battleback2Name: "" });
+    const terrain = state(start(db, 1, {}, {
+      ...CONTEXT,
+      mapId: "map001",
+      playerCell: { x: 2, y: 3, region: 0 },
+      vehicle: null,
+    }).state);
+    expect(terrain.settings).toMatchObject({ battleback1Name: "Lava1", battleback2Name: "Lava" });
+    const vehicle = state(start(db, 1, {}, {
+      ...CONTEXT,
+      mapId: "map001",
+      playerCell: { x: 2, y: 3, region: 0 },
+      vehicle: "boat",
+    }).state);
+    expect(vehicle.settings).toMatchObject({ battleback1Name: "Ship", battleback2Name: "Ship" });
+  });
+
+  test("skill, item, and current-weapon animations publish deterministic target markers", () => {
+    const db = cloneDb();
+    const rules = createRpgMakerBattleRules(db);
+
+    db.skills[0]!.animationId = 1;
+    db.skills[0]!.animation = "anim-skill";
+    let current = rules.start({}, setup(db), 7, CONTEXT)!.state;
+    current = forceAction(rules, current, {
+      side: "actor", user: 0, kind: "skill", id: 1, target: 0, speed: 0,
+    });
+    expect(state(current).battleAnimation).toEqual({
+      id: "anim-skill", targets: [0], targetSide: "enemy", startTick: 1,
+    });
+
+    db.items[0]!.animationId = 1;
+    db.items[0]!.animation = "anim-item";
+    current = rules.start({}, setup(db), 8, { ...CONTEXT, items: { item001: 1 } })!.state;
+    current = forceAction(rules, current, {
+      side: "actor", user: 0, kind: "item", id: 1, target: 0, speed: 0,
+    });
+    expect(state(current).battleAnimation).toEqual({
+      id: "anim-item", targets: [0], targetSide: "actor", startTick: 1,
+    });
+
+    db.skills[0]!.animationId = -1;
+    delete db.skills[0]!.animation;
+    db.weapons![0]!.animationId = 1;
+    db.weapons![0]!.animation = "anim-weapon";
+    current = rules.start({}, setup(db), 9, CONTEXT)!.state;
+    current = forceAction(rules, current, {
+      side: "actor", user: 0, kind: "skill", id: 1, target: 0, speed: 0,
+    });
+    expect(state(current).battleAnimation).toEqual({
+      id: "anim-weapon", targets: [0], targetSide: "enemy", startTick: 1,
+    });
   });
 
   test("encounter disable freezes the counter and every toggle reseeds it", () => {

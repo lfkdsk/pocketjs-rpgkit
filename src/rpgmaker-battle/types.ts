@@ -54,6 +54,9 @@ export interface RpgMakerBattleEquipment extends RpgMakerEquipmentRef {
   typeId: number;
   params: [number, number, number, number, number, number, number, number];
   traits: RpgMakerTrait[];
+  /** Weapons retain their stock attack-animation database reference. */
+  animationId?: number;
+  animation?: string;
 }
 
 export interface RpgMakerAudioSetting {
@@ -427,6 +430,12 @@ export interface RpgMakerBattleCombatant {
     level: number;
     exp: number;
     skills: number[];
+    /** Runtime-mutable Change Actor Images projection. Front-view MZ status
+     * and opt-in menu presentation consume the face; battlerName remains
+     * available for side-view consumers. */
+    faceName?: string;
+    faceIndex?: number;
+    battlerName?: string;
     paramPlus?: [number, number, number, number, number, number, number, number];
     equips?: (RpgMakerEquipmentRef | null)[];
     classExp?: Record<string, number>;
@@ -502,7 +511,14 @@ export interface RpgMakerBattleState {
   settings?: RpgMakerBattleSettings;
   /** A playable MV animation can be surfaced by the optional renderer. MZ
    * Effekseer records remain an explicit importer degradation. */
-  battleAnimation?: { id: string; targets: number[]; startTick: number } | null;
+  battleAnimation?: {
+    id: string;
+    targets: number[];
+    /** Omitted in older saves and troop-command markers, where enemy is the
+     * backwards-compatible default. */
+    targetSide?: "actor" | "enemy";
+    startTick: number;
+  } | null;
   ext: JsonValue;
 }
 
