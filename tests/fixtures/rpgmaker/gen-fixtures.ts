@@ -1163,6 +1163,24 @@ function hollowArt(files: Files): void {
   battler.rect(20, 24, 8, 4, rgb("#f0a030"));
   battler.rect(36, 24, 8, 4, rgb("#f0a030"));
   img("enemies/Golem.png", battler);
+  // Two deliberately overlapping battleback layers. The translucent arches
+  // in layer 2 make z-order observable in semantic pixel assertions.
+  const floor = new Canvas(480, 272);
+  floor.paint(0, 0, floor.w, floor.h, (x, y) =>
+    ((Math.floor(x / 24) + Math.floor(y / 18)) & 1) === 0 ? rgb("#183848") : rgb("#204858"));
+  floor.rect(0, 176, 480, 96, rgb("#6a4028"));
+  floor.rect(0, 176, 480, 5, rgb("#d08a48"));
+  img("battlebacks1/HollowFloor.png", floor);
+  const wall = new Canvas(480, 272);
+  for (const x of [24, 184, 344]) {
+    wall.rect(x, 18, 112, 16, rgb("#765080"));
+    wall.rect(x, 18, 16, 158, rgb("#765080"));
+    wall.rect(x + 96, 18, 16, 158, rgb("#765080"));
+    wall.rect(x + 8, 26, 96, 8, rgb("#bc88c0"));
+  }
+  img("battlebacks2/HollowWall.png", wall);
+  // A legacy MV-cell record inside an MZ fixture proves shape-based import.
+  img("animations/Sparkle.png", stageSparkleSheet().scaled(MV_SCALE));
 }
 
 // --- Hollow maps ----------------------------------------------------------------------------------------
@@ -1519,7 +1537,11 @@ function hollowCave(): RmMap {
       page({ cond: whenSwitch(S_BOSS_DOWN), priority: 0, list: list() }),
     ]),
   ];
-  return rmMap({ displayName: "Golem Cave", tilesetId: 2, grid: g, events, bgs: audio("hollow-cave", 60) });
+  const map = rmMap({ displayName: "Golem Cave", tilesetId: 2, grid: g, events, bgs: audio("hollow-cave", 60) });
+  map.specifyBattleback = true;
+  map.battleback1Name = "HollowFloor";
+  map.battleback2Name = "HollowWall";
+  return map;
 }
 
 function hollowData(files: Files): void {
@@ -1699,7 +1721,31 @@ function hollowData(files: Files): void {
     },
   ];
   put("Troops.json", recordsJson(troops));
-  put("Animations.json", recordsJson([null]));
+  put(
+    "Animations.json",
+    recordsJson([
+      null,
+      {
+        animation1Hue: 0,
+        animation1Name: "Sparkle",
+        animation2Hue: 0,
+        animation2Name: "",
+        frames: [
+          [[0, 0, 0, 50, 0, false, 255, 0]],
+          [[1, -12, -12, 60, 25, false, 255, 0], [2, 16, 10, 35, -20, true, 192, 0]],
+          [[3, 0, -24, 75, 90, true, 220, 0]],
+          [[4, 12, -16, 40, 180, false, 180, 0]],
+        ],
+        id: 1,
+        name: "Sparkle",
+        position: 1,
+        timings: [
+          { flashColor: [255, 255, 224, 160], flashDuration: 5, flashScope: 1, frame: 0, se: SILENT },
+          { flashColor: [160, 208, 255, 120], flashDuration: 3, flashScope: 2, frame: 2, se: SILENT },
+        ],
+      },
+    ]),
+  );
   files.set(`${HOLLOW}/game.rmmzproject`, "RPGMZ 1.8.0");
 }
 
@@ -2146,20 +2192,25 @@ function stageData(files: Files): void {
   put(
     "System.json",
     j(
-      system({
-        flavor: "MV",
-        title: "Lantern Stage",
-        start: [1, 8, 10],
-        switches: {
-          [S_SCENE_DONE]: "SceneDone",
-          [S_LEAD_BOWED]: "LeadBowed",
-          [S_SMOKE]: "Smoke",
-          [S_STAGEHAND]: "StagehandGo",
-        },
-        variables: { [V_CLAPS]: "Claps", [V_ENCORE]: "Encore" },
-        versionId: 72005318,
-        partyMembers: [1, 2],
-      }),
+      {
+        ...system({
+          flavor: "MV",
+          title: "Lantern Stage",
+          start: [1, 8, 10],
+          switches: {
+            [S_SCENE_DONE]: "SceneDone",
+            [S_LEAD_BOWED]: "LeadBowed",
+            [S_SMOKE]: "Smoke",
+            [S_STAGEHAND]: "StagehandGo",
+          },
+          variables: { [V_CLAPS]: "Claps", [V_ENCORE]: "Encore" },
+          versionId: 72005318,
+          partyMembers: [1, 2],
+        }),
+        battleBgm: MV_SE.overture,
+        victoryMe: MV_SE.fanfare,
+        defeatMe: MV_SE.fanfare,
+      },
     ),
   );
   put("MapInfos.json", recordsJson([null, mapInfo(1, "Stage", 1, 0)]));

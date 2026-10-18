@@ -180,10 +180,29 @@ describe("MV animation compositor", () => {
     ]);
   });
 
-  test("rejects unsupported placement and malformed or missing source data", () => {
+  test("accepts screen placement and exposes viewport-origin offsets", () => {
     const first = source();
-    expect(() => cookMvAnimation(animation({ position: 3, frames: [[cell(0)]] }), { animation1: first }, 48))
-      .toThrow(/screen-position/);
+    fillPattern(first, 0, [255, 255, 255, 255]);
+    const cooked = cookMvAnimation(
+      animation({ position: 3, frames: [[cell(0)]] }),
+      { animation1: first },
+      48,
+    );
+
+    expect(cooked).toMatchObject({
+      frameW: 64,
+      frameH: 64,
+      count: 1,
+      originOffsetX: -32,
+      originOffsetY: -32,
+    });
+    expect(pixel(cooked.sheet, 32, 32)).toEqual([255, 255, 255, 255]);
+  });
+
+  test("rejects malformed placement or missing source data", () => {
+    const first = source();
+    expect(() => cookMvAnimation(animation({ position: 4, frames: [[cell(0)]] }), { animation1: first }, 48))
+      .toThrow(/position 4 must be 0, 1, 2, or 3/);
     expect(() => cookMvAnimation(animation({ frames: [] }), {}, 48))
       .toThrow(/at least one frame/);
     expect(() => cookMvAnimation(animation({ frames: [[cell(0)]] }), {}, 48))

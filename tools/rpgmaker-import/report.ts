@@ -110,7 +110,7 @@ export function staticCommandTable(): StaticCommandRow[] {
     let reason = "";
     if (samples.length > 0) {
       const cov = new Coverage();
-      if (troopOnly.has(info.code)) convertRpgMakerTroopEffects(samples, cov);
+      if (troopOnly.has(info.code)) convertRpgMakerTroopEffects(samples, cov, (id) => `anim${id}`);
       else convertCommands(samples, sampleContext(cov));
       const row = cov.list("command").find((r) => r.key === String(info.code));
       if (row) {

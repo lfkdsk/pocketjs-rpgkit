@@ -13,6 +13,7 @@ import type {
   RpgMakerBattleDatabase,
   RpgMakerBattleEquipment,
   RpgMakerBattleItem,
+  RpgMakerBattleMapSettings,
   RpgMakerBattleSkill,
   RpgMakerDamage,
   RpgMakerEffect,
@@ -160,15 +161,51 @@ function equipmentCatalog(
   }] : []);
 }
 
-function audioSetting(source: RmProject["system"]["battleBgm"]): NonNullable<
+function audioSetting(
+  source: RmProject["system"]["battleBgm"],
+  kind: "bgm" | "me",
+  resolve?: BattleDatabaseOptions["audio"],
+): NonNullable<
   NonNullable<RpgMakerBattleDatabase["settings"]>["battleBgm"]
 > {
+  const name = String(source?.name ?? "");
   return {
-    name: String(source?.name ?? ""),
+    name,
     volume: finite(source?.volume, 90),
     pitch: finite(source?.pitch, 100),
     pan: finite(source?.pan),
+    ...(name && resolve ? { id: resolve(kind, name) } : {}),
   };
+}
+
+function autotileKind(tileId: number): number {
+  return tileId >= 2048 ? Math.floor((tileId - 2048) / 48) : -1;
+}
+
+function battleMapSettings(rm: RmProject): RpgMakerBattleMapSettings[] {
+  return [...rm.maps.entries()].sort((a, b) => a[0] - b[0]).map(([id, map]) => {
+    const overworld = rm.tilesets[map.tilesetId]?.mode === 0;
+    const specified = map.specifyBattleback === true;
+    const out: RpgMakerBattleMapSettings = {
+      map: mapId(id),
+      specified,
+      battleback1Name: String(map.battleback1Name ?? ""),
+      battleback2Name: String(map.battleback2Name ?? ""),
+      overworld,
+      width: map.width,
+    };
+    if (!specified && overworld) {
+      const plane = map.width * map.height;
+      const kinds: [number, number][] = [];
+      for (let index = 0; index < plane; index++) {
+        const upper = autotileKind(map.data[plane + index] ?? 0);
+        const kind = upper >= 0 ? upper : autotileKind(map.data[index] ?? 0);
+        if (kind >= 0) kinds.push([index, kind]);
+      }
+      if (kinds.length > 0) out.autotileKinds = kinds;
+    }
+    return out;
+  });
 }
 
 function damage(
@@ -207,7 +244,10 @@ function usable(
   raw: RmSkill | RmItem,
   cov: Coverage,
   key: string,
+  animation?: BattleDatabaseOptions["animation"],
 ): RpgMakerUsableItem {
+  const animationId = integer(raw.animationId);
+  const cooked = animationId > 0 ? animation?.(animationId) : undefined;
   return {
     id: nonNegative(raw.id),
     name: String(raw.name ?? ""),
@@ -222,6 +262,8 @@ function usable(
     tpGain: integer(raw.tpGain),
     damage: damage(raw.damage, cov, key),
     effects: effects(raw.effects),
+    ...(animationId !== 0 ? { animationId } : {}),
+    ...(cooked ? { animation: cooked } : {}),
   };
 }
 
@@ -231,6 +273,7 @@ function usable(
 export function convertRpgMakerTroopEffects(
   commands: readonly RmCommand[],
   cov: Coverage,
+  animation?: BattleDatabaseOptions["animation"],
 ): { effects: RpgMakerTroopPageEffect[]; unsupported: number } {
   const out: RpgMakerTroopPageEffect[] = [];
   let unsupported = 0;
@@ -308,18 +351,17 @@ export function convertRpgMakerTroopEffects(
       continue;
     }
     if (command.code === 337) {
+      const animationId = nonNegative(p[1]);
+      const cooked = animation?.(animationId);
       out.push({
         kind: "battleAnimation",
         index: integer(p[0]),
-        animationId: nonNegative(p[1]),
+        animationId,
         entireTroop: p[2] === true,
+        ...(cooked ? { animation: cooked } : {}),
       });
-      cov.record(
-        "command",
-        337,
-        "Degraded",
-        "battle animation keeps its numeric database id because no cooked animation id is available",
-      );
+      cov.record("command", 337, cooked ? "Native" : "Degraded",
+        cooked ? undefined : "battle animation has no playable cooked legacy animation");
       continue;
     }
     if (command.code === 339) {
@@ -346,7 +388,13 @@ export function convertRpgMakerTroopEffects(
   return { effects: out, unsupported };
 }
 
-function troopPage(page: RmTroopPage, cov: Coverage, troopId: number, index: number): RpgMakerTroopPage {
+function troopPage(
+  page: RmTroopPage,
+  cov: Coverage,
+  troopId: number,
+  index: number,
+  animation?: BattleDatabaseOptions["animation"],
+): RpgMakerTroopPage {
   const raw = page.conditions;
   const condition: RpgMakerTroopPage["condition"] = {};
   if (raw?.turnEnding) condition.turnEnding = true;
@@ -358,7 +406,7 @@ function troopPage(page: RmTroopPage, cov: Coverage, troopId: number, index: num
     condition.actorHp = { actorId: nonNegative(raw.actorId), percent: clamp(raw.actorHp, 0, 100, 100) };
   }
   if (raw?.switchValid) condition.switch = switchId(nonNegative(raw.switchId));
-  const converted = convertRpgMakerTroopEffects(page.list ?? [], cov);
+  const converted = convertRpgMakerTroopEffects(page.list ?? [], cov, animation);
   if (converted.unsupported > 0) {
     cov.record(
       "battle",
@@ -379,6 +427,8 @@ function troopPage(page: RmTroopPage, cov: Coverage, troopId: number, index: num
 
 export interface BattleDatabaseOptions {
   enemyImage?(id: number, battlerName: string): string | undefined;
+  audio?(kind: "bgm" | "me", name: string): string;
+  animation?(id: number): string | undefined;
 }
 
 export function importBattleDatabase(
@@ -441,7 +491,7 @@ export function importBattleDatabase(
     if (!entry) return [];
     cov.record("battle", `skill ${entry.id}`, "Native");
     return [{
-      ...usable(entry, cov, `skill ${entry.id}`),
+      ...usable(entry, cov, `skill ${entry.id}`, options.animation),
       mpCost: nonNegative(entry.mpCost),
       tpCost: nonNegative(entry.tpCost),
       stypeId: nonNegative(entry.stypeId),
@@ -450,7 +500,7 @@ export function importBattleDatabase(
   const items: RpgMakerBattleItem[] = rm.items.flatMap((entry) => {
     if (!entry) return [];
     cov.record("battle", `item ${entry.id}`, "Native");
-    return [{ ...usable(entry, cov, `item ${entry.id}`), consumable: entry.consumable === true }];
+    return [{ ...usable(entry, cov, `item ${entry.id}`, options.animation), consumable: entry.consumable === true }];
   });
   const states = rm.states.flatMap((entry) => {
     if (!entry) return [];
@@ -520,7 +570,7 @@ export function importBattleDatabase(
         y: integer(member.y),
         hidden: member.hidden === true,
       })),
-      pages: (troop.pages ?? []).map((page, index) => troopPage(page, cov, troop.id, index)),
+      pages: (troop.pages ?? []).map((page, index) => troopPage(page, cov, troop.id, index, options.animation)),
     }];
   });
   const encounters = [...rm.maps.entries()]
@@ -569,18 +619,12 @@ export function importBattleDatabase(
     elements: (rm.system.elements ?? []).map((entry) => String(entry ?? "")),
     currencyUnit: String(rm.system.currencyUnit ?? "G"),
     settings: {
-      battleBgm: audioSetting(rm.system.battleBgm),
-      victoryMe: audioSetting(rm.system.victoryMe),
-      defeatMe: audioSetting(rm.system.defeatMe),
+      battleBgm: audioSetting(rm.system.battleBgm, "bgm", options.audio),
+      victoryMe: audioSetting(rm.system.victoryMe, "me", options.audio),
+      defeatMe: audioSetting(rm.system.defeatMe, "me", options.audio),
       encounterDisabled: false,
     },
-    mapSettings: [...rm.maps.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([id, map]) => ({
-        map: mapId(id),
-        battleback1Name: String(map.battleback1Name ?? ""),
-        battleback2Name: String(map.battleback2Name ?? ""),
-      })),
+    mapSettings: battleMapSettings(rm),
     terms: {
       fight: String(commands[0] ?? "Fight"),
       escape: String(commands[1] ?? "Escape"),

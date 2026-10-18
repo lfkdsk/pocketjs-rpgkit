@@ -63,6 +63,9 @@ export interface RpgMakerAudioSetting {
   pan: number;
   /** Imported logical audio id when compatible media was available. */
   id?: string;
+  /** One-shot length in fixed 60 Hz reference ticks. Present for imported
+   * victory/defeat MEs after media conversion succeeds. */
+  durationTicks?: number;
 }
 
 export interface RpgMakerBattleSettings {
@@ -143,6 +146,10 @@ export interface RpgMakerUsableItem {
   tpGain: number;
   damage: RpgMakerDamage;
   effects: RpgMakerEffect[];
+  /** Numeric database id is retained even when the referenced presentation
+   * cannot be cooked. `animation` names the optional cooked legacy asset. */
+  animationId?: number;
+  animation?: string;
 }
 
 export interface RpgMakerBattleSkill extends RpgMakerUsableItem {
@@ -279,6 +286,22 @@ export interface RpgMakerMapEncounter {
   entries: { troopId: number; weight: number; regions: number[] }[];
 }
 
+export interface RpgMakerBattleMapSettings {
+  map: string;
+  /** RPG Maker distinguishes an unspecified battleback from an explicitly
+   * specified empty name. Only the former enables overworld terrain defaults. */
+  specified?: boolean;
+  battleback1Name: string;
+  battleback2Name: string;
+  /** True only for tileset mode 0, where stock terrain defaults apply. */
+  overworld?: boolean;
+  /** Source map width for row-major terrain lookup. */
+  width?: number;
+  /** Sparse row-major autotile kinds selected from z=1 then z=0. Missing
+   * cells have kind -1 and therefore use Grassland/Grassland. */
+  autotileKinds?: [index: number, kind: number][];
+}
+
 export interface RpgMakerBattleDatabase {
   format: "rpgmaker-battle/v1";
   /** SHA-256 of canonical JSON for every other field. Battle commands carry
@@ -304,7 +327,7 @@ export interface RpgMakerBattleDatabase {
   elements: string[];
   currencyUnit: string;
   settings?: RpgMakerBattleSettings;
-  mapSettings?: { map: string; battleback1Name: string; battleback2Name: string }[];
+  mapSettings?: RpgMakerBattleMapSettings[];
   terms: {
     fight: string;
     escape: string;

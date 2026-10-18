@@ -32,6 +32,10 @@ import type {
 } from "../../src/engine/types.ts";
 import type { RpgMakerBattleDatabase } from "../../src/rpgmaker-battle/types.ts";
 import {
+  rpgMakerBattleback1ForKind,
+  rpgMakerBattleback2ForKind,
+} from "../../src/rpgmaker-battle/battleback.ts";
+import {
   RPGMAKER_ENCOUNTER_DUE_VARIABLE,
 } from "../../src/rpgmaker-battle/rules.ts";
 import { cookMvAnimation, MV_ANIMATION_RATE, MvAnimationCookError } from "./animation.ts";
@@ -94,8 +98,15 @@ export interface ImportAssets {
   pictures: Record<string, string>;
   /** Parallax image id -> generated logical-pixel PNG and dimensions. */
   parallaxes: Record<string, { png: string; w: number; h: number }>;
-  /** Animation id -> generated source sheet plus render-only target offset. */
-  animations: Record<string, { sheet: string; offsetX: number; offsetY: number }>;
+  /** Animation id -> generated source sheet plus render-only placement. */
+  animations: Record<string, {
+    sheet: string;
+    offsetX: number;
+    offsetY: number;
+    originOffsetX?: number;
+    originOffsetY?: number;
+    position?: 0 | 1 | 2 | 3;
+  }>;
   /** Map id -> animated cells (water, waterfalls): sheet cells per step. */
   animated: Record<string, ImportAnimatedCell[]>;
   /** Maps with Change Tileset: map id -> tileset id -> animated cells.
@@ -107,6 +118,9 @@ export interface ImportAssets {
   audio: Record<string, string>;
   /** Enemy database id -> imported front-view battler PNG. */
   battlers: Record<string, { png: string; w: number; h: number }>;
+  /** Exact RPG Maker battleback basename -> imported source image. */
+  battlebacks1: Record<string, { png: string; w: number; h: number }>;
+  battlebacks2: Record<string, { png: string; w: number; h: number }>;
   /** The balloon sheet (8 columns x 15 rows of 16 px frames), when used. */
   balloon?: string;
   /** Sprite key of the starting party leader's walking character. */
@@ -417,6 +431,21 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     animated: {},
     audio: {},
     battlers: {},
+    battlebacks1: {},
+    battlebacks2: {},
+  };
+  const audioRequests = new Map<string, RegisteredAudio>();
+  const audioIds = new Set<string>();
+  const audioFor = (kind: RpgMakerAudioKind, name: string): string => {
+    const key = audioMediaKey(kind, name);
+    const known = audioRequests.get(key);
+    if (known) return known.id;
+    const base = `${kind}-${slug(name) || "audio"}`;
+    let id = base;
+    for (let suffix = 2; audioIds.has(id); suffix++) id = `${base}-${suffix}`;
+    audioIds.add(id);
+    audioRequests.set(key, { kind, name, id });
+    return id;
   };
 
   // --- front-view battlers and normalized battle database -----------------
@@ -437,8 +466,6 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       warnings.push(`enemy ${enemy.id}: side-view battler ${enemy.battlerName} is shown in the front-view renderer`);
     }
   }
-  const battle = importBattleDatabase(rm, cov, { enemyImage: (id) => enemyImages.get(id) });
-
   // --- tilesets -----------------------------------------------------------
   const atlases = new Map<number, TileAtlas>();
   const tilesetImages = new Map<number, TilesetImages>();
@@ -535,20 +562,6 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     balloonsUsed.add(n);
     return `balloon${n}`;
   };
-  const audioRequests = new Map<string, RegisteredAudio>();
-  const audioIds = new Set<string>();
-  const audioFor = (kind: RpgMakerAudioKind, name: string): string => {
-    const key = audioMediaKey(kind, name);
-    const known = audioRequests.get(key);
-    if (known) return known.id;
-    const base = `${kind}-${slug(name) || "audio"}`;
-    let id = base;
-    for (let suffix = 2; audioIds.has(id); suffix++) id = `${base}-${suffix}`;
-    audioIds.add(id);
-    audioRequests.set(key, { kind, name, id });
-    return id;
-  };
-
   // --- MV database animations --------------------------------------------
   const animations: AnimationDef[] = [];
   const animationImports = new Map<number, { id: string; disposition: "Native" | "Degraded"; reason?: string }>();
@@ -563,13 +576,24 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     for (const event of rmMap.events) for (const page of event?.pages ?? []) collectAnimations(page.list);
   }
   for (const common of rm.commonEvents) if (common) collectAnimations(common.list);
+  for (const troop of rm.troops) {
+    if (!troop) continue;
+    for (const page of troop.pages ?? []) {
+      for (const command of page.list ?? []) {
+        if (command.code === 337) usedAnimationIds.add(Math.max(0, Math.trunc(Number(command.parameters?.[1] ?? 0))));
+      }
+    }
+  }
+  for (const usable of [...rm.skills, ...rm.items]) {
+    if (usable && Number.isInteger(usable.animationId)) usedAnimationIds.add(Math.max(0, usable.animationId ?? 0));
+  }
   for (const n of [...usedAnimationIds].filter((id) => id > 0).sort((a, b) => a - b)) {
     const source = rm.animations[n];
     if (!source) {
       animationFailures.set(n, `animation ${n} does not exist`);
       continue;
     }
-    if (rm.flavor !== "MV") {
+    if (!Array.isArray(source.frames)) {
       animationFailures.set(n, "MZ Effekseer animations are not supported by the MV cell compositor");
       continue;
     }
@@ -580,13 +604,20 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
         return path ? environment.readPng(path, rm.mediaEncryption) : null;
       };
       const cooked = cookMvAnimation(source, {
-        animation1: await image(source.animation1Name),
-        animation2: await image(source.animation2Name),
+        animation1: await image(source.animation1Name ?? ""),
+        animation2: await image(source.animation2Name ?? ""),
       }, tileSize);
       const id = animationId(n);
       const sheet = `animations/${id}.png`;
       images.set(sheet, cooked.sheet);
-      assets.animations[id] = { sheet, offsetX: cooked.offsetX, offsetY: cooked.offsetY };
+      assets.animations[id] = {
+        sheet,
+        offsetX: cooked.offsetX,
+        offsetY: cooked.offsetY,
+        originOffsetX: cooked.originOffsetX,
+        originOffsetY: cooked.originOffsetY,
+        position: source.position as 0 | 1 | 2 | 3,
+      };
       const degradations = [...cooked.degradations];
       const timings: AnimationTimingDef[] = [];
       for (const timing of source.timings ?? []) {
@@ -639,6 +670,72 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       warnings.push(reason);
     }
   }
+
+  const battle = importBattleDatabase(rm, cov, {
+    enemyImage: (id) => enemyImages.get(id),
+    audio: audioFor,
+    animation: (id) => animationImports.get(id)?.id,
+  });
+
+  // --- battlebacks --------------------------------------------------------
+  const battleback1Names = new Set<string>();
+  const battleback2Names = new Set<string>();
+  const rememberBattleback = (first: unknown, second: unknown): void => {
+    const back1 = String(first ?? "");
+    const back2 = String(second ?? "");
+    if (back1) battleback1Names.add(back1);
+    if (back2) battleback2Names.add(back2);
+  };
+  const collectBattlebacks = (list: readonly { code: number; parameters?: unknown[] }[]): void => {
+    for (const command of list) {
+      if (command.code === 283) rememberBattleback(command.parameters?.[0], command.parameters?.[1]);
+    }
+  };
+  for (const [id, map] of rm.maps) {
+    const setting = battle.mapSettings?.find((entry) => entry.map === mapId(id));
+    if (setting?.specified === true) {
+      rememberBattleback(setting.battleback1Name, setting.battleback2Name);
+    } else if (setting?.overworld === true) {
+      // Grassland is the stock fallback for absent/unrecognised autotiles;
+      // Ship is selected for every vehicle on an overworld map.
+      rememberBattleback("Grassland", "Grassland");
+      rememberBattleback("Ship", "Ship");
+      for (const [, kind] of setting.autotileKinds ?? []) {
+        rememberBattleback(rpgMakerBattleback1ForKind(kind), rpgMakerBattleback2ForKind(kind));
+      }
+    }
+    for (const event of map.events) for (const page of event?.pages ?? []) collectBattlebacks(page.list);
+  }
+  for (const common of rm.commonEvents) if (common) collectBattlebacks(common.list);
+  for (const troop of rm.troops) {
+    if (!troop) continue;
+    for (const page of troop.pages ?? []) collectBattlebacks(page.list);
+  }
+  const importBattleback = async (
+    layer: 1 | 2,
+    name: string,
+  ): Promise<void> => {
+    const dirName = `battlebacks${layer}`;
+    const path = findNamedPng(environment, environment.join(rm.root, "img", dirName), name, rm.mediaEncryption);
+    if (!path) {
+      const reason = `img/${dirName}/${name}.png is missing`;
+      cov.record("battle", `${dirName} ${name}`, "Degraded", reason);
+      warnings.push(reason);
+      return;
+    }
+    const image = await environment.readPng(path, rm.mediaEncryption);
+    const table = layer === 1 ? assets.battlebacks1 : assets.battlebacks2;
+    const used = new Set(Object.values(table).map((entry) => entry.png));
+    const base = slug(name) || "image";
+    let id = base;
+    for (let suffix = 2; used.has(`${dirName}/${id}.png`); suffix++) id = `${base}-${suffix}`;
+    const png = `${dirName}/${id}.png`;
+    images.set(png, image);
+    table[name] = { png, w: image.width, h: image.height };
+    cov.record("battle", `${dirName} ${name}`, "Native");
+  };
+  for (const name of [...battleback1Names].sort()) await importBattleback(1, name);
+  for (const name of [...battleback2Names].sort()) await importBattleback(2, name);
 
   const kitMaps = new Map<number, string>();
   for (const info of rm.mapInfos) if (info && rm.maps.has(info.id)) kitMaps.set(info.id, mapId(info.id));

@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { sha256Text } from "../src/engine/map-repository.ts";
 import { canonicalJson } from "../src/engine/save.ts";
+import {
+  resolveRpgMakerBattlebacks,
+  rpgMakerBattleback1ForKind,
+  rpgMakerBattleback2ForKind,
+} from "../src/rpgmaker-battle/battleback.ts";
 import { parseRpgMakerFormula, RPGMAKER_FORMULA_FALLBACK } from "../src/rpgmaker-battle/formula.ts";
 import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject } from "../tools/rpgmaker-import/project.ts";
@@ -21,10 +26,7 @@ describe("RPG Maker battle database import", () => {
     for (const code of [331, 332, 333, 334, 335, 336, 339, 340, 342]) {
       expect(rows.get(code)?.disposition).toBe("Native");
     }
-    expect(rows.get(337)).toMatchObject({
-      disposition: "Degraded",
-      reason: "battle animation keeps its numeric database id because no cooked animation id is available",
-    });
+    expect(rows.get(337)).toMatchObject({ disposition: "Native", reason: "" });
   });
 
   test("the two fixture command-coverage snapshots match the documented totals", async () => {
@@ -33,7 +35,7 @@ describe("RPG Maker battle database import", () => {
       importRmProject(loadRmProject(STAGE)),
     ]);
     expect(hollow.cov.totals("command")).toEqual({
-      Native: 112, Degraded: 10, Placeholder: 2, Dropped: 0, total: 124,
+      Native: 113, Degraded: 9, Placeholder: 2, Dropped: 0, total: 124,
     });
     expect(stage.cov.totals("command")).toEqual({
       Native: 51, Degraded: 9, Placeholder: 1, Dropped: 0, total: 61,
@@ -113,6 +115,41 @@ describe("RPG Maker battle database import", () => {
     });
     expect(result.images.has("battlers/enemy001.png")).toBe(true);
     expect(result.images.has("battlers/enemy002.png")).toBe(true);
+    expect(battle.troops[1]!.pages[0]!.effects).toContainEqual({
+      kind: "battleAnimation",
+      index: 1,
+      animationId: 1,
+      entireTroop: false,
+      animation: "anim001",
+    });
+    expect(result.assets.animations.anim001).toEqual({
+      sheet: "animations/anim001.png",
+      offsetX: -81,
+      offsetY: -88,
+      originOffsetX: -89,
+      originOffsetY: -96,
+      position: 1,
+    });
+    expect(result.images.has("animations/anim001.png")).toBe(true);
+    expect(result.assets.battlebacks1.HollowFloor).toEqual({
+      png: "battlebacks1/hollowfloor.png", w: 480, h: 272,
+    });
+    expect(result.assets.battlebacks2.HollowWall).toEqual({
+      png: "battlebacks2/hollowwall.png", w: 480, h: 272,
+    });
+    expect(result.images.has("battlebacks1/hollowfloor.png")).toBe(true);
+    expect(result.images.has("battlebacks2/hollowwall.png")).toBe(true);
+  });
+
+  test("binds cooked legacy animations to MZ skills and items by record shape", async () => {
+    const project = loadRmProject(HOLLOW);
+    project.skills[1]!.animationId = 1;
+    project.items[1]!.animationId = 1;
+
+    const battle = (await importRmProject(project)).battle;
+
+    expect(battle.skills[0]).toMatchObject({ animationId: 1, animation: "anim001" });
+    expect(battle.items[0]).toMatchObject({ animationId: 1, animation: "anim001" });
   });
 
   test("retains actor metadata, slot-aligned equipment catalogs, and authored battle defaults", async () => {
@@ -129,8 +166,10 @@ describe("RPG Maker battle database import", () => {
     project.system.defeatMe = { name: "Defeat", volume: 63, pitch: 95, pan: 0 };
     project.maps.get(1)!.battleback1Name = "Grassland";
     project.maps.get(1)!.battleback2Name = "Forest";
+    project.maps.get(1)!.specifyBattleback = true;
     project.maps.get(2)!.battleback1Name = "Room";
     project.maps.get(2)!.battleback2Name = "Wall";
+    project.maps.get(2)!.specifyBattleback = true;
 
     const battle = (await importRmProject(project)).battle;
 
@@ -176,15 +215,51 @@ describe("RPG Maker battle database import", () => {
       traits: [],
     });
     expect(battle.settings).toEqual({
-      battleBgm: { name: "BattleTheme", volume: 71, pitch: 105, pan: -4 },
-      victoryMe: { name: "Victory", volume: 82, pitch: 100, pan: 3 },
-      defeatMe: { name: "Defeat", volume: 63, pitch: 95, pan: 0 },
+      battleBgm: { name: "BattleTheme", volume: 71, pitch: 105, pan: -4, id: "bgm-battletheme" },
+      victoryMe: { name: "Victory", volume: 82, pitch: 100, pan: 3, id: "me-victory" },
+      defeatMe: { name: "Defeat", volume: 63, pitch: 95, pan: 0, id: "me-defeat" },
       encounterDisabled: false,
     });
     expect(battle.mapSettings).toEqual(expect.arrayContaining([
-      { map: "map001", battleback1Name: "Grassland", battleback2Name: "Forest" },
-      { map: "map002", battleback1Name: "Room", battleback2Name: "Wall" },
+      expect.objectContaining({
+        map: "map001", specified: true, overworld: true,
+        battleback1Name: "Grassland", battleback2Name: "Forest",
+      }),
+      expect.objectContaining({
+        map: "map002", specified: true, overworld: false,
+        battleback1Name: "Room", battleback2Name: "Wall",
+      }),
     ]));
+  });
+
+  test("imports logical battle BGM and shared victory/defeat ME media", async () => {
+    const result = await importRmProject(loadRmProject(STAGE));
+
+    expect(result.battle.settings).toMatchObject({
+      battleBgm: { name: "stage-overture", id: "bgm-stage-overture", volume: 80 },
+      victoryMe: { name: "stage-fanfare", id: "me-stage-fanfare", volume: 90 },
+      defeatMe: { name: "stage-fanfare", id: "me-stage-fanfare", volume: 90 },
+    });
+    expect(result.assets.audio).toMatchObject({
+      "bgm-stage-overture": "audio/bgm-stage-overture.qoa",
+      "me-stage-fanfare": "audio/me-stage-fanfare.qoa",
+    });
+  });
+
+  test("resolves explicit, vehicle, and terrain-default battlebacks with stock priority", () => {
+    expect(resolveRpgMakerBattlebacks({
+      map: "map001", specified: true, battleback1Name: "", battleback2Name: "",
+    }, { x: 2, y: 3 }, null)).toEqual({ battleback1Name: "", battleback2Name: "" });
+    expect(resolveRpgMakerBattlebacks({
+      map: "map001", specified: false, overworld: true, width: 10,
+      battleback1Name: "", battleback2Name: "", autotileKinds: [[32, 34]],
+    }, { x: 2, y: 3 }, null)).toEqual({ battleback1Name: "Lava1", battleback2Name: "Lava" });
+    expect(resolveRpgMakerBattlebacks({
+      map: "map001", specified: false, overworld: true, width: 10,
+      battleback1Name: "", battleback2Name: "", autotileKinds: [[32, 34]],
+    }, { x: 2, y: 3 }, "boat")).toEqual({ battleback1Name: "Ship", battleback2Name: "Ship" });
+    expect(rpgMakerBattleback1ForKind(24)).toBe("Wasteland");
+    expect(rpgMakerBattleback2ForKind(20)).toBe("Forest");
   });
 
   test("normalizes executable troop enemy effects and records command coverage", async () => {
@@ -229,7 +304,7 @@ describe("RPG Maker battle database import", () => {
       expect(commandCoverage.get(code)?.counts.Native).toBe(1);
     }
     expect(commandCoverage.get(337)?.counts).toMatchObject({ Native: 0, Degraded: 1, Dropped: 0 });
-    expect(commandCoverage.get(337)?.reasons.join(" ")).toContain("numeric database id");
+    expect(commandCoverage.get(337)?.reasons.join(" ")).toContain("no playable cooked legacy animation");
     expect(commandCoverage.get(999)?.counts.Dropped).toBe(1);
   });
 

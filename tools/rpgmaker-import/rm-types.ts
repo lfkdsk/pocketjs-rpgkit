@@ -71,20 +71,21 @@ export interface RmAnimationTiming {
   flashDuration: number;
 }
 
-/** RPG Maker MV's legacy cell animation. MZ projects may instead contain
- * Effekseer animation records; callers must gate this shape on project
- * flavor before cooking it. */
+/** RPG Maker MV's legacy cell animation. MZ databases may mix these records
+ * with Effekseer entries; `frames` is the stock discriminator. */
 export interface RmAnimation {
   id: number;
   name: string;
-  animation1Name: string;
-  animation1Hue: number;
-  animation2Name: string;
-  animation2Hue: number;
+  animation1Name?: string;
+  animation1Hue?: number;
+  animation2Name?: string;
+  animation2Hue?: number;
   /** 0 head, 1 center, 2 feet, 3 screen. */
-  position: number;
-  frames: RmAnimationCell[][];
-  timings: RmAnimationTiming[];
+  position?: number;
+  frames?: RmAnimationCell[][];
+  timings?: RmAnimationTiming[];
+  /** MZ Effekseer entries omit legacy frames and name an effect instead. */
+  effectName?: string;
 }
 
 /** Event page activation conditions (all present clauses must hold). */
@@ -232,6 +233,7 @@ export interface RmItem {
   tpGain?: number;
   damage?: RmDamage;
   effects?: RmEffect[];
+  animationId?: number;
   note: string;
 }
 
@@ -304,6 +306,7 @@ export interface RmSkill {
   stypeId?: number;
   damage?: RmDamage;
   effects?: RmEffect[];
+  animationId?: number;
   note: string;
 }
 

@@ -31,6 +31,11 @@ export interface CookedMvAnimation {
   count: number;
   offsetX: number;
   offsetY: number;
+  /** Cooked top-left relative to the stock animation origin. Battle targets
+   * supply their own head/centre/feet origin; screen animations use viewport
+   * centre. */
+  originOffsetX: number;
+  originOffsetY: number;
   /** Semantic losses that should make command coverage Degraded. */
   degradations: string[];
   /** Non-fatal source facts worth surfacing in the import report. */
@@ -91,11 +96,11 @@ function finite(animation: RmAnimation, value: unknown, at: string): number {
 }
 
 function sourceName(animation: RmAnimation, slot: SourceSlot): string {
-  return slot === 1 ? animation.animation1Name : animation.animation2Name;
+  return String(slot === 1 ? animation.animation1Name ?? "" : animation.animation2Name ?? "");
 }
 
 function sourceHue(animation: RmAnimation, slot: SourceSlot): number {
-  return slot === 1 ? animation.animation1Hue : animation.animation2Hue;
+  return finite(animation, slot === 1 ? animation.animation1Hue ?? 0 : animation.animation2Hue ?? 0, `animation${slot}Hue`);
 }
 
 function suppliedSource(sources: MvAnimationSources, slot: SourceSlot): RgbaImage | null | undefined {
@@ -288,10 +293,11 @@ export function cookMvAnimation(
     reject(animation, `tile size ${tileSize} must be a positive multiple of 16`);
   }
   const reduction = tileSize / 16;
-  finite(animation, animation.animation1Hue, "animation1Hue");
-  finite(animation, animation.animation2Hue, "animation2Hue");
-  if (animation.position === 3) reject(animation, "screen-position animations are not supported by mapAnim");
-  if (![0, 1, 2].includes(animation.position)) reject(animation, `position ${animation.position} must be 0, 1, 2, or 3`);
+  finite(animation, animation.animation1Hue ?? 0, "animation1Hue");
+  finite(animation, animation.animation2Hue ?? 0, "animation2Hue");
+  if (![0, 1, 2, 3].includes(animation.position ?? -1)) {
+    reject(animation, `position ${animation.position} must be 0, 1, 2, or 3`);
+  }
   if (!Array.isArray(animation.frames) || animation.frames.length === 0) reject(animation, "frames must contain at least one frame");
 
   const warnings: string[] = [];
@@ -425,6 +431,8 @@ export function cookMvAnimation(
     count,
     offsetX: tileSize / 2 / reduction + rawMinX / reduction,
     offsetY: originY / reduction + rawMinY / reduction,
+    originOffsetX: rawMinX / reduction,
+    originOffsetY: rawMinY / reduction,
     degradations,
     warnings,
   };
