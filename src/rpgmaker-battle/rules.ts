@@ -94,14 +94,17 @@ function projectedBattleAudio(settings: Readonly<RpgMakerBattleSettings> | undef
 function completionAudio(state: Readonly<RpgMakerBattleState>): BattleCompletionAudio | undefined {
   if (state.result !== "win" && state.result !== "lose") return undefined;
   const source = state.result === "win" ? state.settings?.victoryMe : state.settings?.defeatMe;
-  if (!source?.id || !Number.isSafeInteger(source.durationTicks) || source.durationTicks <= 0) return undefined;
+  const durationTicks = source?.durationTicks;
+  if (!source?.id || typeof durationTicks !== "number" || !Number.isSafeInteger(durationTicks) || durationTicks <= 0) {
+    return undefined;
+  }
   return {
     cue: {
       id: source.id,
       volume: clamp(Math.round(source.volume), 0, 100),
       pitch: clamp(Math.round(source.pitch), 50, 150),
       pan: clamp(Math.round(source.pan), -100, 100),
-      durationTicks: source.durationTicks,
+      durationTicks,
     },
     ...(state.result === "lose" && !state.canLose ? { restore: "none" as const } : {}),
   };
