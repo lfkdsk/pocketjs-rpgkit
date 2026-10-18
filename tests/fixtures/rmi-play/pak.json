@@ -4,11 +4,35 @@
     "file": "fonts/LICENSE-NotoSansCJK.txt"
   },
   {
+    "key": "audio:qoa.bgm-hollow-battle",
+    "file": "assets/hollow/audio/bgm-hollow-battle.qoa"
+  },
+  {
+    "key": "audio:qoa.bgm-hollow-map",
+    "file": "assets/hollow/audio/bgm-hollow-map.qoa"
+  },
+  {
     "key": "audio:qoa.bgm-stage-overture",
     "file": "assets/stage/audio/bgm-stage-overture.qoa"
   },
   {
+    "key": "audio:qoa.bgs-hollow-cave",
+    "file": "assets/hollow/audio/bgs-hollow-cave.qoa"
+  },
+  {
+    "key": "audio:qoa.me-hollow-defeat",
+    "file": "assets/hollow/audio/me-hollow-defeat.qoa"
+  },
+  {
+    "key": "audio:qoa.me-hollow-victory",
+    "file": "assets/hollow/audio/me-hollow-victory.qoa"
+  },
+  {
     "key": "audio:qoa.me-stage-fanfare",
     "file": "assets/stage/audio/me-stage-fanfare.qoa"
+  },
+  {
+    "key": "audio:qoa.se-hollow-spark",
+    "file": "assets/hollow/audio/se-hollow-spark.qoa"
   }
 ]

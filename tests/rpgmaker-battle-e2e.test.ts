@@ -46,7 +46,7 @@ function options(
     rpgMakerText: rpgMakerTextRuntime,
     travel: travelRuntime,
     extensions: { ...createRpgMakerBattleExtensions(db), ...(initial === undefined ? {} : { initial }) },
-    battle: createRpgMakerBattleRules(db),
+    battle: createRpgMakerBattleRules(db, { animations: imported.project.animations }),
     scenes: { [NAME_INPUT_SCENE_ID]: nameInputRules },
   };
 }
@@ -173,12 +173,17 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     expect(actor.hp).toBe(415);
     expect(actor.states).toEqual([{ id: 3, turns: 3 }]);
     expect(actor.actor?.equips?.[0]).toEqual({ kind: "weapon", id: 2 });
+    expect(actor.actor).toMatchObject({
+      faceName: "WrenFaces",
+      faceIndex: 5,
+      battlerName: "WrenBattlerAlt",
+    });
     expect(actor.params[2]).toBe(32);
     expect(entered.sw.items.weapon001).toBe(1);
     expect(entered.sw.items.weapon002).toBeUndefined();
   });
 
-  test("fixture troop events appear, transform, recover, animate-degrade, and force an action once", async () => {
+  test("fixture troop events appear, transform, recover, animate, and force an action once", async () => {
     const raw = loadRmProject(HOLLOW);
     const command = raw.maps.get(3)!.events[2]!.pages[0]!.list.find((entry) => entry.code === 301)!;
     command.parameters = [0, 2, true, true];
@@ -200,7 +205,12 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     });
     expect(battle.enemies[1]!.tp).toBeGreaterThanOrEqual(20);
     expect(battle.message).toContain("Golem Echo uses Attack");
-    expect(battle.battleAnimation).toBeNull();
+    expect(battle.battleAnimation).toEqual({
+      id: "anim001",
+      targets: [1],
+      targetSide: "enemy",
+      startTick: 0,
+    });
   });
 
   test("fixture Abort Battle takes the escape branch when escape is disabled", async () => {
@@ -221,7 +231,7 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     expect(state.scene).toBeNull();
   });
 
-  test("an opted-in mid-battle save restores the exact reducer worldline", () => {
+  test("an opted-in save during an animation restores the exact reducer worldline", () => {
     const db = structuredClone(imported.battle);
     db.enemies[0]!.params[0] = 1;
     db.enemies[0]!.exp = 200;
@@ -233,10 +243,21 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     middle = pulse(session, middle, { confirmEdge: true }); // fight -> command
     expect(rpgMakerBattleState(middle.scene!.state).phase).toBe("command");
 
+    middle = stepSession(session, middle, { buttons: 0, confirmEdge: true }); // attack -> victory
+    expect(rpgMakerBattleState(middle.scene!.state).battleAnimation).toMatchObject({
+      id: "anim001",
+      targetSide: "enemy",
+      targets: [0],
+    });
+    expect(middle.interp.cues).toEqual([
+      { name: "se-hollow-spark", volume: 72, pitch: 115, pan: 18 },
+    ]);
+
     const snapshot = createSessionSnapshot(session, middle, 0);
     expect(snapshot.battle?.kind).toBe("battle");
     const restored = restoreSessionEnvelope(session, encodeEnvelope(snapshot));
     expect(restored.scene).toEqual(middle.scene);
+    expect(restored.interp.cues).toEqual([]);
 
     const baseline = settleEvent(session, finishBattle(session, middle, "win"));
     const replayed = settleEvent(session, finishBattle(session, restored, "win"));
@@ -246,6 +267,57 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     const malformed = structuredClone(snapshot);
     (malformed.battle!.state as Record<string, any>).databaseHash = "0".repeat(64);
     expect(() => restoreSessionSnapshot(session, malformed)).toThrow("database hash");
+  });
+
+  for (const hz of [60, 30, 20]) test(`imported animation SE crosses the attack edge once at ${hz} Hz`, () => {
+    const db = structuredClone(imported.battle);
+    const project = battleProject();
+    const session = createSession(project, hz, options(db));
+    let state = enterBattle(session, startSession(project, session));
+    state = pulse(session, state, { confirmEdge: true }); // intro -> party
+    state = pulse(session, state, { confirmEdge: true }); // fight -> command
+    expect(rpgMakerBattleState(state.scene!.state).phase).toBe("command");
+
+    const animated = stepSession(session, state, { buttons: 0, confirmEdge: true });
+    expect(rpgMakerBattleState(animated.scene!.state).battleAnimation).toMatchObject({
+      id: "anim001",
+      targetSide: "enemy",
+      targets: [0],
+    });
+    expect(animated.interp.cues).toEqual([
+      { name: "se-hollow-spark", volume: 72, pitch: 115, pan: 18 },
+    ]);
+    const held = stepSession(session, animated, { buttons: 0 });
+    expect(held.interp.cues).toEqual([]);
+  });
+
+  test("imported battle BGM yields to victory ME over the restored map mix", () => {
+    const db = structuredClone(imported.battle);
+    db.enemies[0]!.params[0] = 1;
+    const project = battleProject();
+    const session = createSession(project, 60, options(db));
+    const entered = enterBattle(session, startSession(project, session));
+    expect(entered.interp.audio).toEqual({
+      bgm: {
+        id: "bgm-hollow-battle",
+        volume: 82,
+        pitch: 105,
+        pan: -12,
+        positionTicks: 1,
+      },
+    });
+
+    const completed = finishBattle(session, entered, "win");
+    expect(completed.interp.audio).toMatchObject({
+      bgm: { id: "bgm-hollow-map", volume: 65, pitch: 100 },
+      bgs: { id: "bgs-hollow-cave", volume: 60, pitch: 100 },
+      me: {
+        id: "me-hollow-victory",
+        volume: 88,
+        pitch: 110,
+        pan: 7,
+      },
+    });
   });
 
   for (const hz of [60, 30, 20]) test(`active battle rewind refolds actor and battle state at ${hz} Hz`, () => {
@@ -291,6 +363,11 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     for (const mask of suffix) keyed.step(mask);
     const forward = structuredClone(keyed.state);
     expect(rpgMakerBattleState(forward.scene!.state).phase).toBe("message");
+    expect(rpgMakerBattleState(forward.scene!.state).battleAnimation).toMatchObject({
+      id: "anim001",
+      targetSide: "enemy",
+      targets: [0],
+    });
     expect(forward).not.toEqual(target);
 
     keyed.step(LTRIGGER);

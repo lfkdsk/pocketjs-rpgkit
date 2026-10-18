@@ -74,6 +74,22 @@ function enterTargetSelection(world: BoundGameWorld): void {
   });
 }
 
+/** Confirm the selected target, then stop on the exact first tick of legacy
+ * frame 1 (four 60 Hz reference ticks after the saved marker). */
+function enterAnimationFrameOne(world: BoundGameWorld): void {
+  enterTargetSelection(world);
+  pump(world, BTN.CIRCLE);
+  for (let guard = 0; guard < 12; guard++) {
+    const scene = world.probes().state.scene;
+    if (scene?.kind !== "battle") throw new Error("battle ended before its animation frame");
+    const state = scene.state as { nowTick: number; battleAnimation?: { startTick: number } | null };
+    const marker = state.battleAnimation;
+    if (marker && state.nowTick - marker.startTick === 4) return;
+    pump(world);
+  }
+  throw new Error("battle animation did not reach legacy frame 1");
+}
+
 function findNode(node: TreeNode, name: string): TreeNode | null {
   if (node.n === name) return node;
   for (const child of node.k ?? []) {
@@ -199,6 +215,31 @@ function rgbaAt(frame: Uint8Array, width: number, x: number, y: number): number[
   return [...frame.subarray(at, at + 4)];
 }
 
+function colourBounds(
+  frame: Uint8Array,
+  width: number,
+  colour: Rgba,
+): readonly [number, number, number, number] | null {
+  let minX = width;
+  let minY = Math.floor(frame.length / 4 / width);
+  let maxX = -1;
+  let maxY = -1;
+  for (let at = 0; at < frame.length; at += 4) {
+    if (
+      frame[at] !== colour[0] || frame[at + 1] !== colour[1] ||
+      frame[at + 2] !== colour[2] || frame[at + 3] !== colour[3]
+    ) continue;
+    const pixel = at / 4;
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  return maxX < 0 ? null : [minX, minY, maxX + 1, maxY + 1];
+}
+
 async function golden(
   name: string,
   frame: Uint8Array,
@@ -233,6 +274,7 @@ simDescribe("RPG Maker front-view battle visuals", () => {
         expect(nodeText(findNode(tree, "rpgmaker-enemy-name-0"))).toBe(copy.enemy);
         expect(nodeText(findNode(tree, "rpgmaker-enemy-name-1"))).toBe(copy.enemy);
         expect(nodeText(findNode(tree, "rpgmaker-actor-name-0"))).toBe(copy.actorHud);
+        expect(findNode(tree, "rpgmaker-actor-face-0")).not.toBeNull();
 
         const titleRows = copy.titleRows.map((_, row) =>
           nodeText(findNode(tree, `rpgmaker-target-menu-title${row === 0 ? "" : `-${row}`}`)));
@@ -249,14 +291,26 @@ simDescribe("RPG Maker front-view battle visuals", () => {
         expect(battleText.filter((text) => text.includes(copy.enemy)).length).toBeGreaterThanOrEqual(2);
 
         const frame = world.render().slice();
-        // Exact palette classes prove the backdrop, arena floor, target
-        // window, selected target, enemy HP, and actor HP are all painted.
-        expect(rgbaAt(frame, viewport.width, 2, 2)).toEqual([0x16, 0x25, 0x36, 0xff]);
-        expect(rgbaAt(frame, viewport.width, 2, Math.floor(viewport.height / 2)))
-          .toEqual([0x24, 0x39, 0x4a, 0xff]);
+        // Layer 1 owns the cave field; layer 2's arch must remain above it.
+        // Reversing the nodes changes the arch sample to layer 1's #183848.
+        const scale = viewport.width / 480;
+        expect(rgbaAt(frame, viewport.width, 2, 2)).toEqual([0x18, 0x38, 0x48, 0xff]);
+        expect(rgbaAt(frame, viewport.width, 30 * scale, 22 * scale))
+          .toEqual([0x76, 0x50, 0x80, 0xff]);
+        // Change Actor Images selected face cell 5 (#402848 background), not
+        // the actor database's original cell 0 (#203848).
+        expect(countColourInRect(
+          frame,
+          viewport.width,
+          8,
+          viewport.height - 38,
+          36,
+          viewport.height - 10,
+          [0x40, 0x28, 0x48, 0xff],
+        )).toBeGreaterThan(80);
         expect(countColour(frame, [0x0b, 0x16, 0x26, 0xff]), "target window paper").toBeGreaterThan(13_000);
         expect(countColour(frame, [0x5d, 0x7f, 0xa3, 0xff]), "target window frame").toBeGreaterThan(1_100);
-        expect(countColour(frame, [0xff, 0xe9, 0x7a, 0xff]), "selected target and actor HP").toBeGreaterThan(1_100);
+        expect(countColour(frame, [0xff, 0xe9, 0x7a, 0xff]), "selected target and actor HP").toBeGreaterThan(900);
         expect(countColour(frame, [0xe8, 0x5d, 0x75, 0xff]), "enemy HP bars").toBeGreaterThan(700);
         expect(
           countColourAbove(frame, viewport.width, Math.floor(viewport.height * 0.55), [0xff, 0xff, 0xff, 0xff]),
@@ -314,5 +368,34 @@ simDescribe("RPG Maker front-view battle visuals", () => {
         await golden(language, frame, viewport.width, viewport.height);
       }, 60_000);
     }
+  }
+
+  for (const viewport of VIEWPORTS) {
+    test(`legacy animation frame 1 lands on its target at ${viewport.width}x${viewport.height}`, async () => {
+      const world = await bootGameWorld(
+        appBundle("rmi-play"),
+        60,
+        { __rmiGame: "hollow", __rmiBattlePreview: "en" },
+        undefined,
+        viewport,
+      );
+      enterAnimationFrameOne(world);
+
+      const tree = world.getTree() as TreeNode;
+      expect(findNode(tree, "rpgmaker-battle-animation-frame-enemy-0")).not.toBeNull();
+      // The frame-1 hide window removes only target 0; target 1 remains.
+      expect(findNode(tree, "rpgmaker-enemy-sprite-0")).toBeNull();
+      expect(findNode(tree, "rpgmaker-enemy-sprite-1")).not.toBeNull();
+
+      const frame = world.render().slice();
+      // Self-authored frame 1 has an opaque cyan cell at local (68,52).
+      // Pin its target-centred global position independently at each size.
+      const expectedBounds = viewport.width === 480
+        ? [141, 92, 177, 152] as const
+        : [310, 265, 346, 325] as const;
+      expect(colourBounds(frame, viewport.width, [0x80, 0xe8, 0xff, 0xff]))
+        .toEqual(expectedBounds);
+      await golden("presentation", frame, viewport.width, viewport.height);
+    }, 60_000);
   }
 });
