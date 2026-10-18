@@ -28,6 +28,16 @@ const mono: Measure = (s) => [...s].reduce((w, ch) => w + (ch === "\n" ? 0 : isC
 const texts = (rows: { text: string }[]) => rows.map((row) => row.text);
 const isWord = (ch: string | undefined) => ch !== undefined && /[A-Za-z0-9]/.test(ch);
 
+// Independent minimum Japanese kinsoku oracle. Do not derive this from the
+// production arrays: membership and layout assertions below must fail when a
+// production rule is accidentally removed.
+const JA_MIN_NO_START = [
+  ..."、。，．・：；？！‼⁇⁈⁉ー〜～…‥—–）］｝〕〉》」』】〙〗〛〞’”｠»›",
+  ..."ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶ",
+  ..."゙゚゛゜ヽヾゝゞ｡､･｣ﾞﾟ",
+];
+const JA_MIN_NO_END = [..."（［｛〔〈《「『【〘〖〚〝‘“｟«‹｢"];
+
 describe("breakLine", () => {
   test("a line that fits is one row, untouched", () => {
     expect(breakLine("Hello there", 200, mono)).toEqual([{ text: "Hello there", start: 0, end: 11 }]);
@@ -56,6 +66,39 @@ describe("breakLine", () => {
   test("no-line-end brackets move down to what they open", () => {
     // "「" may not end row one; "」" may not start row three.
     expect(texts(breakLine("一二「三四」", 36, mono))).toEqual(["一二", "「三", "四」"]);
+  });
+
+  test("Japanese line-start kinsoku uses an independent minimum oracle", () => {
+    const production = new Set(NO_LINE_START);
+    for (const forbidden of JA_MIN_NO_START) {
+      const cp = forbidden.codePointAt(0)!;
+      expect(production.has(cp), `missing no-line-start U+${cp.toString(16).toUpperCase()}`).toBe(true);
+      expect(texts(breakLine(`甲乙${forbidden}丙`, 24, mono)), `layout for U+${cp.toString(16).toUpperCase()}`).toEqual([
+        "甲",
+        `乙${forbidden}`,
+        "丙",
+      ]);
+    }
+  });
+
+  test("Japanese line-end kinsoku uses an independent minimum oracle", () => {
+    const production = new Set(NO_LINE_END);
+    for (const forbidden of JA_MIN_NO_END) {
+      const cp = forbidden.codePointAt(0)!;
+      expect(production.has(cp), `missing no-line-end U+${cp.toString(16).toUpperCase()}`).toBe(true);
+      expect(texts(breakLine(`甲${forbidden}乙丙`, 24, mono)), `layout for U+${cp.toString(16).toUpperCase()}`).toEqual([
+        "甲",
+        `${forbidden}乙`,
+        "丙",
+      ]);
+    }
+  });
+
+  test("Japanese combining marks, halfwidth punctuation, and wave dash stay attached", () => {
+    expect(texts(breakLine("あいか\u3099き", 36, mono))).toEqual(["あい", "か\u3099き"]);
+    expect(texts(breakLine("あいう〜え", 36, mono))).toEqual(["あい", "う〜え"]);
+    expect(texts(breakLine("あいう｡え", 36, mono))).toEqual(["あい", "う｡え"]);
+    expect(texts(breakLine("あいう｢え", 48, mono))).toEqual(["あいう", "｢え"]);
   });
 
   test("an unbreakable run wider than the row is cut by code point", () => {
