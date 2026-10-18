@@ -3,13 +3,20 @@
 // fix is attached to the lint row instead of adding a duplicate line.
 
 import { describe, expect, test } from "bun:test";
-import { mergeCheckAndDoctor, type StudioProblem } from "../editor/studio/problems.ts";
+import {
+  findingCommandAddress,
+  locateSchemaPath,
+  mergeCheckAndDoctor,
+  type StudioProblem,
+} from "../editor/studio/problems.ts";
 
-function lint(code: string, loc: Pick<StudioProblem, "map" | "event" | "page">): StudioProblem {
+type ProblemLocation = Pick<StudioProblem, "map" | "event" | "common" | "page">;
+
+function lint(code: string, loc: ProblemLocation): StudioProblem {
   return { severity: "warning", source: "check", message: `lint ${code}`, code, ...loc };
 }
 
-function doctor(code: string, loc: Pick<StudioProblem, "map" | "event" | "page">, fix = true): StudioProblem {
+function doctor(code: string, loc: ProblemLocation, fix = true): StudioProblem {
   return {
     severity: "warning",
     source: "doctor",
@@ -67,5 +74,42 @@ describe("mergeCheckAndDoctor", () => {
     expect(merged).toHaveLength(2);
     expect(merged.filter((p) => p.source === "check")).toHaveLength(1);
     expect(merged.filter((p) => p.source === "doctor")).toHaveLength(1);
+  });
+
+  test("does not merge findings from different common events", () => {
+    const checks = [lint("lint/jump-label-missing", { common: "healing" })];
+    const doctorProblems = [doctor("doctor/label-missing", { common: "cutscene" })];
+    expect(mergeCheckAndDoctor(checks, doctorProblems)).toHaveLength(2);
+  });
+});
+
+describe("common-event problem locations", () => {
+  test("resolves schema paths to the stable common-event id", () => {
+    const project = {
+      maps: [],
+      commonEvents: [
+        { id: "healing", trigger: "none" as const, commands: [] },
+        { id: "weather", trigger: "parallel" as const, commands: [] },
+      ],
+    };
+    expect(locateSchemaPath(project, "$.commonEvents[1].commands[0]")).toEqual({ common: "weather" });
+  });
+
+  test("converts nested lint paths into command addresses", () => {
+    expect(findingCommandAddress([2, "then", 1, "options", 3, 0])).toEqual({
+      path: [
+        { kind: "if", index: 2, branch: "then" },
+        { kind: "choices", index: 1, branch: "option", option: 3 },
+      ],
+      index: 0,
+    });
+    expect(findingCommandAddress([4, "onEscape", 2])).toEqual({
+      path: [{ kind: "battle", index: 4, branch: "escape" }],
+      index: 2,
+    });
+  });
+
+  test("stops at the caller when a finding path enters an inlined common event", () => {
+    expect(findingCommandAddress([3, "common", "healing", 0])).toEqual({ path: [], index: 3 });
   });
 });
