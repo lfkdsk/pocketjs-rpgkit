@@ -19,6 +19,7 @@ import type {
   Command,
   GameEvent,
   Item,
+  JsonValue,
   MapDef,
   MapTilesetVariant,
   ParallaxDef,
@@ -30,6 +31,8 @@ import type {
   TileId,
   VehicleDef,
 } from "../../src/engine/types.ts";
+import { sha256Text } from "../../src/engine/map-repository.ts";
+import { canonicalJson } from "../../src/engine/save.ts";
 import type { RpgMakerBattleDatabase } from "../../src/rpgmaker-battle/types.ts";
 import {
   rpgMakerBattleback1ForKind,
@@ -157,9 +160,13 @@ interface RegisteredAudio {
   id: string;
 }
 
-function meDurationSeconds(media: AudioMediaSuccess, pitch: number): number {
+function meDurationTicks(media: AudioMediaSuccess, pitch: number): number {
   const outputFrames = Math.ceil(media.frames * 100 / pitch);
-  return Math.ceil(outputFrames * 60 / media.sampleRate) / 60;
+  return Math.ceil(outputFrames * 60 / media.sampleRate);
+}
+
+function meDurationSeconds(media: AudioMediaSuccess, pitch: number): number {
+  return meDurationTicks(media, pitch) / 60;
 }
 
 /** Fill every imported ME command after media decoding, including commands
@@ -200,6 +207,48 @@ function applyImportedMeDurations(
     for (const event of map.events ?? []) for (const page of event.pages) visit(page.commands);
   }
   for (const common of project.commonEvents ?? []) visit(common.commands);
+}
+
+/** Battle settings are registered before audio conversion so event commands
+ * can bind to the initial database hash. Once decoded ME lengths are known,
+ * finalize the two system one-shots, rehash the canonical database content,
+ * and move every imported battle command to that final identity. */
+function applyImportedBattleMeDurations(
+  project: Project,
+  battle: RpgMakerBattleDatabase,
+  mediaById: ReadonlyMap<string, AudioMediaSuccess>,
+): void {
+  for (const key of ["victoryMe", "defeatMe"] as const) {
+    const setting = battle.settings?.[key];
+    const media = setting?.id ? mediaById.get(setting.id) : undefined;
+    if (setting && media) setting.durationTicks = meDurationTicks(media, setting.pitch);
+  }
+
+  const { databaseHash: _oldHash, ...content } = battle;
+  battle.databaseHash = sha256Text(canonicalJson(content));
+
+  const nestedKeys = [
+    "commands", "then", "else", "onWin", "onLose", "onEscape", "onDone", "onCancel",
+  ] as const;
+  const bind = (commands: Command[]): void => {
+    for (const command of commands) {
+      if (command.op === "battle" && command.setup !== null && typeof command.setup === "object" && !Array.isArray(command.setup)) {
+        (command.setup as Record<string, JsonValue>).databaseHash = battle.databaseHash;
+      }
+      const record = command as Command & Record<string, unknown>;
+      for (const key of nestedKeys) {
+        if (Array.isArray(record[key])) bind(record[key] as Command[]);
+      }
+      if (command.op === "choices") {
+        for (const option of command.options) bind(option.commands);
+        if (command.cancel) bind(command.cancel.commands);
+      }
+    }
+  };
+  for (const map of project.maps) {
+    for (const event of map.events ?? []) for (const page of event.pages) bind(page.commands);
+  }
+  for (const common of project.commonEvents ?? []) bind(common.commands);
 }
 
 /** Sparse [index, value] pairs for a row-major plane, keeping only nonzero
@@ -1246,6 +1295,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     }
   }
   applyImportedMeDurations(project, successfulById);
+  applyImportedBattleMeDurations(project, battle, successfulById);
   const mediaFiles = new Map<string, Uint8Array>();
   for (const [variant, rel] of Object.entries(assets.pictures)) {
     const name = pictureRequests.get(variant) ?? variant;

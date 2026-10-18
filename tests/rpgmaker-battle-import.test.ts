@@ -20,6 +20,17 @@ function formulaCoverage(result: Awaited<ReturnType<typeof importRmProject>>) {
   return result.cov.list("battle").filter((row) => row.key.startsWith("formula "));
 }
 
+function battleSetupHashes(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(battleSetupHashes);
+  if (value === null || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const own = record.op === "battle" && record.setup !== null && typeof record.setup === "object" &&
+      !Array.isArray(record.setup) && typeof (record.setup as Record<string, unknown>).databaseHash === "string"
+    ? [(record.setup as Record<string, string>).databaseHash]
+    : [];
+  return own.concat(Object.values(record).flatMap(battleSetupHashes));
+}
+
 describe("RPG Maker battle database import", () => {
   test("the static command catalogue measures battle-only commands through the troop converter", () => {
     const rows = new Map(staticCommandTable().map((row) => [row.code, row]));
@@ -197,6 +208,8 @@ describe("RPG Maker battle database import", () => {
       id: 1,
       kind: "weapon",
       name: "Oak Staff",
+      animationId: 1,
+      animation: "anim001",
       etypeId: 1,
       typeId: 1,
       params: [0, 0, 8, 0, 0, 0, 0, 0],
@@ -319,6 +332,37 @@ describe("RPG Maker battle database import", () => {
       .toBe(JSON.stringify(first.battle, null, 2) + "\n");
     const projectText = canonicalJson(first.project);
     expect(projectText).toContain(`\"databaseHash\":\"${databaseHash}\"`);
+  });
+
+  test("finalizes shared victory and defeat ME durations before hashing battle commands", async () => {
+    const fixture = () => {
+      const project = loadRmProject(STAGE);
+      project.maps.get(1)!.encounterList = [{ troopId: 1, weight: 1, regionSet: [] }];
+      return project;
+    };
+    const first = await importRmProject(fixture());
+    const second = await importRmProject(fixture());
+    const fanfare = first.audioMedia.find((entry) => entry.kind === "me" && entry.name === "stage-fanfare");
+    if (!fanfare || fanfare.status !== "success") throw new Error("stage fanfare fixture did not convert");
+
+    expect(first.audioMedia.filter((entry) => entry.kind === "me" && entry.name === "stage-fanfare")).toHaveLength(1);
+    expect(first.battle.settings?.victoryMe).toMatchObject({
+      id: "me-stage-fanfare",
+      durationTicks: fanfare.durationTicks,
+    });
+    expect(first.battle.settings?.defeatMe).toMatchObject({
+      id: "me-stage-fanfare",
+      durationTicks: fanfare.durationTicks,
+    });
+    expect(fanfare.durationTicks).toBeGreaterThan(0);
+
+    const { databaseHash, ...content } = first.battle;
+    expect(databaseHash).toBe(sha256Text(canonicalJson(content)));
+    const hashes = battleSetupHashes(first.project);
+    expect(hashes.length).toBeGreaterThan(0);
+    expect(new Set(hashes)).toEqual(new Set([databaseHash]));
+    expect(canonicalJson(second.battle)).toBe(canonicalJson(first.battle));
+    expect(canonicalJson(second.project)).toBe(canonicalJson(first.project));
   });
 
   test("records safe-formula coverage for both MV and MZ fixtures", async () => {
