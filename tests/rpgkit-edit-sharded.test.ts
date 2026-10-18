@@ -317,6 +317,7 @@ describe("rpgkit-edit ProjectShell protocol", () => {
         args: { common: "shared", address: { path: [], index: 0 }, command: { op: "transfer", map: "map-001", x: 0, y: 0 } },
       });
       expect(inserted).toMatchObject({ ok: true, written: false, addresses: ["common:shared/command:root#0"] });
+      if (!inserted.ok) throw new Error(JSON.stringify(inserted));
       expect(inserted.patch?.changes.every((change) => change.path.startsWith("/shell/"))).toBe(true);
     } finally {
       renameSync(offline, maps);
@@ -365,6 +366,7 @@ describe("rpgkit-edit ProjectShell protocol", () => {
       args: { common: "shared", changes: { id: "renamed" } },
     });
     expect(renamed).toMatchObject({ ok: true, written: true, addresses: ["common:shared", "common:renamed"] });
+    if (!renamed.ok) throw new Error(JSON.stringify(renamed));
     const renamedShell = JSON.parse(readFileSync(shellFile, "utf8")) as ProjectShell;
     expect(renamedShell.commonEvents!.map((common) => common.id)).toEqual(["renamed", "caller"]);
     expect(renamedShell.commonEvents![1]!.commands[0]).toEqual({ op: "common", id: "renamed" });

@@ -136,7 +136,6 @@ export function doctorProblems(project: Project): StudioProblem[] {
     code: finding.check,
     ...(finding.loc.map === undefined ? {} : { map: finding.loc.map }),
     ...(finding.loc.event === undefined ? {} : { event: finding.loc.event }),
-    ...(finding.loc.common === undefined ? {} : { common: finding.loc.common }),
     ...(finding.loc.page === undefined ? {} : { page: finding.loc.page }),
     ...(finding.fix ? { fix: finding.fix } : {}),
   }));

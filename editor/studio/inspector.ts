@@ -6,7 +6,7 @@
 // shared editor/engine field adapters before anything is sent, so invalid
 // input shows an inline error and never reaches the document.
 
-import type { Command, GameEvent, MapDef, Page } from "../../src/engine/types.ts";
+import type { Command, CommonEvent, GameEvent, MapDef, Page } from "../../src/engine/types.ts";
 import type { EditCommandName, EditResponse } from "../api/types.ts";
 import type { SessionOperation } from "../api/session.ts";
 import {
@@ -37,8 +37,8 @@ import {
   type EditableField,
   type FieldEdit,
 } from "../engine/event-fields.ts";
-import type { EventEditorResources } from "../engine/event-resources.ts";
-import { explainEffectsDigest, explainEvent, type EventExplanation } from "../engine/event-explain.ts";
+import { EMPTY_EVENT_EDITOR_RESOURCES, type EventEditorResources } from "../engine/event-resources.ts";
+import { explainCommonEvent, explainEffectsDigest, explainEvent, type EventExplanation } from "../engine/event-explain.ts";
 import type { Selection, StudioApp } from "./app.ts";
 import { emptyState, h, icon, replace, type Child } from "./dom.ts";
 import {
@@ -72,6 +72,7 @@ import {
   adjacentCommand,
   updatePageOp,
   type FieldControl,
+  type CommandRef,
   type PageRef,
   type TreeItem,
 } from "./inspector-model.ts";
@@ -147,9 +148,19 @@ const DROP_CLASSES = ["drop-before", "drop-after"] as const;
 
 /** The command tree as last rendered, for drag and drop. */
 interface TreeContext {
-  ref: PageRef;
+  ref: CommandRef;
   commands: readonly Command[];
   items: TreeItem<FlatCommandRow>[];
+}
+
+interface CommonEventReference {
+  owner: { map: string; event: string; page: number } | { common: string };
+  address: CommandAddress;
+  path: string;
+}
+
+interface CommonEventDetail extends CommonEvent {
+  references: CommonEventReference[];
 }
 
 /** A press on a command row, and once it moves, the drop slot under the
@@ -174,6 +185,7 @@ class Inspector {
   private errors = new Map<string, { raw: string; error: string }>();
   private context = "";
   private confirmDeleteMap: string | null = null;
+  private confirmDeleteCommon: { id: string; references: CommonEventReference[] } | null = null;
   private confirmTimer: ReturnType<typeof setTimeout> | null = null;
   private pickerOpen = false;
   private pickerQuery = "";
@@ -234,6 +246,7 @@ class Inspector {
     this.pickerQuery = "";
     this.pickerTarget = "after";
     this.confirmDeleteMap = null;
+    this.confirmDeleteCommon = null;
     this.resourceCache = null;
   }
 
@@ -277,7 +290,7 @@ class Inspector {
         }
       }
     }
-    if (this.app.pulse && this.app.selection.kind === "event") {
+    if (this.app.pulse && (this.app.selection.kind === "event" || this.app.selection.kind === "common")) {
       this.app.pulse = false;
       this.root.querySelector(".ins-section")?.classList.add("flash");
     }
@@ -290,9 +303,13 @@ class Inspector {
   private content(): Child {
     const session = this.app.session;
     if (!session) return emptyState("open", "Nothing to inspect", "Open or drop a project, then select a map cell or event.");
+    const selection = this.app.selection;
+    if (selection.kind === "common") {
+      const common = session.globals().commonEvents?.find((item) => item.id === selection.commonId);
+      if (common) return this.commonView(common, selection);
+    }
     const map = this.app.currentMap();
     if (!map) return h("div", { class: "ins-empty" }, "No map is open.");
-    const selection = this.app.selection;
     if (selection.kind === "event") {
       const event = map.events?.find((item) => item.id === selection.eventId);
       if (event) return this.eventView(map, event, selection);
@@ -534,6 +551,7 @@ class Inspector {
         fields,
       ),
       selection.kind === "cell" ? this.cellView(map, selection) : null,
+      this.commonListSection(),
       this.section(`Events (${events.length})`, null,
         events.length === 0
           ? emptyState("event", "No events on this map", "Pick the event tool (N) and click a cell to place one.", { label: "Event tool", id: "empty-event-tool", onClick: () => this.app.setTool("event") })
@@ -550,6 +568,36 @@ class Inspector {
             h("span", { class: "ins-muted ins-right" }, `(${event.x}, ${event.y})`))))),
       ),
     ];
+  }
+
+  private commonListSection(): HTMLElement {
+    const commonEvents = this.app.session?.globals().commonEvents ?? [];
+    const add = this.button("new-common-event", "New common event", () => {
+      const used = new Set(commonEvents.map((common) => common.id));
+      let suffix = 1;
+      while (used.has(`common-${suffix}`)) suffix++;
+      const commonEvent: CommonEvent = { id: `common-${suffix}`, trigger: "none", commands: [] };
+      const response = this.run("add-common-event", { commonEvent }, `New common event ${commonEvent.id}`);
+      if (response?.ok) this.app.select({ kind: "common", commonId: commonEvent.id });
+    }, { icon: "plus" });
+    return this.section(`Common events (${commonEvents.length})`, add,
+      commonEvents.length === 0
+        ? emptyState("event", "No common events", "Create a reusable command list that map events can call.", {
+          label: "New common event",
+          id: "empty-new-common-event",
+          onClick: () => add.click(),
+        })
+        : h("ul", { class: "ins-event-list", "data-role": "common-event-list" }, commonEvents.map((common) =>
+          h("li", null, h("button", {
+            type: "button",
+            class: "ins-link",
+            "data-action": "select-common-event",
+            "data-key": common.id,
+            onclick: () => this.app.select({ kind: "common", commonId: common.id }),
+          }, h("span", { class: "ins-mono" }, common.id),
+          common.name ? h("span", { class: "ins-muted" }, ` ${common.name}`) : null,
+          h("span", { class: "ins-muted ins-right" }, `${common.commands.length} · ${common.trigger === "parallel" ? "parallel" : "called"}`))))),
+    );
   }
 
   private cellView(map: MapDef, selection: Extract<Selection, { kind: "cell" }>): Child {
@@ -597,6 +645,117 @@ class Inspector {
     const response = this.run("delete-map", { map: map.id }, `Delete map ${map.id}`);
     if (response?.ok && neighbour) this.app.openMap(neighbour);
     this.request(true);
+  }
+
+  // ---- common events -----------------------------------------------------------
+
+  private commonView(common: CommonEvent, selection: Extract<Selection, { kind: "common" }>): Child {
+    const page: Page = { trigger: "action", commands: common.commands };
+    const ref: CommandRef = { common: common.id };
+    const selected = selection.command && getCommand(common.commands, selection.command) ? selection.command : undefined;
+    this.context = `common:${common.id}/${selected ? commandAddressKey(selected) : ""}`;
+    const map = this.app.currentMap();
+    const resources = map ? this.resources(map) : EMPTY_EVENT_EDITOR_RESOURCES;
+    return [
+      this.commonSection(common),
+      this.commonExplainSection(common),
+      this.commandSection(page, ref, selected, resources),
+    ];
+  }
+
+  private commonSection(common: CommonEvent): HTMLElement {
+    const confirming = this.confirmDeleteCommon?.id === common.id ? this.confirmDeleteCommon : null;
+    const update = (changes: Record<string, unknown>, label: string): CommitResult =>
+      errorOf(this.run("update-common-event", { common: common.id, changes }, label));
+    const actions = [
+      this.button("copy-common-event", "Duplicate", () => {
+        const response = this.run("duplicate-common-event", { common: common.id }, `Duplicate common event ${common.id}`);
+        if (response?.ok) {
+          const copy = response.result as CommonEvent;
+          this.app.select({ kind: "common", commonId: copy.id });
+        }
+      }, { icon: "copy" }),
+      this.button("delete-common-event", confirming ? "Confirm delete" : "Delete", () => this.deleteCommonEvent(common), {
+        icon: "trash",
+        danger: true,
+        pressed: confirming !== null,
+        title: confirming ? `Delete ${common.id} and leave ${confirming.references.length} call${confirming.references.length === 1 ? "" : "s"} unresolved` : "Delete this common event",
+      }),
+      this.button("close-common-event", "Map", () => this.app.select({ kind: "none" }), { icon: "map", title: "Back to map properties" }),
+    ];
+    return this.section(`Common event ${common.id}`, actions,
+      confirming
+        ? h("div", { class: "ins-note warn", role: "alert", "data-role": "common-delete-confirm" },
+          h("p", null, `${common.id} is called from ${confirming.references.length} location${confirming.references.length === 1 ? "" : "s"}. Deleting it leaves those calls unresolved. Click Confirm delete to continue.`),
+          h("ul", null, confirming.references.map((reference) => h("li", { class: "ins-mono" }, reference.path))),
+          this.button("cancel-common-delete", "Cancel", () => {
+            this.confirmDeleteCommon = null;
+            this.request(true);
+          }))
+        : null,
+      h("div", { class: "ins-grid" },
+        this.fieldRow({
+          field: "common.id", label: "Id", control: "text", value: common.id,
+          commit: (raw) => {
+            const id = raw.trim();
+            const error = update({ id }, `Rename common event ${common.id}`);
+            if (!error) this.app.select({ kind: "common", commonId: id });
+            return error;
+          },
+        }),
+        this.fieldRow({ field: "common.name", label: "Name", control: "text", value: common.name ?? "", commit: (raw) => update({ name: raw === "" ? null : raw }, `Name common event ${common.id}`) }),
+        this.fieldRow({ field: "common.trigger", label: "Trigger", control: "select", value: common.trigger, options: ["none", "parallel"], hint: common.trigger === "none" ? "Runs when a common command calls it" : "Runs in the background while its switch gate is on", commit: (raw) => update({ trigger: raw }, `Set ${common.id} trigger`) }),
+        this.fieldRow({
+          field: "common.conditionSwitch", label: "Condition switch", control: "text", value: common.conditionSwitch ?? "",
+          disabled: common.trigger !== "parallel",
+          suggestions: this.app.session?.globals().switches?.map((item) => item.id) ?? [],
+          hint: common.trigger === "parallel" ? "Optional switch gate; empty means always active" : "Only parallel common events use a switch gate",
+          commit: (raw) => update({ conditionSwitch: raw.trim() === "" ? null : raw.trim() }, `Set ${common.id} switch gate`),
+        }),
+      ),
+    );
+  }
+
+  private deleteCommonEvent(common: CommonEvent): void {
+    if (this.confirmDeleteCommon?.id === common.id) {
+      const response = this.run("delete-common-event", { common: common.id, force: true }, `Delete common event ${common.id}`);
+      if (response?.ok) {
+        this.confirmDeleteCommon = null;
+        this.app.select({ kind: "none" });
+      }
+      return;
+    }
+    const response = this.run("get-common-event", { common: common.id }, `Inspect common event ${common.id}`);
+    if (!response?.ok) return;
+    const detail = response.result as CommonEventDetail;
+    if (detail.references.length === 0) {
+      const deleted = this.run("delete-common-event", { common: common.id }, `Delete common event ${common.id}`);
+      if (deleted?.ok) this.app.select({ kind: "none" });
+      return;
+    }
+    this.confirmDeleteCommon = { id: common.id, references: detail.references };
+    this.request(true);
+  }
+
+  private commonExplainSection(common: CommonEvent): HTMLElement {
+    const key = `explain:common:${common.id}`;
+    const collapsed = collapsedCommands.has(key);
+    const explanation = explainCommonEvent(common);
+    const toggle = this.button("explain-toggle", collapsed ? "Show" : "Hide", () => {
+      if (collapsedCommands.has(key)) collapsedCommands.delete(key);
+      else collapsedCommands.add(key);
+      this.request(true);
+    }, { icon: collapsed ? "chevron" : "down", text: false, title: collapsed ? "Show the explanation" : "Hide the explanation" });
+    const page = explanation.pages[0]!;
+    return this.section("Explain", toggle, ...(collapsed ? [] : [
+      h("p", { class: "ins-explain-line" }, h("span", { class: "ins-muted" }, "Trigger: "), explanation.trigger),
+      h("p", { class: "ins-explain-line" }, h("span", { class: "ins-muted" }, "Gate: "), page.condition),
+      h("p", { class: "ins-explain-line" }, h("span", { class: "ins-muted" }, "Changes: "), explainEffectsDigest(explanation)),
+      page.steps.length === 0 ? h("p", { class: "ins-muted" }, "No commands.") : h("ol", { class: "ins-explain-steps" }, page.steps.map((step) =>
+        h("li", { style: `--depth: ${step.depth}` },
+          step.branch ? h("span", { class: "ins-explain-branch" }, step.branch) : null,
+          h("span", null, step.summary)))),
+    ]));
   }
 
   // ---- event ----------------------------------------------------------------------
@@ -805,38 +964,42 @@ class Inspector {
 
   // ---- commands -----------------------------------------------------------------
 
-  private collapseKey(ref: PageRef, key: string): string {
-    return `${ref.map}/${ref.event}/${ref.page}/${key}`;
+  private collapseKey(ref: CommandRef, key: string): string {
+    return "common" in ref ? `common/${ref.common}/${key}` : `${ref.map}/${ref.event}/${ref.page}/${key}`;
   }
 
-  private selectCommand(ref: PageRef, address: CommandAddress | undefined): void {
-    const { map: _, event, page } = ref;
+  private selectCommand(ref: CommandRef, address: CommandAddress | undefined): void {
+    if ("common" in ref) {
+      this.app.select(address ? { kind: "common", commonId: ref.common, command: address } : { kind: "common", commonId: ref.common });
+      return;
+    }
+    const { event, page } = ref;
     this.app.select(address ? { kind: "event", eventId: event, page, command: address } : { kind: "event", eventId: event, page });
   }
 
-  private expandTo(ref: PageRef, address: CommandAddress): void {
+  private expandTo(ref: CommandRef, address: CommandAddress): void {
     for (let depth = 0; depth < address.path.length; depth++) {
       const segment = address.path[depth]!;
       collapsedCommands.delete(this.collapseKey(ref, commandAddressKey({ path: address.path.slice(0, depth), index: segment.index })));
     }
   }
 
-  private deleteSelected(page: Page, ref: PageRef, selected: CommandAddress): void {
+  private deleteSelected(page: Page, ref: CommandRef, selected: CommandAddress): void {
     const next = selectionAfterDelete(page.commands, selected);
     if (this.runOp(deleteCommandOp(ref, selected), "Delete command")?.ok) this.selectCommand(ref, next);
   }
 
-  private moveSelected(page: Page, ref: PageRef, selected: CommandAddress, delta: -1 | 1): void {
+  private moveSelected(page: Page, ref: CommandRef, selected: CommandAddress, delta: -1 | 1): void {
     const plan = commandMoveOps(ref, page.commands, selected, delta);
     if (plan && this.app.transaction(delta < 0 ? "Move command up" : "Move command down", plan.ops)?.ok) this.selectCommand(ref, plan.to);
   }
 
-  private copySelected(page: Page, ref: PageRef, selected: CommandAddress): void {
+  private copySelected(page: Page, ref: CommandRef, selected: CommandAddress): void {
     const plan = commandCopyOp(ref, page.commands, selected);
     if (plan && this.runOp(plan.op, "Copy command")?.ok) this.selectCommand(ref, plan.to);
   }
 
-  private insert(page: Page, ref: PageRef, selected: CommandAddress | undefined, op: string): void {
+  private insert(page: Page, ref: CommandRef, selected: CommandAddress | undefined, op: string): void {
     const address = insertionAddress(page.commands, selected, selected ? this.pickerTarget : undefined);
     if (!address) {
       this.app.notify("error", "That branch is no longer available");
@@ -853,7 +1016,7 @@ class Inspector {
     }
   }
 
-  private commandSection(page: Page, ref: PageRef, selected: CommandAddress | undefined, resources: EventEditorResources): Child {
+  private commandSection(page: Page, ref: CommandRef, selected: CommandAddress | undefined, resources: EventEditorResources): Child {
     const rows = flattenCommands(page.commands);
     const items = commandTreeItems(page.commands, rows, (key) => collapsedCommands.has(this.collapseKey(ref, key)));
     const selectedKey = selected ? commandAddressKey(selected) : "";
@@ -923,7 +1086,7 @@ class Inspector {
     ];
   }
 
-  private treeRow(item: TreeItem<FlatCommandRow>, ref: PageRef, selectedKey: string): HTMLElement {
+  private treeRow(item: TreeItem<FlatCommandRow>, ref: CommandRef, selectedKey: string): HTMLElement {
     const indent = `--depth:${item.depth}`;
     if (item.kind === "branch") {
       return h("div", { class: "ins-branch", style: indent, role: "presentation", "data-key": item.key },
@@ -1084,7 +1247,7 @@ class Inspector {
     return { slot: { path: address.path, index: address.index + 1 }, element, position: "after" };
   }
 
-  private picker(page: Page, ref: PageRef, selected: CommandAddress | undefined): HTMLElement {
+  private picker(page: Page, ref: CommandRef, selected: CommandAddress | undefined): HTMLElement {
     const selectedCommand = selected ? getCommand(page.commands, selected) : null;
     const targets = selectedCommand && selected ? commandBranchTargets(selectedCommand, selected) : [];
     if (this.pickerTarget !== "after" && !targets.some((target) => target.key === this.pickerTarget)) this.pickerTarget = "after";
@@ -1172,7 +1335,7 @@ class Inspector {
     this.root.querySelector<HTMLElement>("[data-action='add-command']")?.focus();
   }
 
-  private commandDetail(page: Page, ref: PageRef, address: CommandAddress, resources: EventEditorResources): HTMLElement | null {
+  private commandDetail(page: Page, ref: CommandRef, address: CommandAddress, resources: EventEditorResources): HTMLElement | null {
     const command = getCommand(page.commands, address);
     if (!command) return null;
     const category = commandCategory(command.op);

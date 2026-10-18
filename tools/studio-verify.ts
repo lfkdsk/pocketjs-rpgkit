@@ -1384,6 +1384,65 @@ async function main(): Promise<void> {
     const patternPreviewUndone = await evaluate<string>(`__studio.app.session.exportText()`);
     expect("polish: undo removes both preview setup edits byte-for-byte", patternPreviewUndone === patternBefore.text, `${patternPreviewUndone.length} bytes`);
 
+    // Tile-sheet passage is edited through the same update-sheet protocol in
+    // the palette. A solid purple line is the authored two-way dirBlock wall;
+    // sample the named edge so a direction swap cannot pass on state alone.
+    const sheetPassageBefore = await evaluate<string>(`__studio.app.session.exportText()`);
+    // village (4, 3) is town.43 between two town.0 cells. Using an isolated
+    // tile keeps a right-edge wall from also being authored by the tile to
+    // its left, so this pixel check catches left/right direction swaps.
+    await evaluate(`(() => {
+      const tile = __studio.tileAt(4, 3);
+      __studio.app.setBrush(tile);
+      __studio.app.setLayer("passage");
+    })()`);
+    await waitFor("sheet passage controls", `!!document.querySelector('[data-testid="sheet-default-passage"]')`);
+    await evaluate(`(() => {
+      const select = document.querySelector('[data-testid="sheet-default-passage"]');
+      select.value = "block";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await clickSelector('[data-testid="sheet-dir-block-right"]');
+    await settleStudio("tile-sheet passage overlay");
+    const sheetPassage = await evaluate<{ sheet: string; cell: number; defaultPassage: string; dirs: string[]; rightPurple: number; leftPurple: number; history: string[][] }>(`(() => {
+      const tile = __studio.tileAt(4, 3);
+      const [sheet, rawCell] = tile.split(".");
+      const cell = Number(rawCell);
+      const authored = __studio.app.session.sheets().find((item) => item.id === sheet);
+      const canvas = document.querySelector(".map-canvas");
+      const rect = canvas.getBoundingClientRect();
+      const ratio = canvas.width / rect.width;
+      const center = __studio.cellToClient(4, 3);
+      const cx = (center.x - rect.left) * ratio;
+      const cy = (center.y - rect.top) * ratio;
+      const half = 8 * __studio.app.view.zoom * ratio;
+      const ctx = canvas.getContext("2d");
+      const countPurple = (x) => {
+        const data = ctx.getImageData(Math.round(x - 2), Math.round(cy - half + 2), 5, Math.max(1, Math.round(half * 2 - 4))).data;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4) if (data[i + 2] > data[i] + 18 && data[i] > data[i + 1] + 18) count++;
+        return count;
+      };
+      return {
+        sheet, cell, defaultPassage: authored.defaultPassage,
+        dirs: authored.dirBlock?.[String(cell)] ?? [],
+        rightPurple: countPurple(cx + half), leftPurple: countPurple(cx - half),
+        history: __studio.app.session.history().slice(-2).map((step) => step.commands),
+      };
+    })()`);
+    expect("polish: sheet default and dirBlock are two undoable update-sheet edits",
+      sheetPassage.defaultPassage === "block" && JSON.stringify(sheetPassage.dirs) === JSON.stringify(["right"]) && JSON.stringify(sheetPassage.history) === JSON.stringify([["update-sheet"], ["update-sheet"]]),
+      JSON.stringify(sheetPassage));
+    expect("polish: the two-way wall is visibly drawn on the authored right edge",
+      sheetPassage.rightPurple >= 4 && sheetPassage.rightPurple > sheetPassage.leftPurple,
+      `right ${sheetPassage.rightPurple}, left ${sheetPassage.leftPurple}`);
+    await shot("studio-sheet-passage-light");
+    await key("z", "KeyZ", CTRL);
+    await key("z", "KeyZ", CTRL);
+    expect("polish: undo restores the sheet passage edits byte-for-byte",
+      (await evaluate<string>(`__studio.app.session.exportText()`)) === sheetPassageBefore,
+      `${sheetPassage.sheet}.${sheetPassage.cell}`);
+
     // A passage-only map is authored content: its overlay must not be covered
     // by the generic “Start with the ground” guide.
     await evaluate(`(() => {
@@ -1505,6 +1564,102 @@ async function main(): Promise<void> {
     expect("event: the inspector explains the selected event",
       !!explained && explained.trigger && explained.changes && explained.steps.length === 1 && /Hello from Studio!/.test(explained.steps[0]!),
       JSON.stringify(explained));
+
+    // ---- common events ----
+    phase = "common-events";
+    await clickSelector('[data-action="close-event"]');
+    const commonHistoryStart = await evaluate<number>(`__studio.app.session.history().length`);
+    await clickSelector('[data-action="new-common-event"]');
+    await waitFor("new common event selected", `__studio.app.selection.kind === "common" && __studio.app.selection.commonId === "common-1"`);
+    await evaluate(`(() => {
+      const id = document.querySelector('[data-field="common.id"]');
+      id.value = "healing";
+      id.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor("common event renamed", `__studio.app.selection.kind === "common" && __studio.app.selection.commonId === "healing"`);
+    await evaluate(`(() => {
+      const name = document.querySelector('[data-field="common.name"]');
+      name.value = "Healing loop";
+      name.dispatchEvent(new Event("change", { bubbles: true }));
+      const trigger = document.querySelector('[data-field="common.trigger"]');
+      trigger.value = "parallel";
+      trigger.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor("parallel common event controls", `document.querySelector('[data-field="common.conditionSwitch"]')?.disabled === false`);
+    await evaluate(`(() => {
+      const gate = document.querySelector('[data-field="common.conditionSwitch"]');
+      gate.value = "healing-enabled";
+      gate.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await clickSelector('[data-action="add-command"]');
+    await waitFor("common command picker", `!!document.querySelector('[data-field="command-picker"]')`);
+    await evaluate(`(() => { const i = document.querySelector('[data-field="command-picker"]'); i.value = "text"; i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    await clickSelector('button[data-op="text"]:not([data-action])');
+    await waitFor("common text field", `!!document.querySelector('[data-field="command.lines"]')`);
+    await evaluate(`(() => {
+      const field = document.querySelector('[data-field="command.lines"]');
+      field.value = "A shared command";
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await sleep(160);
+    const commonEdited = await evaluate<any>(`(() => {
+      const common = __studio.app.session.globals().commonEvents.find((item) => item.id === "healing");
+      const explain = [...document.querySelectorAll("#inspector .ins-section")].find((section) => section.querySelector("h2")?.textContent === "Explain")?.textContent ?? "";
+      return { common, explain, history: __studio.app.session.history().slice(${commonHistoryStart}).map((step) => step.commands) };
+    })()`);
+    expect("common: create, rename, fields and command tree use the edit history",
+      commonEdited.common?.name === "Healing loop" && commonEdited.common?.trigger === "parallel" && commonEdited.common?.conditionSwitch === "healing-enabled" && commonEdited.common?.commands?.[0]?.lines?.[0] === "A shared command" && commonEdited.history.flat().includes("add-common-event") && commonEdited.history.flat().includes("insert-command"),
+      JSON.stringify(commonEdited));
+    expect("common: Explain shows the trigger, gate and command",
+      /background/.test(commonEdited.explain) && /healing-enabled/.test(commonEdited.explain) && /A shared command/.test(commonEdited.explain),
+      commonEdited.explain);
+
+    await clickSelector('[data-action="copy-common-event"]');
+    const copiedCommon = await waitFor<string>("duplicated common event selected", `__studio.app.selection.kind === "common" && __studio.app.selection.commonId !== "healing" && __studio.app.selection.commonId`);
+    const copiedTree = await evaluate<any>(`__studio.app.session.globals().commonEvents.find((item) => item.id === ${JSON.stringify(copiedCommon)})?.commands`);
+    expect("common: duplicate deep-copies the command tree", JSON.stringify(copiedTree) === JSON.stringify([{ op: "text", lines: ["A shared command"] }]), JSON.stringify(copiedTree));
+    await clickSelector('[data-action="delete-common-event"]');
+    await waitFor("unreferenced common copy deleted", `!__studio.app.session.globals().commonEvents.some((item) => item.id === ${JSON.stringify(copiedCommon)})`);
+    await clickSelector('[data-action="select-common-event"][data-key="healing"]');
+
+    await evaluate(`__studio.app.run("insert-command", {
+      map: "village", event: ${JSON.stringify(created?.id ?? "")}, page: 0,
+      address: { path: [], index: 1 }, command: { op: "common", id: "healing" }
+    }, "Call healing")`);
+    await evaluate(`(() => {
+      const id = document.querySelector('[data-field="common.id"]');
+      id.value = "healing-renamed";
+      id.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor("common rename rewrites callers", `__studio.app.currentMap().events.find((item) => item.id === ${JSON.stringify(created?.id ?? "")}).pages[0].commands[1]?.id === "healing-renamed"`);
+    await evaluate(`(() => {
+      const id = document.querySelector('[data-field="common.id"]');
+      id.value = "healing";
+      id.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor("common renamed back", `__studio.app.selection.kind === "common" && __studio.app.selection.commonId === "healing"`);
+    await clickSelector('[data-action="delete-common-event"]');
+    await waitFor("referenced common delete prompt", `!!document.querySelector('[data-role="common-delete-confirm"]')`);
+    const deletePrompt = await evaluate<{ text: string; exists: boolean }>(`({
+      text: document.querySelector('[data-role="common-delete-confirm"]')?.textContent ?? "",
+      exists: __studio.app.session.globals().commonEvents.some((item) => item.id === "healing")
+    })`);
+    expect("common: referenced deletion names the caller before changing the document",
+      deletePrompt.exists && /map:village/.test(deletePrompt.text) && new RegExp(created?.id ?? "").test(deletePrompt.text),
+      deletePrompt.text);
+    await clickSelector('[data-action="cancel-common-delete"]');
+    expect("common: cancelling referenced deletion keeps the common event", await evaluate<boolean>(`__studio.app.session.globals().commonEvents.some((item) => item.id === "healing")`), "healing remains");
+
+    await evaluate(`__studio.app.run("insert-command", {
+      common: "healing", address: { path: [], index: 1 }, command: { op: "common", id: "missing-common" }
+    }, "Add broken common call")`);
+    if (await evaluate<boolean>(`document.querySelector("#problems")?.hidden !== false`)) await clickSelector("#status-problems");
+    await waitFor("common lint problem", `__studio.lintIdle() && [...document.querySelectorAll(".problem")].some((row) => /missing-common/.test(row.textContent ?? ""))`, 10_000);
+    await evaluate(`[...document.querySelectorAll(".problem")].find((row) => /missing-common/.test(row.textContent ?? ""))?.click()`);
+    await waitFor("common problem navigation", `__studio.app.selection.kind === "common" && __studio.app.selection.commonId === "healing" && __studio.app.selection.command?.index === 1`);
+    expect("common: Problems navigates to the common-event command", true, "healing command 2 selected");
+    await evaluate(`__studio.app.run("delete-command", { common: "healing", address: { path: [], index: 1 } }, "Remove broken common call")`);
+    if (!(await evaluate<boolean>(`document.querySelector("#problems")?.hidden`))) await clickSelector("#status-problems");
 
     // ---- drag and drop ----
     phase = "drag";

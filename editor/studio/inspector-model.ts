@@ -336,22 +336,26 @@ export interface PageRef {
   page: number;
 }
 
+/** A command list belongs either to a map event page or to one project-wide
+ * common event. The wire API enforces the same strict XOR. */
+export type CommandRef = PageRef | { common: string };
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-export function insertCommandOp(ref: PageRef, address: CommandAddress, command: unknown): SessionOperation {
+export function insertCommandOp(ref: CommandRef, address: CommandAddress, command: unknown): SessionOperation {
   return { command: "insert-command", args: { ...ref, address, command: clone(command) } };
 }
 
-export function deleteCommandOp(ref: PageRef, address: CommandAddress): SessionOperation {
+export function deleteCommandOp(ref: CommandRef, address: CommandAddress): SessionOperation {
   return { command: "delete-command", args: { ...ref, address } };
 }
 
 /** Delete + reinsert one slot up (-1) or down (+1) in the same list; null
  * when the command is already at that edge. */
 export function commandMoveOps(
-  ref: PageRef,
+  ref: CommandRef,
   commands: readonly Command[],
   address: CommandAddress,
   delta: -1 | 1,
@@ -375,7 +379,7 @@ export function commandMoveOps(
  * tree without the command: a later slot in the same list moves up by one,
  * and so does a branch of a later sibling (moveCommand's semantics). */
 export function commandDropOps(
-  ref: PageRef,
+  ref: CommandRef,
   commands: readonly Command[],
   from: CommandAddress,
   slot: CommandAddress,
@@ -396,7 +400,7 @@ export function commandDropOps(
 
 /** Insert a deep copy of the command immediately after it. */
 export function commandCopyOp(
-  ref: PageRef,
+  ref: CommandRef,
   commands: readonly Command[],
   address: CommandAddress,
 ): { op: SessionOperation; to: CommandAddress } | null {

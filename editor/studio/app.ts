@@ -19,7 +19,8 @@ export type EdgeBrushValue = { kind: "enter" | "exit"; dir: "up" | "down" | "lef
 export type Selection =
   | { kind: "none" }
   | { kind: "cell"; x: number; y: number; w?: number; h?: number }
-  | { kind: "event"; eventId: string; page: number; command?: CommandAddress };
+  | { kind: "event"; eventId: string; page: number; command?: CommandAddress }
+  | { kind: "common"; commonId: string; command?: CommandAddress };
 
 export interface Notice {
   id: number;
@@ -230,6 +231,9 @@ export class StudioApp {
       const event = this.currentMap()?.events?.find((item) => item.id === selection.eventId);
       if (!event) this.selection = { kind: "none" };
       else if (selection.page >= event.pages.length) this.selection = { kind: "event", eventId: event.id, page: 0 };
+    } else if (selection.kind === "common") {
+      const common = session.globals().commonEvents?.find((item) => item.id === selection.commonId);
+      if (!common) this.selection = { kind: "none" };
     }
     this.reconcileBrush();
   }
