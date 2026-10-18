@@ -3033,28 +3033,31 @@ icons, the legacy text-only shop node tree and dimensions are unchanged. The
 dedicated package entry keeps `Image` and the icon-row implementation out of
 games that do not opt in.
 
-### Chinese (CJK) text
+### Chinese and Japanese (CJK) text
 
-The kit's boxes lay out Simplified Chinese, and mixed Chinese and Latin text,
-with no change to the project format. Lines are still authored as `text`
-`lines` (at most four, 52 characters each); the box wraps any line wider
-than its pixel width:
+The kit's boxes share one line breaker for Simplified Chinese, Traditional
+Chinese, Japanese, Korean and mixed CJK/Latin text, with no change to the
+project format. Lines are still authored as `text` `lines` (at most four, 52
+characters each); the box wraps any line wider than its pixel width:
 
 - between any two CJK characters (Han, kana, Hangul, CJK and fullwidth
   punctuation) a row may break; between two Latin characters it may not, so
   an English word or a number (`Route 1`, `HP 120/120`) is never split, and
   Latin text still breaks at spaces;
-- kinsoku (the common simplified rules): closing punctuation, `，。！？、；：`,
-  `…`, `—` and small kana never begin a row, opening brackets and quotes
-  never end one; the neighbouring character moves down with them;
+- kinsoku: Chinese and Japanese closing punctuation, sentence marks,
+  ellipses, dashes, prolonged-sound marks, small kana, combining sound marks
+  and halfwidth Japanese punctuation never begin a row; opening brackets and
+  quotes never end one; the neighbouring character moves down with them;
 - a line that already fits keeps its authored rows exactly, so Latin
   dialog renders as before;
 - after the player name is substituted for `{name}`, a page that no longer
   fits the box's rows is reflowed as one paragraph; text that still does not fit
   continues on a second page ([Long text is never cut](#long-text-is-never-cut)).
 
-The typewriter counts code points, one per drawn glyph, so a supplementary
-character such as U+20BB7 appears in one step and is never cut in half.
+The typewriter counts Unicode code points, so a supplementary character such
+as U+20BB7 appears in one step and is never cut in half. A decomposed sequence
+such as `か` plus U+3099 takes two steps; the combining mark still cannot begin
+a wrapped row.
 Choice options and prompts, shop rows, battle menus, command cells, the
 battle message band and save-menu summaries are measured at their real pixel
 width: fullwidth glyphs are measured as the core draws them (12 px wide at
@@ -3068,14 +3071,25 @@ importer paginating long messages measures with `createFontMeasure` from
 the baked advances exactly, so its pages lay out as the same rows on the
 device.
 
-**Fonts.** Latin text keeps Inter. Chinese glyphs come from a subset of
-Noto Sans CJK SC (SIL Open Font License) cut to exactly the characters the
-game displays:
+**Regional fonts.** Latin text keeps Inter. CJK glyphs come from one regional
+Noto Sans CJK face (SIL Open Font License) cut to exactly the characters that
+language app displays. Select `sc` for Simplified Chinese, `tc` for
+Traditional Chinese, `jp` for Japanese or `kr` for Korean; omitting
+`--variant` retains the original SC filenames and byte output:
 
 ```sh
-bun tools/cjk-font.ts --app=<app dir> [--scan=<project file> ...] [--chars=...]
-bun tools/cjk-font.ts --app=<app dir> [--scan=<project file> ...] --check   # offline coverage check
+bun tools/cjk-font.ts --app=<app dir> --variant=jp [--scan=<project file> ...] [--chars=...]
+bun tools/cjk-font.ts --app=<app dir> --variant=jp [--scan=<project file> ...] --check
 ```
+
+Generate one app directory (or language shard) per regional face. The selected
+directory has one `fonts.json`, one regional subset and one baked atlas; a
+language selector loads and mounts that language's bundle, so SC, TC and JP
+outlines are not resident together. Do not list several regional Noto faces as
+fallbacks in one `fonts.json`: they map the same Han code points, and the first
+face would win for every language. The two entries under
+`examples/cjk-multi/` demonstrate a Japanese and a Traditional Chinese shard
+over the same UI gallery.
 
 The tool reads the app's display strings decoded, the way the build and
 the runtime see them:
@@ -3097,9 +3111,12 @@ text that Inter does not have, and writes `fonts/` (the subset, the
 character list, the license notice and a provenance note), `fonts.json` and
 a `pak.json` row beside the app entry. The PocketJS build bakes those
 characters from the subset into the app's font atlases, on Inter's baseline
-and line height. `--check` fails, without network access, when the subset,
-the character list, the license notice or the `pak.json` row does not cover
-the text. `tests/fixtures/cjk-text` is a complete example.
+and line height. Each regional source comes from the same immutable upstream
+revision and is checked by byte length and SHA-256 before subsetting.
+`--check` fails, without network access, when the selected family, subset,
+character list, license notice or `pak.json` row does not cover the text. A
+missing baked character draws the core's existing box glyph. See
+`tests/fixtures/cjk-text` for SC and `examples/cjk-multi/` for JP and TC.
 
 **License.** Glyphs baked from Noto are a derivative of it, so its license
 travels with every build: `fonts/LICENSE-NotoSansCJK.txt` (the font's
@@ -3114,7 +3131,7 @@ app's `pak.json` must keep the row (`pakManifestWithLicense` in
 
 **Preview and Studio.** The project preview (the Studio play-test) is built
 once for every project, so it cannot bake one project's characters at build
-time. Its pak carries a budgeted Chinese face instead: the 3,755 GB2312
+time. Its pak currently carries a budgeted SC face: the 3,755 GB2312
 level-1 hanzi, the GB2312 symbol rows, CJK punctuation and full-width forms
 (4,302 characters Inter lacks, 1.1 MB), plus a 76 KB Inter subset for Latin
 beyond ASCII. When `load` brings a document, the preview bakes the
@@ -3128,40 +3145,48 @@ Latin document never parses the fonts. Baking at load took 46 ms for a
 26-character line in headless Chrome, font parsing included; the preview
 bundle is 338 KB larger (the font parser), its density-2 pak 1.2 MB.
 `load` reports `glyphs: { added, missing }`, and Studio names any character
-outside the budget, which the preview draws as a box. A built game bakes its
-own subset and is not limited by the budget.
+outside the budget, which the preview draws as a box. Studio is therefore not
+a regional-shape oracle for TC or JP Han; a built language app uses its
+selected face and is not limited by the preview budget.
 
 **Memory.** The build bakes every character into every font slot the app's
-styles use. A CJK glyph takes one atlas cell of the slot (12×15 bytes at
-12 px, 14×18 at 14 px, 16×20 at 16 px) plus an 8-byte map entry, times the
-square of the raster density. A GameView app uses the 12, 14 and 16 px
-slots, so the atlases grow by about 776 bytes per character at density 1
-(PSP) and about 3 KiB at the web's default density 2. An app that bundles
-the battle `CommandGrid` also bakes the grid's 10 px slot (10×13 per glyph):
-138 more bytes per character at density 1 and 528 at density 2. Apps without
-the grid do not bake that slot.
+styles use. A CJK glyph takes one atlas cell plus an 8-byte map entry, times
+the square of the raster density. In the SC fixture, the 12, 14 and 16 px
+slots cost about 776 bytes per character at density 1 (PSP) and about 3 KiB
+at density 2. A slot's cell expands to the widest glyph in that app, and bold
+or the battle `CommandGrid` adds slots, so actual cost is reported from the
+built atlas rather than assumed to be identical across languages.
 
-On PSP that size is held twice: the pak is embedded in the EBOOT and stays
-in memory, and the core keeps its own parsed copy of each atlas. So the
-resident cost is about 1,552 bytes per character (about 1,828 with the
-command grid), plus the separate 256 KiB glyph-page cache. The fixture's 196
-Chinese characters add about 148 KiB to its density-1 atlases (about 297 KiB
-resident on PSP); 2,500 characters would add about 1.9 MiB of atlas and
-about 3.7 MiB resident (4.4 MiB with the grid).
+On PSP atlas bytes are held twice: the pak is embedded in the EBOOT and stays
+in memory, and the core keeps a parsed copy. The separate 256 KiB glyph-page
+cache is shared by the running app, not charged once per regional face. The
+committed examples measure as follows; “atlas increase” is the selected CJK
+characters across that app's actual slots, and “PSP resident” is its two
+copies:
 
-**Not used, not paid for.** An app without Chinese text gets no `fonts.json`
-and bakes no CJK atlas. Its pak is not necessarily byte-identical to an
-older kit's, though: the no-truncation work changed shared style records
-(Meadow's pak differs at the same size), and an app that bundles
-`CommandGrid` bakes the new 10 px slot for its own characters (showcase
-+18,912 bytes, the battle fixture +14,288). Sunstone's pak is unchanged.
+| Face / example | Characters | Subset OTF (build input) | Density-1 atlas increase | PSP resident increase |
+| --- | ---: | ---: | ---: | ---: |
+| SC / `cjk-text` | 196 | 49,400 B | about 148 KiB | about 297 KiB |
+| JP / `cjk-multi-jp` | 114 | 26,672 B | about 141 KiB | about 281 KiB |
+| TC / `cjk-multi-tc` | 121 | 36,772 B | about 149 KiB | about 299 KiB |
 
-Limits: Simplified Chinese glyphs only (no language-selected Han variants);
-curly quotes, `…` and `—` come from Inter and are proportional; no vertical
-text, ruby or justification; the kit's own fixed words (`Buy`, `Sell`,
-`Gold`, the save menu) are English unless the game replaces them (see
-[Interface words](#interface-words-uitext)); the name-input scene is a Latin
-keyboard and there is no input method.
+Only the selected language bundle is mounted. For scale, 2,500 SC characters
+in the three base slots add about 1.9 MiB of density-1 atlas and 3.7 MiB of
+PSP residency; extra slots and unusually wide glyph bounds increase that.
+
+**Not used, not paid for.** An app without CJK text gets no `fonts.json` and
+bakes no CJK atlas. An existing app that omits `--variant` keeps the SC
+default; exact subset/config/manifest hashes and all three `cjk-text` pak
+hashes are regression-tested. Selecting a regional face changes only that
+language app's generated files and atlas.
+
+Limits: Studio preview still uses SC outlines; switching regional Han shapes
+means selecting another language bundle before mount, not swapping faces
+inside one atlas; curly quotes, `…` and `—` come from Inter and are
+proportional; no vertical text, ruby or justification; the kit's own fixed
+words (`Buy`, `Sell`, `Gold`, the save menu) are English unless the game
+replaces them (see [Interface words](#interface-words-uitext)); the name-input
+scene is a Latin keyboard and there is no CJK input method.
 
 ### Long text is never cut
 
