@@ -27,6 +27,7 @@ import {
 import { decodeCompactMap, isCompactMapValue } from "../../src/engine/compact-map.ts";
 import { encodeCompactMap } from "../../tools/lib/compact-map.ts";
 import { loadProject, semanticEqual } from "../engine/document.ts";
+import { flattenCommands } from "../engine/commands.ts";
 import { deepClone } from "../../src/engine/clone.ts";
 import { canonicalJson } from "../../src/engine/save.ts";
 import { eventCountProblem, MAX_SHARD_BYTES, shardProblem, utf8Bytes } from "./limits.ts";
@@ -58,8 +59,33 @@ import { catalogCommandSpec } from "./catalogs.ts";
 
 export const SHARDED_DOCUMENT_KIND = "rpgkit-edit/sharded-document-v1" as const;
 
-const NO_SHARD_COMMANDS = new Set(["open", "list-maps"]);
+const NO_SHARD_COMMANDS = new Set(["open", "list-maps", "list-common-events"]);
 const SHELL_GLOBAL_COMMANDS = new Set(["add-item", "add-sprite", "update-mobility"]);
+const COMMON_COMMAND_OPERATIONS = new Set(["list-commands", "insert-command", "delete-command", "update-command"]);
+
+function hasCommonCommandTarget(command: string, args: Record<string, unknown>): boolean {
+  if (!COMMON_COMMAND_OPERATIONS.has(command) || !own(args, "common")) return false;
+  if (["map", "event", "page"].some((key) => own(args, key))) {
+    throw new EditApiError(
+      "INVALID_ARGUMENT",
+      "command target must be exactly one of {map,event,page} or {common}",
+      "$",
+      ["map/event/page", "common"],
+    );
+  }
+  return true;
+}
+
+function isShellGlobalOperation(shell: ProjectShell, command: string, args: Record<string, unknown>): boolean {
+  if (SHELL_GLOBAL_COMMANDS.has(command) || hasCommonCommandTarget(command, args)) return true;
+  if (command === "add-common-event" || command === "duplicate-common-event") return true;
+  if (command !== "update-common-event") return false;
+  if (!isRecord(args.changes) || !own(args.changes, "id") || typeof args.changes.id !== "string") return true;
+  const selected = typeof args.common === "string"
+    ? (shell.commonEvents ?? []).find((common) => common.id === args.common)
+    : undefined;
+  return selected === undefined || selected.id === args.changes.id;
+}
 
 /** Commands that cannot be expressed over a shell in patch-v1. Map
  * add/duplicate/delete/move would add, remove or reorder mapIndex entries,
@@ -156,6 +182,13 @@ export function loadValidatedProjectShell(source: string): ProjectShell {
     invalidDocument("$", "expected a ProjectShell with mapIndex and without maps");
   }
   const shell = value as ProjectShell;
+  const commonIds = new Set<string>();
+  for (const [commonIndex, common] of (shell.commonEvents ?? []).entries()) {
+    if (commonIds.has(common.id)) {
+      invalidDocument(`$.commonEvents[${commonIndex}].id`, `duplicate common event id ${JSON.stringify(common.id)}`);
+    }
+    commonIds.add(common.id);
+  }
   let index: Map<string, MapIndexEntry>;
   try {
     index = validateMapIndex(shell.mapIndex);
@@ -208,7 +241,10 @@ export function shardEntriesForOperation(
   // Refuse before any shard selection: add-map has no map argument at all.
   assertShellSupported(command);
   if (NO_SHARD_COMMANDS.has(command)) return [];
-  if (SHELL_GLOBAL_COMMANDS.has(command)) return [];
+  if (isShellGlobalOperation(shell, command, args)) return [];
+  if (command === "get-common-event" || command === "delete-common-event" || command === "update-common-event") {
+    return shell.mapIndex.map((meta) => meta.entry);
+  }
   const catalog = catalogCommandSpec(command);
   if (catalog) {
     if (catalog.action === "add" || catalog.action === "update") {
@@ -431,10 +467,10 @@ function executeValidatedShardedEditOperation(
 ): ShardedEditExecution {
   const { args } = validateEditOperationInput(commandValue, rawArgs);
   const entries = shardEntriesForOperation(shell, commandValue, rawArgs);
-  if (commandValue === "open" || commandValue === "list-maps") {
+  if (commandValue === "open" || commandValue === "list-maps" || commandValue === "list-common-events") {
     return shellRead(shell, commandValue);
   }
-  if (SHELL_GLOBAL_COMMANDS.has(commandValue)) {
+  if (isShellGlobalOperation(shell, commandValue, args)) {
     return executeShellGlobalOperation(shell, commandValue, rawArgs, manifestRevision);
   }
   const maps = loadedMaps(shell, shardSources, entries, checksumsVerified, encodings);
@@ -562,17 +598,30 @@ function executeShellGlobalOperation(
       });
     }
   }
-  const maps = mobilityMaps.length > 0
-    ? mobilityMaps
-    : [{
-        id: placeholderId,
-        name: "Shell edit placeholder",
+  const commonCommandMaps: MapDef[] = hasCommonCommandTarget(command, args)
+    ? shell.mapIndex.map((meta) => ({
+        id: meta.id,
+        name: meta.id,
         width: 1,
         height: 1,
         sheets: [shell.sheets[0]!.id],
         ground: [null],
         events: [],
-      }];
+      }))
+    : [];
+  const maps = mobilityMaps.length > 0
+    ? mobilityMaps
+    : commonCommandMaps.length > 0
+      ? commonCommandMaps
+      : [{
+          id: placeholderId,
+          name: "Shell edit placeholder",
+          width: 1,
+          height: 1,
+          sheets: [shell.sheets[0]!.id],
+          ground: [null],
+          events: [],
+        }];
   const project: Project = {
     ...cloneJson(globals),
     start: { map: maps[0]!.id, x: 0, y: 0, dir: shell.start.dir },
@@ -732,7 +781,7 @@ export function executeShardedEditTransaction(
 
 function shellRead(
   shell: ProjectShell,
-  command: "open" | "list-maps",
+  command: "open" | "list-maps" | "list-common-events",
 ): ShardedEditExecution {
   const view = shardedView(shell, new Map());
   const project = summary(shell, view);
@@ -742,14 +791,23 @@ function shellRead(
         start: cloneJson(shell.start),
         sheets: shell.sheets.map((sheet) => ({ id: sheet.id, cols: sheet.cols, rows: sheet.rows })),
       }
-    : shell.mapIndex.map((map) => ({
+    : command === "list-maps"
+      ? shell.mapIndex.map((map) => ({
         address: `map:${map.id}`,
         id: map.id,
         width: map.width,
         height: map.height,
         entry: map.entry,
         sha256: map.sha256,
-      }));
+      }))
+      : (shell.commonEvents ?? []).map((common) => ({
+          address: `common:${common.id}`,
+          id: common.id,
+          ...(common.name === undefined ? {} : { name: common.name }),
+          trigger: common.trigger,
+          ...(common.conditionSwitch === undefined ? {} : { conditionSwitch: common.conditionSwitch }),
+          commandCount: flattenCommands(common.commands).length,
+        }));
   return {
     response: {
       ok: true,

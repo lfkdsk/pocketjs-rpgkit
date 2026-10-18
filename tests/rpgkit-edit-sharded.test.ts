@@ -289,6 +289,105 @@ describe("rpgkit-edit ProjectShell protocol", () => {
       .toMatchObject({ op: "transfer", map: "map-renamed" });
   });
 
+  test("keeps common-event browsing, creation and command edits shell-only", () => {
+    const root = join(TEMP, "common-shell-only");
+    const project = syntheticProject(2);
+    project.commonEvents = [{ id: "shared", trigger: "none", commands: [] }];
+    const { shellFile } = materialize(project, root);
+    const maps = join(root, "maps");
+    const offline = join(root, "maps-offline");
+    renameSync(maps, offline);
+    try {
+      expect(runFileEdit({ command: "list-common-events", file: shellFile, root })).toMatchObject({
+        ok: true,
+        result: [{ address: "common:shared", id: "shared", trigger: "none", commandCount: 0 }],
+      });
+      expect(runFileEdit({
+        command: "add-common-event",
+        file: shellFile,
+        root,
+        dryRun: true,
+        args: { commonEvent: { id: "fresh", trigger: "parallel", conditionSwitch: "on", commands: [] } },
+      })).toMatchObject({ ok: true, written: false, changed: true });
+      const inserted = runFileEdit({
+        command: "insert-command",
+        file: shellFile,
+        root,
+        dryRun: true,
+        args: { common: "shared", address: { path: [], index: 0 }, command: { op: "transfer", map: "map-001", x: 0, y: 0 } },
+      });
+      expect(inserted).toMatchObject({ ok: true, written: false, addresses: ["common:shared/command:root#0"] });
+      expect(inserted.patch?.changes.every((change) => change.path.startsWith("/shell/"))).toBe(true);
+    } finally {
+      renameSync(offline, maps);
+    }
+  });
+
+  test("scans all shards for common references, atomically rewrites renames, and protects deletion", () => {
+    const root = join(TEMP, "common-references");
+    const project = syntheticProject(3);
+    project.commonEvents = [
+      { id: "shared", trigger: "none", commands: [{ op: "text", lines: ["Shared"] }] },
+      { id: "caller", trigger: "none", commands: [{ op: "common", id: "shared" }] },
+    ];
+    project.maps[2]!.events![0]!.pages[0]!.commands = [{ op: "common", id: "shared" }];
+    const { shellFile, shell } = materialize(project, root);
+
+    const got = runFileEdit({ command: "get-common-event", file: shellFile, root, args: { common: "shared" } });
+    expect(got).toMatchObject({
+      ok: true,
+      result: {
+        id: "shared",
+        references: [
+          { owner: { map: "map-002", event: "exit", page: 0 }, address: { path: [], index: 0 } },
+          { owner: { common: "caller" }, address: { path: [], index: 0 } },
+        ],
+      },
+    });
+
+    const unavailablePath = join(root, shell.mapIndex[1]!.entry);
+    const unavailable = `${unavailablePath}.missing`;
+    renameSync(unavailablePath, unavailable);
+    const unavailableSnapshot = snapshotFiles(root);
+    expect(runFileEdit({
+      command: "update-common-event",
+      file: shellFile,
+      root,
+      args: { common: "shared", changes: { id: "renamed" } },
+    })).toMatchObject({ ok: false, written: false, error: { code: "READ_FAILED" } });
+    expect(snapshotFiles(root)).toEqual(unavailableSnapshot);
+    renameSync(unavailable, unavailablePath);
+
+    const renamed = runFileEdit({
+      command: "update-common-event",
+      file: shellFile,
+      root,
+      args: { common: "shared", changes: { id: "renamed" } },
+    });
+    expect(renamed).toMatchObject({ ok: true, written: true, addresses: ["common:shared", "common:renamed"] });
+    const renamedShell = JSON.parse(readFileSync(shellFile, "utf8")) as ProjectShell;
+    expect(renamedShell.commonEvents!.map((common) => common.id)).toEqual(["renamed", "caller"]);
+    expect(renamedShell.commonEvents![1]!.commands[0]).toEqual({ op: "common", id: "renamed" });
+    const lastEntry = renamedShell.mapIndex[2]!.entry;
+    expect((JSON.parse(readFileSync(join(root, lastEntry), "utf8")) as MapDef).events![0]!.pages[0]!.commands[0])
+      .toEqual({ op: "common", id: "renamed" });
+    expect(renamed.patch?.changes.some((change) => change.path.startsWith(`/shards/${lastEntry.replace(/~/g, "~0").replace(/\//g, "~1")}/`))).toBe(true);
+    expect(runFileEdit({ command: "save", file: shellFile, root, args: { patch: renamed.patch, direction: "reverse" } }))
+      .toMatchObject({ ok: true, written: true });
+
+    const beforeDelete = snapshotFiles(root);
+    const refused = runFileEdit({ command: "delete-common-event", file: shellFile, root, args: { common: "shared" } });
+    expect(refused).toMatchObject({
+      ok: false,
+      written: false,
+      error: { code: "RESOURCE_IN_USE", details: { common: "shared", references: [{ owner: { map: "map-002" } }, { owner: { common: "caller" } }] } },
+    });
+    expect(snapshotFiles(root)).toEqual(beforeDelete);
+    const forced = runFileEdit({ command: "delete-common-event", file: shellFile, root, args: { common: "shared", force: true } });
+    expect(forced).toMatchObject({ ok: true, written: true, result: { deleted: { id: "shared" }, references: [{}, {}] } });
+    expect(changedFiles(beforeDelete, snapshotFiles(root))).toEqual(["project.json"]);
+  });
+
   test("rejects stale identities, shard metadata drift, traversal, and symlink escapes", () => {
     const root = join(TEMP, "safety");
     const { shellFile } = materialize(syntheticProject(2), root);

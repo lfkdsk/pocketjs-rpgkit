@@ -124,6 +124,142 @@ describe("rpgkit edit read operations", () => {
   });
 });
 
+describe("rpgkit edit common-event operations", () => {
+  function commonFixture(): Project {
+    const project = fixture();
+    project.maps[0]!.events![0]!.pages[0]!.commands.push({
+      op: "if",
+      if: { kind: "switch", id: "call" },
+      then: [{ op: "common", id: "shared" }],
+    });
+    project.commonEvents = [
+      { id: "shared", name: "Shared", trigger: "none", commands: [{ op: "text", lines: ["Shared"] }] },
+      { id: "caller", trigger: "none", commands: [{ op: "loop", commands: [{ op: "common", id: "shared" }] }] },
+    ];
+    return project;
+  }
+
+  test("lists common events and gets concrete map/common invocation locations", () => {
+    const source = serializeProject(commonFixture());
+    expect((readSuccess(executeEditOperation(source, "list-common-events")).result as any[])).toEqual([
+      { address: "common:shared", id: "shared", name: "Shared", trigger: "none", commandCount: 1 },
+      { address: "common:caller", id: "caller", trigger: "none", commandCount: 2 },
+    ]);
+    expect(readSuccess(executeEditOperation(source, "get-common-event", { common: "shared" })).result).toMatchObject({
+      address: "common:shared",
+      id: "shared",
+      commands: [{ op: "text", lines: ["Shared"] }],
+      references: [
+        {
+          owner: { map: "map", event: "npc", page: 0 },
+          address: { path: [{ kind: "if", index: 2, branch: "then" }], index: 0 },
+          path: "map:map/event:npc/page:0/command:i2:then#0",
+        },
+        {
+          owner: { common: "caller" },
+          address: { path: [{ kind: "loop", index: 0, branch: "body" }], index: 0 },
+          path: "common:caller/command:l0:body#0",
+        },
+      ],
+    });
+  });
+
+  test("adds, updates, duplicates, renames and protects deletion with reversible patches", () => {
+    const added = success(executeEditOperation(serializeProject(fixture()), "add-common-event", {
+      commonEvent: { id: "fresh", name: "Fresh", trigger: "parallel", conditionSwitch: "on", commands: [] },
+    }));
+    expect(added.addresses).toEqual(["common:fresh"]);
+    expect((JSON.parse(added.output) as Project).commonEvents).toEqual([
+      { id: "fresh", name: "Fresh", trigger: "parallel", conditionSwitch: "on", commands: [] },
+    ]);
+
+    const original = commonFixture();
+    const duplicated = success(executeEditOperation(serializeProject(original), "duplicate-common-event", {
+      common: "shared",
+    }));
+    const duplicateProject = JSON.parse(duplicated.output) as Project;
+    expect(duplicateProject.commonEvents!.map((common) => common.id)).toEqual(["shared", "shared-copy", "caller"]);
+    expect(duplicateProject.commonEvents![1]!.commands).toEqual(original.commonEvents![0]!.commands);
+    expect(duplicateProject.commonEvents![1]!.commands).not.toBe(original.commonEvents![0]!.commands);
+
+    const renamed = success(executeEditOperation(serializeProject(original), "update-common-event", {
+      common: "shared",
+      changes: { id: "renamed", name: "Renamed", trigger: "parallel", conditionSwitch: "enabled" },
+    }));
+    const afterRename = JSON.parse(renamed.output) as Project;
+    expect(afterRename.commonEvents![0]).toMatchObject({ id: "renamed", name: "Renamed", trigger: "parallel", conditionSwitch: "enabled" });
+    expect(afterRename.maps[0]!.events![0]!.pages[0]!.commands[2]).toMatchObject({
+      then: [{ op: "common", id: "renamed" }],
+    });
+    expect((afterRename.commonEvents![1]!.commands[0] as any).commands[0]).toEqual({ op: "common", id: "renamed" });
+    expect(applyEditPatch(afterRename, renamed.patch!, "reverse")).toEqual(original);
+
+    const refused = executeEditOperation(renamed.output, "delete-common-event", { common: "renamed" });
+    expect(refused.output).toBeUndefined();
+    expect(refused.response).toMatchObject({
+      ok: false,
+      error: {
+        code: "RESOURCE_IN_USE",
+        details: {
+          common: "renamed",
+          references: [
+            { owner: { map: "map", event: "npc", page: 0 }, path: "map:map/event:npc/page:0/command:i2:then#0" },
+            { owner: { common: "caller" }, path: "common:caller/command:l0:body#0" },
+          ],
+        },
+      },
+    });
+    const forced = success(executeEditOperation(renamed.output, "delete-common-event", { common: "renamed", force: true }));
+    expect((JSON.parse(forced.output) as Project).commonEvents!.map((common) => common.id)).toEqual(["caller"]);
+    expect((forced.result as any).references).toHaveLength(2);
+    expect(applyEditPatch(JSON.parse(forced.output), forced.patch!, "reverse")).toEqual(afterRename);
+  });
+
+  test("edits a common command tree and enforces an exact target XOR", () => {
+    const source = serializeProject(commonFixture());
+    const inserted = success(executeEditOperation(source, "insert-command", {
+      common: "shared",
+      address: { path: [], index: 1 },
+      command: { op: "switch", id: "done", value: true },
+    }));
+    expect(inserted.addresses).toEqual(["common:shared/command:root#1"]);
+    const listed = readSuccess(executeEditOperation(inserted.output, "list-commands", { common: "shared" })).result as any[];
+    expect(listed.map((row) => row.address)).toEqual([
+      "common:shared/command:root#0",
+      "common:shared/command:root#1",
+    ]);
+    const updated = success(executeEditOperation(inserted.output, "update-command", {
+      common: "shared",
+      address: { path: [], index: 0 },
+      field: "lines",
+      value: "Updated",
+    }));
+    expect((JSON.parse(updated.output) as Project).commonEvents![0]!.commands[0]).toEqual({ op: "text", lines: ["Updated"] });
+    const deleted = success(executeEditOperation(updated.output, "delete-command", {
+      common: "shared",
+      address: { path: [], index: 1 },
+    }));
+    expect((deleted.result as any).deleted).toEqual({ op: "switch", id: "done", value: true });
+
+    expect(executeEditOperation(source, "list-commands", { common: "shared", map: "map", event: "npc", page: 0 }).response)
+      .toMatchObject({ ok: false, error: { code: "INVALID_ARGUMENT", path: "$" } });
+    expect(executeEditOperation(source, "list-commands", { map: "map", event: "npc" }).response)
+      .toMatchObject({ ok: false, error: { code: "INVALID_ARGUMENT", path: "$" } });
+  });
+
+  test("rejects duplicate common-event ids in source and mutations", () => {
+    const project = commonFixture();
+    project.commonEvents!.push({ id: "shared", trigger: "none", commands: [] });
+    expect(executeEditOperation(serializeProject(project), "open").response).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_DOCUMENT", path: "$.commonEvents[2].id" },
+    });
+    expect(executeEditOperation(serializeProject(commonFixture()), "update-common-event", {
+      common: "shared", changes: { id: "caller" },
+    }).response).toMatchObject({ ok: false, error: { code: "DUPLICATE_COMMON_EVENT", path: "$.changes.id" } });
+  });
+});
+
 describe("rpgkit edit tile operations", () => {
   test("paints one tile and emits a small reversible diff", () => {
     const project = fixture();

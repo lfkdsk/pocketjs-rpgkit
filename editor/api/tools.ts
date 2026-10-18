@@ -20,6 +20,7 @@ const file = {
 const map = { type: "string", minLength: 1, description: "Stable map id returned by rpgkit_maps_list." };
 const event = { type: "string", minLength: 1, description: "Stable map-local event id returned by rpgkit_events_list." };
 const page = { type: "integer", minimum: 0, description: "Zero-based page index returned by rpgkit_pages_list." };
+const common = { type: "string", minLength: 1, description: "Stable common-event id returned by rpgkit_common_events_list." };
 const item = { type: "string", minLength: 1, description: "Stable item id returned by rpgkit_items_list." };
 const sprite = { type: "string", minLength: 1, description: "Stable sprite id returned by rpgkit_sprites_list." };
 const audio = { type: "string", minLength: 1, description: "Stable logical audio id returned by rpgkit_audio_list." };
@@ -166,6 +167,31 @@ const eventValue = {
     w: { type: "integer", minimum: 1 },
     h: { type: "integer", minimum: 1 },
     pages: { type: "array", minItems: 1, items: pageValue },
+  },
+};
+
+const commonEventValue = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "trigger", "commands"],
+  properties: {
+    id: { type: "string", pattern: "^[a-z0-9_-]+$" },
+    name: { type: "string" },
+    trigger: { enum: ["none", "parallel"] },
+    conditionSwitch: { type: "string" },
+    commands: { type: "array", items: commandValue },
+  },
+};
+
+const commonEventChanges = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    id: { type: "string", pattern: "^[a-z0-9_-]+$" },
+    name: { type: ["string", "null"] },
+    trigger: { enum: ["none", "parallel"] },
+    conditionSwitch: { type: ["string", "null"] },
   },
 };
 
@@ -418,6 +444,17 @@ function exactlyOneOf(
   return definition;
 }
 
+function withCommandTarget(definition: EditToolDefinition): EditToolDefinition {
+  definition.inputSchema.oneOf = [
+    { required: ["map", "event", "page"], not: { required: ["common"] } },
+    {
+      required: ["common"],
+      not: { anyOf: [{ required: ["map"] }, { required: ["event"] }, { required: ["page"] }] },
+    },
+  ];
+  return definition;
+}
+
 function withVariants(
   definition: EditToolDefinition,
   variants: readonly Record<string, unknown>[],
@@ -432,7 +469,9 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_maps_list", "List maps", "list-maps", "List maps with deterministic map:<id> addresses. ProjectShell map indexes are supported without loading their shards."),
   tool("rpgkit_events_list", "List map events", "list-events", "List every event on the selected map with stable map/event addresses and page counts. A shell loads only that map's shard.", { map }, ["map"]),
   tool("rpgkit_pages_list", "List event pages", "list-pages", "List pages in priority order with stable map/event/page addresses, conditions, triggers and command counts. A shell loads only the selected map's shard.", { map, event }, ["map", "event"]),
-  tool("rpgkit_commands_list", "List command tree", "list-commands", "Flatten one page's recursive command tree. Each row includes a reusable structured commandAddress, stable text address, branch, summary and read-only flag. A shell loads only the selected map's shard.", { map, event, page }, ["map", "event", "page"]),
+  tool("rpgkit_common_events_list", "List common events", "list-common-events", "List project-global common events with stable addresses, trigger metadata and recursive command counts. A shell reads no map shards."),
+  tool("rpgkit_common_event_get", "Get common event", "get-common-event", "Read one common event and every concrete map-page or common-event command that invokes it.", { common }, ["common"]),
+  withCommandTarget(tool("rpgkit_commands_list", "List command tree", "list-commands", "Flatten a map page or common event's recursive command tree. Each row includes a reusable structured commandAddress, stable text address, branch, summary and read-only flag.", { map, event, page, common })),
   tool("rpgkit_items_list", "List items", "list-items", "List item definitions and known reference counts in author order."),
   tool("rpgkit_item_get", "Get item", "get-item", "Read one item definition and every statically typed project reference.", { item }, ["item"]),
   tool("rpgkit_item_add", "Add item", "add-item", "Append one complete item definition to the project catalog.", { item: itemValue }, ["item"], true),
@@ -500,9 +539,13 @@ export const EDIT_TOOLS: readonly EditToolDefinition[] = [
   tool("rpgkit_page_add", "Add event page", "add-page", "Add a complete schema-shaped page, optionally at a zero-based index. Higher indexes have higher runtime priority.", { map, event, page: pageValue, index: { type: "integer", minimum: 0 } }, ["map", "event", "page"], true),
   tool("rpgkit_page_update", "Replace event page", "update-page", "Replace one page with a complete schema-shaped Page value through the editor page transaction model.", { map, event, page, value: pageValue }, ["map", "event", "page", "value"], true),
   tool("rpgkit_page_delete", "Delete event page", "delete-page", "Delete one page. The operation refuses to remove an event's final page.", { map, event, page }, ["map", "event", "page"], true),
-  tool("rpgkit_command_insert", "Insert command", "insert-command", "Insert a schema-valid command at a root or recursive branch slot. Opaque runtime commands are inserted intact; obtain nested paths from rpgkit_commands_list.", { map, event, page, address, command: commandValue }, ["map", "event", "page", "address", "command"], true),
-  tool("rpgkit_command_delete", "Delete command", "delete-command", "Delete any command at a commandAddress, including an opaque command as one intact value.", { map, event, page, address }, ["map", "event", "page", "address"], true),
-  tool("rpgkit_command_update", "Update command field", "update-command", "Edit one supported command field using the editor's validated text adapter. Errors name legal fields and accepted values.", { map, event, page, address, field: { type: "string", minLength: 1 }, value: { type: "string", description: "Editor text spelling, for example 10, true, or newline-separated text lines." } }, ["map", "event", "page", "address", "field", "value"], true),
+  tool("rpgkit_common_event_add", "Add common event", "add-common-event", "Insert a complete project-global common event, optionally at a zero-based index.", { commonEvent: commonEventValue, index: { type: "integer", minimum: 0 } }, ["commonEvent"], true),
+  tool("rpgkit_common_event_update", "Update common event", "update-common-event", "Update common-event identity or trigger metadata. Renaming atomically rewrites every map/common invocation; use command tools for its body.", { common, changes: commonEventChanges }, ["common", "changes"], true),
+  tool("rpgkit_common_event_duplicate", "Duplicate common event", "duplicate-common-event", "Deep-copy a common event directly after its source. Omit id for a unique <id>-copy id.", { common, id: { type: "string", pattern: "^[a-z0-9_-]+$" } }, ["common"], true),
+  tool("rpgkit_common_event_delete", "Delete common event", "delete-common-event", "Delete a common event. RESOURCE_IN_USE returns concrete map/common command locations; retry with force:true only after explicit confirmation.", { common, force: { type: "boolean", default: false } }, ["common"], true),
+  withCommandTarget(tool("rpgkit_command_insert", "Insert command", "insert-command", "Insert a schema-valid command in a map page or common event at a root or recursive branch slot. Opaque runtime commands are inserted intact; obtain nested paths from rpgkit_commands_list.", { map, event, page, common, address, command: commandValue }, ["address", "command"], true)),
+  withCommandTarget(tool("rpgkit_command_delete", "Delete command", "delete-command", "Delete any command in a map page or common event at a commandAddress, including an opaque command as one intact value.", { map, event, page, common, address }, ["address"], true)),
+  withCommandTarget(tool("rpgkit_command_update", "Update command field", "update-command", "Edit one supported map-page or common-event command field using the editor's validated text adapter. Errors name legal fields and accepted values.", { map, event, page, common, address, field: { type: "string", minLength: 1 }, value: { type: "string", description: "Editor text spelling, for example 10, true, or newline-separated text lines." } }, ["address", "field", "value"], true)),
   tool("rpgkit_project_validate", "Validate project", "validate", "Validate a document against rpgkit-project/v1. Pass map to scope a shell validation to that one shard; otherwise every indexed shard is read and verified. Invalid content is returned as valid:false with field paths and messages.", { map }),
   tool("rpgkit_project_save", "Apply reversible patch", "save", "Apply a patch forward or reverse after checking its semantic SHA-256 base. For a shell, read only patch-addressed shards, stage and conflict-check all outputs, publish shards before the shell, and use best-effort rollback.", { patch: patchValue, direction: { type: "string", enum: ["forward", "reverse"], default: "forward" } }, ["patch"], true),
   tool("rpgkit_project_batch", "Batch edit transaction", "batch", "Run several editing operations as one all-or-nothing transaction: one dry-run, one schema gate, one reversible patch, one publish. Operations apply in order; a failure in any of them changes nothing. Inline projects and sharded ProjectShells are both supported (a shell writes only the affected shards). Structural shell commands (add-map and friends) stay proposal-only. The result lists each operation's result in order.", { operations: { type: "array", minItems: 1, items: batchOperation } }, ["operations"], true),
