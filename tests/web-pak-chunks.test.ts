@@ -24,6 +24,14 @@ function response(body: BodyInit, init?: ResponseInit): Response {
   return new Response(body, init);
 }
 
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 50; turn++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("fixture condition did not settle");
+}
+
 function memoryCache(): Cache {
   const values = new Map<string, Response>();
   return {
@@ -165,6 +173,72 @@ describe("Web pak chunk loader", () => {
     await expect(loader.prepare("maps/a")).rejects.toThrow(/entries do not match its manifest/);
     expect(loader.blocking).toBe(false);
     expect(loader.stats().failures.maps).toMatch(/entries do not match/);
+  });
+
+  test("contains advisory fetch failures, retries them, and still rejects demand prepares", async () => {
+    const startup = new Uint8Array([1]);
+    const chunks = ["prefetch", "background", "demand"].map((id) => ({
+      id,
+      bytes: pack([{ key: `maps/${id}`, dtype: 0, data: new Uint8Array([id.length]) }]),
+    }));
+    const manifest = {
+      version: 1,
+      format: "pocket-pak-chunks/v1",
+      startup: asset(HASH, startup, "startup"),
+      chunks: chunks.map(({ id, bytes }) => ({
+        id,
+        ...asset(HASH, bytes, id),
+        entries: [`maps/${id}`],
+        background: id === "background",
+        requires: [],
+      })),
+    };
+    const attempts = new Map<string, number>();
+    const loader = await openPakChunkLoader("https://example.test/manifest.json", {
+      fetch: async (input: URL | RequestInfo) => {
+        const url = String(input);
+        if (url.endsWith("manifest.json")) return response(JSON.stringify(manifest));
+        const chunk = chunks.find(({ id }) => url.includes(`/${id}-`))!;
+        const attempt = (attempts.get(chunk.id) ?? 0) + 1;
+        attempts.set(chunk.id, attempt);
+        if (attempt === 1) throw new TypeError(`fixture ${chunk.id} fetch failed`);
+        return response(exact(chunk.bytes));
+      },
+      sha256: async () => HASH,
+      gunzip: async (bytes: ArrayBuffer) => bytes,
+      backgroundConcurrency: 1,
+    });
+    const consoleErrors: unknown[][] = [];
+    const unhandled: unknown[] = [];
+    const originalConsoleError = console.error;
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    console.error = (...args: unknown[]) => { consoleErrors.push(args); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      loader.startBackground();
+      await waitUntil(() => loader.stats().failures.background?.includes("fixture background fetch failed") === true);
+      expect(loader.ready("maps/background")).toBeFalse();
+
+      await expect(loader.prefetch("maps/prefetch")).resolves.toBeUndefined();
+      expect(loader.stats().failures.prefetch).toContain("fixture prefetch fetch failed");
+      expect(loader.ready("maps/prefetch")).toBeFalse();
+
+      await loader.prefetch("maps/background");
+      await loader.prefetch("maps/prefetch");
+      expect(loader.ready("maps/background")).toBeTrue();
+      expect(loader.ready("maps/prefetch")).toBeTrue();
+      expect(loader.stats().failures).toEqual({});
+
+      await expect(loader.prepare("maps/demand")).rejects.toThrow("fixture demand fetch failed");
+      expect(loader.blocking).toBeFalse();
+      expect(loader.stats().failures.demand).toContain("fixture demand fetch failed");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(consoleErrors).toEqual([]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      console.error = originalConsoleError;
+    }
   });
 
   test("bounds post-first-frame background requests without making them blockers", async () => {

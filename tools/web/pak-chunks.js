@@ -344,7 +344,12 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
   const prefetch = (key) => {
     const id = entryToChunk.get(key);
     if (!id) return Promise.resolve();
-    return Promise.all(closure(id).map((candidate) => schedule(candidate, true))).then(() => undefined);
+    // Prefetch is advisory: load() has already recorded the failure, and the
+    // scheduler removes the failed job so a later prefetch or demand prepare
+    // can retry it. Keep this fire-and-forget API from leaking a rejection to
+    // per-frame working-set callers.
+    return Promise.all(closure(id).map((candidate) => schedule(candidate, true)))
+      .then(() => undefined, () => undefined);
   };
 
   return {
@@ -387,7 +392,9 @@ export async function openPakChunkLoader(manifestUrl, options = {}) {
       if (backgroundStarted) return;
       backgroundStarted = true;
       for (const chunk of manifest.chunks) {
-        if (chunk.background) void schedule(chunk.id, false).catch((error) => console.error(error));
+        // Background warming is also advisory. load() records failures for
+        // stats and later schedule() calls retry after this job is removed.
+        if (chunk.background) void schedule(chunk.id, false).catch(() => undefined);
       }
     },
     stats() {
