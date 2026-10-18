@@ -7,6 +7,7 @@
 #
 #   bun run dist:mac     # universal dmg + zip (signed when a Developer ID is available)
 #   bun run dist:linux   # unpacked Linux app in dist/linux-unpacked
+#   bun run dist:win     # x64 NSIS installer and dist/win-unpacked
 
 appId: io.github.lfkdsk.pocket-rpgkit.studio
 productName: Pocket RPG Kit Studio
@@ -96,3 +97,10 @@ linux:
   target:
     - dir
     - AppImage
+
+win:
+  artifactName: pocket-rpgkit-studio-${version}-${arch}-setup.${ext}
+  target:
+    - target: nsis
+      arch:
+        - x64

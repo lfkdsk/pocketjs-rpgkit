@@ -1,13 +1,16 @@
 name: Studio desktop
 
-# Build the Studio desktop app for macOS: one universal (arm64 + x86_64)
-# dmg and zip. With the signing secrets (docs/studio-desktop.md lists them)
-# the app and the dmg are signed with a Developer ID, notarized and stapled.
-# Without them the build is ad-hoc signed only, and the job still passes.
+# Build and exercise the Studio desktop app on Linux and Windows. Manual and
+# tagged release runs also build one universal macOS (arm64 + x86_64) dmg and
+# zip. With the signing secrets (docs/studio-desktop.md lists them) the app and
+# dmg are signed with a Developer ID, notarized and stapled. Without them the
+# macOS build is ad-hoc signed only, and the job still passes.
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches: [main]
     tags: ["studio-v*"]
 
 permissions:
@@ -18,7 +21,125 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  desktop-smoke:
+    name: Desktop smoke (${{ matrix.os-name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os-name: Linux
+            dist-script: dist:linux
+          - os: windows-latest
+            os-name: Windows
+            dist-script: dist:win
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.x
+
+      # Playwright's Electron driver runs under Node rather than Bun. Pin it
+      # explicitly so both matrix legs use the same test-runner flags.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache the wasm core build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            vendor/pocketjs/engine/wasm/target
+          key: ${{ runner.os }}-pocketjs-wasm-${{ hashFiles('vendor/pocketjs/engine/wasm/Cargo.lock', 'vendor/pocketjs/engine/wasm/Cargo.toml', 'vendor/pocketjs/engine/core/Cargo.toml', 'vendor/pocketjs/engine/wasm/src/**', 'vendor/pocketjs/engine/core/src/**') }}
+          restore-keys: ${{ runner.os }}-pocketjs-wasm-
+
+      - name: Install Xvfb
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the wasm core
+        run: bun run build:wasm
+
+      - name: Install the desktop dependencies
+        working-directory: studio-desktop
+        run: bun install --frozen-lockfile
+
+      # Each OS builds its real package first. The E2E then drives the same
+      # app/ payload with development Electron because the packaged binary's
+      # fuses intentionally disable Playwright's inspector connection.
+      - name: Package the desktop app
+        working-directory: studio-desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: bun run ${{ matrix.dist-script }}
+
+      - name: Verify Linux package structure
+        if: runner.os == 'Linux'
+        working-directory: studio-desktop
+        shell: bash
+        run: |
+          test -s dist/linux-unpacked/resources/app.asar
+          test -s dist/linux-unpacked/resources/helper/rpgkit-studio-helper
+          test -x dist/linux-unpacked/resources/helper/rpgkit-studio-helper
+
+      - name: Verify Windows package structure
+        if: runner.os == 'Windows'
+        working-directory: studio-desktop
+        shell: pwsh
+        run: |
+          $required = @(
+            'dist/win-unpacked/resources/app.asar',
+            'dist/win-unpacked/resources/helper/rpgkit-studio-helper.exe'
+          )
+          foreach ($path in $required) {
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "missing packaged file: $path"
+            }
+            if ((Get-Item -LiteralPath $path).Length -eq 0) {
+              throw "empty packaged file: $path"
+            }
+          }
+          $installers = @(Get-ChildItem -Path dist -File -Filter 'pocket-rpgkit-studio-*-x64-setup.exe')
+          if ($installers.Count -ne 1) {
+            throw "expected one x64 NSIS installer, found $($installers.Count)"
+          }
+          if ($installers[0].Length -eq 0) {
+            throw "empty NSIS installer: $($installers[0].FullName)"
+          }
+
+      - name: Run the desktop end-to-end test
+        working-directory: studio-desktop
+        run: bun run e2e
+
+      - name: Keep the Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: studio-desktop-windows-x64
+          path: studio-desktop/dist/pocket-rpgkit-studio-*-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
   mac:
+    # Keep release packaging on the same manual/tag path as before; the new
+    # pull-request and main-branch triggers run only the smoke matrix above.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/studio-v')
     runs-on: macos-latest
     timeout-minutes: 60
     env:

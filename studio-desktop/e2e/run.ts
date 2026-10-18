@@ -79,6 +79,11 @@ writeFileSync(agentConfig, `${JSON.stringify({
 }, null, 2)}\n`);
 
 function which(name: string): string | null {
+  if (process.platform === "win32") {
+    const found = spawnSync("where.exe", [name], { encoding: "utf8", windowsHide: true });
+    if (found.status !== 0) return null;
+    return found.stdout.split(/\r?\n/, 1)[0]?.trim() || null;
+  }
   const found = spawnSync("sh", ["-c", `command -v ${name}`], { encoding: "utf8" });
   return found.status === 0 ? found.stdout.trim() : null;
 }
