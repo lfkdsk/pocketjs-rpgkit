@@ -307,7 +307,29 @@ describe("imported RPG Maker Battle Processing end to end", () => {
       },
     });
 
-    const completed = finishBattle(session, entered, "win");
+    let result = entered;
+    for (let frame = 0; frame < 20; frame++) {
+      const battle = rpgMakerBattleState(result.scene!.state);
+      if (battle.phase === "message" && battle.afterMessage === "win") break;
+      result = stepSession(session, result, { buttons: 0, confirmEdge: true });
+    }
+    expect(result.scene?.kind).toBe("battle");
+    expect(rpgMakerBattleState(result.scene!.state)).toMatchObject({
+      phase: "message", afterMessage: "win",
+    });
+    expect(result.interp.audio).toMatchObject({
+      bgm: { id: "bgm-hollow-map", volume: 65, pitch: 100 },
+      bgs: { id: "bgs-hollow-cave", volume: 60, pitch: 100 },
+      me: {
+        id: "me-hollow-victory",
+        volume: 88,
+        pitch: 110,
+        pan: 7,
+        positionTicks: 0,
+      },
+    });
+    const resultMePosition = result.interp.audio!.me!.positionTicks;
+    const completed = finishBattle(session, result, "win");
     expect(completed.interp.audio).toMatchObject({
       bgm: { id: "bgm-hollow-map", volume: 65, pitch: 100 },
       bgs: { id: "bgs-hollow-cave", volume: 60, pitch: 100 },
@@ -318,6 +340,7 @@ describe("imported RPG Maker Battle Processing end to end", () => {
         pan: 7,
       },
     });
+    expect(completed.interp.audio!.me!.positionTicks).toBeGreaterThan(resultMePosition);
   });
 
   for (const hz of [60, 30, 20]) test(`active battle rewind refolds actor and battle state at ${hz} Hz`, () => {

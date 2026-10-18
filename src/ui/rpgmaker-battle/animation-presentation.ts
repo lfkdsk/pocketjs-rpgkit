@@ -81,12 +81,14 @@ function flashAt(
 ): BattleAnimationFlash | undefined {
   const total = durationTicks(flash.duration);
   const local = elapsed - cueStart;
-  if (total <= 0 || local < 0 || local >= total) return undefined;
+  // Stock starts the timing and immediately runs updateFlash in that same
+  // update, so the first painted sample has already consumed one tick.
+  if (total <= 1 || local < 0 || local >= total - 1) return undefined;
   const alpha = clamp(flash.color.a, 0, 255) / 255;
   const intensity = clamp(flash.intensity, 0, 255) / 255;
   return {
     color: battleAnimationColor(flash.color),
-    opacity: alpha * intensity * (total - local) / total,
+    opacity: alpha * intensity * (total - local - 1) / total,
   };
 }
 
@@ -117,7 +119,8 @@ export function battleAnimationPresentationAt(
     if (timing.hide) {
       const hiddenFor = durationTicks(timing.hide.duration);
       const local = elapsed - cueStart;
-      if (hiddenFor > 0 && local >= 0 && local < hiddenFor) hideTargets = true;
+      // updateHiding likewise decrements before the frame is painted.
+      if (hiddenFor > 1 && local >= 0 && local < hiddenFor - 1) hideTargets = true;
     }
   }
   return {
@@ -131,19 +134,23 @@ export function battleAnimationPresentationAt(
 /** Position 0/1/2 select target head/centre/feet. Position 3 ignores the
  * target and uses viewport centre, matching legacy MV screen animations. */
 export function battleAnimationPlacement(
-  animation: Pick<RpgMakerBattleAnimationAsset, "position" | "originOffsetX" | "originOffsetY">,
+  animation: Pick<RpgMakerBattleAnimationAsset, "position" | "originOffsetX" | "originOffsetY" | "w">,
   viewport: { width: number; height: number },
   target?: Readonly<BattleAnimationTargetRect>,
+  mirror = false,
 ): { x: number; y: number } {
+  const horizontal = (origin: number): number => Math.round(mirror
+    ? origin - animation.originOffsetX - animation.w
+    : origin + animation.originOffsetX);
   if (animation.position === 3 || !target) {
     return {
-      x: Math.round(viewport.width / 2 + animation.originOffsetX),
+      x: horizontal(viewport.width / 2),
       y: Math.round(viewport.height / 2 + animation.originOffsetY),
     };
   }
   const vertical = animation.position === 0 ? 0 : animation.position === 1 ? 0.5 : 1;
   return {
-    x: Math.round(target.x + target.width / 2 + animation.originOffsetX),
+    x: horizontal(target.x + target.width / 2),
     y: Math.round(target.y + target.height * vertical + animation.originOffsetY),
   };
 }

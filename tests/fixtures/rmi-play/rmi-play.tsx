@@ -258,7 +258,10 @@ const battleText = preview === "zh"
     : undefined;
 
 const AudioEffects = createAudioEffects(project.audio ?? {});
-const battle = createRpgMakerBattleRules(database, { animations: game.project.animations });
+const battle = createRpgMakerBattleRules(database, {
+  animations: game.project.animations,
+  animationPositions: game.battleAnimationPositions,
+});
 const BattleScene = createRpgMakerBattleScene(database, {
   enemyImages: game.enemyImages,
   faces: game.faceImages,

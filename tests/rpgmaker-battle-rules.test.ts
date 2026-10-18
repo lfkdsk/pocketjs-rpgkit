@@ -646,7 +646,7 @@ describe("RPG Maker battle rules", () => {
     expect(rules.done(started.state)?.result).toBe("escape");
   });
 
-  test("battle settings persist globally while battlebacks remain map-local", () => {
+  test("battle settings persist globally while battlebacks last one map visit", () => {
     const db = cloneDb();
     db.settings = {
       battleBgm: { name: "Default", volume: 90, pitch: 100, pan: 0 },
@@ -657,28 +657,42 @@ describe("RPG Maker battle rules", () => {
       { map: "map003", battleback1Name: "Cave", battleback2Name: "Rock" },
     ];
     let ext: JsonValue = {};
+    let variables: Record<string, string | number> = {};
     const invoke = (args: JsonValue, mapId = "map003") => {
-      const result = runExtensionCommand(db, RPGMAKER_BATTLE_SETTING_CALL, args, { ext, mapId });
+      const result = runExtensionCommand(db, RPGMAKER_BATTLE_SETTING_CALL, args, { ext, mapId, variables });
       ext = result.ext ?? ext;
+      variables = { ...variables, ...result.writes };
       return result;
     };
     invoke({
       kind: "battleBgm",
       audio: { name: "Boss", volume: 80, pitch: 105, pan: -5, id: "bgm-boss" },
     });
-    invoke({ kind: "battleback", battleback1Name: "Lava", battleback2Name: "Smoke" });
+    const battleback = invoke({ kind: "battleback", battleback1Name: "Lava", battleback2Name: "Smoke" });
+    expect(battleback.writes).toEqual({
+      "local.rpgmaker.battleback1": "Lava",
+      "local.rpgmaker.battleback2": "Smoke",
+    });
     const encounter = invoke({ kind: "encounter", disabled: true });
     expect(encounter.writes).toEqual({ [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 });
 
     const restored = JSON.parse(JSON.stringify(ext)) as JsonValue;
-    const cave = state(start(db, 1, restored, { ...CONTEXT, mapId: "map003" }).state);
+    const cave = state(start(db, 1, restored, { ...CONTEXT, mapId: "map003", variables }).state);
     expect(cave.settings).toMatchObject({
       battleBgm: { name: "Boss", volume: 80, pitch: 105, pan: -5, id: "bgm-boss" },
       battleback1Name: "Lava",
       battleback2Name: "Smoke",
       encounterDisabled: true,
     });
-    const field = state(start(db, 1, restored, { ...CONTEXT, mapId: "map001" }).state);
+    // Session.enterMap clears local.* even when transferring back to the same
+    // map, so a fresh visit observes the authored battleback again.
+    const revisited = state(start(db, 1, restored, {
+      ...CONTEXT, mapId: "map003", variables: {},
+    }).state);
+    expect(revisited.settings).toMatchObject({ battleback1Name: "Cave", battleback2Name: "Rock" });
+    const field = state(start(db, 1, restored, {
+      ...CONTEXT, mapId: "map001", variables: {},
+    }).state);
     expect(field.settings).toMatchObject({ battleback1Name: "Field", battleback2Name: "Clouds" });
     const step = runExtensionCommand(db, RPGMAKER_ENCOUNTER_STEP_CALL, null, {
       ext: restored,
@@ -686,6 +700,82 @@ describe("RPG Maker battle rules", () => {
       playerStep: { dx: 1, dy: 0, kind: "step" },
     });
     expect(step.writes).toEqual({ [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 });
+  });
+
+  test("battle-event presentation settings persist without repainting the current battle", () => {
+    const db = cloneDb();
+    db.mapSettings = [{
+      map: "map003", specified: true, battleback1Name: "Cave", battleback2Name: "Rock",
+    }];
+    db.settings = {
+      battleBgm: { name: "Old Battle", id: "bgm-old", volume: 90, pitch: 100, pan: 0 },
+      victoryMe: { name: "Old Victory", id: "me-old", volume: 90, pitch: 100, pan: 0, durationTicks: 60 },
+    };
+    db.troops[0]!.pages = [{
+      span: 0,
+      condition: { turn: { a: 0, b: 0 } },
+      effects: [
+        { kind: "battleBgm", audio: { name: "Next Battle", id: "bgm-next", volume: 75, pitch: 104, pan: -5 } },
+        { kind: "victoryMe", audio: { name: "New Victory", id: "me-new", volume: 82, pitch: 108, pan: 7, durationTicks: 72 } },
+        { kind: "defeatMe", audio: { name: "New Defeat", id: "me-lose", volume: 70, pitch: 96, pan: -8, durationTicks: 80 } },
+        { kind: "battleback", battleback1Name: "Lava", battleback2Name: "Smoke" },
+        {
+          kind: "images", actorId: 1, characterName: "Hero2", characterIndex: 3,
+          faceName: "WrenFaces", faceIndex: 5, battlerName: "WrenBattlerAlt",
+        },
+      ],
+      unsupported: 0,
+    }];
+
+    const rules = createRpgMakerBattleRules(db);
+    const started = rules.start({}, setup(db), 1, CONTEXT)!;
+    const current = state(started.state);
+    expect(current.settings).toMatchObject({
+      battleBgm: { id: "bgm-old" },
+      victoryMe: { id: "me-new", durationTicks: 72 },
+      defeatMe: { id: "me-lose", durationTicks: 80 },
+      battleback1Name: "Cave",
+      battleback2Name: "Rock",
+    });
+    expect(rules.audio?.(started.state)).toEqual({
+      bgm: { id: "bgm-old", volume: 90, pitch: 100, pan: 0 },
+    });
+    expect(current.actors[0]!.actor).toMatchObject({
+      faceName: "WrenFaces", faceIndex: 5, battlerName: "WrenBattlerAlt",
+    });
+
+    const terminal = mutable(started.state);
+    terminal.phase = "done";
+    terminal.result = "win";
+    const completion = rules.done(json(terminal))!;
+    expect(completion.audio).toMatchObject({ cue: { id: "me-new", durationTicks: 72 } });
+    expect(completion.writes).toEqual({
+      "local.rpgmaker.battleback1": "Lava",
+      "local.rpgmaker.battleback2": "Smoke",
+    });
+    expect(completion.ext).toMatchObject({
+      rpgmakerBattle: {
+        settings: {
+          battleBgm: { id: "bgm-next" },
+          victoryMe: { id: "me-new" },
+          defeatMe: { id: "me-lose" },
+        },
+        actors: {
+          "1": { characterName: "Hero2", characterIndex: 3, faceName: "WrenFaces", faceIndex: 5 },
+        },
+      },
+    });
+
+    const nextContext = {
+      ...CONTEXT,
+      variables: { ...CONTEXT.variables, ...completion.writes },
+    };
+    const next = state(rules.start(completion.ext, setup(db), 2, nextContext)!.state);
+    expect(next.settings).toMatchObject({
+      battleBgm: { id: "bgm-next" }, battleback1Name: "Lava", battleback2Name: "Smoke",
+    });
+    const reentered = state(rules.start(completion.ext, setup(db), 3, { ...CONTEXT, variables: {} })!.state);
+    expect(reentered.settings).toMatchObject({ battleback1Name: "Cave", battleback2Name: "Rock" });
   });
 
   test("battle BGM projects with pan and result ME selects the stock restore policy", () => {
@@ -777,7 +867,7 @@ describe("RPG Maker battle rules", () => {
       side: "actor", user: 0, kind: "item", id: 1, target: 0, speed: 0,
     });
     expect(state(current).battleAnimation).toEqual({
-      id: "anim-item", targets: [0], targetSide: "actor", startTick: 1,
+      id: "anim-item", targets: [0], targetSide: "actor", mirror: true, startTick: 1,
     });
 
     db.skills[0]!.animationId = -1;
@@ -1462,12 +1552,12 @@ describe("RPG Maker battle rules", () => {
     expect(rules.cues).toBeDefined();
     const initial = rules.start({}, setup(db), 1, CONTEXT)!.state;
 
-    const marked = (nowTick: number, startTick: number): JsonValue => {
+    const marked = (nowTick: number, startTick: number, targets = [0]): JsonValue => {
       const next = mutable(initial);
       next.nowTick = nowTick;
       next.battleAnimation = {
         id: animation.id,
-        targets: [0],
+        targets,
         targetSide: "enemy",
         startTick,
       };
@@ -1495,6 +1585,14 @@ describe("RPG Maker battle rules", () => {
     expect(rules.cues!(initial, marked(1, 1))).toEqual([
       { id: "start", volume: 80, pitch: 110, pan: -25 },
     ]);
+    expect(ids(rules.cues!(initial, marked(1, 1, [0, 1])))).toEqual([
+      "start", "start",
+    ]);
+    const screenRules = createRpgMakerBattleRules(db, {
+      animations: [animation],
+      animationPositions: { [animation.id]: 3 },
+    });
+    expect(ids(screenRules.cues!(initial, marked(1, 1, [0, 1])))).toEqual(["start"]);
 
     // The old marker is scanned through the transition tick before a new
     // same-id marker emits its independent frame-zero edge.

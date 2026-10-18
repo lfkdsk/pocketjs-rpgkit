@@ -273,6 +273,7 @@ for (const source of RMI_SOURCES) {
   // --- map animations and balloons ---------------------------------------
   const animSource: string[] = [];
   const battleAnimSource: string[] = [];
+  const battleAnimPositionSource: string[] = [];
   for (const def of project.animations ?? []) {
     const image = result.images.get(def.sheet);
     if (!image) throw new Error(`rmi-play: animation ${def.id} has no imported sheet ${def.sheet}`);
@@ -286,6 +287,7 @@ for (const source of RMI_SOURCES) {
       ` }`,
     );
     if (placement) {
+      battleAnimPositionSource.push(`${q(def.id)}: ${placement.position ?? 1}`);
       battleAnimSource.push(
         `${q(def.id)}: { frames: ${q(names)}, w: ${padded[0]!.w}, h: ${padded[0]!.h}, ` +
         `position: ${placement.position ?? 1}, originOffsetX: ${placement.originOffsetX ?? placement.offsetX}, ` +
@@ -359,6 +361,7 @@ for (const source of RMI_SOURCES) {
     `const FACES_${source.id}: Record<string, string> = { ${faceSource.join(", ")} };\n` +
     `const BATTLEBACKS1_${source.id}: Record<string, string> = { ${battlebackSource[1].join(", ")} };\n` +
     `const BATTLEBACKS2_${source.id}: Record<string, string> = { ${battlebackSource[2].join(", ")} };\n` +
+    `const BATTLE_ANIMATION_POSITIONS_${source.id}: Record<string, 0 | 1 | 2 | 3> = { ${battleAnimPositionSource.join(", ")} };\n` +
     `const BATTLE_ANIMATIONS_${source.id}: Record<string, RpgMakerBattleAnimationAsset> = { ${battleAnimSource.join(", ")} };\n`,
   );
   summaries.push(
@@ -431,8 +434,8 @@ writeFileSync(
     animatedSources.join("\n") + "\n" +
     tilesetSources.join("\n") + "\n" +
     gameSources.join("\n") + "\n" +
-    `export const RMI_GAMES: Record<RmiGameId, { project: Project; battle: RpgMakerBattleDatabase; enemyImages: Record<string, string>; faceImages: Record<string, string>; battlebacks1: Record<string, string>; battlebacks2: Record<string, string>; battleAnimations: Record<string, RpgMakerBattleAnimationAsset>; assets: GameAssets }> = {\n` +
-    RMI_SOURCES.map((s) => `  ${s.id}: { project: PROJECT_${s.id}, battle: BATTLE_${s.id}, enemyImages: BATTLERS_${s.id}, faceImages: FACES_${s.id}, battlebacks1: BATTLEBACKS1_${s.id}, battlebacks2: BATTLEBACKS2_${s.id}, battleAnimations: BATTLE_ANIMATIONS_${s.id}, assets: ASSETS_${s.id} },`).join("\n") +
+    `export const RMI_GAMES: Record<RmiGameId, { project: Project; battle: RpgMakerBattleDatabase; enemyImages: Record<string, string>; faceImages: Record<string, string>; battlebacks1: Record<string, string>; battlebacks2: Record<string, string>; battleAnimationPositions: Record<string, 0 | 1 | 2 | 3>; battleAnimations: Record<string, RpgMakerBattleAnimationAsset>; assets: GameAssets }> = {\n` +
+    RMI_SOURCES.map((s) => `  ${s.id}: { project: PROJECT_${s.id}, battle: BATTLE_${s.id}, enemyImages: BATTLERS_${s.id}, faceImages: FACES_${s.id}, battlebacks1: BATTLEBACKS1_${s.id}, battlebacks2: BATTLEBACKS2_${s.id}, battleAnimationPositions: BATTLE_ANIMATION_POSITIONS_${s.id}, battleAnimations: BATTLE_ANIMATIONS_${s.id}, assets: ASSETS_${s.id} },`).join("\n") +
     `\n};\n`,
 );
 // PocketJS deliberately does not bake every string literal in a generated

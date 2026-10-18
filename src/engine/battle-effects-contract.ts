@@ -8,9 +8,9 @@ import type { SoundCue } from "./interpreter.ts";
 export interface BattleEffectsRuntime {
   /** Validate game-owned one-shot cue data and project host-ready SE cues. */
   soundCues(value: unknown): SoundCue[] | undefined;
-  /** Validate and atomically install one completion ME over the selected
-   * base mix. `suspended` is undefined when the battle never owned audio,
-   * null for prior silence, or the complete map-side mix to restore. */
+  /** Validate and atomically install one result/completion ME over the
+   * selected base mix. `suspended` is undefined when the battle never owned
+   * audio, null for prior silence, or the complete map-side mix to restore. */
   completeAudio(
     value: unknown,
     suspended: Readonly<AudioState> | null | undefined,

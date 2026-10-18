@@ -215,8 +215,9 @@ function applyImportedMeDurations(
 
 /** Battle settings are registered before audio conversion so event commands
  * can bind to the initial database hash. Once decoded ME lengths are known,
- * finalize the two system one-shots, rehash the canonical database content,
- * and move every imported battle command to that final identity. */
+ * finalize system, map/common-event, and troop-page one-shots; rehash the
+ * canonical database content; and move every imported battle command to that
+ * final identity. */
 function applyImportedBattleMeDurations(
   project: Project,
   battle: RpgMakerBattleDatabase,
@@ -226,6 +227,20 @@ function applyImportedBattleMeDurations(
     const setting = battle.settings?.[key];
     const media = setting?.id ? mediaById.get(setting.id) : undefined;
     if (setting && media) setting.durationTicks = meDurationTicks(media, setting.pitch);
+  }
+
+  const finishSetting = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+    const setting = value as Record<string, unknown>;
+    if (setting.kind !== "victoryMe" && setting.kind !== "defeatMe") return;
+    const audio = setting.audio;
+    if (audio === null || typeof audio !== "object" || Array.isArray(audio)) return;
+    const record = audio as Record<string, unknown>;
+    const media = typeof record.id === "string" ? mediaById.get(record.id) : undefined;
+    if (media && typeof record.pitch === "number") record.durationTicks = meDurationTicks(media, record.pitch);
+  };
+  for (const troop of battle.troops) {
+    for (const page of troop.pages) for (const effect of page.effects) finishSetting(effect);
   }
 
   const { databaseHash: _oldHash, ...content } = battle;
@@ -239,6 +254,7 @@ function applyImportedBattleMeDurations(
       if (command.op === "battle" && command.setup !== null && typeof command.setup === "object" && !Array.isArray(command.setup)) {
         (command.setup as Record<string, JsonValue>).databaseHash = battle.databaseHash;
       }
+      if (command.op === "ext" && command.call === "rpgmaker.battleSetting") finishSetting(command.args);
       const record = command as Command & Record<string, unknown>;
       for (const key of nestedKeys) {
         if (Array.isArray(record[key])) bind(record[key] as Command[]);
@@ -868,8 +884,9 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       // Ship is selected for every vehicle on an overworld map.
       rememberBattleback("Grassland", "Grassland");
       rememberBattleback("Ship", "Ship");
-      for (const [, kind] of setting.autotileKinds ?? []) {
-        rememberBattleback(rpgMakerBattleback1ForKind(kind), rpgMakerBattleback2ForKind(kind));
+      for (const [, upper, lower = upper] of setting.autotileKinds ?? []) {
+        rememberBattleback(rpgMakerBattleback1ForKind(upper), rpgMakerBattleback2ForKind(upper));
+        rememberBattleback(rpgMakerBattleback1ForKind(lower), rpgMakerBattleback2ForKind(lower));
       }
     }
     for (const event of map.events) for (const page of event?.pages ?? []) collectBattlebacks(page.list);

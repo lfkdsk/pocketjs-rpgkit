@@ -1,7 +1,7 @@
 import type { RpgMakerBattleMapSettings } from "./types.ts";
 
-/** Stock MV/MZ overworld battle-floor name for one autotile kind. */
-export function rpgMakerBattleback1ForKind(kind: number): string {
+/** Stock MV/MZ overworld battle-floor name for one recognized autotile kind. */
+function battleback1ForKind(kind: number): string | undefined {
   if (kind === 24 || kind === 25) return "Wasteland";
   if (kind === 26 || kind === 27) return "DirtField";
   if (kind === 32 || kind === 33) return "Desert";
@@ -10,11 +10,11 @@ export function rpgMakerBattleback1ForKind(kind: number): string {
   if (kind === 40 || kind === 41) return "Snowfield";
   if (kind === 42) return "Clouds";
   if (kind === 4 || kind === 5) return "PoisonSwamp";
-  return "Grassland";
+  return undefined;
 }
 
-/** Stock MV/MZ overworld battle-wall name for one autotile kind. */
-export function rpgMakerBattleback2ForKind(kind: number): string {
+/** Stock MV/MZ overworld battle-wall name for one recognized autotile kind. */
+function battleback2ForKind(kind: number): string | undefined {
   if (kind === 20 || kind === 21) return "Forest";
   if (kind === 22 || kind === 30 || kind === 38) return "Cliff";
   if (kind >= 24 && kind <= 27) return "Wasteland";
@@ -23,8 +23,14 @@ export function rpgMakerBattleback2ForKind(kind: number): string {
   if (kind === 40 || kind === 41) return "Snowfield";
   if (kind === 42) return "Clouds";
   if (kind === 4 || kind === 5) return "PoisonSwamp";
-  return "Grassland";
+  return undefined;
 }
+
+/** Stock public helpers retain the final normal-battleback fallback. */
+export const rpgMakerBattleback1ForKind = (kind: number): string =>
+  battleback1ForKind(kind) ?? "Grassland";
+export const rpgMakerBattleback2ForKind = (kind: number): string =>
+  battleback2ForKind(kind) ?? "Grassland";
 
 export interface RpgMakerBattlebackSelection {
   battleback1Name: string;
@@ -53,9 +59,13 @@ export function resolveRpgMakerBattlebacks(
     return { battleback1Name: "Ship", battleback2Name: "Ship" };
   }
   const index = cell && setting.width && setting.width > 0 ? cell.y * setting.width + cell.x : -1;
-  const kind = setting.autotileKinds?.find((entry) => entry[0] === index)?.[1] ?? -1;
+  const kinds = setting.autotileKinds?.find((entry) => entry[0] === index);
+  const upper = kinds?.[1] ?? -1;
+  // Two-field rows are databases imported before independent layer fallback
+  // was retained. Reuse their selected kind for both layers.
+  const lower = kinds?.[2] ?? upper;
   return {
-    battleback1Name: rpgMakerBattleback1ForKind(kind),
-    battleback2Name: rpgMakerBattleback2ForKind(kind),
+    battleback1Name: battleback1ForKind(upper) ?? battleback1ForKind(lower) ?? "Grassland",
+    battleback2Name: battleback2ForKind(upper) ?? battleback2ForKind(lower) ?? "Grassland",
   };
 }

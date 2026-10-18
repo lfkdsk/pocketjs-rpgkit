@@ -55,6 +55,9 @@ function completeAudio(
   if (restore !== "map" && restore !== "none") {
     throw new Error("battle completion audio.restore: map or none required");
   }
+  if (audio.alreadyStarted !== undefined && audio.alreadyStarted !== true) {
+    throw new Error("battle completion audio.alreadyStarted: true required when present");
+  }
   const cueValue = audio.cue;
   if (cueValue === null || typeof cueValue !== "object" || Array.isArray(cueValue)) {
     throw new Error("battle completion audio.cue: object required");
@@ -77,6 +80,14 @@ function completeAudio(
   }
   if (!Number.isInteger(cue.durationTicks) || (cue.durationTicks as number) <= 0) {
     throw new Error("battle completion audio.cue.durationTicks: positive integer required");
+  }
+
+  if (audio.alreadyStarted === true) return current ? cloneAudioState(current) : {};
+  if (current?.me && current.me.id === cue.id && current.me.volume === volume &&
+      current.me.pitch === pitch && (current.me.pan ?? 0) === pan &&
+      current.me.durationTicks === cue.durationTicks && current.me.positionTicks === 0 &&
+      current.me.leftTicks === cue.durationTicks) {
+    return cloneAudioState(current);
   }
 
   const base = restore === "none"

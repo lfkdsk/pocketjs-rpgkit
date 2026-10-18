@@ -1208,7 +1208,7 @@ describe("actor changes and battle settings", () => {
       { kind: "encounter", disabled: false },
     ]);
     expect(audioCalls).toEqual(["bgm:Battle1", "me:Defeat1"]);
-    for (const code of [132, 133, 139, 283]) expect(only(cov, code)).toBe("Degraded");
+    for (const code of [132, 133, 139, 283]) expect(only(cov, code)).toBe("Native");
     expect(counts(cov, "command", "136")).toMatchObject({ Native: 2 });
   });
 });

@@ -25,6 +25,7 @@ import type {
 import type { Coverage } from "./coverage.ts";
 import { itemId, mapId, switchId, variableId } from "./ids.ts";
 import type {
+  RmAudio,
   RmCommand,
   RmActor,
   RmDamage,
@@ -170,7 +171,7 @@ function equipmentCatalog(
 }
 
 function audioSetting(
-  source: RmProject["system"]["battleBgm"],
+  source: RmAudio | undefined,
   kind: "bgm" | "me",
   resolve?: BattleDatabaseOptions["audio"],
 ): NonNullable<
@@ -204,11 +205,11 @@ function battleMapSettings(rm: RmProject): RpgMakerBattleMapSettings[] {
     };
     if (!specified && overworld) {
       const plane = map.width * map.height;
-      const kinds: [number, number][] = [];
+      const kinds: [number, number, number][] = [];
       for (let index = 0; index < plane; index++) {
         const upper = autotileKind(map.data[plane + index] ?? 0);
-        const kind = upper >= 0 ? upper : autotileKind(map.data[index] ?? 0);
-        if (kind >= 0) kinds.push([index, kind]);
+        const lower = autotileKind(map.data[index] ?? 0);
+        if (upper >= 0 || lower >= 0) kinds.push([index, upper, lower]);
       }
       if (kinds.length > 0) out.autotileKinds = kinds;
     }
@@ -282,6 +283,7 @@ export function convertRpgMakerTroopEffects(
   commands: readonly RmCommand[],
   cov: Coverage,
   animation?: BattleDatabaseOptions["animation"],
+  audio?: BattleDatabaseOptions["audio"],
 ): { effects: RpgMakerTroopPageEffect[]; unsupported: number } {
   const out: RpgMakerTroopPageEffect[] = [];
   let unsupported = 0;
@@ -316,6 +318,37 @@ export function convertRpgMakerTroopEffects(
         }
         continue;
       }
+    }
+    if (command.code === 132 || command.code === 133 || command.code === 139) {
+      const kind = command.code === 132 ? "battleBgm" : command.code === 133 ? "victoryMe" : "defeatMe";
+      out.push({
+        kind,
+        audio: audioSetting(p[0] as RmAudio | undefined, kind === "battleBgm" ? "bgm" : "me", audio),
+      });
+      cov.record("command", command.code, "Native");
+      continue;
+    }
+    if (command.code === 283) {
+      out.push({
+        kind: "battleback",
+        battleback1Name: String(p[0] ?? ""),
+        battleback2Name: String(p[1] ?? ""),
+      });
+      cov.record("command", 283, "Native");
+      continue;
+    }
+    if (command.code === 322) {
+      out.push({
+        kind: "images",
+        actorId: nonNegative(p[0]),
+        characterName: String(p[1] ?? ""),
+        characterIndex: nonNegative(p[2]),
+        faceName: String(p[3] ?? ""),
+        faceIndex: nonNegative(p[4]),
+        battlerName: String(p[5] ?? ""),
+      });
+      cov.record("command", 322, "Native");
+      continue;
     }
     if (command.code === 331) {
       out.push({
@@ -402,6 +435,7 @@ function troopPage(
   troopId: number,
   index: number,
   animation?: BattleDatabaseOptions["animation"],
+  audio?: BattleDatabaseOptions["audio"],
 ): RpgMakerTroopPage {
   const raw = page.conditions;
   const condition: RpgMakerTroopPage["condition"] = {};
@@ -414,7 +448,7 @@ function troopPage(
     condition.actorHp = { actorId: nonNegative(raw.actorId), percent: clamp(raw.actorHp, 0, 100, 100) };
   }
   if (raw?.switchValid) condition.switch = switchId(nonNegative(raw.switchId));
-  const converted = convertRpgMakerTroopEffects(page.list ?? [], cov, animation);
+  const converted = convertRpgMakerTroopEffects(page.list ?? [], cov, animation, audio);
   if (converted.unsupported > 0) {
     cov.record(
       "battle",
@@ -578,7 +612,8 @@ export function importBattleDatabase(
         y: integer(member.y),
         hidden: member.hidden === true,
       })),
-      pages: (troop.pages ?? []).map((page, index) => troopPage(page, cov, troop.id, index, options.animation)),
+      pages: (troop.pages ?? []).map((page, index) =>
+        troopPage(page, cov, troop.id, index, options.animation, options.audio)),
     }];
   });
   const encounters = [...rm.maps.entries()]

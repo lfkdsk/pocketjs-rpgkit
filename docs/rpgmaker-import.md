@@ -88,7 +88,7 @@ for the registrations and their absence behavior.
 ## Support matrix
 
 The static catalogue runs a minimal sample of each independent/head command
-through the real converter. It contains **107 commands**: **95 Native, 9
+through the real converter. It contains **107 commands**: **100 Native, 4
 Degraded, 2 Placeholder and 1 Dropped**. Continuation and branch-marker codes
 such as text lines and battle-result branches are handled with their parent
 but are not separate catalogue rows.
@@ -103,8 +103,8 @@ but are not separate catalogue rows.
 
 | Handling | Command codes and reason |
 | --- | --- |
-| Native | The 95 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. |
-| Degraded | **132, 133, 139** retain battle BGM/victory/defeat settings, but the current battle presentation does not play them; **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **283** retains battleback names without painting them; **322** retains actor-image data without updating live map/face/side-view art; **337** retains a numeric animation id without a cooked animation id. |
+| Native | The 100 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. Battle presentation commands still require the imported media and opt-in battle integration to be visible or audible. |
+| Degraded | **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **322** persists actor images and updates imported faces live, but does not wire map walking images or draw side-view battlers in the front-view battle. |
 | Placeholder | **356, 357** (MV/MZ plugin commands) need a per-plugin port. |
 | Dropped | **261** (Play Movie) has no video host. |
 
@@ -123,9 +123,9 @@ rows:
 
 | Fixture | Uses | Native | Degraded | Placeholder | Dropped | Native share |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Hollow MZ | 124 | 112 | 10 | 2 | 0 | 90.3% |
-| Stage MV | 61 | 51 | 9 | 1 | 0 | 83.6% |
-| Combined | 185 | 163 | 19 | 3 | 0 | 88.1% |
+| Hollow MZ | 128 | 115 | 11 | 2 | 0 | 89.8% |
+| Stage MV | 61 | 52 | 8 | 1 | 0 | 85.2% |
+| Combined | 189 | 167 | 19 | 3 | 0 | 88.4% |
 
 Every conversion computes per-project counts; CLI and desktop imports write
 them to `coverage.md` and `coverage.json`. Those counts, not the static minimal
@@ -159,9 +159,28 @@ arithmetic, comparisons, boolean operators, ternaries and allowlisted `Math`
 members. A rejected formula is reported Degraded and uses
 `Math.max(0, a.atk * 4 - b.def * 2)`.
 
-The current module is deterministic front-view battle. Side-view projects are
-shown in front view; battle audio settings and battleback names persist but are
-not presented; numeric battle-animation ids need cooked art; and the trait
+The current module is deterministic front-view battle. It resolves explicit
+map battlebacks, map-local Change Battle Background overrides and stock
+overworld terrain/vehicle defaults, then paints battleback1 below battleback2.
+Imported battle BGM takes priority over the walking or vehicle mix; a dynamic
+Change Battle BGM is used by subsequent battles. Victory/defeat ME starts when
+the result message opens and plays over the restored map BGM/BGS, while escape
+simply restores that held mix.
+
+Cooked legacy MV animations play for Show Battle Animation and skill/item use
+at four saved reference ticks per frame, with SE, target or screen flash and
+target hide timings. Actor-target requests mirror their cooked cells as in the
+upstream legacy renderer. MZ records which retain the legacy MV frame shape use
+the same path; Effekseer entries remain dropped. Cell `add`, `multiply` and
+`screen` blends are baked into the animation frames. They cannot retain their
+blend interaction with the eventual scene, and flashes are deterministic
+source-over approximations because PocketJS has no portable colour matrix.
+Change Actor Images faces update live in the MZ battle-status HUD and in the
+optional MV/MZ formation/menu surface. MV front-view battle status remains
+text-only, matching its upstream layout.
+
+The feature remains Partial: side-view projects are shown in front view, map
+walking art and side-view battlers do not update live, and the bounded trait
 subset is listed under [known limitations](#known-limitations).
 
 ## Import-time safe Script subset
@@ -202,14 +221,18 @@ omitted.
 - Browser Studio produces an editable maps/images pack, not the complete
   CLI/desktop directory. It drops audio and does not persist `battle.json`,
   manifests or coverage files in the pack.
-- RPG Maker battle is partial front-view battle. Battle audio/battlebacks,
-  side-view layout, some traits and uncooked numeric animations are retained
-  as data or reported, not fully presented.
-- Tone, window colour, MZ cursor/font controls and some animation blend/flash
-  behavior are portable approximations. MZ Effekseer animations are dropped.
+- RPG Maker battle is partial front-view battle. Two-layer battlebacks, battle
+  audio and cooked legacy MV animations are presented by the opt-in reference
+  integration, but side-view layout, some traits and animations which cannot
+  be cooked remain limited. MZ Effekseer animations are dropped.
+- Tone, window colour, MZ cursor/font controls and animation blend/flash
+  behavior are portable approximations. `add`, `multiply` and `screen` cells
+  are baked into each animation frame, while target/screen flashes use
+  deterministic source-over overlays because PocketJS has no colour matrix.
 - Actor event simulation does not cover every later predicate/presentation
-  effect. In particular, changed actor art is not drawn live and some actor
-  conditions still use imported initial facts.
+  effect. Changed imported faces do update the battle HUD and optional
+  formation/menu surface, but map walking art and side-view battlers do not;
+  some actor conditions still use imported initial facts.
 - Maps larger than **256 × 256** are rejected. Ladder, bush and counter special
   behavior is not simulated; their passage remains.
 - RTP and third-party assets retain their own licenses. The importer reads the
@@ -432,14 +455,14 @@ for that project, to `coverage.md`.
 | 127 | Change Weapons | MV/MZ | Native |  | equipment (equipped copies) and item changes by variable |
 | 128 | Change Armors | MV/MZ | Native |  | equipment (equipped copies) and item changes by variable |
 | 129 | Change Party Member | MV/MZ | Native |  | a party roster (the importer keeps one switch per actor) |
-| 132 | Change Battle BGM | MV/MZ | Degraded | battle BGM setting persists, but the current battle audio lifecycle does not play it | battle audio settings in the battle setup |
-| 133 | Change Victory ME | MV/MZ | Degraded | victory ME setting persists, but the current battle audio lifecycle does not play it | battle audio settings in the battle setup |
+| 132 | Change Battle BGM | MV/MZ | Native |  | battle audio settings in the battle setup |
+| 133 | Change Victory ME | MV/MZ | Native |  | battle audio settings in the battle setup |
 | 134 | Change Save Access | MV/MZ | Native |  |  |
 | 135 | Change Menu Access | MV/MZ | Native |  |  |
 | 136 | Change Encounter | MV/MZ | Native |  | random encounters |
 | 137 | Change Formation Access | MV/MZ | Degraded | formation reorders followers and battle slots but keeps the walking leader fixed |  |
 | 138 | Change Window Color | MV/MZ | Degraded | window tone is retained exactly and projected onto the kit theme palette |  |
-| 139 | Change Defeat ME | MV/MZ | Degraded | defeat ME setting persists, but the current battle audio lifecycle does not play it | battle audio settings in the battle setup |
+| 139 | Change Defeat ME | MV/MZ | Native |  | battle audio settings in the battle setup |
 | 140 | Change Vehicle BGM | MV/MZ | Native |  |  |
 | 201 | Transfer Player | MV/MZ | Native |  | a white transfer fade colour |
 | 202 | Set Vehicle Location | MV/MZ | Native |  |  |
@@ -477,7 +500,7 @@ for that project, to `coverage.md`.
 | 261 | Play Movie | MV/MZ | Dropped |  | video playback |
 | 281 | Change Map Name Display | MV/MZ | Native |  | the screenPresentation capability |
 | 282 | Change Tileset | MV/MZ | Native |  |  |
-| 283 | Change Battle Background | MV/MZ | Degraded | battle background names persist, but battle backgrounds are not presented | battle backgrounds in the battle setup |
+| 283 | Change Battle Background | MV/MZ | Native |  | battle backgrounds in the battle setup |
 | 284 | Change Parallax | MV/MZ | Native |  |  |
 | 285 | Get Location Info | MV/MZ | Native |  |  |
 | 301 | Battle Processing | MV/MZ | Native |  |  |
@@ -495,7 +518,7 @@ for that project, to `coverage.md`.
 | 319 | Change Equipment | MV/MZ | Native |  | equipment slots |
 | 320 | Change Name | MV/MZ | Native |  | runtime names for actors other than actor 1 |
 | 321 | Change Class | MV/MZ | Native |  | actor classes |
-| 322 | Change Actor Images | MV/MZ | Degraded | actor images persist, but map, face, and side-view presentation do not update live | per-actor walking/face/battler images (the player sprite can change via appearance) |
+| 322 | Change Actor Images | MV/MZ | Degraded | actor images persist and imported faces can update live, but map walking images are not wired and front-view battle does not draw side-view battlers | per-actor walking/face/battler images (the player sprite can change via appearance) |
 | 323 | Change Vehicle Image | MV/MZ | Native |  |  |
 | 324 | Change Nickname | MV/MZ | Native |  | actor profiles |
 | 325 | Change Profile | MV/MZ | Native |  | actor profiles |
@@ -506,7 +529,7 @@ for that project, to `coverage.md`.
 | 334 | Enemy Recover All | MV/MZ | Native |  | an RPG Maker battle system |
 | 335 | Enemy Appear | MV/MZ | Native |  | an RPG Maker battle system |
 | 336 | Enemy Transform | MV/MZ | Native |  | an RPG Maker battle system |
-| 337 | Show Battle Animation | MV/MZ | Degraded | battle animation keeps its numeric database id because no cooked animation id is available | an RPG Maker battle system |
+| 337 | Show Battle Animation | MV/MZ | Native |  | an RPG Maker battle system |
 | 339 | Force Action | MV/MZ | Native |  | an RPG Maker battle system |
 | 340 | Abort Battle | MV/MZ | Native |  | an RPG Maker battle system |
 | 351 | Open Menu Screen | MV/MZ | Native |  |  |
@@ -626,12 +649,24 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   map encounters, and the common turn/enemy-HP/switch troop-page conditions.
   Troop pages additionally execute enemy HP/MP/TP/state changes, recovery,
   appear, transform, forced actions and abort in source order. MV side-view
-  projects intentionally render in front view. Numeric Show Battle Animation
-  ids are retained but cannot paint without a cooked animation id. Battle
-  BGM/ME records and per-map battleback names persist, but the current battle
-  presentation does not consume them. Encounter Disable works; Encounter Half
-  halves progress, ships halve it again, boats keep the walking rate and
-  airships freeze the saved countdown. Stock bush doubling is not modelled.
+  projects intentionally render in front view. Explicit and changed
+  battlebacks plus terrain/vehicle defaults render as stock-ordered
+  battleback1/battleback2 layers. Imported battle BGM overrides the walking or
+  vehicle mix, Change Battle BGM updates later battles, and victory/defeat ME
+  starts with the result message over the restored map BGM/BGS. Troop pages can
+  change later battle BGM, the current result ME, later same-visit battlebacks,
+  and actor images without repainting or restarting the current battle scene.
+  Cooked legacy MV Show Battle Animation
+  and skill/item animations advance every four reference ticks with SE,
+  target/screen flash, target hide and upstream actor-target mirroring; MZ
+  legacy-shaped entries work, but Effekseer entries are dropped. Non-normal cell blends are baked into the
+  frames and flashes use deterministic source-over approximations. Imported
+  Change Actor Images faces update the MZ battle-status HUD and the optional
+  MV/MZ formation/menu surface, while MV front-view status remains text-only
+  and map walking art and side-view battlers remain limited.
+  Encounter Disable works; Encounter Half halves progress, ships halve it
+  again, boats keep the walking rate and airships freeze the saved countdown.
+  Stock bush doubling is not modelled.
   One targeting edge intentionally differs from stock: MV/MZ can resolve an
   explicitly indexed hidden-but-living troop member because hiding does not
   change `isAlive()`, while the kit redirects that explicit target to the first

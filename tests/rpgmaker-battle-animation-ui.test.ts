@@ -51,13 +51,20 @@ describe("RPG Maker battle animation placement", () => {
     [1, { x: 110, y: 60 }],
     [2, { x: 110, y: 90 }],
   ] as const)("position %i anchors to target head/centre/feet", (position, expected) => {
-    expect(battleAnimationPlacement({ position, originOffsetX: -10, originOffsetY: -20 }, viewport, target))
+    expect(battleAnimationPlacement({ position, originOffsetX: -10, originOffsetY: -20, w: 40 }, viewport, target))
       .toEqual(expected);
   });
 
   test("position 3 anchors to viewport centre and ignores a target", () => {
-    expect(battleAnimationPlacement({ position: 3, originOffsetX: -10, originOffsetY: -20 }, viewport, target))
+    expect(battleAnimationPlacement({ position: 3, originOffsetX: -10, originOffsetY: -20, w: 40 }, viewport, target))
       .toEqual({ x: 230, y: 116 });
+  });
+
+  test("request-level mirror reflects asymmetric cooked bounds around the animation origin", () => {
+    const animation = { position: 1 as const, originOffsetX: -10, originOffsetY: -20, w: 40 };
+    expect(battleAnimationPlacement(animation, viewport, target, true)).toEqual({ x: 90, y: 60 });
+    expect(battleAnimationPlacement({ ...animation, position: 3 }, viewport, target, true))
+      .toEqual({ x: 210, y: 116 });
   });
 });
 
@@ -92,16 +99,36 @@ describe("RPG Maker battle animation timing approximations", () => {
     const start = battleAnimationPresentationAt(timed, 20, 20);
     const targetLater = battleAnimationPresentationAt(timed, 20, 22);
     expect(start.targetFlash).toMatchObject({ color: "#ffe0a0" });
-    expect(start.targetFlash!.opacity).toBeCloseTo(128 / 255 * (128 / 255));
+    expect(start.targetFlash!.opacity).toBeCloseTo(128 / 255 * (128 / 255) * 4 / 5);
     expect(targetLater.targetFlash!.opacity).toBeLessThan(start.targetFlash!.opacity);
 
     const secondFrame = battleAnimationPresentationAt(timed, 20, 24);
     expect(secondFrame.screenFlash).toMatchObject({ color: "#a0d0ff" });
-    expect(secondFrame.screenFlash!.opacity).toBeCloseTo(120 / 255);
+    expect(secondFrame.screenFlash!.opacity).toBeCloseTo(120 / 255 * 2 / 3);
     expect(secondFrame.hideTargets).toBe(true);
-    expect(battleAnimationPresentationAt(timed, 20, 25).hideTargets).toBe(true);
+    expect(battleAnimationPresentationAt(timed, 20, 25).hideTargets).toBe(false);
     expect(battleAnimationPresentationAt(timed, 20, 26).hideTargets).toBe(false);
     expect(battleAnimationPresentationAt(timed, 20, 27).screenFlash).toBeUndefined();
+  });
+
+  test("one-tick flash and hide timings finish before the first painted sample", () => {
+    const oneTick: RpgMakerBattleAnimationAsset = {
+      ...BASE,
+      timings: [{
+        frame: 0,
+        flash: {
+          scope: "target",
+          color: { r: 255, g: 255, b: 255, a: 255 },
+          intensity: 255,
+          duration: 1 / 60,
+        },
+        hide: { duration: 1 / 60 },
+      }],
+    };
+    expect(battleAnimationPresentationAt(oneTick, 10, 10)).toEqual({
+      frameIndex: 0,
+      hideTargets: false,
+    });
   });
 
   test("timing windows expire independently of a retained reducer marker", () => {

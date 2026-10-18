@@ -211,6 +211,8 @@ export type RpgMakerTroopPageEffect =
   | { kind: "enemyTransform"; index: number; enemyId: number }
   | { kind: "battleAnimation"; index: number; animationId: number; entireTroop: boolean; animation?: string }
   | { kind: "forceAction"; side: "enemy" | "actor"; subject: number; skillId: number; target: number }
+  | Exclude<RpgMakerSettingCommand, { kind: "encounter" }>
+  | Extract<RpgMakerActorCommand, { kind: "images" }>
   | { kind: "abort" };
 
 export interface RpgMakerTroopPageCondition {
@@ -300,9 +302,10 @@ export interface RpgMakerBattleMapSettings {
   overworld?: boolean;
   /** Source map width for row-major terrain lookup. */
   width?: number;
-  /** Sparse row-major autotile kinds selected from z=1 then z=0. Missing
-   * cells have kind -1 and therefore use Grassland/Grassland. */
-  autotileKinds?: [index: number, kind: number][];
+  /** Sparse row-major z=1/z=0 autotile kinds. Each battleback layer tries
+   * the upper kind independently, then the lower kind, then Grassland.
+   * `lowerKind` is absent only in databases imported before that distinction. */
+  autotileKinds?: [index: number, upperKind: number, lowerKind?: number][];
 }
 
 export interface RpgMakerBattleDatabase {
@@ -393,8 +396,8 @@ export interface RpgMakerBattleRuntime {
     remaining: number;
   } | null;
   settings?: RpgMakerBattleSettings;
-  /** Change Battle Background is map-local in RPG Maker. Keys are imported
-   * map ids so a transfer restores the destination map's authored default. */
+  /** Compatibility-only Change Battle Background values written by releases
+   * before command 283 moved to the engine's per-map-visit local.* bank. */
   mapSettings?: Record<string, { battleback1Name: string; battleback2Name: string }>;
 }
 
@@ -488,6 +491,10 @@ export interface RpgMakerBattleState {
   messageStart: number;
   afterMessage: RpgMakerBattleAfterMessage;
   result: "win" | "lose" | "escape" | null;
+  /** First reducer tick of a victory/defeat result message. While equal to
+   * nowTick the audio projector publishes the one-shot map-restore + ME
+   * transition; later ticks retain the durable session audio cursor. */
+  resultAudioStartTick?: number;
   /** Most recently committed HP change, used only for state-driven tweening. */
   effect: {
     side: "actor" | "enemy";
@@ -517,6 +524,9 @@ export interface RpgMakerBattleState {
     /** Omitted in older saves and troop-command markers, where enemy is the
      * backwards-compatible default. */
     targetSide?: "actor" | "enemy";
+    /** Stock mirrors request-level legacy animations aimed at actors. The
+     * authored per-cell mirror is already baked into each cooked frame. */
+    mirror?: true;
     startTick: number;
   } | null;
   ext: JsonValue;

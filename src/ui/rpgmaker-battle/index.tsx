@@ -221,12 +221,13 @@ function FrontViewScene(
   };
   const animationPlacements = () => {
     const asset = animationAsset();
+    const mirror = animationMarker()?.mirror === true;
     if (!asset) return [];
     if (asset.position === 3) {
-      return [{ ...battleAnimationPlacement(asset, props), key: "screen" }];
+      return [{ ...battleAnimationPlacement(asset, props, undefined, mirror), key: "screen" }];
     }
     return animationTargetRects().map((target) => ({
-      ...battleAnimationPlacement(asset, props, target),
+      ...battleAnimationPlacement(asset, props, target, mirror),
       key: `${target.side}-${target.index}`,
     }));
   };
@@ -242,7 +243,9 @@ function FrontViewScene(
   const targetFlash = () => animationPresentation()?.targetFlash;
   const screenFlash = () => animationPresentation()?.screenFlash;
   const actorFace = (actor: Readonly<RpgMakerBattleCombatant>): string | undefined =>
-    rpgMakerFaceSource(options.faces, actor.actor?.faceName, actor.actor?.faceIndex);
+    db.flavor === "MZ"
+      ? rpgMakerFaceSource(options.faces, actor.actor?.faceName, actor.actor?.faceIndex)
+      : undefined;
   const ActorHudLines = (lineProps: {
     actor: RpgMakerBattleCombatant;
     index: number;
@@ -427,6 +430,7 @@ function FrontViewScene(
                 translateY: placement.y,
                 width: animationAsset()!.w,
                 height: animationAsset()!.h,
+                scaleX: animationMarker()?.mirror === true ? -1 : 1,
               }}
               debugName={`rpgmaker-battle-animation-frame-${placement.key}`}
             />

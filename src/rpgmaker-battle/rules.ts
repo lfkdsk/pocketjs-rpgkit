@@ -50,6 +50,9 @@ export const RPGMAKER_ENCOUNTER_DUE_VARIABLE = "rmi-encounter-due";
 export const RPGMAKER_ACTOR_CHANGE_CALL = "rpgmaker.actorChange";
 export const RPGMAKER_BATTLE_SETTING_CALL = "rpgmaker.battleSetting";
 
+const RPGMAKER_BATTLEBACK1_VARIABLE = "local.rpgmaker.battleback1";
+const RPGMAKER_BATTLEBACK2_VARIABLE = "local.rpgmaker.battleback2";
+
 interface RpgMakerBattleSetup {
   system?: unknown;
   databaseHash?: unknown;
@@ -75,11 +78,20 @@ export interface RpgMakerBattleRulesOptions {
   /** Optional cooked numeric animation timelines. Omit them when no battle
    * renderer/audio integration needs legacy animation timing SE. */
   animations?: readonly AnimationDef[];
+  /** Cooked legacy animation placement by id. Positions 0..2 create one
+   * upstream animation instance (and timing SE) per target; 3 is one shared
+   * screen animation. Omitted ids use target-centre semantics. */
+  animationPositions?: Readonly<Record<string, 0 | 1 | 2 | 3>>;
 }
 
 interface BattleSeTiming {
   tick: number;
   cue: BattleCue;
+}
+
+interface BattleSeSchedule {
+  timings: readonly BattleSeTiming[];
+  perTarget: boolean;
 }
 
 type BattleAnimationMarker = NonNullable<RpgMakerBattleState["battleAnimation"]>;
@@ -89,6 +101,7 @@ function sameBattleAnimation(
   right: Readonly<BattleAnimationMarker> | null | undefined,
 ): boolean {
   if (!left || !right || left.id !== right.id || left.startTick !== right.startTick ||
+      (left.mirror === true) !== (right.mirror === true) ||
       (left.targetSide ?? "enemy") !== (right.targetSide ?? "enemy") ||
       left.targets.length !== right.targets.length) return false;
   return left.targets.every((target, index) => target === right.targets[index]);
@@ -99,9 +112,10 @@ function sameBattleAnimation(
 function battleCueProjector(
   db: RpgMakerBattleDatabase,
   animations: readonly AnimationDef[] | undefined,
+  positions: Readonly<Record<string, 0 | 1 | 2 | 3>> | undefined,
 ): BattleRules["cues"] | undefined {
   if (!animations || animations.length === 0) return undefined;
-  const schedules = new Map<string, readonly BattleSeTiming[]>();
+  const schedules = new Map<string, BattleSeSchedule>();
   for (const animation of animations) {
     const timings: BattleSeTiming[] = [];
     for (const timing of compileAnim(animation, 60).timings ?? []) {
@@ -116,7 +130,12 @@ function battleCueProjector(
         },
       });
     }
-    if (timings.length > 0) schedules.set(animation.id, timings);
+    if (timings.length > 0) {
+      schedules.set(animation.id, {
+        timings,
+        perTarget: positions?.[animation.id] !== 3,
+      });
+    }
   }
   if (schedules.size === 0) return undefined;
 
@@ -126,11 +145,14 @@ function battleCueProjector(
     throughTick: number,
     out: BattleCue[],
   ): void => {
-    for (const timing of schedules.get(marker.id) ?? []) {
+    const schedule = schedules.get(marker.id);
+    if (!schedule) return;
+    const repeats = schedule.perTarget ? Math.max(1, marker.targets.length) : 1;
+    for (const timing of schedule.timings) {
       const dueTick = marker.startTick + timing.tick;
       if (dueTick <= afterTick) continue;
       if (dueTick > throughTick) break;
-      out.push(timing.cue);
+      for (let index = 0; index < repeats; index++) out.push(timing.cue);
     }
   };
 
@@ -181,9 +203,12 @@ function projectedBattleAudio(settings: Readonly<RpgMakerBattleSettings> | undef
   };
 }
 
-function completionAudio(state: Readonly<RpgMakerBattleState>): BattleCompletionAudio | undefined {
-  if (state.result !== "win" && state.result !== "lose") return undefined;
-  const source = state.result === "win" ? state.settings?.victoryMe : state.settings?.defeatMe;
+function resultAudio(
+  state: Readonly<RpgMakerBattleState>,
+  result: "win" | "lose",
+  alreadyStarted = false,
+): BattleCompletionAudio | undefined {
+  const source = result === "win" ? state.settings?.victoryMe : state.settings?.defeatMe;
   const durationTicks = source?.durationTicks;
   if (!source?.id || typeof durationTicks !== "number" || !Number.isSafeInteger(durationTicks) || durationTicks <= 0) {
     return undefined;
@@ -196,8 +221,20 @@ function completionAudio(state: Readonly<RpgMakerBattleState>): BattleCompletion
       pan: clamp(Math.round(source.pan), -100, 100),
       durationTicks,
     },
-    ...(state.result === "lose" && !state.canLose ? { restore: "none" as const } : {}),
+    ...(result === "lose" && !state.canLose ? { restore: "none" as const } : {}),
+    ...(alreadyStarted ? { alreadyStarted: true as const } : {}),
   };
+}
+
+function completionAudio(state: Readonly<RpgMakerBattleState>): BattleCompletionAudio | undefined {
+  if (state.result !== "win" && state.result !== "lose") return undefined;
+  return resultAudio(state, state.result, state.resultAudioStartTick !== undefined);
+}
+
+function activeResultAudio(state: Readonly<RpgMakerBattleState>): BattleCompletionAudio | undefined {
+  if (state.resultAudioStartTick !== state.nowTick) return undefined;
+  if (state.afterMessage !== "win" && state.afterMessage !== "lose") return undefined;
+  return resultAudio(state, state.afterMessage);
 }
 
 export function rpgMakerBattleState(value: JsonValue): Readonly<RpgMakerBattleState> {
@@ -930,13 +967,6 @@ function battleSettingHandler(db: RpgMakerBattleDatabase) {
     const settings = runtime.settings ??= { ...(db.settings ?? {}) };
     if (command.kind === "battleBgm" || command.kind === "victoryMe" || command.kind === "defeatMe") {
       settings[command.kind] = { ...command.audio };
-    } else if (command.kind === "battleback") {
-      if (context.mapId) {
-        (runtime.mapSettings ??= {})[context.mapId] = {
-          battleback1Name: command.battleback1Name,
-          battleback2Name: command.battleback2Name,
-        };
-      }
     } else if (command.kind === "encounter") {
       settings.encounterDisabled = command.disabled;
       const mapId = context.mapId;
@@ -945,7 +975,14 @@ function battleSettingHandler(db: RpgMakerBattleDatabase) {
     }
     return {
       ext: withRuntime(root, runtime),
-      ...(command.kind === "encounter" ? { writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 } } : {}),
+      ...(command.kind === "battleback" ? {
+        writes: {
+          [RPGMAKER_BATTLEBACK1_VARIABLE]: command.battleback1Name,
+          [RPGMAKER_BATTLEBACK2_VARIABLE]: command.battleback2Name,
+        },
+      } : command.kind === "encounter" ? {
+        writes: { [RPGMAKER_ENCOUNTER_DUE_VARIABLE]: 0 },
+      } : {}),
     };
   };
 }
@@ -1365,6 +1402,45 @@ function applyTroopPageEffect(
         targetSide: "enemy",
         startTick: state.nowTick,
       };
+    }
+    return [];
+  }
+  if (effect.kind === "battleBgm" || effect.kind === "victoryMe" || effect.kind === "defeatMe") {
+    const { root, runtime } = runtimeRoot(db, state.ext);
+    const settings = runtime.settings ??= { ...(db.settings ?? {}) };
+    settings[effect.kind] = { ...effect.audio };
+    state.ext = withRuntime(root, runtime);
+    // Change Battle BGM affects the next battle, not the already-playing
+    // track. Victory/defeat ME is read only when this battle settles, so its
+    // current result cue does observe an in-battle command.
+    if (effect.kind !== "battleBgm") {
+      (state.settings ??= {})[effect.kind] = { ...effect.audio };
+    }
+    return [];
+  }
+  if (effect.kind === "battleback") {
+    // Stock mutates Game_Map while the already-created battle sprites keep
+    // their textures. Returning these local.* writes at completion makes the
+    // next battle in this map visit observe the command; map entry clears it.
+    state.variables[RPGMAKER_BATTLEBACK1_VARIABLE] = effect.battleback1Name;
+    state.variables[RPGMAKER_BATTLEBACK2_VARIABLE] = effect.battleback2Name;
+    return [];
+  }
+  if (effect.kind === "images") {
+    const { root, runtime } = runtimeRoot(db, state.ext);
+    const actor = ensureRuntimeActor(db, runtime, effect.actorId);
+    if (!actor) return [];
+    actor.characterName = effect.characterName;
+    actor.characterIndex = effect.characterIndex;
+    actor.faceName = effect.faceName;
+    actor.faceIndex = effect.faceIndex;
+    actor.battlerName = effect.battlerName;
+    state.ext = withRuntime(root, runtime);
+    const combatant = state.actors.find((entry) => entry.databaseId === effect.actorId);
+    if (combatant?.actor) {
+      combatant.actor.faceName = effect.faceName;
+      combatant.actor.faceIndex = effect.faceIndex;
+      combatant.actor.battlerName = effect.battlerName;
     }
     return [];
   }
@@ -2017,10 +2093,12 @@ function resolveAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleState, a
     animation = equipmentFor(db, firstWeapon)?.animation;
   }
   if (animation) {
+    const targetSide = targets[0]!.side;
     state.battleAnimation = {
       id: animation,
-      targetSide: targets[0]!.side,
+      targetSide,
       targets: targets.map((target) => target.index),
+      ...(targetSide === "actor" ? { mirror: true } : {}),
       startTick: state.nowTick,
     };
   }
@@ -2123,10 +2201,12 @@ function beginVictory(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): v
     }
   }
   rows.push(...levels);
+  state.resultAudioStartTick = state.nowTick;
   showMessage(state, rows.join("\n"), "win");
 }
 
 function beginDefeat(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
+  state.resultAudioStartTick = state.nowTick;
   showMessage(state, formatTerm(db, db.terms.messages.defeat, state.actors[0]?.name ?? ""), "lose");
 }
 
@@ -2269,17 +2349,24 @@ function changed<T extends number | string | boolean>(
 function effectiveBattleSettings(
   db: RpgMakerBattleDatabase,
   runtime: RpgMakerBattleRuntime,
-  context: Pick<ExtensionReadContext, "mapId" | "playerCell" | "vehicle">,
+  context: Pick<ExtensionReadContext, "mapId" | "playerCell" | "vehicle" | "variables">,
 ): RpgMakerBattleSettings {
   const mapId = context.mapId;
   const authored = mapId ? db.mapSettings?.find((entry) => entry.map === mapId) : undefined;
-  const override = mapId ? runtime.mapSettings?.[mapId] : undefined;
+  // Releases before map-visit variables stored command 283 overrides by map
+  // id. Read those saves as a fallback, but new commands write local.* so
+  // Session.enterMap clears them on every same-map or cross-map entry.
+  const legacyOverride = mapId ? runtime.mapSettings?.[mapId] : undefined;
   const battleback = resolveRpgMakerBattlebacks(authored, context.playerCell, context.vehicle);
+  const battleback1Name = context.variables[RPGMAKER_BATTLEBACK1_VARIABLE];
+  const battleback2Name = context.variables[RPGMAKER_BATTLEBACK2_VARIABLE];
   return {
     ...(runtime.settings ?? db.settings ?? {}),
     battleback1Name: battleback.battleback1Name,
     battleback2Name: battleback.battleback2Name,
-    ...(override ?? {}),
+    ...(legacyOverride ?? {}),
+    ...(typeof battleback1Name === "string" ? { battleback1Name } : {}),
+    ...(typeof battleback2Name === "string" ? { battleback2Name } : {}),
   };
 }
 
@@ -2591,6 +2678,9 @@ function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): 
   if (value.result !== null && value.result !== "win" && value.result !== "lose" && value.result !== "escape") {
     return "result is unknown";
   }
+  if (value.resultAudioStartTick !== undefined && !savedInteger(value.resultAudioStartTick)) {
+    return "resultAudioStartTick must be a non-negative integer";
+  }
   if (typeof value.message !== "string") return "message must be a string";
   for (const side of ["actors", "enemies"] as const) {
     if (!Array.isArray(value[side]) || value[side].length === 0) return `${side} must be a non-empty array`;
@@ -2632,6 +2722,7 @@ function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): 
     if (!savedStateRecord(value.battleAnimation) || typeof value.battleAnimation.id !== "string" ||
         !Array.isArray(value.battleAnimation.targets) || !value.battleAnimation.targets.every(savedInteger) ||
         !savedInteger(value.battleAnimation.startTick) ||
+        (value.battleAnimation.mirror !== undefined && value.battleAnimation.mirror !== true) ||
         (value.battleAnimation.targetSide !== undefined && value.battleAnimation.targetSide !== "actor" &&
           value.battleAnimation.targetSide !== "enemy")) return "battleAnimation is malformed";
   }
@@ -2668,7 +2759,7 @@ export function createRpgMakerBattleRules(
   db: RpgMakerBattleDatabase,
   options: RpgMakerBattleRulesOptions = {},
 ): BattleRules {
-  const cues = battleCueProjector(db, options.animations);
+  const cues = battleCueProjector(db, options.animations, options.animationPositions);
   return {
     effects: battleEffectsRuntime,
     ...(cues ? { cues } : {}),
@@ -2694,6 +2785,7 @@ export function createRpgMakerBattleRules(
     audio(raw) {
       const state = rpgMakerBattleState(raw);
       if (state.format !== "rpgmaker-battle-state/v1" || state.databaseHash !== db.databaseHash) return undefined;
+      if (state.resultAudioStartTick !== undefined) return activeResultAudio(state);
       return projectedBattleAudio(state.settings);
     },
     done(raw): BattleCompletion | null {

@@ -1100,20 +1100,16 @@ function battleAudioSetting(a: RmAudio | undefined, kind: "bgm" | "me", st: Stat
 
 function emitBattleSetting(code: number, p: readonly unknown[], st: State): Command[] {
   let command: RpgMakerSettingCommand;
-  let disposition: Disposition = "Degraded";
-  let reason: string | undefined;
+  const disposition: Disposition = "Native";
   switch (code) {
     case 132:
       command = { kind: "battleBgm", audio: battleAudioSetting(p[0] as RmAudio | undefined, "bgm", st) };
-      reason = "battle BGM setting persists, but the current battle audio lifecycle does not play it";
       break;
     case 133:
       command = { kind: "victoryMe", audio: battleAudioSetting(p[0] as RmAudio | undefined, "me", st) };
-      reason = "victory ME setting persists, but the current battle audio lifecycle does not play it";
       break;
     case 139:
       command = { kind: "defeatMe", audio: battleAudioSetting(p[0] as RmAudio | undefined, "me", st) };
-      reason = "defeat ME setting persists, but the current battle audio lifecycle does not play it";
       break;
     case 283:
       command = {
@@ -1121,17 +1117,15 @@ function emitBattleSetting(code: number, p: readonly unknown[], st: State): Comm
         battleback1Name: String(p[0] ?? ""),
         battleback2Name: String(p[1] ?? ""),
       };
-      reason = "battle background names persist, but battle backgrounds are not presented";
       break;
     case 136:
       command = { kind: "encounter", disabled: p[0] === 0 };
-      disposition = "Native";
       break;
     default:
       rec(st, code, "Dropped", "unknown battle setting command");
       return [];
   }
-  rec(st, code, disposition, reason);
+  rec(st, code, disposition);
   return settingExt(command);
 }
 

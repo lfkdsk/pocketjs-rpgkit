@@ -67,6 +67,10 @@ export interface BattleCompletionAudio {
    * the cue (and is the default). `none` discards every prior track, leaving
    * silence after the cue finishes. */
   restore?: "map" | "none";
+  /** The reducer already projected this cue while its result message was
+   * open. Completion must preserve the current ME/base-mix cursor instead of
+   * installing the cue again. */
+  alreadyStarted?: true;
 }
 
 /** One battle-owned BGM intent. Battle music deliberately owns only BGM:
@@ -79,6 +83,11 @@ export interface BattleAudio {
     pan?: number;
   } | null;
 }
+
+/** Active-battle audio may either select its owned BGM or publish the
+ * one-frame result transition that restores the suspended map mix under an
+ * ME. */
+export type BattleAudioProjection = BattleAudio | BattleCompletionAudio;
 
 /** One transient battle-owned SE emitted on a reducer-state edge. Unlike
  * `BattleAudio`, cues are one-shot frame outputs: the session validates and
@@ -138,12 +147,13 @@ export interface BattleRules {
     previousState: JsonValue,
     state: JsonValue,
   ): readonly BattleCue[] | undefined;
-  /** Optional desired BGM projection for a battle that returned
-   * `BattleStart.audio`. The engine samples it after each step, changes the
-   * owned track only when id/volume/pitch/pan differ, and still restores the
-   * suspended map mix on completion. `undefined` keeps the current battle
-   * track; `{ bgm: null }` selects silence. */
-  audio?(state: JsonValue): BattleAudio | undefined;
+  /** Optional audio projection for a battle that returned
+   * `BattleStart.audio`. A BGM intent is sampled after each step and changes
+   * the owned track only when its parameters differ. A completion-audio
+   * shape is a one-frame transition that restores the suspended map mix and
+   * starts its ME while the result message is still open. `undefined` keeps
+   * the current audio state; `{ bgm: null }` selects silence. */
+  audio?(state: JsonValue): BattleAudioProjection | undefined;
   done(state: JsonValue): BattleCompletion | null;
 }
 

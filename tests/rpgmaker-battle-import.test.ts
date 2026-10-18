@@ -31,6 +31,17 @@ function battleSetupHashes(value: unknown): string[] {
   return own.concat(Object.values(record).flatMap(battleSetupHashes));
 }
 
+function extensionArgs(value: unknown, call: string): Record<string, unknown>[] {
+  if (Array.isArray(value)) return value.flatMap((entry) => extensionArgs(entry, call));
+  if (value === null || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const own = record.op === "ext" && record.call === call && record.args !== null &&
+      typeof record.args === "object" && !Array.isArray(record.args)
+    ? [record.args as Record<string, unknown>]
+    : [];
+  return own.concat(Object.values(record).flatMap((entry) => extensionArgs(entry, call)));
+}
+
 describe("RPG Maker battle database import", () => {
   test("the static command catalogue measures battle-only commands through the troop converter", () => {
     const rows = new Map(staticCommandTable().map((row) => [row.code, row]));
@@ -205,6 +216,65 @@ describe("RPG Maker battle database import", () => {
     expect(imageCommand.reasons.join(" ")).toContain("map walking images are not wired");
   });
 
+  test("converts battle-event presentation commands and finalizes their ME clocks", async () => {
+    const project = loadRmProject(HOLLOW);
+    const page = project.troops[1]!.pages[0]!;
+    page.conditions.turnValid = true;
+    page.list.splice(page.list.length - 1, 0,
+      { code: 132, indent: 0, parameters: [{ name: "hollow-battle", volume: 73, pitch: 101, pan: -4 }] },
+      { code: 133, indent: 0, parameters: [{ name: "hollow-victory", volume: 84, pitch: 100, pan: 5 }] },
+      { code: 139, indent: 0, parameters: [{ name: "hollow-defeat", volume: 72, pitch: 100, pan: -6 }] },
+      { code: 283, indent: 0, parameters: ["Grassland", "HollowWall"] },
+      { code: 322, indent: 0, parameters: [1, "People", 0, "WrenFaces", 5, "WrenBattlerAlt"] },
+    );
+    const mapList = project.maps.get(1)!.events.find((event) => event !== null)!.pages[0]!.list;
+    mapList.splice(mapList.length - 1, 0, {
+      code: 133,
+      indent: 0,
+      parameters: [{ name: "hollow-victory", volume: 81, pitch: 100, pan: 2 }],
+    });
+
+    const result = await importRmProject(project);
+    const effects = result.battle.troops[0]!.pages[0]!.effects;
+    expect(effects).toContainEqual({
+      kind: "battleBgm",
+      audio: { name: "hollow-battle", volume: 73, pitch: 101, pan: -4, id: "bgm-hollow-battle" },
+    });
+    expect(effects).toContainEqual({
+      kind: "battleback", battleback1Name: "Grassland", battleback2Name: "HollowWall",
+    });
+    expect(effects).toContainEqual({
+      kind: "images", actorId: 1, characterName: "People", characterIndex: 0,
+      faceName: "WrenFaces", faceIndex: 5, battlerName: "WrenBattlerAlt",
+    });
+    const fanfare = result.audioMedia.find((entry) => entry.kind === "me" && entry.name === "hollow-victory");
+    if (!fanfare || fanfare.status !== "success") throw new Error("hollow victory fixture did not convert");
+    expect(effects).toContainEqual({
+      kind: "victoryMe",
+      audio: {
+        name: "hollow-victory", volume: 84, pitch: 100, pan: 5,
+        id: "me-hollow-victory", durationTicks: fanfare.durationTicks,
+      },
+    });
+    const defeat = result.audioMedia.find((entry) => entry.kind === "me" && entry.name === "hollow-defeat");
+    if (!defeat || defeat.status !== "success") throw new Error("hollow defeat fixture did not convert");
+    expect(effects).toContainEqual({
+      kind: "defeatMe",
+      audio: {
+        name: "hollow-defeat", volume: 72, pitch: 100, pan: -6,
+        id: "me-hollow-defeat", durationTicks: defeat.durationTicks,
+      },
+    });
+    const mapSetting = extensionArgs(result.project, "rpgmaker.battleSetting")
+      .find((args) => args.kind === "victoryMe" && (args.audio as Record<string, unknown>)?.volume === 81);
+    expect(mapSetting?.audio).toMatchObject({
+      id: "me-hollow-victory", durationTicks: fanfare.durationTicks,
+    });
+    for (const code of [132, 133, 139, 283, 322]) {
+      expect(result.cov.list("command").find((row) => row.key === String(code))?.counts.Native).toBeGreaterThan(0);
+    }
+  });
+
   test("binds cooked legacy animations to MZ skills and items by record shape", async () => {
     const project = loadRmProject(HOLLOW);
     project.skills[1]!.animationId = 1;
@@ -320,6 +390,10 @@ describe("RPG Maker battle database import", () => {
       map: "map001", specified: false, overworld: true, width: 10,
       battleback1Name: "", battleback2Name: "", autotileKinds: [[32, 34]],
     }, { x: 2, y: 3 }, null)).toEqual({ battleback1Name: "Lava1", battleback2Name: "Lava" });
+    expect(resolveRpgMakerBattlebacks({
+      map: "map001", specified: false, overworld: true, width: 10,
+      battleback1Name: "", battleback2Name: "", autotileKinds: [[32, 20, 34]],
+    }, { x: 2, y: 3 }, null)).toEqual({ battleback1Name: "Lava1", battleback2Name: "Forest" });
     expect(resolveRpgMakerBattlebacks({
       map: "map001", specified: false, overworld: true, width: 10,
       battleback1Name: "", battleback2Name: "", autotileKinds: [[32, 34]],

@@ -1962,6 +1962,11 @@ function battleAudioState(value: unknown): AudioState | null | undefined {
   };
 }
 
+function battleResultAudioProjection(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    Object.prototype.hasOwnProperty.call(value, "cue");
+}
+
 /** A battle audio projection is a desired track, not a replay command. Keep
  * the existing position when the projected id/volume/pitch/pan already match. */
 function battleAudioMatches(
@@ -2409,10 +2414,18 @@ function advanceBattleScene(
   // battle must have claimed audio at start, and the rules must publish a
   // projection. Projects using neither retain the old zero-call hot path.
   if (scene.returnAudio !== undefined && rules.audio !== undefined) {
-    const projected = battleAudioState(rules.audio(scene.state));
-    if (projected !== undefined && !battleAudioMatches(s.interp.audio, projected)) {
-      if (projected === null) delete s.interp.audio;
-      else s.interp.audio = projected;
+    const intent = rules.audio(scene.state);
+    if (battleResultAudioProjection(intent)) {
+      if (rules.effects === undefined) {
+        throw new Error("battle result audio requires a battle effects runtime");
+      }
+      s.interp.audio = rules.effects.completeAudio(intent, scene.returnAudio, s.interp.audio);
+    } else {
+      const projected = battleAudioState(intent);
+      if (projected !== undefined && !battleAudioMatches(s.interp.audio, projected)) {
+        if (projected === null) delete s.interp.audio;
+        else s.interp.audio = projected;
+      }
     }
   }
   const completion = rules.done(scene.state);

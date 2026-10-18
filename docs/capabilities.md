@@ -71,9 +71,20 @@ import { rpgMakerChoiceTextRuntime } from "pocket-rpgkit/ui/rpgmaker-text";
 import { krm2ScreenPresentation } from "pocket-rpgkit/ui/krm2";
 import { createRpgMakerBattleRules } from "pocket-rpgkit/rpgmaker-battle";
 import { createRpgMakerBattleScene } from "pocket-rpgkit/ui/rpgmaker-battle";
+import { createRpgMakerFormation } from "pocket-rpgkit/ui/rpgmaker-formation";
 
-const battle = createRpgMakerBattleRules(database);
-const BattleScene = createRpgMakerBattleScene(database, battleArt);
+const battle = createRpgMakerBattleRules(database, {
+  animations: project.animations,
+  animationPositions: battleArt.animationPositions,
+});
+const BattleScene = createRpgMakerBattleScene(database, {
+  enemyImages: battleArt.enemyImages,
+  faces: battleArt.faces,
+  battlebacks1: battleArt.battlebacks1,
+  battlebacks2: battleArt.battlebacks2,
+  animations: battleArt.animations,
+});
+const formation = createRpgMakerFormation({ faces: battleArt.faces });
 
 <GameView
   project={project}
@@ -83,6 +94,7 @@ const BattleScene = createRpgMakerBattleScene(database, battleArt);
   screenPresentation={krm2ScreenPresentation}
   battle={battle}
   battleScene={BattleScene}
+  overlay={formation}
 />
 ```
 
