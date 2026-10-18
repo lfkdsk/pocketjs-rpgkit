@@ -7,7 +7,7 @@ import type {
   ExtensionCommandResult,
   ExtensionReadContext,
 } from "../src/engine/extensions.ts";
-import type { JsonValue } from "../src/engine/types.ts";
+import type { AnimationDef, JsonValue } from "../src/engine/types.ts";
 import {
   augmentRpgMakerBattleExtensions,
   createRpgMakerBattleExtensions,
@@ -1440,6 +1440,105 @@ describe("RPG Maker battle rules", () => {
     for (let i = 0; i < 20; i++) at20 = fold(rules, at20, {}, 3);
     expect(at20).toEqual(at60);
     expect(confirm(rules, at20)).toEqual(confirm(rules, at60));
+  });
+
+  test("animation timing SE projects every crossed edge at 60/30/20 Hz", () => {
+    const db = cloneDb();
+    const animation: AnimationDef = {
+      id: "anim-timed",
+      sheet: "unused.png",
+      count: 5,
+      frameDuration: 1 / 60,
+      timings: [
+        { frame: 0, se: { id: "start", volume: 80, pitch: 110, pan: -25 } },
+        { frame: 1, se: { id: "one-a" } },
+        { frame: 1, se: { id: "one-b", volume: 70 } },
+        { frame: 2, se: { id: "two" } },
+        { frame: 3, se: { id: "three" } },
+        { frame: 4, se: { id: "tail" } },
+      ],
+    };
+    const rules = createRpgMakerBattleRules(db, { animations: [animation] });
+    expect(rules.cues).toBeDefined();
+    const initial = rules.start({}, setup(db), 1, CONTEXT)!.state;
+
+    const marked = (nowTick: number, startTick: number): JsonValue => {
+      const next = mutable(initial);
+      next.nowTick = nowTick;
+      next.battleAnimation = {
+        id: animation.id,
+        targets: [0],
+        targetSide: "enemy",
+        startTick,
+      };
+      return json(next);
+    };
+    const ids = (cues: ReturnType<NonNullable<BattleRules["cues"]>>): string[] =>
+      cues?.map((cue) => cue.id) ?? [];
+    const sequence = (ticks: 1 | 2 | 3): string[] => {
+      const out: string[] = [];
+      const started = marked(ticks, ticks);
+      out.push(...ids(rules.cues!(initial, started)));
+      let previous = started;
+      for (let elapsed = 0; elapsed < 5; elapsed += ticks) {
+        const next = marked(ticks + Math.min(5, elapsed + ticks), ticks);
+        out.push(...ids(rules.cues!(previous, next)));
+        previous = next;
+      }
+      return out;
+    };
+
+    const expected = ["start", "one-a", "one-b", "two", "three", "tail"];
+    expect(sequence(1)).toEqual(expected);
+    expect(sequence(2)).toEqual(expected);
+    expect(sequence(3)).toEqual(expected);
+    expect(rules.cues!(initial, marked(1, 1))).toEqual([
+      { id: "start", volume: 80, pitch: 110, pan: -25 },
+    ]);
+
+    // The old marker is scanned through the transition tick before a new
+    // same-id marker emits its independent frame-zero edge.
+    const oldMarker = marked(3, 0);
+    const replacement = marked(4, 4);
+    expect(ids(rules.cues!(oldMarker, replacement))).toEqual(["tail", "start"]);
+  });
+
+  test("animation timing SE survives save/load without replaying past edges", () => {
+    const db = cloneDb();
+    const animation: AnimationDef = {
+      id: "anim-save",
+      sheet: "unused.png",
+      count: 4,
+      frameDuration: 1 / 60,
+      timings: [
+        { frame: 0, se: { id: "start" } },
+        { frame: 2, se: { id: "middle" } },
+      ],
+    };
+    const rules = createRpgMakerBattleRules(db, { animations: [animation] });
+    const initial = rules.start({}, setup(db), 1, CONTEXT)!.state;
+    const marked = (nowTick: number): JsonValue => {
+      const next = mutable(initial);
+      next.nowTick = nowTick;
+      next.battleAnimation = { id: animation.id, targets: [0], startTick: 1 };
+      return json(next);
+    };
+    const before = rules.save!.decode(rules.save!.encode(marked(2)));
+    expect(rules.cues!(before, marked(3))).toEqual([
+      { id: "middle", volume: 100, pitch: 100 },
+    ]);
+    const after = rules.save!.decode(rules.save!.encode(marked(3)));
+    expect(rules.cues!(after, marked(4))).toBeUndefined();
+    // Rewinding to the pre-edge reducer state defines a new forward
+    // traversal, so the same deterministic edge is projected once again.
+    expect(rules.cues!(before, marked(3))).toEqual([
+      { id: "middle", volume: 100, pitch: 100 },
+    ]);
+
+    const silentRules = createRpgMakerBattleRules(db, {
+      animations: [{ ...animation, timings: [{ frame: 1, hide: { duration: 1 / 60 } }] }],
+    });
+    expect(silentRules.cues).toBeUndefined();
   });
 
   test("database identity mismatch fails before publishing battle state", () => {

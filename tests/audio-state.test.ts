@@ -11,6 +11,7 @@ import {
 import { AttractController } from "../src/engine/attract.ts";
 import { createSession, startSession, stepSession, type SessionState } from "../src/engine/session.ts";
 import { createSessionSnapshot, decodeEnvelopeText, encodeEnvelope } from "../src/engine/save.ts";
+import { restoreSessionSnapshot } from "../src/engine/save-restore.ts";
 import type {
   BattleCompletion,
   BattleRules,
@@ -460,6 +461,136 @@ describe("session audio clock", () => {
     reference.startPlay();
     for (let i = 0; i < rewound.length; i++) reference.step(0);
     expect(rewound.state.interp.audio).toEqual(reference.state.interp.audio);
+  });
+});
+
+describe("battle one-shot cue projection", () => {
+  test("protects mutable previous state, preserves cue order, and keeps silent projects cold", () => {
+    let projections = 0;
+    const rules: BattleRules = {
+      start: (ext) => ({ ext, state: { tick: 0 } }),
+      step(raw, _input, ticks) {
+        const state = raw as { tick: number };
+        state.tick += ticks;
+        return raw;
+      },
+      cues(previousRaw, nextRaw) {
+        projections++;
+        const previous = previousRaw as { tick: number };
+        const next = nextRaw as { tick: number };
+        return previous.tick === 0 && next.tick > 0
+          ? [
+            { id: "first", volume: 80, pitch: 110, pan: -20 },
+            { id: "second" },
+          ]
+          : undefined;
+      },
+      done: () => null,
+    };
+    const p = battleProject([]);
+    const session = createSession(p, 60, { battle: rules });
+    const entered = sessionStep(session, startSession(p, session), true);
+    expect(projections).toBe(0);
+    const fired = sessionStep(session, entered);
+    expect(projections).toBe(1);
+    expect(fired.interp.cues).toEqual([
+      { name: "first", volume: 80, pitch: 110, pan: -20 },
+      { name: "second", volume: 100, pitch: 100 },
+    ]);
+    expect((entered.scene!.state as { tick: number }).tick).toBe(0);
+    expect((fired.scene!.state as { tick: number }).tick).toBe(1);
+    const drained = sessionStep(session, fired);
+    expect(drained.interp.cues).toEqual([]);
+
+    // At low host rates, a map command can emit before opening the battle
+    // while the remaining reference ticks advance its new scene. Preserve
+    // map-before-battle ordering when both lists share one host frame.
+    const mergedProject = battleProject([{ op: "playSe", id: "map-cue" }]);
+    const mergedSession = createSession(mergedProject, 20, { battle: rules });
+    const merged = sessionStep(mergedSession, startSession(mergedProject, mergedSession), true);
+    expect(merged.interp.cues).toEqual([
+      { name: "map-cue", volume: 100, pitch: 100 },
+      { name: "first", volume: 80, pitch: 110, pan: -20 },
+      { name: "second", volume: 100, pitch: 100 },
+    ]);
+
+    const noAudio = structuredClone(p);
+    delete noAudio.audio;
+    const coldSession = createSession(noAudio, 60, { battle: rules });
+    const coldEntered = sessionStep(coldSession, startSession(noAudio, coldSession), true);
+    const callsBefore = projections;
+    sessionStep(coldSession, coldEntered);
+    expect(projections).toBe(callsBefore);
+  });
+
+  for (const [value, message] of [
+    [null, "array required"],
+    [[{}], "id: non-empty string"],
+    [[{ id: "x", volume: 101 }], "volume: integer 0..100"],
+    [[{ id: "x", pitch: 49 }], "pitch: integer 50..150"],
+    [[{ id: "x", pan: -101 }], "pan: integer -100..100"],
+  ] as const) {
+    test(`rejects malformed projected cues: ${message}`, () => {
+      const rules: BattleRules = {
+        start: (ext) => ({ ext, state: { tick: 0 } }),
+        step: () => ({ tick: 1 }),
+        cues: (() => value) as BattleRules["cues"],
+        done: () => null,
+      };
+      const p = battleProject([]);
+      const session = createSession(p, 60, { battle: rules });
+      const entered = sessionStep(session, startSession(p, session), true);
+      expect(() => sessionStep(session, entered)).toThrow(message);
+    });
+  }
+
+  test("save/load drains historical cues while a rewind can cross the edge again", () => {
+    const rules: BattleRules = {
+      save: {
+        encode: (state) => structuredClone(state),
+        decode: (state) => structuredClone(state),
+      },
+      start: (ext) => ({ ext, state: { tick: 0 } }),
+      step(raw) {
+        return { tick: (raw as { tick: number }).tick + 1 };
+      },
+      cues(previousRaw, nextRaw) {
+        const previous = (previousRaw as { tick: number }).tick;
+        const next = (nextRaw as { tick: number }).tick;
+        return previous < 2 && next >= 2 ? [{ id: "edge" }] : undefined;
+      },
+      done: () => null,
+    };
+    const p = battleProject([]);
+    const session = createSession(p, 60, { battle: rules });
+    const entered = sessionStep(session, startSession(p, session), true);
+    const before = sessionStep(session, entered);
+    const restoredBefore = restoreSessionSnapshot(session, createSessionSnapshot(session, before, 0));
+    expect(restoredBefore.interp.cues).toEqual([]);
+    const crossed = sessionStep(session, restoredBefore);
+    expect(crossed.interp.cues).toEqual([{ name: "edge", volume: 100, pitch: 100 }]);
+
+    const restoredAfter = restoreSessionSnapshot(session, createSessionSnapshot(session, crossed, 0));
+    expect(restoredAfter.interp.cues).toEqual([]);
+    expect(sessionStep(session, restoredAfter).interp.cues).toEqual([]);
+
+    const rewound = new AttractController(p, [], {
+      hz: 60,
+      attractEnabled: false,
+      rewindSeconds: 1 / 60,
+      keyframeIntervalFrames: 1,
+      battle: rules,
+    });
+    rewound.startPlay();
+    rewound.step(0x2000); // enter battle
+    rewound.step(0); // tick 1
+    rewound.step(0); // tick 2, cue edge
+    expect(rewound.state.interp.cues).toEqual([{ name: "edge", volume: 100, pitch: 100 }]);
+    rewound.step(0x0100); // rewind to tick 1
+    expect((rewound.state.scene!.state as { tick: number }).tick).toBe(1);
+    expect(rewound.state.interp.cues).toEqual([]);
+    rewound.step(0); // cross tick 2 on the new forward worldline
+    expect(rewound.state.interp.cues).toEqual([{ name: "edge", volume: 100, pitch: 100 }]);
   });
 });
 

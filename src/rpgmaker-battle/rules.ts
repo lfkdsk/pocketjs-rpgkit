@@ -3,16 +3,17 @@
 // and animation clock lives in this JSON state so replay/rewind are exact.
 
 import { deepClone } from "../engine/clone.ts";
-import { rngNext } from "../engine/interpreter.ts";
+import { compileAnim, rngNext } from "../engine/interpreter.ts";
 import type {
   BattleAudio,
   BattleCompletion,
   BattleCompletionAudio,
+  BattleCue,
   BattleRules,
 } from "../engine/battle.ts";
 import type { ExtensionOptions, ExtensionReadContext } from "../engine/extensions.ts";
 import type { ExtensionCommandContext, ExtensionCommandResult } from "../engine/extensions.ts";
-import type { JsonValue, VariableValue } from "../engine/types.ts";
+import type { AnimationDef, JsonValue, VariableValue } from "../engine/types.ts";
 import { evaluateRpgMakerDamageBase, type RpgMakerFormulaBattler } from "./formula.ts";
 import { resolveRpgMakerBattlebacks } from "./battleback.ts";
 import type {
@@ -68,6 +69,94 @@ const integer = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
 
 const clamp = (value: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, value));
+
+export interface RpgMakerBattleRulesOptions {
+  /** Optional cooked numeric animation timelines. Omit them when no battle
+   * renderer/audio integration needs legacy animation timing SE. */
+  animations?: readonly AnimationDef[];
+}
+
+interface BattleSeTiming {
+  tick: number;
+  cue: BattleCue;
+}
+
+type BattleAnimationMarker = NonNullable<RpgMakerBattleState["battleAnimation"]>;
+
+function sameBattleAnimation(
+  left: Readonly<BattleAnimationMarker> | null | undefined,
+  right: Readonly<BattleAnimationMarker> | null | undefined,
+): boolean {
+  if (!left || !right || left.id !== right.id || left.startTick !== right.startTick ||
+      (left.targetSide ?? "enemy") !== (right.targetSide ?? "enemy") ||
+      left.targets.length !== right.targets.length) return false;
+  return left.targets.every((target, index) => target === right.targets[index]);
+}
+
+/** Compile legacy numeric animation timing SE once, then project only the
+ * schedule edges crossed by each reducer step. */
+function battleCueProjector(
+  db: RpgMakerBattleDatabase,
+  animations: readonly AnimationDef[] | undefined,
+): BattleRules["cues"] | undefined {
+  if (!animations || animations.length === 0) return undefined;
+  const schedules = new Map<string, readonly BattleSeTiming[]>();
+  for (const animation of animations) {
+    const timings: BattleSeTiming[] = [];
+    for (const timing of compileAnim(animation, 60).timings ?? []) {
+      if (!timing.se || "stop" in timing.se) continue;
+      timings.push({
+        tick: timing.tick,
+        cue: {
+          id: timing.se.name,
+          volume: timing.se.volume,
+          pitch: timing.se.pitch,
+          ...(timing.se.pan !== undefined ? { pan: timing.se.pan } : {}),
+        },
+      });
+    }
+    if (timings.length > 0) schedules.set(animation.id, timings);
+  }
+  if (schedules.size === 0) return undefined;
+
+  const emitCrossed = (
+    marker: Readonly<BattleAnimationMarker>,
+    afterTick: number,
+    throughTick: number,
+    out: BattleCue[],
+  ): void => {
+    for (const timing of schedules.get(marker.id) ?? []) {
+      const dueTick = marker.startTick + timing.tick;
+      if (dueTick <= afterTick) continue;
+      if (dueTick > throughTick) break;
+      out.push(timing.cue);
+    }
+  };
+
+  return (previousRaw, nextRaw) => {
+    if (previousRaw === null || typeof previousRaw !== "object" || Array.isArray(previousRaw) ||
+        nextRaw === null || typeof nextRaw !== "object" || Array.isArray(nextRaw)) return undefined;
+    const previous = rpgMakerBattleState(previousRaw);
+    const next = rpgMakerBattleState(nextRaw);
+    if (previous.format !== "rpgmaker-battle-state/v1" || next.format !== "rpgmaker-battle-state/v1" ||
+        previous.databaseHash !== db.databaseHash || next.databaseHash !== db.databaseHash ||
+        !Number.isSafeInteger(previous.nowTick) || !Number.isSafeInteger(next.nowTick) ||
+        next.nowTick < previous.nowTick) return undefined;
+
+    const out: BattleCue[] = [];
+    // A low-Hz step may cross several old-animation timings before the same
+    // reducer transition installs its replacement marker.
+    if (previous.battleAnimation) {
+      emitCrossed(previous.battleAnimation, previous.nowTick, next.nowTick, out);
+    }
+    if (next.battleAnimation && !sameBattleAnimation(previous.battleAnimation, next.battleAnimation)) {
+      // New markers are committed at next.nowTick. Their tick-zero SE is an
+      // edge, even when the new animation has the same logical id.
+      emitCrossed(next.battleAnimation, next.battleAnimation.startTick - 1, next.battleAnimation.startTick, out);
+    }
+    return out.length > 0 ? out : undefined;
+  };
+}
 
 const itemKey = (id: number): string => `item${String(id).padStart(3, "0")}`;
 const switchKey = (id: number): string => `s${String(id).padStart(3, "0")}`;
@@ -2574,8 +2663,13 @@ function decodeSavedBattleState(db: RpgMakerBattleDatabase, saved: JsonValue): J
   return deepClone(saved);
 }
 
-export function createRpgMakerBattleRules(db: RpgMakerBattleDatabase): BattleRules {
+export function createRpgMakerBattleRules(
+  db: RpgMakerBattleDatabase,
+  options: RpgMakerBattleRulesOptions = {},
+): BattleRules {
+  const cues = battleCueProjector(db, options.animations);
   return {
+    ...(cues ? { cues } : {}),
     save: {
       encode: (state) => decodeSavedBattleState(db, state),
       decode: (saved) => decodeSavedBattleState(db, saved),

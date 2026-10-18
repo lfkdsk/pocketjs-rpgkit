@@ -79,6 +79,16 @@ export interface BattleAudio {
   } | null;
 }
 
+/** One transient battle-owned SE emitted on a reducer-state edge. Unlike
+ * `BattleAudio`, cues are one-shot frame outputs: the session validates and
+ * appends them to the interpreter's ordinary per-frame cue sequence. */
+export interface BattleCue {
+  id: string;
+  volume?: number;
+  pitch?: number;
+  pan?: number;
+}
+
 export interface BattleStart {
   state: JsonValue;
   ext: JsonValue;
@@ -116,6 +126,14 @@ export interface BattleRules {
   /** One host-frame fold. ticks is the number of fixed 60 Hz reference ticks
    * represented by that host frame (1/2/3/15 at 60/30/20/4 Hz). */
   step(state: JsonValue, input: Readonly<BattleInput>, ticks: number): JsonValue;
+  /** Optional one-shot projection across a completed step. The engine
+   * preserves `previousState` even for rules that mutate their step input,
+   * validates the result, and never calls this hook for projects without an
+   * audio manifest. Omit it to retain the zero-clone/zero-call hot path. */
+  cues?(
+    previousState: JsonValue,
+    state: JsonValue,
+  ): readonly BattleCue[] | undefined;
   /** Optional desired BGM projection for a battle that returned
    * `BattleStart.audio`. The engine samples it after each step, changes the
    * owned track only when id/volume/pitch/pan differ, and still restores the

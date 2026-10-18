@@ -1959,6 +1959,46 @@ function battleAudioState(value: unknown): AudioState | null | undefined {
   };
 }
 
+/** Validate game-owned transient battle cues and compile them into the
+ * interpreter's established one-shot sequence. */
+function battleSoundCues(value: unknown): SoundCue[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("battle cues: array required");
+  }
+  if (value.length === 0) return undefined;
+  const out: SoundCue[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry = value[index];
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`battle cue ${index}: object required`);
+    }
+    const cue = entry as Record<string, unknown>;
+    if (typeof cue.id !== "string" || cue.id.length === 0) {
+      throw new Error(`battle cue ${index}.id: non-empty string required`);
+    }
+    const volume = cue.volume ?? 100;
+    if (!Number.isInteger(volume) || (volume as number) < 0 || (volume as number) > 100) {
+      throw new Error(`battle cue ${index}.volume: integer 0..100 required`);
+    }
+    const pitch = cue.pitch ?? 100;
+    if (!Number.isInteger(pitch) || (pitch as number) < 50 || (pitch as number) > 150) {
+      throw new Error(`battle cue ${index}.pitch: integer 50..150 required`);
+    }
+    const pan = cue.pan ?? 0;
+    if (!Number.isInteger(pan) || (pan as number) < -100 || (pan as number) > 100) {
+      throw new Error(`battle cue ${index}.pan: integer -100..100 required`);
+    }
+    out.push({
+      name: cue.id,
+      volume: volume as number,
+      pitch: pitch as number,
+      ...((pan as number) !== 0 ? { pan: pan as number } : {}),
+    });
+  }
+  return out;
+}
+
 /** A battle audio projection is a desired track, not a replay command. Keep
  * the existing position when the projected id/volume/pitch/pan already match. */
 function battleAudioMatches(
@@ -2432,19 +2472,28 @@ function advanceBattleScene(
   input: Readonly<BattleInput>,
   ticks: number,
   frozenShared = false,
-): void {
+): SoundCue[] | undefined {
   const scene = s.scene;
   const rules = sess.battle;
   if (!scene || scene.kind !== "battle" || !rules) return;
+  let frameCues: SoundCue[] | undefined;
   if (ticks > 0) {
+    // Edge projections need a true pre-step snapshot. Pay for that snapshot
+    // only when one-shot battle audio is both supported by the project and
+    // published by these rules. Immutable rules already promise to preserve
+    // every published state, so their previous value can remain shared.
+    const previous = sess.audioCues && rules.cues !== undefined
+      ? rules.immutableState ? scene.state : deepClone(scene.state)
+      : undefined;
     // stepSession already cloned the scene for this frame, so the rules own
     // an isolated working value even if an implementation mutates its input
-    // despite the pure-reducer contract. Cloning again before and after the
-    // call only traversed large battle payloads without adding isolation.
+    // despite the pure-reducer contract. Rules without an edge projector keep
+    // the historical no-extra-clone path.
     const stepped = rules.step(scene.state, input, ticks);
     if (rules.immutableState) assertImmutableJsonValue(stepped, "battle step state");
     else assertJsonValue(stepped, "battle step state");
     scene.state = stepped;
+    if (previous !== undefined) frameCues = battleSoundCues(rules.cues!(previous, stepped));
   }
   // Dynamic battle BGM remains reducer state. Sampling is opt-in twice: the
   // battle must have claimed audio at start, and the rules must publish a
@@ -2457,7 +2506,7 @@ function advanceBattleScene(
     }
   }
   const completion = rules.done(scene.state);
-  if (completion === null) return;
+  if (completion === null) return frameCues;
   if (typeof completion !== "object" || Array.isArray(completion)) {
     throw new Error("battle done: BattleCompletion object or null required");
   }
@@ -2554,6 +2603,7 @@ function advanceBattleScene(
   s.interp = continueBattle(s.interp, scene.fiber, completion.result, transfer);
   s.sw = s.interp.sw;
   s.scene = null;
+  return frameCues;
 }
 
 /** Per-reference-tick direction resolver for a view-local walking route
@@ -2740,13 +2790,17 @@ function foldSession(
   if (s.scene) {
     const sceneTicks = sceneAtFrameStart ? ticks : Math.max(0, ticks - sceneStartedAt);
     if (s.scene.kind === "battle") {
-      advanceBattleScene(
+      const battleCues = advanceBattleScene(
         sess,
         s,
         sceneAtFrameStart ? battleInput(input) : battleInput(NO_MAP_INPUT),
         sceneTicks,
         frozen,
       );
+      if (battleCues !== undefined) {
+        if (frameCues === undefined) frameCues = battleCues;
+        else frameCues.push(...battleCues);
+      }
     } else {
       advanceGameScene(
         sess,
