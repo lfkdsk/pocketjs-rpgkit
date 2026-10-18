@@ -481,7 +481,7 @@ describe("rpgmaker-import: output", () => {
     expect(stage.cov.list("command").find((r) => r.key === "356")!.counts.Placeholder).toBe(1);
   });
 
-  test("MV Show Animation cooks a deterministic mapAnim sheet, cues, target, and wait flag", () => {
+  test("legacy MV/MZ animations retain deterministic scoped timing windows and SE", async () => {
     expect(stage.project.animations?.find((entry) => entry.id === "anim001")).toEqual({
       id: "anim001",
       sheet: "animations/anim001.png",
@@ -492,10 +492,21 @@ describe("rpgmaker-import: output", () => {
       frameDuration: 4 / 60,
       loop: false,
       timings: [
-        { frame: 0, se: { id: "se-stage-puff", volume: 70, pitch: 100 } },
+        {
+          frame: 0,
+          se: { id: "se-stage-puff", volume: 70, pitch: 100 },
+          flash: {
+            scope: "target",
+            color: { r: 255, g: 255, b: 224, a: 255 },
+            intensity: 160,
+            duration: 1 / 3,
+          },
+        },
+        { frame: 1, hide: { duration: 2 / 15 } },
         {
           frame: 2,
           flash: {
+            scope: "screen",
             color: { r: 160, g: 208, b: 255, a: 255 },
             intensity: 120,
             duration: 0.2,
@@ -507,6 +518,9 @@ describe("rpgmaker-import: output", () => {
       sheet: "animations/anim001.png",
       offsetX: -22,
       offsetY: -24,
+      originOffsetX: -30,
+      originOffsetY: -32,
+      position: 1,
     });
     const sheet = stage.images.get("animations/anim001.png")!;
     expect(sheet).toMatchObject({ width: 108, height: 108 });
@@ -525,8 +539,45 @@ describe("rpgmaker-import: output", () => {
       wait: true,
     });
     const coverage = stage.cov.list("command").find((row) => row.key === "212")!;
-    expect(coverage.counts.Degraded).toBe(1);
-    expect(coverage.reasons).toContain("target-local animation flash is omitted");
+    expect(coverage.counts.Native).toBe(1);
+    expect(coverage.counts.Degraded).toBe(0);
+
+    const mzTimings = hollow.project.animations?.find((entry) => entry.id === "anim001")?.timings;
+    expect(mzTimings).toEqual([
+      {
+        frame: 0,
+        se: { id: "se-hollow-spark", volume: 72, pitch: 115, pan: 18 },
+        flash: {
+          scope: "target",
+          color: { r: 255, g: 255, b: 224, a: 255 },
+          intensity: 160,
+          duration: 1 / 3,
+        },
+      },
+      { frame: 1, hide: { duration: 2 / 15 } },
+      {
+        frame: 2,
+        flash: {
+          scope: "screen",
+          color: { r: 160, g: 208, b: 255, a: 255 },
+          intensity: 120,
+          duration: 0.2,
+        },
+      },
+    ]);
+    expect(hollow.audioMedia.find((record) => record.key === "se/hollow-spark")).toMatchObject({
+      status: "success", sourceFormat: "ogg", sourceBytes: 5545,
+      outputBytes: 28144, channels: 2, sampleRate: 44_100, frames: 34_816,
+    });
+
+    const missingSe = stage.audioMedia.find((record) => record.key === "se/stage-puff");
+    expect(missingSe).toMatchObject({ status: "missing", sourceBytes: 0, outputBytes: 0 });
+    expect(stage.cov.list("audio").find((row) => row.key === "se/stage-puff")?.counts.Dropped).toBe(1);
+    expect(stage.warnings).toContain("se/stage-puff: audio/se/stage-puff.ogg or .m4a was not found");
+
+    const again = await importRmProject(loadRmProject(STAGE));
+    expect(JSON.stringify(again.project.animations?.find((entry) => entry.id === "anim001")?.timings))
+      .toBe(JSON.stringify(stage.project.animations?.find((entry) => entry.id === "anim001")?.timings));
   });
 
   test("IconSet item cells and map/change parallaxes retain authored pixels and metadata", () => {

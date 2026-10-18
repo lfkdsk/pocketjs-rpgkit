@@ -799,19 +799,20 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
               : {}),
           };
         }
-        if (timing.flashScope === 2) {
+        if (timing.flashScope === 1 || timing.flashScope === 2) {
           const color = Array.isArray(timing.flashColor) ? timing.flashColor : [255, 255, 255, 0];
           entry.flash = {
+            scope: timing.flashScope === 1 ? "target" : "screen",
             color: { r: byteNumber(color[0]), g: byteNumber(color[1]), b: byteNumber(color[2]), a: 255 },
             intensity: byteNumber(color[3]),
             duration: Math.max(0, Number(timing.flashDuration) || 0) * MV_ANIMATION_RATE / 60,
           };
-        } else if (timing.flashScope === 1) {
-          degradations.push("target-local animation flash is omitted");
         } else if (timing.flashScope === 3) {
-          degradations.push("temporary target hiding is omitted");
+          entry.hide = {
+            duration: Math.max(0, Number(timing.flashDuration) || 0) * MV_ANIMATION_RATE / 60,
+          };
         }
-        if (entry.se || entry.flash) timings.push(entry);
+        if (entry.se || entry.flash || entry.hide) timings.push(entry);
       }
       const uniqueDegradations = [...new Set(degradations)];
       for (const warning of cooked.warnings) warnings.push(`${id}: ${warning}`);

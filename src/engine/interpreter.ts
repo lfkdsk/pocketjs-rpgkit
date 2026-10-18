@@ -2372,9 +2372,12 @@ export function compileAnim(def: AnimationDef, hz: number = TICK_HZ): CompiledAn
           name: timing.se.id,
           volume: timing.se.volume ?? 100,
           pitch: timing.se.pitch ?? 100,
+          ...(timing.se.pan !== undefined && timing.se.pan !== 0 ? { pan: timing.se.pan } : {}),
         };
       }
-      if (timing.flash) {
+      // Target-local flashes are retained for renderers that own selected
+      // target pixels; the map interpreter only owns the screen plane.
+      if (timing.flash && timing.flash.scope !== "target") {
         out.flash = {
           color: { ...timing.flash.color },
           intensity: timing.flash.intensity,

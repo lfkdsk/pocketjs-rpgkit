@@ -18,7 +18,7 @@ const TIMED: AnimationDef = {
   count: 4,
   frameDuration: 4 / 60,
   timings: [
-    { frame: 0, se: { id: "start", volume: 80, pitch: 110 } },
+    { frame: 0, se: { id: "start", volume: 80, pitch: 110, pan: -30 } },
     {
       frame: 2,
       se: { id: "middle" },
@@ -80,6 +80,38 @@ describe("KRM3V animation timing", () => {
     expect(validateSchema(schema, fixture().project)).toEqual([]);
   });
 
+  test("map compilation emits only screen-scoped flashes", () => {
+    const scoped: AnimationDef = {
+      ...TIMED,
+      timings: [
+        {
+          frame: 0,
+          flash: {
+            scope: "target",
+            color: { r: 255, g: 224, b: 160, a: 255 },
+            intensity: 144,
+            duration: 5 / 60,
+          },
+        },
+        { frame: 1, hide: { duration: 2 / 60 } },
+        {
+          frame: 2,
+          flash: {
+            scope: "screen",
+            color: { r: 160, g: 208, b: 255, a: 255 },
+            intensity: 120,
+            duration: 3 / 60,
+          },
+        },
+      ],
+    };
+    const timings = compileAnim(scoped, 60).timings!;
+
+    expect(timings[0]).toEqual({ tick: 0 });
+    expect(timings[1]).toEqual({ tick: 4 });
+    expect(timings[2]).toMatchObject({ tick: 8, flash: { intensity: 120, frames: 3 } });
+  });
+
   test("cumulative quantization preserves short MV animation duration at every supported hz", () => {
     const totals = [60, 30, 20, 4].map((hz) => compileAnim(TIMED, hz).total);
     expect(totals).toEqual([16, 8, 5, 1]);
@@ -95,7 +127,7 @@ describe("KRM3V animation timing", () => {
     const { map } = fixture(false);
     const world = createWorld(map, [], 60, { animations: [TIMED] });
     let state = stepInterp(world, createInterpState(), input(true));
-    expect(state.cues).toEqual([{ name: "start", volume: 80, pitch: 110 }]);
+    expect(state.cues).toEqual([{ name: "start", volume: 80, pitch: 110, pan: -30 }]);
     expect(state.sw.switches.continued).toBe(true);
     const start = state.anims![0]!.start;
     while (state.frame - start < 7) state = stepInterp(world, state, input());

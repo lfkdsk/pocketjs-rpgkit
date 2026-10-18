@@ -1226,13 +1226,21 @@ export type WalkerSpriteDef = WalkerSheetSpriteDef | WalkerAtlasSpriteDef;
  *  the cooker slices into per-facing/pose frames. */
 export type SpriteDef = ImageSpriteDef | WalkerSpriteDef;
 
-/** A deterministic cue attached to one authored animation frame. Target-
- * local flashes are intentionally not represented: importers either bake
- * them or report the semantic loss. */
+/** A deterministic cue attached to one authored animation frame. Map
+ * playback emits sound and screen flashes; target-local flash/hide windows
+ * are retained for renderers (such as the RPG Maker battle presentation)
+ * that own the selected target pixels. */
 export interface AnimationTimingDef {
   frame: number;
   se?: { id: string; volume?: number; pitch?: number; pan?: number };
-  flash?: { color: ScreenColor; intensity: number; duration: number };
+  flash?: {
+    /** Omitted by older projects and equivalent to `screen`. */
+    scope?: "target" | "screen";
+    color: ScreenColor;
+    intensity: number;
+    duration: number;
+  };
+  hide?: { duration: number };
 }
 
 /** A frame animation a `mapAnim` command plays on the map. The sheet is
@@ -1264,7 +1272,7 @@ export interface AnimationDef {
   frameDuration: number;
   /** Default loop behavior; a `mapAnim` command's `loop` overrides it. */
   loop?: boolean;
-  /** Sound and full-screen flash cues fired when their frame begins. The
+  /** Sound plus scoped flash/hide cues fired when their frame begins. The
    * timeline is folded from the saved animation start tick, including for
    * non-waited and looping playback. */
   timings?: AnimationTimingDef[];

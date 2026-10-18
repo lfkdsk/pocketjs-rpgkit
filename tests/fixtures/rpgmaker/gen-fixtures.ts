@@ -1239,6 +1239,15 @@ function hollowArt(files: Files): void {
   img("battlebacks2/HollowWall.png", wall);
   // A legacy MV-cell record inside an MZ fixture proves shape-based import.
   img("animations/Sparkle.png", stageSparkleSheet().scaled(MV_SCALE));
+  // Self-authored tones shared with the MV fixture at the byte level but
+  // named independently, so the imported lifecycle can prove map -> battle
+  // -> result-ME restoration and an animation-timing SE end to end.
+  files.set(`${HOLLOW}/audio/bgm/hollow-map.ogg`, STAGE_OVERTURE_OGG);
+  files.set(`${HOLLOW}/audio/bgm/hollow-battle.ogg`, STAGE_OVERTURE_OGG);
+  files.set(`${HOLLOW}/audio/bgs/hollow-cave.ogg`, STAGE_OVERTURE_OGG);
+  files.set(`${HOLLOW}/audio/me/hollow-victory.ogg`, STAGE_FANFARE_OGG);
+  files.set(`${HOLLOW}/audio/me/hollow-defeat.ogg`, STAGE_FANFARE_OGG);
+  files.set(`${HOLLOW}/audio/se/hollow-spark.ogg`, STAGE_FANFARE_OGG);
 }
 
 // --- Hollow maps ----------------------------------------------------------------------------------------
@@ -1576,6 +1585,11 @@ function hollowCave(): RmMap {
           cmd(311, 0, 1, 1, 0, 25, false),
           cmd(313, 0, 1, 0, 3),
           cmd(319, 1, 1, 2),
+          cmd(241, audio("hollow-map", 65)),
+          cmd(245, audio("hollow-cave", 60)),
+          // Keep the walking sheet unchanged while replacing the portrait
+          // and side-view identity that the subsequent battle observes.
+          cmd(322, 1, "People", 0, "WrenFaces", 5, "WrenBattlerAlt"),
           mzText("Golem", "GRRR... who disturbs the deep?"),
           cmd(124, 0, 90),
           battle(
@@ -1595,7 +1609,14 @@ function hollowCave(): RmMap {
       page({ cond: whenSwitch(S_BOSS_DOWN), priority: 0, list: list() }),
     ]),
   ];
-  const map = rmMap({ displayName: "Golem Cave", tilesetId: 2, grid: g, events, bgs: audio("hollow-cave", 60) });
+  const map = rmMap({
+    displayName: "Golem Cave",
+    tilesetId: 2,
+    grid: g,
+    events,
+    bgm: audio("hollow-map", 65),
+    bgs: audio("hollow-cave", 60),
+  });
   map.specifyBattleback = true;
   map.battleback1Name = "HollowFloor";
   map.battleback2Name = "HollowWall";
@@ -1607,7 +1628,8 @@ function hollowData(files: Files): void {
   put(
     "System.json",
     j(
-      system({
+      {
+        ...system({
         flavor: "MZ",
         title: "Hollow",
         start: [1, 11, 9],
@@ -1627,7 +1649,11 @@ function hollowData(files: Files): void {
           boat: { ...vehicle, characterName: "People", characterIndex: 2, startMapId: 1, startX: 3, startY: 11 },
           airship: { ...vehicle, characterName: "People", characterIndex: 6, startMapId: 1, startX: 7, startY: 9 },
         },
-      }),
+        }),
+        battleBgm: audio("hollow-battle", 82, 105, -12),
+        victoryMe: audio("hollow-victory", 88, 110, 7),
+        defeatMe: audio("hollow-defeat", 74, 95, -5),
+      },
     ),
   );
   put(
@@ -1811,7 +1837,11 @@ function hollowData(files: Files): void {
         name: "Sparkle",
         position: 1,
         timings: [
-          { flashColor: [255, 255, 224, 160], flashDuration: 5, flashScope: 1, frame: 0, se: SILENT },
+          {
+            flashColor: [255, 255, 224, 160], flashDuration: 5, flashScope: 1, frame: 0,
+            se: audio("hollow-spark", 72, 115, 18),
+          },
+          { flashColor: [0, 0, 0, 0], flashDuration: 2, flashScope: 3, frame: 1, se: SILENT },
           { flashColor: [160, 208, 255, 120], flashDuration: 3, flashScope: 2, frame: 2, se: SILENT },
         ],
       },
@@ -2347,6 +2377,7 @@ function stageData(files: Files): void {
         position: 1,
         timings: [
           { flashColor: [255, 255, 224, 160], flashDuration: 5, flashScope: 1, frame: 0, se: MV_SE.puff },
+          { flashColor: [0, 0, 0, 0], flashDuration: 2, flashScope: 3, frame: 1, se: SILENT },
           { flashColor: [160, 208, 255, 120], flashDuration: 3, flashScope: 2, frame: 2, se: SILENT },
         ],
       },

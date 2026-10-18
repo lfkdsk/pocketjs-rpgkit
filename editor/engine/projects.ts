@@ -392,7 +392,7 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
             "type": "object",
             "additionalProperties": false,
             "required": ["frame"],
-            "anyOf": [{ "required": ["se"] }, { "required": ["flash"] }],
+            "anyOf": [{ "required": ["se"] }, { "required": ["flash"] }, { "required": ["hide"] }],
             "properties": {
               "frame": { "type": "integer", "minimum": 0 },
               "se": {
@@ -411,14 +411,23 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
                 "additionalProperties": false,
                 "required": ["color", "intensity", "duration"],
                 "properties": {
+                  "scope": { "type": "string", "enum": ["target", "screen"], "description": "Selected animation targets or the whole screen; omission retains the legacy screen cue." },
                   "color": { "$ref": "#/$defs/screenColor" },
                   "intensity": { "type": "integer", "minimum": 0, "maximum": 255 },
+                  "duration": { "type": "number", "minimum": 0 }
+                }
+              },
+              "hide": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["duration"],
+                "properties": {
                   "duration": { "type": "number", "minimum": 0 }
                 }
               }
             }
           },
-          "description": "Sound and full-screen flash cues fired when the named animation frame begins."
+          "description": "Sound and scoped flash/hide cues fired when the named animation frame begins."
         }
       },
       "description": "A frame animation a mapAnim command plays on the map. The runtime frame index is a pure function of the saved reference tick, so rewind and save/load reproduce pixels exactly."

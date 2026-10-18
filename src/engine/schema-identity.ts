@@ -24,7 +24,7 @@
 /** SHA-256 of canonical src/data/schema.json. A test derives it from the file
  * so schema edits cannot leave it stale; keeping the literal avoids hashing
  * the schema at startup. */
-export const MAP_SCHEMA_HASH = "a59ec3e0a1ee74fe08fb75dff938e56b01b8b6b66ccfd102cb9dbb2866d23444";
+export const MAP_SCHEMA_HASH = "24945cdb48da82c863a7e5f4c467698699ced3ba85cdb4cbdb43f10b2948fc34";
 
 /** Earlier schema identities whose shells and saves remain loadable, newest
  * first. Each entry names the change that superseded it.
@@ -62,6 +62,10 @@ export const MAP_SCHEMA_HASH = "a59ec3e0a1ee74fe08fb75dff938e56b01b8b6b66ccfd102
  * tests/fixtures/schema-compat keeps a refused fixture and a recorded
  * counterexample for each of these. */
 export const MAP_SCHEMA_COMPATIBLE_HASHES: readonly string[] = Object.freeze([
+  // superseded by: optional target/screen scope on animation flashes and an
+  // optional target-hide timing window; older timings omit both additions,
+  // retain their screen-flash default and behave identically
+  "a59ec3e0a1ee74fe08fb75dff938e56b01b8b6b66ccfd102cb9dbb2866d23444",
   // superseded by: synchronous `face`, optional immediate move-route start,
   // and the modal-covered bounded backdrop push policy; older documents
   // omit every addition and retain delayed routes plus the single backdrop
