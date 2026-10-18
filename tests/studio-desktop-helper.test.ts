@@ -296,11 +296,11 @@ describe("studio desktop helper", () => {
       expect(existsSync(join(outputDir, "project.json"))).toBe(true);
       expect(existsSync(join(outputDir, "coverage.json"))).toBe(true);
       expect(imported.coverage.totals).toEqual({
-        Native: 112,
-        Degraded: 10,
+        Native: 115,
+        Degraded: 11,
         Placeholder: 2,
         Dropped: 0,
-        total: 124,
+        total: 128,
       });
       expect(imported.coverage.rows.map((row) => [row.section, row.key, row.counts.Placeholder, row.counts.Dropped])).toEqual([
         ["audio", "se/hollow-chest", 0, 1],

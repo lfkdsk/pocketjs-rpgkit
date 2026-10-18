@@ -2188,6 +2188,90 @@ function shiftFrozenWorldClocks(
   }
 }
 
+interface CompletionBanks {
+  writes: [string, string | number][];
+  switches: [string, boolean][];
+  items?: Record<string, number>;
+  gold?: number;
+}
+
+/** Scene and battle completions expose the same four built-in banks. Keep
+ * their registered-code validation and finite-number normalization on one
+ * cold path so adding an opt-in scene capability does not duplicate the
+ * whole commit contract in every game bundle. */
+function completionBanks(
+  completion: Readonly<{
+    writes?: Readonly<Record<string, string | number>>;
+    switches?: Readonly<Record<string, boolean>>;
+    items?: Readonly<Record<string, number>>;
+    gold?: number;
+  }>,
+  kind: "scene" | "battle",
+  currentItems: Readonly<Record<string, number>>,
+  inventory: Parameters<typeof replaceItemCounts>[2],
+): CompletionBanks {
+  const writes: [string, string | number][] = [];
+  const switches: [string, boolean][] = [];
+  if (completion.writes !== undefined) {
+    if (completion.writes === null || typeof completion.writes !== "object" || Array.isArray(completion.writes)) {
+      throw new Error(`${kind} completion writes must be a record`);
+    }
+    for (const id of Object.keys(completion.writes)) {
+      const value = completion.writes[id];
+      if (typeof value !== "string" && !(typeof value === "number" && Number.isFinite(value))) {
+        throw new Error(`${kind} completion write ${JSON.stringify(id)} must be a string or finite number`);
+      }
+      writes.push([id, value]);
+    }
+  }
+  if (completion.switches !== undefined) {
+    if (completion.switches === null || typeof completion.switches !== "object" || Array.isArray(completion.switches)) {
+      throw new Error(`${kind} completion switches must be a record`);
+    }
+    for (const id of Object.keys(completion.switches)) {
+      const value = completion.switches[id];
+      if (typeof value !== "boolean") {
+        throw new Error(`${kind} completion switch ${JSON.stringify(id)} must be a boolean`);
+      }
+      switches.push([id, value]);
+    }
+  }
+  let items: Record<string, number> | undefined;
+  if (completion.items !== undefined) {
+    if (completion.items === null || typeof completion.items !== "object" || Array.isArray(completion.items)) {
+      throw new Error(`${kind} completion items must be a record`);
+    }
+    const replacements: Record<string, number> = keyedRecord();
+    for (const id of Object.keys(completion.items)) {
+      const value = completion.items[id];
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(`${kind} completion item ${JSON.stringify(id)} must be a finite number`);
+      }
+      replacements[id] = value;
+    }
+    items = replaceItemCounts(currentItems, replacements, inventory);
+  }
+  let gold: number | undefined;
+  if (completion.gold !== undefined) {
+    if (typeof completion.gold !== "number" || !Number.isFinite(completion.gold)) {
+      throw new Error(`${kind} completion gold must be a finite number`);
+    }
+    gold = Math.max(0, clampFiniteVar(completion.gold));
+  }
+  return { writes, switches, ...(items === undefined ? {} : { items }), ...(gold === undefined ? {} : { gold }) };
+}
+
+function commitCompletionBanks(s: SessionState, banks: Readonly<CompletionBanks>): void {
+  const variables = banks.writes.length ? ownRecord(s.interp.sw, "variables") : null;
+  for (const [id, value] of banks.writes) {
+    variables![id] = typeof value === "number" ? clampFiniteVar(value) : value;
+  }
+  const switches = banks.switches.length > 0 ? ownRecord(s.interp.sw, "switches") : null;
+  for (const [id, value] of banks.switches) switches![id] = value;
+  if (banks.items !== undefined) s.interp.sw.items = banks.items;
+  if (banks.gold !== undefined) s.interp.sw.gold = banks.gold;
+}
+
 /** KG1: advance the game-owned scene reducer once for this host frame, then
  *  atomically commit a terminal result. The commit body mirrors
  *  advanceBattleScene (ext/writes/switches/items/gold/transfer plus the
@@ -2220,53 +2304,12 @@ function advanceGameScene(
   if (!cancelled && completion.ext !== undefined) {
     nextExt = cloneExtension(sess.extensions, completion.ext, "scene completion extension state");
   }
-  const writes: [string, string | number][] = [];
-  const switches: [string, boolean][] = [];
-  if (!cancelled && completion.writes !== undefined) {
-    if (completion.writes === null || typeof completion.writes !== "object" || Array.isArray(completion.writes)) {
-      throw new Error("scene completion writes must be a record");
-    }
-    for (const id of Object.keys(completion.writes)) {
-      const value = completion.writes[id];
-      if (typeof value !== "string" && !(typeof value === "number" && Number.isFinite(value))) {
-        throw new Error(`scene completion write ${JSON.stringify(id)} must be a string or finite number`);
-      }
-      writes.push([id, value]);
-    }
-  }
-  if (!cancelled && completion.switches !== undefined) {
-    if (completion.switches === null || typeof completion.switches !== "object" || Array.isArray(completion.switches)) {
-      throw new Error("scene completion switches must be a record");
-    }
-    for (const id of Object.keys(completion.switches)) {
-      const value = completion.switches[id];
-      if (typeof value !== "boolean") {
-        throw new Error(`scene completion switch ${JSON.stringify(id)} must be a boolean`);
-      }
-      switches.push([id, value]);
-    }
-  }
-  let itemReplacements: Record<string, number> | undefined;
-  if (!cancelled && completion.items !== undefined) {
-    if (completion.items === null || typeof completion.items !== "object" || Array.isArray(completion.items)) {
-      throw new Error("scene completion items must be a record");
-    }
-    itemReplacements = keyedRecord();
-    for (const id of Object.keys(completion.items)) {
-      const value = completion.items[id];
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(`scene completion item ${JSON.stringify(id)} must be a finite number`);
-      }
-      itemReplacements[id] = value;
-    }
-  }
-  let gold: number | undefined;
-  if (!cancelled && completion.gold !== undefined) {
-    if (typeof completion.gold !== "number" || !Number.isFinite(completion.gold)) {
-      throw new Error("scene completion gold must be a finite number");
-    }
-    gold = Math.max(0, clampFiniteVar(completion.gold));
-  }
+  const banks = completionBanks(
+    cancelled ? {} : completion,
+    "scene",
+    s.interp.sw.items,
+    sess.worldOptions.inventory,
+  );
   let playerName: string | undefined;
   if (!cancelled && completion.playerName !== undefined) {
     if (
@@ -2279,9 +2322,6 @@ function advanceGameScene(
     playerName = completion.playerName;
   }
   const transfer = cancelled ? null : completionTransfer(completion.transfer);
-  const items = itemReplacements === undefined
-    ? undefined
-    : replaceItemCounts(s.interp.sw.items, itemReplacements, sess.worldOptions.inventory);
 
   // A frozen scene frame starts from a shallow interpreter shell so ticking
   // the scene can avoid cloning a world it cannot advance. Completion is the
@@ -2293,14 +2333,7 @@ function advanceGameScene(
     s.sw = s.interp.sw;
   }
   s.ext = nextExt;
-  const variables = writes.length > 0 ? ownRecord(s.interp.sw, "variables") : null;
-  for (const [id, value] of writes) {
-    variables![id] = typeof value === "number" ? clampFiniteVar(value) : value;
-  }
-  const switchBank = switches.length > 0 ? ownRecord(s.interp.sw, "switches") : null;
-  for (const [id, value] of switches) switchBank![id] = value;
-  if (items !== undefined) s.interp.sw.items = items;
-  if (gold !== undefined) s.interp.sw.gold = gold;
+  commitCompletionBanks(s, banks);
   if (playerName !== undefined) s.interp.sw.playerName = playerName;
   shiftFrozenWorldClocks(sess, s, scene);
   s.interp = continueScene(s.interp, scene.fiber, cancelled, transfer);
@@ -2389,7 +2422,7 @@ function advanceBattleScene(
   const scene = s.scene;
   const rules = sess.battle;
   if (!scene || scene.kind !== "battle" || !rules) return;
-  let frameCues: SoundCue[] | undefined;
+  let sounds: SoundCue[] | undefined;
   if (ticks > 0) {
     // Edge projections need a true pre-step snapshot. Pay for that snapshot
     // only when one-shot battle audio is both supported by the project and
@@ -2407,7 +2440,7 @@ function advanceBattleScene(
     else assertJsonValue(stepped, "battle step state");
     scene.state = stepped;
     if (previous !== undefined) {
-      frameCues = rules.effects!.soundCues(rules.cues!(previous, stepped));
+      sounds = rules.effects!.soundCues(rules.cues!(previous, stepped));
     }
   }
   // Dynamic battle BGM remains reducer state. Sampling is opt-in twice: the
@@ -2429,7 +2462,7 @@ function advanceBattleScene(
     }
   }
   const completion = rules.done(scene.state);
-  if (completion === null) return frameCues;
+  if (completion === null) return sounds;
   if (typeof completion !== "object" || Array.isArray(completion)) {
     throw new Error("battle done: BattleCompletion object or null required");
   }
@@ -2440,53 +2473,12 @@ function advanceBattleScene(
     throw new Error("battle done: result must be win, lose, escape, or draw");
   }
   const nextExt = cloneExtension(sess.extensions, completion.ext, "battle completion extension state");
-  const writes: [string, string | number][] = [];
-  const switches: [string, boolean][] = [];
-  if (completion.writes !== undefined) {
-    if (completion.writes === null || typeof completion.writes !== "object" || Array.isArray(completion.writes)) {
-      throw new Error("battle completion writes must be a record");
-    }
-    for (const id of Object.keys(completion.writes)) {
-      const value = completion.writes[id];
-      if (typeof value !== "string" && !(typeof value === "number" && Number.isFinite(value))) {
-        throw new Error(`battle completion write ${JSON.stringify(id)} must be a string or finite number`);
-      }
-      writes.push([id, value]);
-    }
-  }
-  if (completion.switches !== undefined) {
-    if (completion.switches === null || typeof completion.switches !== "object" || Array.isArray(completion.switches)) {
-      throw new Error("battle completion switches must be a record");
-    }
-    for (const id of Object.keys(completion.switches)) {
-      const value = completion.switches[id];
-      if (typeof value !== "boolean") {
-        throw new Error(`battle completion switch ${JSON.stringify(id)} must be a boolean`);
-      }
-      switches.push([id, value]);
-    }
-  }
-  let itemReplacements: Record<string, number> | undefined;
-  if (completion.items !== undefined) {
-    if (completion.items === null || typeof completion.items !== "object" || Array.isArray(completion.items)) {
-      throw new Error("battle completion items must be a record");
-    }
-    itemReplacements = keyedRecord();
-    for (const id of Object.keys(completion.items)) {
-      const value = completion.items[id];
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(`battle completion item ${JSON.stringify(id)} must be a finite number`);
-      }
-      itemReplacements[id] = value;
-    }
-  }
-  let gold: number | undefined;
-  if (completion.gold !== undefined) {
-    if (typeof completion.gold !== "number" || !Number.isFinite(completion.gold)) {
-      throw new Error("battle completion gold must be a finite number");
-    }
-    gold = Math.max(0, clampFiniteVar(completion.gold));
-  }
+  const banks = completionBanks(
+    completion,
+    "battle",
+    s.interp.sw.items,
+    sess.worldOptions.inventory,
+  );
   const transfer = completionTransfer(completion.transfer);
   if (completion.audio !== undefined && rules.effects === undefined) {
     throw new Error("battle completion audio requires a battle effects runtime");
@@ -2494,26 +2486,13 @@ function advanceBattleScene(
   const completionAudio = completion.audio === undefined
     ? undefined
     : rules.effects!.completeAudio(completion.audio, scene.returnAudio, s.interp.audio);
-  const items = itemReplacements === undefined
-    ? undefined
-    : replaceItemCounts(s.interp.sw.items, itemReplacements, sess.worldOptions.inventory);
 
   if (frozenShared) {
     s.interp = shareInterp(s.interp, sess.immutableState);
     s.sw = s.interp.sw;
   }
   s.ext = nextExt;
-  // B1 (fix 3): a battle completion's numeric write shares
-  // the interpreter's finite-safe-integer normalizer, same as an ext
-  // command's writes and every authored variable/gold/item command.
-  const variables = writes.length > 0 ? ownRecord(s.interp.sw, "variables") : null;
-  for (const [id, value] of writes) {
-    variables![id] = typeof value === "number" ? clampFiniteVar(value) : value;
-  }
-  const switchBank = switches.length > 0 ? ownRecord(s.interp.sw, "switches") : null;
-  for (const [id, value] of switches) switchBank![id] = value;
-  if (items !== undefined) s.interp.sw.items = items;
-  if (gold !== undefined) s.interp.sw.gold = gold;
+  commitCompletionBanks(s, banks);
   shiftFrozenWorldClocks(sess, s, scene);
   // Battle-owned audio is a presentation scene resource, but its intent is
   // reducer state. Select the completion's base mix, then install its ME so
@@ -2528,7 +2507,7 @@ function advanceBattleScene(
   s.interp = continueBattle(s.interp, scene.fiber, completion.result, transfer);
   s.sw = s.interp.sw;
   s.scene = null;
-  return frameCues;
+  return sounds;
 }
 
 /** Per-reference-tick direction resolver for a view-local walking route
@@ -2715,16 +2694,16 @@ function foldSession(
   if (s.scene) {
     const sceneTicks = sceneAtFrameStart ? ticks : Math.max(0, ticks - sceneStartedAt);
     if (s.scene.kind === "battle") {
-      const battleCues = advanceBattleScene(
+      const sounds = advanceBattleScene(
         sess,
         s,
         sceneAtFrameStart ? battleInput(input) : battleInput(NO_MAP_INPUT),
         sceneTicks,
         frozen,
       );
-      if (battleCues !== undefined) {
-        if (frameCues === undefined) frameCues = battleCues;
-        else frameCues.push(...battleCues);
+      if (sounds !== undefined) {
+        if (frameCues === undefined) frameCues = sounds;
+        else frameCues.push(...sounds);
       }
     } else {
       advanceGameScene(
