@@ -130,6 +130,8 @@ map:<id>/layer:<ground|upper|passage>/tile:<x>,<y>
 map:<id>/event:<eid>
 map:<id>/event:<eid>/page:<i>
 map:<id>/event:<eid>/page:<i>/command:<key>
+common:<id>
+common:<id>/command:<key>
 sheet:<sheet>/cell:<n>
 item:<id>
 sprite:<id>
@@ -411,8 +413,9 @@ $ bun run rpgkit-edit list-pages --file examples/sunstone/data/sunstone.json --j
 
 ### `list-commands`
 
-Args: `map`, `event`, `page` (integer ≥ 0; all required). `result` is an
-array of flattened rows, one per command in the page's recursive tree:
+Args: exactly one target: either `map`, `event`, `page` (integer ≥ 0), or
+`common`. `result` is an array of flattened rows, one per command in the
+target's recursive tree:
 `{ address, commandAddress, key, depth, branch?, summary, readOnly, command }`.
 `commandAddress` is the structured `{ path, index }` form accepted by the
 command-editing commands. Every op in the current project schema is owned by
@@ -552,6 +555,42 @@ bun run rpgkit-edit add-item --file game.json \
 bun run rpgkit-edit add-event --file game.json \
   --json '{"map":"town","event":{"id":"key-giver","x":4,"y":6,"pages":[{"trigger":"action","commands":[{"op":"item","item":"storehouse-key","set":"add","count":1}]}]}}'
 ```
+
+## Common-event editing
+
+Common events use stable `common:<id>` addresses and the same recursive
+command addresses as map pages. The CLI and MCP expose the complete lifecycle
+for inline and sharded projects:
+
+| command | arguments | result |
+| --- | --- | --- |
+| `list-common-events` | none | Authored rows with `address`, `id`, optional `name`, `trigger`, optional `conditionSwitch` and recursive `commandCount` |
+| `get-common-event` | `common` | The complete common event plus `references`; each reference has its map-page or common owner, structured command `address` and stable `path` |
+| `add-common-event` | `commonEvent`, optional `index` | The inserted `{ id, name?, trigger, conditionSwitch?, commands }` value |
+| `update-common-event` | `common`, `changes` | The updated value; `changes` may contain `id`, `name`, `trigger` or `conditionSwitch` |
+| `duplicate-common-event` | `common`, optional `id` | A deep copy directly after the source; without `id`, a unique `<id>-copy` id is chosen |
+| `delete-common-event` | `common`, optional `force` | The deleted value and the references that existed at deletion time |
+
+`trigger` is `"none"` or `"parallel"`; a parallel event may name its switch
+gate with `conditionSwitch`. Updating the id atomically rewrites every nested
+`common` call in map pages and other common events. Deletion fails with
+`RESOURCE_IN_USE` and concrete caller paths while references remain. A caller
+that has displayed those paths and obtained explicit confirmation may retry
+with `force: true`; the operation deliberately does not cascade or remove the
+calls.
+
+```sh
+bun run rpgkit-edit add-common-event --file game.json \
+  --json '{"commonEvent":{"id":"heal-party","name":"Heal party","trigger":"none","commands":[{"op":"text","lines":["Everyone feels better."]}]}}'
+bun run rpgkit-edit get-common-event --file game.json \
+  --json '{"common":"heal-party"}'
+```
+
+For a sharded `ProjectShell`, list, add, duplicate, metadata updates and
+common command-tree edits touch only the shell. `get-common-event`, renames
+and protected deletion scan all indexed shards so their reference lists and
+rewrites are complete; changed shards and the shell publish through the usual
+multi-file conflict checks.
 
 ## Map editing
 
@@ -888,10 +927,15 @@ $ bun run rpgkit-edit delete-page --file examples/sunstone/data/sunstone.json --
 
 ## Command editing
 
+All three command mutations below take exactly one target: either the
+map-page triple `map`, `event`, `page`, or `common`. Supplying both targets or
+an incomplete map-page target is `INVALID_ARGUMENT`. The structured `address`
+has the same shape for either owner.
+
 ### `insert-command`
 
-Args: `map`, `event`, `page`, `address` (`{ path, index }`; `index` may equal
-the list length), `command` (an object with a non-empty `op` string).
+Args: one target as above, `address` (`{ path, index }`; `index` may equal the
+list length), `command` (an object with a non-empty `op` string).
 The command object is inserted intact; the whole-project schema gate after an
 inline mutation, or the selected map-schema gate for a shell, decides whether
 that op and payload are valid.
@@ -924,7 +968,7 @@ $ bun run rpgkit-edit insert-command --file examples/sunstone/data/sunstone.json
 
 ### `delete-command`
 
-Args: `map`, `event`, `page`, `address`. The address must resolve to an
+Args: one target as above and `address`. The address must resolve to an
 existing command. `result` is `{ deleted: <command> }`.
 
 ```sh
@@ -935,7 +979,7 @@ $ bun run rpgkit-edit delete-command --file examples/sunstone/data/sunstone.json
 
 ### `update-command`
 
-Args: `map`, `event`, `page`, `address`, `field` (non-empty string), `value`
+Args: one target as above, `address`, `field` (non-empty string), `value`
 (string: the editor's text spelling, e.g. `"10"`, `"true"`, or
 newline-separated text lines). Every command and condition kind in the current
 project schema is field-editable. A future unknown op fails with
@@ -1542,7 +1586,9 @@ that root after symlink resolution. Mutating tools also take `dryRun`.
 | `rpgkit_maps_list` | `list-maps` | `file` | — |
 | `rpgkit_events_list` | `list-events` | `file`, `map` | — |
 | `rpgkit_pages_list` | `list-pages` | `file`, `map`, `event` | — |
-| `rpgkit_commands_list` | `list-commands` | `file`, `map`, `event`, `page` | — |
+| `rpgkit_common_events_list` | `list-common-events` | `file` | — |
+| `rpgkit_common_event_get` | `get-common-event` | `file`, `common` | — |
+| `rpgkit_commands_list` | `list-commands` | `file`, plus either `map`, `event`, `page` or `common` | — |
 | `rpgkit_items_list` | `list-items` | `file` | — |
 | `rpgkit_item_get` | `get-item` | `file`, `item` | — |
 | `rpgkit_item_add` | `add-item` | `file`, `item` | `dryRun` |
@@ -1590,9 +1636,13 @@ that root after symlink resolution. Mutating tools also take `dryRun`.
 | `rpgkit_page_add` | `add-page` | `file`, `map`, `event`, `page` | `index`, `dryRun` |
 | `rpgkit_page_update` | `update-page` | `file`, `map`, `event`, `page`, `value` | `dryRun` |
 | `rpgkit_page_delete` | `delete-page` | `file`, `map`, `event`, `page` | `dryRun` |
-| `rpgkit_command_insert` | `insert-command` | `file`, `map`, `event`, `page`, `address`, `command` | `dryRun` |
-| `rpgkit_command_delete` | `delete-command` | `file`, `map`, `event`, `page`, `address` | `dryRun` |
-| `rpgkit_command_update` | `update-command` | `file`, `map`, `event`, `page`, `address`, `field`, `value` | `dryRun` |
+| `rpgkit_common_event_add` | `add-common-event` | `file`, `commonEvent` | `index`, `dryRun` |
+| `rpgkit_common_event_update` | `update-common-event` | `file`, `common`, `changes` | `dryRun` |
+| `rpgkit_common_event_duplicate` | `duplicate-common-event` | `file`, `common` | `id`, `dryRun` |
+| `rpgkit_common_event_delete` | `delete-common-event` | `file`, `common` | `force`, `dryRun` |
+| `rpgkit_command_insert` | `insert-command` | `file`, `address`, `command`, plus either `map`, `event`, `page` or `common` | `dryRun` |
+| `rpgkit_command_delete` | `delete-command` | `file`, `address`, plus either `map`, `event`, `page` or `common` | `dryRun` |
+| `rpgkit_command_update` | `update-command` | `file`, `address`, `field`, `value`, plus either `map`, `event`, `page` or `common` | `dryRun` |
 | `rpgkit_project_validate` | `validate` | `file` | `map` |
 | `rpgkit_project_batch` | `batch` | `file`, `operations` | `dryRun`, `envelope` |
 | `rpgkit_project_save` | `save` | `file`, `patch` | `direction`, `dryRun` |

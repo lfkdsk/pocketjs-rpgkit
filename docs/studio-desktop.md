@@ -25,11 +25,13 @@ Play-test, art, checks and every editing feature work as on the web page.
 
 ## Status
 
-Built and tested on Linux: the build, an unpacked package, and an
-end-to-end test of the real app (below). macOS packages are built, signed
-and notarized by a GitHub Actions workflow. That workflow has not run yet
-because the signing secrets are not set up; without them it produces an
-unsigned build. Windows is not packaged.
+Built and tested on Linux: the build, an unpacked package, and an end-to-end
+test of the real app (below). The GitHub Actions smoke matrix builds Linux and
+Windows packages and runs the same Playwright flow on both. Windows produces
+an unsigned x64 NSIS installer; no published installer has been code-signed.
+macOS packages are built, signed and notarized by the release job. That job
+has not run with signing secrets yet; without them it produces an unsigned
+build.
 
 ## Build and run
 
@@ -59,6 +61,7 @@ Packages:
 ```sh
 bun run dist:linux    # dist/linux-unpacked/ (and electron-builder's other Linux targets with `bun run dist`)
 bun run dist:mac      # universal dmg + zip, on a Mac (see "Signing and releases")
+bun run dist:win      # x64 NSIS installer + dist/win-unpacked/, on Windows
 ```
 
 On Linux machines without unprivileged user namespaces (many containers,
@@ -211,6 +214,10 @@ process; everything after them is the real app. The tests check:
 - the folder appears in Open Recent;
 - the offline fake agent returns a proposal through the compiled helper's MCP
   server, and accepting it is one undo step;
+- a common event is created, gated and command-edited, its Explain summary is
+  visible, referenced deletion shows the caller and Cancel keeps it;
+- tile-sheet `defaultPassage` and a right-side `dirBlock` wall are two
+  `update-sheet` history steps, with undo/redo restoring the authored value;
 - engine checks find `reach/transfer-target-missing` and it joins the
   problems list;
 - the art folder opens with its own town sheet and wizard sprite on the
@@ -232,11 +239,17 @@ saves on the real file system), `tests/studio-agent-panel.test.ts`
 
 ## Signing and releases
 
-### Signing and notarizing on CI
+### Packaging, signing and notarizing on CI
 
 The "Studio desktop" workflow (`.github/workflows/studio-desktop.yml`)
-builds one universal macOS app (Apple Silicon and Intel) and uploads two
-files as a workflow artifact:
+runs a Linux/Windows smoke matrix on pull requests, `main`, manual runs and
+release tags. Each leg installs only from the public lockfiles, builds the
+real package, checks `app.asar` and the external helper, then drives the same
+`app/` payload with the Playwright test above. The Windows leg retains
+`pocket-rpgkit-studio-<version>-x64-setup.exe` as a 14-day workflow artifact.
+
+Manual runs and release tags additionally build one universal macOS app
+(Apple Silicon and Intel) and upload two files as a workflow artifact:
 
 - `pocket-rpgkit-studio-<version>-universal.dmg`, for first installs.
 - `pocket-rpgkit-studio-<version>-universal.zip`, the same app zipped (and
@@ -274,9 +287,9 @@ even when it fails.
 
    Or run the workflow by hand: Actions → Studio desktop → Run workflow.
    A manual run does not check the version.
-3. Download the artifact from the run's summary page (it is kept for 14
-   days), check it as shown below, and attach the dmg and zip to a GitHub
-   release.
+3. Download the artifacts from the run's summary page (they are kept for 14
+   days), check them as shown below, and attach the dmg, macOS zip and
+   unsigned Windows installer to a GitHub release as appropriate.
 
 #### Checking a downloaded build
 
@@ -373,6 +386,7 @@ If a secret is missing:
 - Saving cannot add, remove or rename map files in a folder (as on the web
   page); use Export.
 - No auto-update. Download a new build.
-- Windows is not packaged, and the Linux package is not signed.
+- Windows and Linux packages are not code-signed. Windows SmartScreen and
+  Linux desktop environments may therefore warn on first launch.
 - The macOS build has not run with real signing secrets yet. The helper's
   entitlements are Bun's documented set and may be more than it needs.
