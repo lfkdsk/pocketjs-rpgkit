@@ -391,9 +391,9 @@ function FrontViewScene(
         }}
       </For>
 
-      {/* Target-local flash is a deterministic source-over approximation:
-          PocketJS has no portable colour-matrix primitive for tinting only
-          the non-transparent battler pixels. Keep it below animation cells. */}
+      {/* Target-local flash retains its deterministic source-over projection
+          instead of filtering only non-transparent battler pixels. Keep it
+          below animation cells. */}
       <Show when={targetFlash() && animationTargetSide() === "enemy"}>
         <For each={animationTargetRects()}>
           {(target) => (

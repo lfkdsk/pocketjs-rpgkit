@@ -282,9 +282,9 @@ Conventions:
   operand contract.
   Move/tint tween state, easing, continuous rotation, origin, scale, opacity,
   retained blend intent and tone all save and rewind; pictures survive map
-  transfer. The PocketJS view currently renders blend as normal source-over
-  and uses a deterministic overlay approximation for RPG Maker tone because
-  the host has no portable per-image blend/colour-matrix primitive.
+  transfer. Core-software PocketJS hosts apply exact image blend/tone to both
+  axis-aligned and transformed pictures. Fixed GPU/console hosts use normal
+  blend plus the deterministic tone-overlay fallback.
 - **Backdrop, layering, and lifetime:** `screenBackdrop` selects a
   `GameAssets.layers` entry with `placement:"screen"`; omitting/nulling its
   variant pops the visible top, exposing the nearest hidden frame or closing

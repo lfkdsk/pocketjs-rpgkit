@@ -1309,9 +1309,9 @@ conversion point are documented in `src/ui/world-contract.ts`.
 | `tileProperty` | replace one cell's passage and/or one-sided entry/exit edge masks for this map visit |
 | `screenFade` | fade the complete presentation out to a colour (default opaque black) or back in, independently of transfer |
 | `screenTint` | tween a named composable RGBA screen-tint layer (a zero-alpha target removes it) |
-| `screenTone` | tween RPG Maker's signed RGB/gray tone; reducer and save retain exact channels while portable presentation approximates the colour matrix |
+| `screenTone` | tween RPG Maker's signed RGB/gray tone; core-software hosts use destination tone and fixed GPU/console hosts use the stable overlay fallback |
 | `weather` | start or fade deterministic RPG Maker rain, storm or snow at power 0–9 |
-| `windowTone` | retain RPG Maker's global signed window tone; RGB affects kit chrome while gray is kept for lossless state |
+| `windowTone` | tone kit window chrome; stock MV/MZ input uses RGB, while compatible four-channel input may use the kit's gray extension |
 | `screenFlash` | flash an RGBA colour at 0..255 intensity, then decay to transparent |
 | `screenShake` | deterministic horizontal shake with pixel strength, cycles/second speed, and duration |
 | `camera` | scroll focus to an absolute tile, the player, this event, or a named event; targeting the player restores live follow |
@@ -1514,12 +1514,13 @@ inspects reducer state only. Projects that use no such commands keep this UI
 out of their bundle and node tree. The editor and preview host register it
 themselves.
 
-PocketJS currently has no portable per-image colour matrix or blend-mode
-primitive. The reducer and RPG Maker importer retain `blend` and the complete
-tone, but the KRM2 presentation draws every blend as normal source-over and
-approximates tone deterministically with gray/darken/brighten overlays. Position, origin,
-scale, opacity and rotation are rendered directly; exact RPG Maker colour
-math awaits a host primitive.
+PocketJS image nodes expose normal/add/multiply/screen blend plus signed RGB
+and gray tone for both axis-aligned and transformed pictures. Core-software
+hosts execute those operations with RPG Maker's pixel equations. The native
+fixed GPU/console walkers consume the appended operations but do not execute
+them, so KRM2 selects normal blend and the stable gray/darken/brighten tone
+fallback on those hosts. Position, origin, scale, opacity and rotation render
+through the same picture node in either path.
 
 #### Map parallax backgrounds
 

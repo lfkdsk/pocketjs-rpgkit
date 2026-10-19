@@ -94,8 +94,8 @@ export interface ScreenColor {
 
 /** RPG Maker picture colour tone. RGB channels are signed offsets
  * (-255..255); gray is a 0..255 desaturation amount. Keeping the authored
- * integers in reducer state makes picture tweens portable across hosts even
- * when a renderer has to approximate the tone operation. */
+ * integers in reducer state makes picture tweens portable across exact and
+ * fallback render paths. */
 export interface PictureTone {
   r: number;
   g: number;
@@ -549,9 +549,9 @@ export type Command =
   /** Tween one named, composable full-screen colour layer. A target with
    * alpha 0 removes the layer when the tween completes. */
   | { op: "screenTint"; layer: string; color: ScreenColor; duration: number; wait?: boolean }
-  /** Tween RPG Maker's signed RGB + gray screen tone. Renderers which cannot
-   * provide a colour matrix may project this descriptor approximately, but
-   * the reducer and save retain the authored channels exactly. */
+  /** Tween RPG Maker's signed RGB + gray screen tone. Exact-capable hosts use
+   * destination tone; fixed draw backends use a stable overlay projection.
+   * The reducer and save retain the authored channels exactly. */
   | { op: "screenTone"; tone: ScreenTone; duration: number; wait?: boolean }
   /** Deterministic RPG Maker weather. `power` is clamped to 0..9; `none`
    * fades the current kind out before clearing it. */
@@ -674,8 +674,9 @@ export type Command =
   /** Select one of the current map's precomposed tileset variants. The
    * selection changes art, passage, vehicle passage and terrain atomically. */
   | { op: "changeTileset"; id: string }
-  /** Change the global RPG Maker window tone. Only RGB affects presentation;
-   * gray is retained for lossless round-tripping. */
+  /** Change the global RPG Maker window tone. Stock MV/MZ imports use RGB and
+   * set gray to zero; hand-authored four-channel commands may use the kit's
+   * gray extension. */
   | { op: "windowTone"; tone: ScreenTone }
   /** Write a fact about one map cell to a variable (RPG Maker 285 Get
    *  Location Info). The coordinate is a literal or a variable read at

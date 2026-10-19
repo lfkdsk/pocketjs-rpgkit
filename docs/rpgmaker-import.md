@@ -113,7 +113,7 @@ but are not separate catalogue rows.
 | Handling | Command codes and reason |
 | --- | --- |
 | Native | The 100 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. Battle presentation commands still require the imported media and opt-in battle integration to be visible or audible. |
-| Degraded | **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** retains window tone but projects RGB to the kit palette; **223** retains exact tone state with approximate rendering; **322** persists actor images and updates imported faces live, but does not wire map walking images or draw side-view battlers in the front-view battle. |
+| Degraded | **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** tones flat kit chrome instead of an RPG Maker windowskin; **223** uses exact destination tone on core-software hosts and an overlay fallback on fixed draw backends; **322** persists actor images and updates imported faces live, but does not wire map walking images or draw side-view battlers in the front-view battle. |
 | Placeholder | **356, 357** (MV/MZ plugin commands) need a per-plugin port. |
 | Dropped | **261** (Play Movie) has no video host. |
 
@@ -182,8 +182,8 @@ target hide timings. Actor-target requests mirror their cooked cells as in the
 upstream legacy renderer. MZ records which retain the legacy MV frame shape use
 the same path; Effekseer entries remain dropped. Cell `add`, `multiply` and
 `screen` blends are baked into the animation frames. They cannot retain their
-blend interaction with the eventual scene, and flashes are deterministic
-source-over approximations because PocketJS has no portable colour matrix.
+blend interaction with the eventual scene, and flashes remain deterministic
+source-over approximations rather than alpha-masked target filters.
 Change Actor Images faces update live in the MZ battle-status HUD and in the
 optional MV/MZ formation/menu surface. MV front-view battle status remains
 text-only, matching its upstream layout.
@@ -234,10 +234,11 @@ omitted.
   audio and cooked legacy MV animations are presented by the opt-in reference
   integration, but side-view layout, some traits and animations which cannot
   be cooked remain limited. MZ Effekseer animations are dropped.
-- Tone, window colour, MZ cursor/font controls and animation blend/flash
-  behavior are portable approximations. `add`, `multiply` and `screen` cells
-  are baked into each animation frame, while target/screen flashes use
-  deterministic source-over overlays because PocketJS has no colour matrix.
+- Fixed GPU/console hosts use deterministic tone overlays, and window colour
+  tones flat kit chrome rather than an RPG Maker windowskin. MZ cursor/font
+  controls and animation blend/flash behavior remain approximations. `add`,
+  `multiply` and `screen` cells are baked into each animation frame, while
+  target/screen flashes use deterministic source-over overlays.
 - Actor event simulation does not cover every later predicate/presentation
   effect. Changed imported faces do update the battle HUD and optional
   formation/menu surface, but map walking art and side-view battlers do not;
@@ -384,10 +385,11 @@ In short:
   uses the fixed reference clock for the authored duration and optional wait.
   The state, including an in-progress tween, survives save/load and rewind and
   paints on maps and battles below numbered pictures and battle windows.
-  PocketJS does not expose a portable colour-matrix primitive, so the renderer
-  uses a deterministic source-over approximation: gray first, complementary
-  darkening second, positive-channel brightening last. The exact authored
-  descriptor remains in reducer state and saves.
+  Core-software hosts use PocketJS destination tone with the pinned RPG Maker
+  gray-before-RGB equation. Fixed GPU/console walkers use a deterministic
+  source-over fallback: gray first, complementary darkening second and
+  positive-channel brightening last. The exact authored descriptor remains in
+  reducer state and saves.
 - **Set Weather Effect (236)** supports rain, storm and snow, power 1–9,
   duration and wait. It draws `floor(power * 10)` stock-shaped particles and
   the stock dimmer, with a serialized seed and clock replacing upstream's
@@ -399,11 +401,12 @@ In short:
   tileset. The active visit is saved and rewound.
 - **Change Window Color (138)** accepts the editor's three-channel RGB tone
   (and four-channel data from compatible tools), defaulting an omitted gray
-  channel to zero. Like RPG Maker, presentation consumes RGB only; the kit
-  projects those channels onto its theme's message, choice, menu and
-  battle-window chrome. A supplied gray channel remains serialized for
-  lossless round-tripping. This palette projection
-  is reported Degraded because it is not a per-pixel windowskin tone.
+  channel to zero. Stock MV/MZ windows consume RGB only, so ordinary imports
+  keep gray at zero. Exact-capable hosts use PocketJS destination tone on
+  opaque message, choice, menu and battle-window chrome; translucent chrome
+  and fixed backends apply the same equation to source palette colours. A
+  supplied fourth gray channel enables this kit extension. The command remains
+  Degraded because it tones flat kit chrome rather than a per-pixel windowskin.
 - **Change Formation Access (137)** gates the optional formation overlay.
   Its two-confirm flow swaps any pair, including index 0, and the order drives
   followers and front-view battle slots. The saved order is reconciled with
@@ -489,7 +492,7 @@ for that project, to `coverage.md`.
 | 217 | Gather Followers | MV/MZ | Native |  |  |
 | 221 | Fadeout Screen | MV/MZ | Native |  |  |
 | 222 | Fadein Screen | MV/MZ | Native |  |  |
-| 223 | Tint Screen | MV/MZ | Degraded | signed tone is retained exactly; portable rendering approximates additive colour and desaturation | the rpgMakerText runtime and screenPresentation capability |
+| 223 | Tint Screen | MV/MZ | Degraded | core software uses exact destination tone; fixed draw backends use the deterministic overlay fallback | the rpgMakerText runtime and screenPresentation capability |
 | 224 | Flash Screen | MV/MZ | Native |  |  |
 | 225 | Shake Screen | MV/MZ | Native |  |  |
 | 230 | Wait | MV/MZ | Native |  |  |

@@ -2248,7 +2248,7 @@ function emitTint(p: readonly unknown[], st: State): Command[] {
     rec(st, 223, "Dropped", "screen tone wait flag must be boolean");
     return [];
   }
-  rec(st, 223, "Degraded", "signed tone is retained exactly; portable rendering approximates additive colour and desaturation");
+  rec(st, 223, "Degraded", "core software uses exact destination tone; fixed draw backends use the deterministic overlay fallback");
   return [{ op: "screenTone", tone, duration: seconds(p[1]), wait: p[2] }];
 }
 

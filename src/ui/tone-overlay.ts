@@ -22,8 +22,8 @@ function unit(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-/** PocketJS has no backend-independent colour-matrix primitive, so tone is
- * expressed in a documented stable order: gray, darken, then brighten. */
+/** Fixed GPU/console walkers do not execute PocketJS tone operations, so their
+ * fallback uses a stable order: gray, darken, then brighten. */
 export function toneOverlays(tone: Readonly<PictureTone>): ToneOverlay[] {
   const overlays: ToneOverlay[] = [];
   const gray = unit(tone.gray / 255);
