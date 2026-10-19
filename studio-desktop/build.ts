@@ -20,6 +20,8 @@
 //   app/helper/rpgkit-studio-helper
 //                             src/helper.ts compiled with `bun build
 //                             --compile`: local agents and engine checks
+//   app/helper/stb-vorbis-LICENSE.txt
+//                             Apache-2.0 notice for the embedded Ogg decoder
 //
 // The PocketJS wasm core must exist (`bun run build:wasm` at the kit root).
 
@@ -63,6 +65,10 @@ function helperTargets(): string[] {
 function buildHelper(): void {
   const dir = join(APP, "helper");
   mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "stb-vorbis-LICENSE.txt"),
+    readFileSync(join(KIT, "node_modules", "stb-vorbis", "LICENSE")),
+  );
   const targets = helperTargets();
   const entry = join(HERE, "src", "helper.ts");
   if (targets.length === 0) {

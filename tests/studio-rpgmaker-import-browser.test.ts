@@ -135,7 +135,15 @@ describe("browser RPG Maker import", () => {
     expect(outcome.opened.target).toBeUndefined();
     expect(outcome.coverage.totals.total).toBeGreaterThan(0);
     expect(outcome.coverage.rows.some((row) => row.section === "audio" && row.counts.Dropped > 0)).toBe(true);
-    expect(outcome.warnings.some((warning) => warning.includes("browser import cannot convert"))).toBe(true);
+    const warnings = outcome.warnings.join("\n");
+    for (const guidance of [
+      "Browser Studio cannot invoke system ffmpeg",
+      "Ogg/M4A audio is omitted while maps and images continue importing",
+      "Desktop Studio or the CLI can import this audio when ffmpeg is installed",
+      "浏览器版 Studio 无法调用系统 ffmpeg",
+      "因此会省略 Ogg/M4A 音频，但地图和图片会继续导入",
+      "安装 ffmpeg 后，桌面版 Studio 或 CLI 可以导入这些音频",
+    ]) expect(warnings).toContain(guidance);
     expect(progress[0]).toBe("selecting");
     expect(progress).toContain("reading");
     expect(progress).toContain("converting");

@@ -12,7 +12,7 @@
 // Screenshots go to docs/screenshots/studio-desktop/.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Project } from "../../src/engine/types.ts";
 import { splitProjectMaps } from "../../tools/lib/map-project.ts";
@@ -22,7 +22,7 @@ import { decodePng } from "../../vendor/pocketjs/framework/compiler/pak.ts";
 const HERE = resolve(import.meta.dir, "..");
 const KIT = resolve(HERE, "..");
 const WORK = join(HERE, ".e2e");
-const RPG_MAKER = join(KIT, "tests", "fixtures", "rpgmaker", "hollow-mz");
+const RPG_MAKER_SOURCE = join(KIT, "tests", "fixtures", "rpgmaker", "hollow-mz");
 
 if (!existsSync(join(HERE, "app", "main.cjs"))) {
   console.error("studio-desktop e2e: app/ is not built; run `bun run build` first");
@@ -33,6 +33,16 @@ rmSync(WORK, { recursive: true, force: true });
 mkdirSync(WORK, { recursive: true });
 const importParent = join(WORK, "imports");
 mkdirSync(importParent, { recursive: true });
+const decoderFreePath = join(WORK, "path-without-ffmpeg");
+mkdirSync(decoderFreePath, { recursive: true });
+
+// Keep the checked-in fixture immutable. One present M4A exercises the
+// per-file decoder warning while its Ogg tracks exercise the bundled fallback.
+const rpgMaker = join(WORK, "hollow-mz");
+cpSync(RPG_MAKER_SOURCE, rpgMaker, { recursive: true });
+writeFileSync(join(rpgMaker, "audio", "se", "hollow-chest.m4a"), Uint8Array.of(
+  0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20,
+));
 
 // Sunstone as a project folder: project.json plus one file per map.
 const sunstone = JSON.parse(readFileSync(join(KIT, "examples", "sunstone", "data", "sunstone.json"), "utf8")) as Project;
@@ -120,9 +130,10 @@ try {
       STUDIO_E2E_ART_FOLDER: artFolder,
       STUDIO_E2E_BROKEN: broken,
       STUDIO_E2E_AGENT_CONFIG: agentConfig,
-      STUDIO_E2E_RPG_MAKER: RPG_MAKER,
+      STUDIO_E2E_RPG_MAKER: rpgMaker,
       STUDIO_E2E_IMPORT_PARENT: importParent,
       STUDIO_E2E_SHOTS: join(KIT, "docs", "screenshots", "studio-desktop"),
+      STUDIO_E2E_APP_PATH: decoderFreePath,
     },
   });
   code = test.status ?? 1;

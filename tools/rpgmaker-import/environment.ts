@@ -1,6 +1,6 @@
 // Host boundary for RPG Maker import conversion. The conversion core only
 // sees portable paths, decoded RGBA images and explicit audio results; Node
-// filesystem/ffmpeg and browser DirectoryHandle/canvas adapters implement it.
+// filesystem/audio and browser DirectoryHandle/canvas adapters implement it.
 
 import {
   RPGMAKER_AUDIO_KINDS,

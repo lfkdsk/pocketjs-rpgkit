@@ -87,7 +87,8 @@ export interface BrowserImportEnvironmentOptions {
 }
 
 /** Bind lazy DirectoryHandle reads to the import core. Audio remains an
- * explicit dropped conversion because a web page has no ffmpeg/QOA decoder. */
+ * explicit dropped conversion because Browser Studio cannot invoke the
+ * system's ffmpeg process. */
 export function browserRpgMakerImportEnvironment(
   source: BrowserRpgMakerSource,
   options: BrowserImportEnvironmentOptions = {},
@@ -115,7 +116,7 @@ export function browserRpgMakerImportEnvironment(
     readMedia,
     convertAudio: (_root, requests) => unavailableAudioRecords(
       requests,
-      "browser import cannot convert RPG Maker Ogg/M4A audio to QOA; maps and images were still imported",
+      "Browser Studio cannot invoke system ffmpeg, so Ogg/M4A audio is omitted while maps and images continue importing. Desktop Studio or the CLI can import this audio when ffmpeg is installed. 浏览器版 Studio 无法调用系统 ffmpeg，因此会省略 Ogg/M4A 音频，但地图和图片会继续导入；安装 ffmpeg 后，桌面版 Studio 或 CLI 可以导入这些音频。",
     ),
   };
 }

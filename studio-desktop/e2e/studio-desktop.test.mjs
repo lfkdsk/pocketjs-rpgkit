@@ -27,7 +27,8 @@ const AGENT_CONFIG = process.env.STUDIO_E2E_AGENT_CONFIG;
 const RPG_MAKER = process.env.STUDIO_E2E_RPG_MAKER;
 const IMPORT_PARENT = process.env.STUDIO_E2E_IMPORT_PARENT;
 const SHOTS = process.env.STUDIO_E2E_SHOTS;
-if (!WORK || !FOLDER || !ART_FOLDER || !BROKEN || !AGENT_CONFIG || !RPG_MAKER || !IMPORT_PARENT || !SHOTS) throw new Error("run this through e2e/run.ts");
+const APP_PATH = process.env.STUDIO_E2E_APP_PATH;
+if (!WORK || !FOLDER || !ART_FOLDER || !BROKEN || !AGENT_CONFIG || !RPG_MAKER || !IMPORT_PARENT || !SHOTS || !APP_PATH) throw new Error("run this through e2e/run.ts");
 const PROFILE = join(WORK, "profile");
 mkdirSync(SHOTS, { recursive: true });
 
@@ -121,7 +122,7 @@ before(async () => {
       `--studio-user-data=${PROFILE}`,
       `--agent-config=${AGENT_CONFIG}`,
     ],
-    env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0" },
+    env: { ...process.env, PATH: APP_PATH, ELECTRON_ENABLE_LOGGING: "0" },
   });
   page = await electronApp.firstWindow();
   await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
@@ -179,23 +180,35 @@ describe("Studio desktop", () => {
 
   test("imports through native source/destination dialogs, publishes once, and opens through a directory token", async () => {
     await answerDialogs({ opens: [RPG_MAKER, IMPORT_PARENT] });
-    const imported = await studio(async () => {
-      const progress = [];
-      const outcome = await window.__studio.files.importRpgMaker("visible", (event) => progress.push(event));
-      const opened = outcome?.ok ? window.__studio.files.openRpgMakerResult(outcome) : false;
-      return { outcome, progress, opened };
-    });
-    assert.equal(imported.outcome.ok, true, JSON.stringify(imported.outcome));
-    assert.equal(imported.opened, true);
-    assert.deepEqual(imported.progress.map((event) => event.phase), ["selecting", "selecting", "reading", "converting", "writing", "complete"]);
-    assert.equal(imported.outcome.coverage.totals.total > 0, true);
-    assert.equal(imported.outcome.coverage.rows.every((row) => row.counts.Placeholder > 0 || row.counts.Dropped > 0), true);
+    await openMenuItem("Import RPG Maker MV/MZ");
+    await page.click('[data-action="choose-rpgmaker-source"]');
+    await page.waitForSelector(".import-callout.ready", { timeout: 60_000 });
+    assert.equal(await page.locator(".import-metrics").isVisible(), true);
+    assert.equal(await page.locator(".import-limitations").isVisible(), true);
+    await page.click(".import-warnings summary");
+    const decoderWarning = await page.locator(".import-warnings").textContent();
+    assert.match(decoderWarning, /audio decoder unavailable/);
+    assert.match(decoderWarning, /音频解码器不可用/);
+    assert.match(decoderWarning, /built-in decoder supports Ogg Vorbis only/);
+    assert.match(decoderWarning, /内置解码器仅支持 Ogg Vorbis/);
+    assert.match(decoderWarning, /ffmpeg.*PATH/);
+    await page.selectOption('[data-action="import-language"]', "zh");
+    assert.match(await page.locator(".import-warnings summary").textContent(), /^警告/);
+    await page.click('[data-action="open-rpgmaker-result"]');
+    await page.waitForFunction(() => window.__studio.files.target?.kind === "directory" && window.__studio.app.session?.kind === "pack", null, { timeout: 15_000 });
     assert.equal(await studio(() => window.__studio.files.target?.kind), "directory");
     assert.equal(await studio(() => window.__studio.app.session?.kind), "pack");
 
     const output = join(IMPORT_PARENT, "hollow-mz-rpgkit");
     assert.equal(existsSync(join(output, "project.json")), true);
     assert.equal(existsSync(join(output, "coverage.md")), true);
+    assert.equal(existsSync(join(output, "audio-media.json")), true);
+    const media = JSON.parse(readFileSync(join(output, "audio-media.json"), "utf8"));
+    assert.equal(media.filter((record) => record.status === "success").length, 6);
+    const unsupported = media.find((record) => record.key === "se/hollow-chest");
+    assert.equal(unsupported.status, "corrupt");
+    assert.match(unsupported.reason, /audio decoder unavailable.*音频解码器不可用/);
+    assert.equal(readdirSync(join(output, "audio")).length, 6);
     assert.equal(readdirSync(IMPORT_PARENT).some((name) => name.includes(".import-")), false, "staging directory was left behind");
     const before = snapshot(output);
 

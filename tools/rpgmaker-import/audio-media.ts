@@ -21,6 +21,7 @@ import {
   type AudioMediaSampleRate,
   type RpgMakerAudioKind,
 } from "./audio-types.ts";
+import { decodeOggVorbisPcm } from "./ogg-decode.ts";
 
 export {
   RPGMAKER_AUDIO_KINDS,
@@ -42,6 +43,13 @@ interface Candidate {
   path: string;
   relativePath: string;
   encrypted: boolean;
+}
+
+interface CandidateRecordBase extends AudioMediaRequest {
+  key: string;
+  sourcePath: string;
+  sourceFormat: Candidate["format"];
+  sourceBytes: number;
 }
 
 const KIND_ORDER = new Map<RpgMakerAudioKind, number>(
@@ -113,7 +121,52 @@ function pcmSamples(bytes: Uint8Array): Int16Array | null {
   return samples;
 }
 
-function convertCandidate(
+function errorText(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function decoderUnavailableReason(
+  ffmpeg: string,
+  format: Candidate["format"],
+  spawnError: unknown,
+  fallbackError?: unknown,
+): string {
+  const launch = `could not run ${JSON.stringify(ffmpeg)} (${errorText(spawnError)})`;
+  if (format === "m4a") {
+    return `audio decoder unavailable / 音频解码器不可用: ${launch}. ` +
+      "The built-in decoder supports Ogg Vorbis only; install ffmpeg and ensure it is on PATH to import M4A/AAC audio. / " +
+      "内置解码器仅支持 Ogg Vorbis；请安装 ffmpeg 并确保它位于 PATH 中，以导入 M4A/AAC 音频。";
+  }
+  const fallback = fallbackError === undefined ? "" : ` Built-in Ogg Vorbis fallback failed (${errorText(fallbackError)}).`;
+  return `audio decoder unavailable / 音频解码器不可用: ${launch}.${fallback} ` +
+    "Install ffmpeg and ensure it is on PATH, then retry. / 请安装 ffmpeg 并确保它位于 PATH 中，然后重试。";
+}
+
+function corruptRecord(base: CandidateRecordBase, reason: string): AudioMediaRecord {
+  return { ...base, status: "corrupt", outputBytes: 0, reason };
+}
+
+function successRecord(
+  base: CandidateRecordBase,
+  samples: Int16Array,
+  sampleRate: AudioMediaSampleRate,
+  channels: AudioMediaChannels,
+): AudioMediaRecord {
+  const frames = samples.length / channels;
+  const qoaBytes = encodeQoa(samples, channels, sampleRate);
+  return {
+    ...base,
+    status: "success",
+    outputBytes: qoaBytes.byteLength,
+    channels,
+    sampleRate,
+    frames,
+    durationTicks: Math.ceil(frames * 60 / sampleRate),
+    qoaBytes,
+  };
+}
+
+async function convertCandidate(
   request: AudioMediaRequest,
   candidate: Candidate,
   sourceBytes: number,
@@ -121,10 +174,22 @@ function convertCandidate(
   sampleRate: AudioMediaSampleRate,
   channels: AudioMediaChannels,
   encryption?: RpgMakerMediaEncryption,
-): AudioMediaRecord {
+): Promise<AudioMediaRecord> {
+  const base: CandidateRecordBase = {
+    ...request,
+    key: audioMediaKey(request.kind, request.name),
+    sourcePath: candidate.relativePath,
+    sourceFormat: candidate.format,
+    sourceBytes,
+  };
+  let input: Uint8Array | null;
+  try {
+    input = candidate.encrypted ? readRpgMakerMedia(candidate.path, encryption, "audio") : null;
+  } catch (error) {
+    return corruptRecord(base, `encrypted audio decode failed: ${errorText(error)}`);
+  }
   let decoded: ReturnType<typeof Bun.spawnSync>;
   try {
-    const input = candidate.encrypted ? readRpgMakerMedia(candidate.path, encryption, "audio") : null;
     decoded = Bun.spawnSync({
       cmd: [
         ffmpeg,
@@ -144,47 +209,27 @@ function convertCandidate(
       stderr: "pipe",
     });
   } catch (error) {
-    throw new Error(`rpgmaker audio: could not run ${JSON.stringify(ffmpeg)} (${(error as Error).message})`);
+    if (candidate.format === "ogg") {
+      try {
+        const bytes = input ?? readRpgMakerMedia(candidate.path, encryption, "audio");
+        const samples = await decodeOggVorbisPcm(bytes, sampleRate, channels);
+        return successRecord(base, samples, sampleRate, channels);
+      } catch (fallbackError) {
+        return corruptRecord(base, decoderUnavailableReason(ffmpeg, candidate.format, error, fallbackError));
+      }
+    }
+    return corruptRecord(base, decoderUnavailableReason(ffmpeg, candidate.format, error));
   }
 
-  const base = {
-    ...request,
-    key: audioMediaKey(request.kind, request.name),
-    sourcePath: candidate.relativePath,
-    sourceFormat: candidate.format,
-    sourceBytes,
-  } as const;
   if (!decoded.success) {
-    return {
-      ...base,
-      status: "corrupt",
-      outputBytes: 0,
-      reason: decodeError(decoded.stderr ?? new Uint8Array(), candidate.path, decoded.exitCode),
-    };
+    return corruptRecord(base, decodeError(decoded.stderr ?? new Uint8Array(), candidate.path, decoded.exitCode));
   }
 
   const samples = pcmSamples(decoded.stdout ?? new Uint8Array());
   if (!samples || samples.length % channels !== 0) {
-    return {
-      ...base,
-      status: "corrupt",
-      outputBytes: 0,
-      reason: samples ? "ffmpeg decoded a partial PCM frame" : "ffmpeg decoded no complete PCM samples",
-    };
+    return corruptRecord(base, samples ? "ffmpeg decoded a partial PCM frame" : "ffmpeg decoded no complete PCM samples");
   }
-
-  const frames = samples.length / channels;
-  const qoaBytes = encodeQoa(samples, channels, sampleRate);
-  return {
-    ...base,
-    status: "success",
-    outputBytes: qoaBytes.byteLength,
-    channels,
-    sampleRate,
-    frames,
-    durationTicks: Math.ceil(frames * 60 / sampleRate),
-    qoaBytes,
-  };
+  return successRecord(base, samples, sampleRate, channels);
 }
 
 /**
@@ -193,11 +238,11 @@ function convertCandidate(
  * When both deployment formats exist, Ogg is selected before M4A; a corrupt
  * preferred Ogg is reported as corrupt rather than silently changing source.
  */
-export function convertRpgMakerAudioMedia(
+export async function convertRpgMakerAudioMedia(
   projectRoot: string,
   requests: Iterable<AudioMediaRequest>,
   options: AudioMediaOptions = {},
-): AudioMediaRecord[] {
+): Promise<AudioMediaRecord[]> {
   const sampleRate = options.sampleRate ?? 44_100;
   const channels = options.channels ?? 2;
   const ffmpeg = options.ffmpeg ?? "ffmpeg";
@@ -226,20 +271,23 @@ export function convertRpgMakerAudioMedia(
   const indexes = new Map(
     RPGMAKER_AUDIO_KINDS.map((kind) => [kind, candidatesIn(projectRoot, kind, encryption)]),
   );
-  return unique.map((request): AudioMediaRecord => {
+  const records: AudioMediaRecord[] = [];
+  for (const request of unique) {
     const candidate = indexes.get(request.kind)!.get(request.name.toLowerCase())?.[0];
     if (!candidate) {
-      return {
+      records.push({
         ...request,
         key: audioMediaKey(request.kind, request.name),
         status: "missing",
         sourceBytes: 0,
         outputBytes: 0,
         reason: `audio/${request.kind}/${request.name}.ogg or .m4a was not found`,
-      };
+      });
+      continue;
     }
     const sourceBytes = statSync(candidate.path).size;
-    return convertCandidate(request, candidate, sourceBytes, ffmpeg, sampleRate, channels, encryption);
-  });
+    records.push(await convertCandidate(request, candidate, sourceBytes, ffmpeg, sampleRate, channels, encryption));
+  }
+  return records;
 }
 

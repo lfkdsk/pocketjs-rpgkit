@@ -2012,9 +2012,20 @@ async function main(): Promise<void> {
         importedCoverage.counts[0]! > 0 && importedCoverage.counts[1]! > 0 && importedCoverage.counts[2]! > 0 &&
         importedCoverage.limitations.some((row) => row.head.includes("Placeholder")) &&
         importedCoverage.limitations.some((row) => row.head.includes("Dropped")) &&
-        importedCoverage.limitations.every((row) => row.reason.startsWith("Reasons: ")) &&
-        importedCoverage.warnings.includes("browser import cannot convert"),
+        importedCoverage.limitations.every((row) => row.reason.startsWith("Reasons: ")),
       JSON.stringify(importedCoverage),
+    );
+    expect(
+      "import: omitted browser audio has bilingual ffmpeg recovery guidance",
+      [
+        "Browser Studio cannot invoke system ffmpeg",
+        "Ogg/M4A audio is omitted while maps and images continue importing",
+        "Desktop Studio or the CLI can import this audio when ffmpeg is installed",
+        "浏览器版 Studio 无法调用系统 ffmpeg",
+        "因此会省略 Ogg/M4A 音频，但地图和图片会继续导入",
+        "安装 ffmpeg 后，桌面版 Studio 或 CLI 可以导入这些音频",
+      ].every((guidance) => importedCoverage.warnings.includes(guidance)),
+      importedCoverage.warnings,
     );
 
     // Wide 1x capture plus screenshot-pixel checks for the green ready state

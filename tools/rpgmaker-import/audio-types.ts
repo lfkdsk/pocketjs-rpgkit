@@ -1,5 +1,6 @@
-// Browser-safe audio request/result contract. The Node/Bun adapter converts
-// through ffmpeg; browser environments return explicit missing records.
+// Browser-safe audio request/result contract. The Node/Bun adapter prefers
+// ffmpeg and has a bundled Ogg fallback; browser environments return explicit
+// missing records because Studio packs currently carry PNG assets only.
 
 import type { RpgMakerMediaEncryption } from "./media-crypto.ts";
 

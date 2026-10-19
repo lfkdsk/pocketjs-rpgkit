@@ -14,10 +14,12 @@ import {
   type AudioMediaSuccess,
   type RpgMakerAudioKind,
 } from "../tools/rpgmaker-import/audio-media.ts";
+import { decodeOggVorbisPcm } from "../tools/rpgmaker-import/ogg-decode.ts";
 
 const FFMPEG = Bun.which("ffmpeg");
 if (!FFMPEG) throw new Error("rpgmaker-audio-media tests require ffmpeg on PATH");
 const SCRATCH_ROOT = "/var/tmp/fleet/4306";
+const PARITY_OGG = join(import.meta.dir, "fixtures", "rpgmaker", "hollow-mz", "audio", "bgm", "hollow-map.ogg");
 mkdirSync(SCRATCH_ROOT, { recursive: true });
 
 const DEPLOYMENT_HEADER = Uint8Array.of(
@@ -76,13 +78,47 @@ function generateMedia(
   return output;
 }
 
-function success(record: ReturnType<typeof convertRpgMakerAudioMedia>[number]): AudioMediaSuccess {
+function success(record: Awaited<ReturnType<typeof convertRpgMakerAudioMedia>>[number]): AudioMediaSuccess {
   if (record.status !== "success") throw new Error(`expected success, got ${record.status}`);
   return record;
 }
 
 describe("RPG Maker audio media conversion", () => {
-  test("decrypts MZ deployment audio before deterministic conversion", () => {
+  test("keeps bundled Ogg PCM within the pinned ffmpeg tolerance", async () => {
+    const reference = Bun.spawnSync({
+      cmd: [
+        FFMPEG!,
+        "-v", "error", "-nostdin", "-i", PARITY_OGG,
+        "-map", "0:a:0", "-vn", "-sn", "-dn",
+        "-ac", "1", "-ar", "11025", "-acodec", "pcm_s16le", "-f", "s16le", "pipe:1",
+      ],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(reference.success).toBe(true);
+    const expectedBytes = reference.stdout ?? new Uint8Array();
+    const expectedView = new DataView(expectedBytes.buffer, expectedBytes.byteOffset, expectedBytes.byteLength);
+    const expected = new Int16Array(expectedBytes.byteLength / 2);
+    for (let index = 0; index < expected.length; index++) expected[index] = expectedView.getInt16(index * 2, true);
+    const actual = await decodeOggVorbisPcm(new Uint8Array(readFileSync(PARITY_OGG)), 11_025, 1);
+    expect(actual).toHaveLength(expected.length);
+
+    let signal = 0;
+    let noise = 0;
+    let maxDifference = 0;
+    for (let index = 0; index < actual.length; index++) {
+      const difference = actual[index]! - expected[index]!;
+      signal += expected[index]! * expected[index]!;
+      noise += difference * difference;
+      maxDifference = Math.max(maxDifference, Math.abs(difference));
+    }
+    const snrDb = 10 * Math.log10(signal / noise);
+    expect(maxDifference).toBeLessThanOrEqual(64);
+    expect(snrDb).toBeGreaterThanOrEqual(60);
+  }, 20_000);
+
+  test("decrypts MZ deployment audio before deterministic conversion", async () => {
     const root = mkdtempSync(join(SCRATCH_ROOT, "rpgmaker-audio-encrypted-"));
     try {
       const plainPath = generateMedia(root, "se", "Bell.ogg", 550);
@@ -92,7 +128,7 @@ describe("RPG Maker audio media conversion", () => {
       writeFileSync(encryptedPath, encryptedMedia(plain, key));
       rmSync(plainPath);
 
-      const records = convertRpgMakerAudioMedia(root, [{ kind: "se", name: "bell" }], {
+      const records = await convertRpgMakerAudioMedia(root, [{ kind: "se", name: "bell" }], {
         sampleRate: 11_025,
         channels: 1,
         encryption: { key, images: false, audio: true },
@@ -107,7 +143,7 @@ describe("RPG Maker audio media conversion", () => {
     }
   }, 20_000);
 
-  test("matches names case-insensitively, prefers Ogg, deduplicates, and is byte-stable", () => {
+  test("matches names case-insensitively, prefers Ogg, deduplicates, and is byte-stable", async () => {
     const root = mkdtempSync(join(SCRATCH_ROOT, "rpgmaker-audio-media-"));
     try {
       generateMedia(root, "bgm", "Theme.M4A", 330);
@@ -121,8 +157,8 @@ describe("RPG Maker audio media conversion", () => {
       ];
       const options = { sampleRate: 11_025 as const, channels: 1 as const };
 
-      const first = convertRpgMakerAudioMedia(root, requests, options);
-      const second = convertRpgMakerAudioMedia(root, [...requests].reverse(), options);
+      const first = await convertRpgMakerAudioMedia(root, requests, options);
+      const second = await convertRpgMakerAudioMedia(root, [...requests].reverse(), options);
       expect(second).toEqual(first);
       expect(first.map((record) => [record.key, record.status])).toEqual([
         ["bgm/theme", "success"],
@@ -151,14 +187,14 @@ describe("RPG Maker audio media conversion", () => {
       expect(rain.sourcePath).toBe("audio/bgs/Rain.m4a");
       expect(rain.sourceBytes).toBe(statSync(bgs).size);
 
-      const defaultRain = success(convertRpgMakerAudioMedia(root, [{ kind: "bgs", name: "rain" }])[0]!);
+      const defaultRain = success((await convertRpgMakerAudioMedia(root, [{ kind: "bgs", name: "rain" }]))[0]!);
       expect(defaultRain).toMatchObject({ channels: 2, sampleRate: 44_100 });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   }, 20_000);
 
-  test("reports corrupt preferred media and does not fall back to M4A", () => {
+  test("reports corrupt preferred media and does not fall back to M4A", async () => {
     const root = mkdtempSync(join(SCRATCH_ROOT, "rpgmaker-audio-corrupt-"));
     try {
       generateMedia(root, "me", "Fanfare.m4a", 440);
@@ -167,8 +203,8 @@ describe("RPG Maker audio media conversion", () => {
       const contents = new TextEncoder().encode("not an ogg stream\n");
       writeFileSync(bad, contents);
 
-      const first = convertRpgMakerAudioMedia(root, [{ kind: "me", name: "FANFARE" }]);
-      const second = convertRpgMakerAudioMedia(root, [{ kind: "me", name: "fanfare" }]);
+      const first = await convertRpgMakerAudioMedia(root, [{ kind: "me", name: "FANFARE" }]);
+      const second = await convertRpgMakerAudioMedia(root, [{ kind: "me", name: "fanfare" }]);
       expect(first).toHaveLength(1);
       const firstRecord = first[0]!;
       const secondRecord = second[0]!;
@@ -190,12 +226,12 @@ describe("RPG Maker audio media conversion", () => {
     }
   }, 20_000);
 
-  test("reports missing names with stable zero-byte accounting", () => {
+  test("reports missing names with stable zero-byte accounting", async () => {
     const root = mkdtempSync(join(SCRATCH_ROOT, "rpgmaker-audio-missing-"));
     try {
       mkdirSync(join(root, "audio", "se"), { recursive: true });
       writeFileSync(join(root, "audio", "se", "Bell.wav"), pcm(20, 220));
-      const records = convertRpgMakerAudioMedia(root, [
+      const records = await convertRpgMakerAudioMedia(root, [
         { kind: "se", name: "Bell" },
         { kind: "bgm", name: "Field" },
       ]);

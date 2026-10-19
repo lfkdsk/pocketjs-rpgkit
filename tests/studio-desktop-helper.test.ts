@@ -76,13 +76,14 @@ class HelperProcess {
   readonly stderr: Promise<string>;
   private nextId = 1;
 
-  constructor(command: string[], token: string | null = TOKEN) {
+  constructor(command: string[], token: string | null = TOKEN, env: Record<string, string> = {}) {
     this.child = Bun.spawn({
       cmd: command,
       cwd: ROOT,
       env: {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",
+        ...env,
         ...(token === null ? {} : { RPGKIT_HELPER_TOKEN: token }),
       },
       stdin: "pipe",
@@ -156,8 +157,11 @@ class HelperProcess {
   }
 }
 
-async function started(command = [process.execPath, HELPER, "serve"]): Promise<HelperProcess> {
-  const helper = new HelperProcess(command);
+async function started(
+  command = [process.execPath, HELPER, "serve"],
+  env: Record<string, string> = {},
+): Promise<HelperProcess> {
+  const helper = new HelperProcess(command, TOKEN, env);
   await helper.hello();
   return helper;
 }
@@ -320,6 +324,37 @@ describe("studio desktop helper", () => {
         phase: "converting",
         message: "Converting maps, events, art and audio / 正在转换地图、事件、美术和音频",
       }]);
+    } finally {
+      await helper.close();
+    }
+  }, 60_000);
+
+  test("imports all non-audio content and Ogg media when ffmpeg is absent from PATH", async () => {
+    const helper = await started([process.execPath, HELPER, "serve"], { PATH: "" });
+    const outputDir = scratch();
+    try {
+      const imported = result<ImportResult>(await helper.request("import", {
+        runId: "import-without-ffmpeg",
+        sourceDir: RPG_MAKER,
+        outputDir,
+        placeholders: "visible",
+      }));
+      const project = JSON.parse(readFileSync(join(outputDir, "project.json"), "utf8")) as {
+        mapIndex: unknown[];
+        audio?: Record<string, string>;
+      };
+      expect(project.mapIndex).toHaveLength(3);
+      expect(Object.keys(project.audio ?? {})).toHaveLength(6);
+      expect(readdirSync(join(outputDir, "audio")).sort()).toHaveLength(6);
+      const media = JSON.parse(readFileSync(join(outputDir, "audio-media.json"), "utf8")) as Array<{
+        status: string;
+        reason?: string;
+      }>;
+      expect(media.filter((record) => record.status === "success")).toHaveLength(6);
+      expect(media.filter((record) => record.status === "missing")).toHaveLength(6);
+      expect(media.some((record) => record.reason?.includes("audio decoder unavailable"))).toBe(false);
+      expect(imported.warnings.some((warning) => warning.includes("audio decoder unavailable"))).toBe(false);
+      expect(imported.coverage.rows.filter((row) => row.section === "audio")).toHaveLength(6);
     } finally {
       await helper.close();
     }
