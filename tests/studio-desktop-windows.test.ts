@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { snapshotPath } from "../studio-desktop/e2e/path.mjs";
 
 const ROOT = join(import.meta.dir, "..");
 const desktopPackage = JSON.parse(readFileSync(join(ROOT, "studio-desktop", "package.json"), "utf8")) as {
@@ -11,6 +12,11 @@ const workflow = readFileSync(join(ROOT, ".github", "workflows", "studio-desktop
 const e2eRunner = readFileSync(join(ROOT, "studio-desktop", "e2e", "run.ts"), "utf8");
 
 describe("Studio desktop Windows packaging", () => {
+  test("E2E snapshots use stable slash-separated keys on every host", () => {
+    expect(snapshotPath("maps\\village.json")).toBe("maps/village.json");
+    expect(snapshotPath("maps/village.json")).toBe("maps/village.json");
+  });
+
   test("the public script and builder config produce one unsigned x64 NSIS installer", () => {
     expect(desktopPackage.scripts?.["dist:win"])
       .toBe("bun build.ts && electron-builder --win nsis --x64 --publish never");
