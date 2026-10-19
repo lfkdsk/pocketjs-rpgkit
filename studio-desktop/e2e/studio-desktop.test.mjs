@@ -14,6 +14,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { _electron } from "playwright-core";
+import { snapshotPath } from "./path.mjs";
 
 const HERE = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -37,7 +38,10 @@ function snapshot(dir) {
     for (const entry of readdirSync(path, { withFileTypes: true })) {
       const full = join(path, entry.name);
       if (entry.isDirectory()) walk(full);
-      else out.set(relative(dir, full), { text: readFileSync(full, "utf8"), mtime: statSync(full).mtimeMs });
+      else {
+        const key = snapshotPath(relative(dir, full));
+        out.set(key, { text: readFileSync(full, "utf8"), mtime: statSync(full).mtimeMs });
+      }
     }
   };
   walk(dir);
