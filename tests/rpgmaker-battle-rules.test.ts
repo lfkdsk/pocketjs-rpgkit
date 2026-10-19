@@ -1641,6 +1641,69 @@ describe("RPG Maker battle rules", () => {
     expect(silentRules.cues).toBeUndefined();
   });
 
+  test("side-view action pose survives save, load, rewind, and 60/30/20 Hz stepping", async () => {
+    const { sideViewPose } = await import("../src/ui/rpgmaker-battle/side-view-pose.ts");
+    const db = (await importRmProject(loadRmProject(join(import.meta.dir, "fixtures/rpgmaker/sideview-mz")))).battle;
+    expect(db.sideView).toBe(true);
+    const { rules, state: initial } = start(db, 77);
+    const attack = { side: "actor" as const, user: 0, kind: "skill" as const,
+      id: 1, target: 0, speed: 0 };
+    const started = forceAction(rules, initial, attack);
+    const descriptor = state(started).sideViewMotion;
+    expect(descriptor).toMatchObject({ side: "actor", index: 0, motion: 7, weaponImageId: 1 });
+    const snapshots = [1, 2, 3].map((step) => {
+      let current = started;
+      for (let tick = 0; tick < 48; tick += step) {
+        current = fold(rules, current, {}, step);
+        const saved = rules.save!.encode(current);
+        expect(rules.save!.decode(saved)).toEqual(current);
+      }
+      return current;
+    });
+    expect(snapshots[1]).toEqual(snapshots[0]);
+    expect(snapshots[2]).toEqual(snapshots[0]);
+    const mid = fold(rules, started, {}, 18);
+    const restored = rules.save!.decode(rules.save!.encode(mid));
+    expect(sideViewPose(db, state(restored), state(restored).actors[0]!, 0))
+      .toEqual(sideViewPose(db, state(mid), state(mid).actors[0]!, 0));
+    expect(sideViewPose(db, state(mid), state(mid).actors[0]!, 0)).toMatchObject({
+      motion: 7, pattern: 1, advance: 1, weaponImageId: 1, weaponPattern: 1,
+    });
+    expect(sideViewPose(db, state(fold(rules, started, {}, 18)), state(mid).actors[0]!, 0))
+      .toEqual(sideViewPose(db, state(mid), state(mid).actors[0]!, 0));
+    expect(sideViewPose(db, state(snapshots[0]!), state(snapshots[0]!).actors[0]!, 0).advance).toBe(0);
+  });
+
+  test("side-view pose selects highest-priority state and exact frame boundaries", async () => {
+    const { sideViewPose } = await import("../src/ui/rpgmaker-battle/side-view-pose.ts");
+    const db = structuredClone((await importRmProject(loadRmProject(join(import.meta.dir, "fixtures/rpgmaker/sideview-mz")))).battle);
+    const initial = mutable(start(db, 91).state);
+    const actor = initial.actors[0]!;
+    const marked = db.states.find((entry) => entry.id === 3)!;
+    marked.motion = 1;
+    marked.overlay = 1;
+    db.states.push({ ...marked, id: 4, priority: marked.priority + 1, motion: 2, overlay: 2 });
+    actor.states = [{ id: 3, turns: 2 }, { id: 4, turns: 2 }];
+    expect(sideViewPose(db, initial, actor, 0).motion).toBe(16);
+    actor.states.reverse();
+    expect(sideViewPose(db, initial, actor, 0).motion).toBe(16);
+    actor.states = [{ id: 3, turns: 2 }];
+    expect(sideViewPose(db, initial, actor, 0).motion).toBe(15);
+    actor.states = [];
+    initial.sideViewMotion = { side: "actor", index: 0, motion: 7, weaponImageId: 1, startTick: 0 };
+    for (const [tick, pattern, advance, weapon] of [
+      [0, 0, 0, 0], [11, 0, 11 / 12, 0], [12, 1, 1, 1],
+      [24, 2, 1, 2], [35, 2, 1, 2], [36, 1, 1, 3],
+      [47, 1, 1 / 12, 3], [48, 0, 0, 4],
+    ]) {
+      initial.nowTick = tick!;
+      expect(sideViewPose(db, initial, actor, 0)).toMatchObject({
+        motion: tick! < 36 ? 7 : 1, pattern, advance,
+        weaponImageId: tick! < 48 ? 1 : 0, weaponPattern: weapon,
+      });
+    }
+  });
+
   test("database identity mismatch fails before publishing battle state", () => {
     const db = cloneDb();
     const rules = createRpgMakerBattleRules(db);

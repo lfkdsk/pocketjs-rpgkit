@@ -1,4 +1,4 @@
-// tests/fixtures/rpgmaker/gen-fixtures.ts — author the two RPG Maker
+// tests/fixtures/rpgmaker/gen-fixtures.ts — author the three RPG Maker
 // fixture projects the importer is tested against.
 //
 //   bun tests/fixtures/rpgmaker/gen-fixtures.ts [outDir]
@@ -9,6 +9,7 @@
 //                battle placeholder
 //   stage-mv/    MV flavour, 48 px tiles: one stage map with an autorun
 //                opening cutscene
+//   sideview-mz/ MZ flavour, authored side-view art and two battle actors
 //
 // Each project is a `data/` directory in the public MV/MZ JSON layout, an
 // `img/` directory of generated placeholder art (art.ts), and two small
@@ -72,7 +73,7 @@ import {
 } from "./art.ts";
 import { STAGE_FANFARE_OGG, STAGE_OVERTURE_OGG } from "./audio-bytes.ts";
 
-export const FIXTURE_PROJECTS = ["hollow-mz", "stage-mv"] as const;
+export const FIXTURE_PROJECTS = ["hollow-mz", "stage-mv", "sideview-mz"] as const;
 
 /** Relative path -> contents. */
 type Files = Map<string, string | Uint8Array>;
@@ -700,6 +701,7 @@ interface SystemSpec {
   variables: Record<number, string>;
   versionId: number;
   partyMembers: number[];
+  sideView?: boolean;
   followers?: boolean;
   vehicles?: Partial<Record<"boat" | "ship" | "airship", RmVehicle>>;
 }
@@ -734,7 +736,7 @@ function system(s: SystemSpec): RmSystem {
     optExtraExp: false,
     optFloorDeath: false,
     optFollowers: s.followers ?? true,
-    optSideView: false,
+    optSideView: s.sideView ?? false,
     optSlipDeath: false,
     optTransparent: false,
     partyMembers: s.partyMembers,
@@ -2391,6 +2393,69 @@ function stageData(files: Files): void {
 }
 
 // =====================================================================================================
+// A separate side-view project derives only from our authored Hollow fixture.
+// Its independent files leave the existing front-view projects byte-identical.
+// =====================================================================================================
+
+const SIDEVIEW = "sideview-mz";
+
+function sideViewFixture(files: Files): void {
+  for (const [path, bytes] of [...files]) {
+    if (path.startsWith(`${HOLLOW}/`)) files.set(`${SIDEVIEW}/${path.slice(HOLLOW.length + 1)}`, bytes);
+  }
+  const data = (name: string) => `${SIDEVIEW}/data/${name}`;
+  const systemRecord = JSON.parse(files.get(data("System.json")) as string) as Record<string, unknown>;
+  systemRecord.optSideView = true;
+  systemRecord.partyMembers = [1, 2];
+  systemRecord.gameTitle = "Side View Laboratory";
+  files.set(data("System.json"), j(systemRecord));
+  const actors = JSON.parse(files.get(data("Actors.json")) as string) as (RmActor | null)[];
+  actors[1]!.battlerName = "WrenSV";
+  actors[2]!.battlerName = "MossSV";
+  files.set(data("Actors.json"), recordsJson(actors));
+  const stateRecords = JSON.parse(files.get(data("States.json")) as string) as (Record<string, unknown> | null)[];
+  stateRecords[3]!.overlay = 1;
+  stateRecords[3]!.motion = 1;
+  files.set(data("States.json"), recordsJson(stateRecords));
+  const img = (path: string, canvas: Canvas) => files.set(`${SIDEVIEW}/img/${path}`, canvas.png());
+  for (const [name, body, hair] of [
+    ["WrenSV", "#30b9e6", "#ffcf40"], ["MossSV", "#e95b8b", "#8ae060"],
+  ] as const) {
+    const sheet = new Canvas(9 * 64, 6 * 64);
+    for (let motion = 0; motion < 18; motion++) for (let pattern = 0; pattern < 3; pattern++) {
+      const x = (Math.floor(motion / 6) * 3 + pattern) * 64;
+      const y = (motion % 6) * 64;
+      sheet.rect(x + 20, y + 18 + pattern, 24, 30, rgb(body));
+      sheet.rect(x + 22, y + 8 + pattern, 20, 14, rgb(hair));
+      sheet.rect(x + 27, y + 14 + pattern, 3, 3, rgb("#17212c"));
+      sheet.rect(x + 24, y + 48, 6, 12, rgb("#28304b"));
+      sheet.rect(x + 36, y + 48, 6, 12, rgb("#28304b"));
+      sheet.rect(x + 18, y + 2, 2, 5, rgb(motion % 2 ? "#f9ef55" : "#eb583c"));
+    }
+    img(`sv_actors/${name}.png`, sheet);
+  }
+  const enemy = new Canvas(64, 64);
+  enemy.rect(8, 10, 48, 50, rgb("#7351a1"));
+  enemy.rect(20, 24, 8, 5, rgb("#fff064"));
+  enemy.rect(38, 24, 8, 5, rgb("#fff064"));
+  img("sv_enemies/Golem.png", enemy);
+  for (let page = 1; page <= 3; page++) {
+    const weapons = new Canvas(6 * 96, 6 * 64);
+    for (let id = 0; id < 12; id++) for (let frame = 0; frame < 3; frame++) {
+      const x = (Math.floor(id / 6) * 3 + frame) * 96;
+      const y = (id % 6) * 64;
+      weapons.rect(x + 12 + frame * 6, y + 22, 58, 8, rgb("#e8dd6c"));
+      weapons.rect(x + 18 + frame * 6, y + 30, 8, 20, rgb("#83572a"));
+    }
+    img(`system/Weapons${page}.png`, weapons);
+  }
+  const overlays = new Canvas(8 * 96, 96);
+  for (let frame = 0; frame < 8; frame++) overlays.frame(frame * 96 + 10, 8, 76, 80, rgb("#33dfd3", 160));
+  img("system/States.png", overlays);
+  const shadow = new Canvas(64, 16);
+  shadow.rect(5, 5, 54, 7, rgb("#26304b", 128));
+  img("system/Shadow2.png", shadow);
+}
 
 /** Build every fixture file in memory. Keys are paths relative to the
  *  fixtures directory. */
@@ -2401,6 +2466,7 @@ export function buildFixtures(): Files {
   stageData(files);
   stageArt(files);
   files.set(`${HOLLOW}/test-art/Window.png`, windowSkin().png());
+  sideViewFixture(files);
   return files;
 }
 

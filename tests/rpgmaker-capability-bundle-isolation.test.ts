@@ -96,9 +96,10 @@ const EXPECTED_BYTES = {
   // shared validator without admitting an optional RPG Maker runtime.
   sunstone: 1_120_900,
   // The positive control also opts into imported battlebacks, legacy battle
-  // animations, changed actor faces and result audio. Their complete optional
-  // presentation adds a measured 45,162 B; neither negative control changes.
-  "rmi-play": 1_371_688,
+  // animations, changed actor faces, result audio and stock side-view
+  // presentation. The complete optional presentation is rebuilt together;
+  // neither negative control changes.
+  "rmi-play": 1_501_530,
 } as const;
 
 function implementationModules(app: string): string[] {

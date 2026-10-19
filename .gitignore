@@ -1,6 +1,10 @@
 node_modules/
 dist/
 
+# Local-only upstream comparison and build scratch; never ship reference art.
+.sv-reference/
+.pocket-build/
+
 # Bun / editor noise
 .DS_Store
 *.swp

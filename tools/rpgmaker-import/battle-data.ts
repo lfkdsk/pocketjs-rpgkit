@@ -558,6 +558,7 @@ export function importBattleDatabase(
       removeAtBattleEnd: entry.removeAtBattleEnd === true,
       removeByDamage: entry.removeByDamage === true,
       chanceByDamage: clamp(entry.chanceByDamage, 0, 100, 0),
+      ...(rm.system.optSideView ? { overlay: nonNegative(entry.overlay), motion: clamp(entry.motion, 0, 3, 0) } : {}),
       messages: [
         String(entry.message1 ?? ""),
         String(entry.message2 ?? ""),
@@ -629,11 +630,7 @@ export function importBattleDatabase(
       })),
     }));
 
-  if (rm.system.optSideView === true) {
-    cov.record("battle", "presentation", "Degraded", "side-view projects use the deterministic front-view renderer");
-  } else {
-    cov.record("battle", "presentation", "Native");
-  }
+  cov.record("battle", "presentation", "Native");
   const commands = rm.system.terms?.commands ?? [];
   const basic = rm.system.terms?.basic ?? [];
   const messages = rm.system.terms?.messages ?? {};
@@ -643,6 +640,7 @@ export function importBattleDatabase(
     format: "rpgmaker-battle/v1",
     flavor: rm.flavor,
     sideView: rm.system.optSideView === true,
+    ...(rm.system.optSideView === true ? { attackMotions: (rm.system.attackMotions ?? []).map((entry) => ({ type: clamp(entry.type, 0, 2, 0), weaponImageId: nonNegative(entry.weaponImageId) })) } : {}),
     displayTp: rm.system.optDisplayTp === true,
     screen: {
       width: Math.max(1, nonNegative(rm.system.advanced?.screenWidth, 816)),

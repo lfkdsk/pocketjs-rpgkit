@@ -1,0 +1,5 @@
+[
+null,
+{"animationId":0,"consumable":true,"damage":{"critical":false,"elementId":0,"formula":"0","type":0,"variance":20},"description":"Restores a little HP.","effects":[{"code":11,"dataId":0,"value1":0,"value2":30}],"hitType":0,"iconIndex":176,"id":1,"itypeId":1,"name":"Potion","note":"","occasion":0,"price":20,"repeats":1,"scope":7,"speed":0,"successRate":100,"tpGain":0},
+{"animationId":0,"consumable":false,"damage":{"critical":false,"elementId":0,"formula":"0","type":0,"variance":20},"description":"The elder's seal. Opens the north gate.","effects":[],"hitType":0,"iconIndex":195,"id":2,"itypeId":2,"name":"Cave Pass","note":"","occasion":3,"price":0,"repeats":1,"scope":0,"speed":0,"successRate":100,"tpGain":0}
+]

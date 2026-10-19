@@ -2,7 +2,7 @@
 
 `tools/rpgmaker-import` converts RPG Maker MV or MZ maps, events, database
 records, referenced images and Ogg/M4A media into an `rpgkit-project/v1`
-project, generated art, QOA audio and an opt-in front-view battle database.
+project, generated art, QOA audio and an opt-in front-view or side-view battle database.
 Plain projects and standard encrypted deployments are supported. The importer
 is a build-time tool, so applications which do not use it bundle none of its
 code.
@@ -91,7 +91,7 @@ bun tools/build-example.ts rmi-play
 Its cooker imports both test projects, bakes map chunks and sprite frames,
 packs QOA, pictures, parallaxes, balloons and animations, and writes
 `GameAssets`. Its entry registers audio, parallax, item icons, RPG Maker text
-and screen presentation, the generated battle database and front-view scene,
+and screen presentation, the generated battle database and optional front-view or side-view scene,
 formation, travel and name input. See [Optional capabilities](capabilities.md)
 for the registrations and their absence behavior.
 
@@ -114,7 +114,7 @@ but are not separate catalogue rows.
 | Handling | Command codes and reason |
 | --- | --- |
 | Native | The 100 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. Battle presentation commands still require the imported media and opt-in battle integration to be visible or audible. |
-| Degraded | **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** tones flat kit chrome instead of an RPG Maker windowskin; **223** uses exact destination tone on core-software hosts and an overlay fallback on fixed draw backends; **322** persists actor images and updates imported faces live, but does not wire map walking images or draw side-view battlers in the front-view battle; **356, 357** retain typed plugin calls that require a game-registered extension handler. |
+| Degraded | **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** tones flat kit chrome instead of an RPG Maker windowskin; **223** uses exact destination tone on core-software hosts and an overlay fallback on fixed draw backends; **322** persists actor images and updates imported faces and side-view battlers live when cooked, but does not wire map walking images; **356, 357** retain typed plugin calls that require a game-registered extension handler. |
 | Dropped | **261** (Play Movie) has no video host. |
 
 The generated code-137 reason in the full table says that the "walking leader"
@@ -168,7 +168,7 @@ arithmetic, comparisons, boolean operators, ternaries and allowlisted `Math`
 members. A rejected formula is reported Degraded and uses
 `Math.max(0, a.atk * 4 - b.def * 2)`.
 
-The current module is deterministic front-view battle. It resolves explicit
+The optional module provides deterministic front-view and side-view battle. It resolves explicit
 map battlebacks, map-local Change Battle Background overrides and stock
 overworld terrain/vehicle defaults, then paints battleback1 below battleback2.
 Imported battle BGM takes priority over the walking or vehicle mix; a dynamic
@@ -188,9 +188,7 @@ Change Actor Images faces update live in the MZ battle-status HUD and in the
 optional MV/MZ formation/menu surface. MV front-view battle status remains
 text-only, matching its upstream layout.
 
-The feature remains Partial: side-view projects are shown in front view, map
-walking art and side-view battlers do not update live, and the bounded trait
-subset is listed under [known limitations](#known-limitations).
+When `System.json` opts into side view, imported 9×6 actor motion sheets, side-view enemies, weapon sheets, state overlays and shadows paint actors on the right and enemies on the left. The serialized 60 Hz battle clock drives 12-tick motion and weapon frames, eight-tick overlays and a 48-pixel forward step across 60/30/20 Hz, save/load and rewind. Missing optional art uses a placeholder or omits that layer. Changed cooked battler art updates live; map walking art does not. The feature remains Partial: the bounded trait subset and further limitations are listed under [known limitations](#known-limitations).
 
 ## Import-time safe Script subset
 
@@ -231,9 +229,9 @@ omitted.
 - Browser Studio produces an editable maps/images pack, not the complete
   CLI/desktop directory. It drops audio and does not persist `battle.json`,
   manifests or coverage files in the pack.
-- RPG Maker battle is partial front-view battle. Two-layer battlebacks, battle
+- RPG Maker battle has front-view and opt-in side-view presentation. Two-layer battlebacks, battle
   audio and cooked legacy MV animations are presented by the opt-in reference
-  integration, but side-view layout, some traits and animations which cannot
+  integration, but some traits and animations which cannot
   be cooked remain limited. MZ Effekseer animations are dropped.
 - Fixed GPU/console hosts use deterministic tone overlays, and window colour
   tones flat kit chrome rather than an RPG Maker windowskin. MZ cursor/font
@@ -242,8 +240,8 @@ omitted.
   target/screen flashes use deterministic source-over overlays.
 - Actor event simulation does not cover every later predicate/presentation
   effect. Changed imported faces do update the battle HUD and optional
-  formation/menu surface, but map walking art and side-view battlers do not;
-  some actor conditions still use imported initial facts.
+  formation/menu surface, and cooked side-view battlers update live; map walking
+  art does not. Some actor conditions still use imported initial facts.
 - Maps larger than **256 × 256** are rejected. Ladder, bush and counter traits
   are imported; the consuming cooker must provide bush-depth actor variants as
   described under [tiles and autotiles](#tiles-and-autotiles).
@@ -586,7 +584,7 @@ for that project, to `coverage.md`.
 | 319 | Change Equipment | MV/MZ | Native |  | equipment slots |
 | 320 | Change Name | MV/MZ | Native |  | runtime names for actors other than actor 1 |
 | 321 | Change Class | MV/MZ | Native |  | actor classes |
-| 322 | Change Actor Images | MV/MZ | Degraded | actor images persist and imported faces can update live, but map walking images are not wired and front-view battle does not draw side-view battlers | per-actor walking/face/battler images (the player sprite can change via appearance) |
+| 322 | Change Actor Images | MV/MZ | Degraded | actor images persist; imported faces and side-view battlers update live when cooked, but map walking images do not | per-actor walking/face/battler images (the player sprite can change via appearance) |
 | 323 | Change Vehicle Image | MV/MZ | Native |  |  |
 | 324 | Change Nickname | MV/MZ | Native |  | actor profiles |
 | 325 | Change Profile | MV/MZ | Native |  | actor profiles |
@@ -725,12 +723,12 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   project-wide failure. With no system `ffmpeg`, Ogg Vorbis uses the bundled
   decoder and M4A/AAC records explain that `ffmpeg` is required.
 - **RPG Maker battle support is opt-in and partial.** The deterministic
-  front-view module imports actor/class parameter curves, enemy action patterns,
+  front-view and opt-in side-view module imports actor/class parameter curves, enemy action patterns,
   troops and positions, skills/items, states, rewards, weighted region-aware
   map encounters, and the common turn/enemy-HP/switch troop-page conditions.
   Troop pages additionally execute enemy HP/MP/TP/state changes, recovery,
-  appear, transform, forced actions and abort in source order. MV side-view
-  projects intentionally render in front view. Explicit and changed
+  appear, transform, forced actions and abort in source order. Cooked side-view
+  sheets and their optional layers render when the project opts in. Explicit and changed
   battlebacks plus terrain/vehicle defaults render as stock-ordered
   battleback1/battleback2 layers. Imported battle BGM overrides the walking or
   vehicle mix, Change Battle BGM updates later battles, and victory/defeat ME
@@ -744,7 +742,7 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   frames and flashes use deterministic source-over approximations. Imported
   Change Actor Images faces update the MZ battle-status HUD and the optional
   MV/MZ formation/menu surface, while MV front-view status remains text-only
-  and map walking art and side-view battlers remain limited.
+  and map walking art remains limited. Cooked side-view battlers update live.
   Encounter Disable works; a bush doubles progress, Encounter Half halves it,
   ships halve it again, boats keep the walking rate and airships freeze the
   saved countdown. The factors multiply and fractional progress is saved.

@@ -1446,7 +1446,7 @@ describe("battle, shop, name input", () => {
     }]);
   });
 
-  test("side-view Battle Processing is reported as front-view degradation", () => {
+  test("side-view Battle Processing is reported as native", () => {
     const { cmds, cov } = conv([C(301, 0, [2, 0, true, false])], { sideView: true });
     expect(cmds).toEqual([{
       op: "battle",
@@ -1455,7 +1455,7 @@ describe("battle, shop, name input", () => {
       },
       onLose: [{ op: "gameOver" }, { op: "exit" }],
     }]);
-    expect(only(cov, 301)).toBe("Degraded");
+    expect(only(cov, 301)).toBe("Native");
   });
 
   test("shop goods", () => {

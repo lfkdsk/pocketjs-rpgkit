@@ -250,6 +250,9 @@ export interface RpgMakerBattleStateDef {
   removeAtBattleEnd: boolean;
   removeByDamage: boolean;
   chanceByDamage: number;
+  /** Optional side-view state overlay row and priority motion. */
+  overlay?: number;
+  motion?: number;
   /** RPG Maker's actor/enemy/additional/removal state messages. */
   messages: [string, string, string, string];
   traits: RpgMakerTrait[];
@@ -314,8 +317,10 @@ export interface RpgMakerBattleDatabase {
    * the same value, binding separately packaged battle.json to map content. */
   databaseHash: string;
   flavor: RpgMakerFlavor;
-  /** True means authored side-view data is intentionally rendered front-view. */
+  /** Authored System.optSideView; opts in to the optional side-view scene. */
   sideView: boolean;
+  /** Optional authored attack pose and weapon image for each weapon type. */
+  attackMotions?: { type: number; weaponImageId: number }[];
   displayTp: boolean;
   /** Authored battle canvas used to scale troop member coordinates. */
   screen: { width: number; height: number };
@@ -495,6 +500,15 @@ export interface RpgMakerBattleState {
    * nowTick the audio projector publishes the one-shot map-restore + ME
    * transition; later ticks retain the durable session audio cursor. */
   resultAudioStartTick?: number;
+  /** Last side-view action, anchored to the reducer's integer 60 Hz clock.
+   * Optional so saves made before side-view support remain valid. */
+  sideViewMotion?: {
+    side: "actor" | "enemy";
+    index: number;
+    motion: number;
+    weaponImageId: number;
+    startTick: number;
+  } | null;
   /** Most recently committed HP change, used only for state-driven tweening. */
   effect: {
     side: "actor" | "enemy";

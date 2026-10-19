@@ -1,5 +1,5 @@
 // tests/rpgmaker-import.test.ts — the RPG Maker MV/MZ importer end to end
-// on the two self-written fixture projects (tests/fixtures/rpgmaker):
+// on three self-written fixture projects (tests/fixtures/rpgmaker):
 // schema-valid output, byte-stable files, the CLI, coverage accounting, the
 // generated tile sheets' passage, and the committed play fixture
 // (tests/fixtures/rmi-play/games.ts) staying in step with the importer.
@@ -123,6 +123,36 @@ describe("rpgmaker-import: output", () => {
       expect(lintProject(result.project).findings.filter((finding) => finding.severity === "error")).toEqual([]);
     });
   }
+
+  test("side-view import is opt-in, preserves front-view normalization, and reports missing actor art", async () => {
+    const source = loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/sideview-mz"));
+    const side = await importRmProject(source);
+    expect(side.battle.sideView).toBe(true);
+    expect(side.assets.sideViewActors?.WrenSV).toMatchObject({ w: 576, h: 384 });
+    expect(side.assets.sideViewActors?.MossSV).toMatchObject({ w: 576, h: 384 });
+    expect(side.assets.sideViewWeapons?.["1"]).toMatchObject({ w: 576, h: 384 });
+    expect(side.assets.sideViewStates).toMatchObject({ w: 768, h: 96 });
+    expect(side.assets.sideViewShadow).toMatchObject({ w: 64, h: 16 });
+    expect(side.battle.attackMotions?.[1]).toEqual({ type: 1, weaponImageId: 1 });
+    expect(hollow.assets.sideViewActors).toBeUndefined();
+    expect(hollow.battle.attackMotions).toBeUndefined();
+    expect(hollow.battle.states.every((entry) => entry.overlay === undefined && entry.motion === undefined)).toBe(true);
+    const missing = loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/sideview-mz"));
+    missing.actors[1]!.battlerName = "IntentionallyAbsentSV";
+    const degraded = await importRmProject(missing);
+    expect(degraded.assets.sideViewActors?.IntentionallyAbsentSV).toBeUndefined();
+    expect(degraded.warnings).toContain("sv_actors/IntentionallyAbsentSV.png not found");
+    expect(degraded.assets.sideViewActors?.MossSV).toBeDefined();
+    const changed = loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/sideview-mz"));
+    changed.actors[1]!.battlerName = "";
+    const golem = changed.maps.get(3)?.events.find((event) => event?.id === 2);
+    expect(golem).toBeDefined();
+    golem!.pages[0]!.list.unshift({ code: 322, indent: 0,
+      parameters: [1, "", 0, "", 0, "WrenSV"] });
+    const eventImage = await importRmProject(changed);
+    expect(eventImage.assets.sideViewActors?.WrenSV).toMatchObject({ w: 576, h: 384 });
+    expect(eventImage.warnings).not.toContain("sv_actors/WrenSV.png not found");
+  });
 
   test("maps, sheets and start come from the RM data", () => {
     expect(hollow.project.maps.map((m) => [m.id, m.width, m.height])).toEqual([

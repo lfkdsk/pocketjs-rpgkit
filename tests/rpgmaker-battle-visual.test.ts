@@ -255,6 +255,99 @@ async function golden(
   expect(frame).toEqual(expected.rgba);
 }
 
+simDescribe("RPG Maker side-view battle visuals", () => {
+  for (const viewport of VIEWPORTS) {
+    test(`a confirmed target paints and animates the authored weapon at ${viewport.width}x${viewport.height}`, async () => {
+      const world = await bootGameWorld(appBundle("rmi-play"), 60,
+        { __rmiGame: "sideview", __rmiBattlePreview: "en" }, undefined, viewport);
+      enterTargetSelection(world);
+      pump(world, BTN.CIRCLE); // Confirm actor 0's target.
+      pump(world);             // Release before selecting actor 1's command.
+      pump(world, BTN.CIRCLE); // Actor 1 attacks.
+      pump(world);
+      pump(world, BTN.CIRCLE); // Confirm actor 1's target; resolve queued actions.
+      for (let tick = 0; tick < 45; tick++) {
+        pump(world);
+        const scene = world.probes().state.scene as { state?: { phase?: string; sideViewMotion?: { weaponImageId: number; startTick: number; side: string }; nowTick?: number } } | undefined;
+        const motion = scene?.state?.sideViewMotion;
+        if (motion?.side === "actor" && motion.weaponImageId === 2) {
+          expect(findNode(world.getTree() as TreeNode, "rpgmaker-actor-weapon-0")).not.toBeNull();
+          const effect = (scene?.state as { effect?: { side: string; index: number; from: number; to: number } | null })?.effect;
+          expect(effect?.side, "attack records the enemy damage target").toBe("enemy");
+          expect(effect?.from, "attack reduces enemy HP").toBeGreaterThan(effect?.to ?? Infinity);
+          expect(findNode(world.getTree() as TreeNode, `rpgmaker-enemy-damage-${effect?.index}`),
+            "damage number paints above the side-view enemy").not.toBeNull();
+          const scale = viewport.width / 480;
+          const spritePositions = () => {
+            const frame = world.render().slice();
+            const blade: number[] = [];
+            const body: number[] = [];
+            for (let y = Math.floor(50 * scale); y < Math.floor(145 * scale); y++) {
+              for (let x = Math.floor(250 * scale); x < Math.floor(410 * scale); x++) {
+                const at = (y * viewport.width + x) * 4;
+                if (frame[at] === 0xe8 && frame[at + 1] === 0xdd && frame[at + 2] === 0x6c && frame[at + 3] === 0xff) blade.push(x);
+                if (frame[at] === 0x30 && frame[at + 1] === 0xb9 && frame[at + 2] === 0xe6 && frame[at + 3] === 0xff) body.push(x);
+              }
+            }
+            expect(blade.length, "authored gold blade is visible over the arena").toBeGreaterThan(20);
+            expect(body.length, "actor body remains visible").toBeGreaterThan(20);
+            return Math.min(...blade) - Math.min(...body);
+          };
+          const first = spritePositions();
+          for (let frame = 0; frame < 12; frame++) pump(world);
+          const second = spritePositions();
+          expect(second, "weapon cell changes relative to the advancing actor").not.toBe(first);
+          for (let frame = 0; frame < 6; frame++) pump(world);
+          expect(findNode(world.getTree() as TreeNode, `rpgmaker-enemy-damage-${effect?.index}`),
+            "damage number expires at the reducer's effect duration").toBeNull();
+          return;
+        }
+      }
+      const scene = world.probes().state.scene as { state?: { phase?: string; nowTick?: number; sideViewMotion?: unknown } } | undefined;
+      throw new Error(`actor action did not begin: phase=${scene?.state?.phase}, tick=${scene?.state?.nowTick}, motion=${JSON.stringify(scene?.state?.sideViewMotion)}`);
+    }, 60_000);
+  }
+
+  for (const viewport of VIEWPORTS) {
+    test(`authored actor and enemy sheets paint on opposite sides at ${viewport.width}x${viewport.height}`, async () => {
+      const world = await bootGameWorld(appBundle("rmi-play"), 60,
+        { __rmiGame: "sideview", __rmiBattlePreview: "en" }, undefined, viewport);
+      enterTargetSelection(world);
+      const tree = world.getTree() as TreeNode;
+      expect(findNode(tree, "rpgmaker-actor-sprite-0")).not.toBeNull();
+      expect(findNode(tree, "rpgmaker-actor-sprite-1")).not.toBeNull();
+      expect(findNode(tree, "rpgmaker-actor-shadow-0")).not.toBeNull();
+      expect(findNode(tree, "rpgmaker-actor-overlay-0"), "marked actor displays the authored state overlay").not.toBeNull();
+      expect(findNode(tree, "rpgmaker-enemy-sprite-0")).not.toBeNull();
+      const pixels = world.render().slice();
+      const s = viewport.width / 480;
+      const count = (x0: number, y0: number, x1: number, y1: number, colour: Rgba) =>
+        countColourInRect(pixels, viewport.width,
+          Math.floor(x0 * s), Math.floor(y0 * s), Math.floor(x1 * s), Math.floor(y1 * s), colour);
+      expect(count(340, 45, 420, 150, [0x30, 0xb9, 0xe6, 0xff]), "first actor on right").toBeGreaterThan(30);
+      expect(count(360, 65, 455, 175, [0xe9, 0x5b, 0x8b, 0xff]), "second actor on right").toBeGreaterThan(30);
+      expect(count(30, 40, 280, 175, [0x73, 0x51, 0xa1, 0xff]), "side-view enemy on left").toBeGreaterThan(30);
+      // Translucent fixture art is composited over the arena, so compare the
+      // resulting colour rather than the unblended source RGBA values.
+      const countBlended = (x0: number, y0: number, x1: number, y1: number, matches: (r: number, g: number, b: number) => boolean) => {
+        let total = 0;
+        for (let y = Math.floor(y0 * s); y < Math.floor(y1 * s); y++) {
+          for (let x = Math.floor(x0 * s); x < Math.floor(x1 * s); x++) {
+            const at = (y * viewport.width + x) * 4;
+            if (matches(pixels[at]!, pixels[at + 1]!, pixels[at + 2]!)) total++;
+          }
+        }
+        return total;
+      };
+      expect(countBlended(325, 35, 420, 145, (r, g, b) => r < 100 && g > 130 && b > 120 && b < 205),
+        "marked actor overlay on right").toBeGreaterThan(10);
+      expect(countBlended(352, 125, 410, 140, (r, g, b) => r >= 35 && r <= 40 && g >= 48 && g <= 55 && b >= 70 && b <= 80),
+        "authored shadow below actor").toBeGreaterThan(10);
+      await golden("sideview.en", pixels, viewport.width, viewport.height);
+    }, 60_000);
+  }
+});
+
 simDescribe("RPG Maker front-view battle visuals", () => {
   for (const [language, copy] of Object.entries(CASES) as [keyof typeof CASES, (typeof CASES)[keyof typeof CASES]][]) {
     for (const viewport of VIEWPORTS) {

@@ -321,6 +321,9 @@ export interface RmState {
   removeAtBattleEnd?: boolean;
   removeByDamage?: boolean;
   chanceByDamage?: number;
+  /** MV/MZ state overlay row and priority motion (0..3). */
+  overlay?: number;
+  motion?: number;
   message1?: string;
   message2?: string;
   message3?: string;
@@ -398,6 +401,8 @@ export interface RmSystem {
   victoryMe?: RmAudio;
   defeatMe?: RmAudio;
   optSideView?: boolean;
+  /** Weapon type index -> attack pose (0 thrust, 1 swing, 2 missile) and sheet id. */
+  attackMotions?: { type: number; weaponImageId: number }[];
   optDisplayTp?: boolean;
   optExtraExp?: boolean;
   elements?: string[];

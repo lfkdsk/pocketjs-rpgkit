@@ -37,6 +37,7 @@ const ASSETS = join(HERE, "assets");
 export const RMI_SOURCES = [
   { id: "hollow", dir: "tests/fixtures/rpgmaker/hollow-mz" },
   { id: "stage", dir: "tests/fixtures/rpgmaker/stage-mv" },
+  { id: "sideview", dir: "tests/fixtures/rpgmaker/sideview-mz" },
 ] as const;
 
 /** RM character sheets list rows down, left, right, up and columns
@@ -66,6 +67,21 @@ const bushPng = (png: Uint8Array, depth = 4): Uint8Array => {
   const bush = bakeBushDepth({ width: decoded.width, height: decoded.height, data: decoded.rgba }, depth);
   return encodePNG(bush.data, bush.width, bush.height);
 };
+
+/** Crop an authored side-view cell without resampling its pixels; transparent
+ * right/bottom padding satisfies the pak's power-of-two texture constraint. */
+function sideViewCell(image: RgbaImage, x: number, y: number, w: number, h: number): Uint8Array {
+  if (w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > image.width || y + h > image.height) {
+    throw new Error(`rmi-play: invalid side-view frame ${x},${y},${w},${h}`);
+  }
+  const width = nextPow2(w);
+  const height = nextPow2(h);
+  const rgba = new Uint8Array(width * height * 4);
+  for (let row = 0; row < h; row++) {
+    rgba.set(image.data.subarray(((y + row) * image.width + x) * 4, ((y + row) * image.width + x + w) * 4), row * width * 4);
+  }
+  return encodePNG(rgba, width, height);
+}
 
 /** PocketJS static textures are power-of-two. Pad at the bottom/right so
  * the cooked top-left and its authored placement offsets do not move. */
@@ -292,6 +308,47 @@ for (const source of RMI_SOURCES) {
     }
   }
 
+  // --- optional side-view cells -------------------------------------------
+  const actorFrames: Record<string, { frames: string[][]; w: number; h: number }> = {};
+  for (const [name, sheet] of Object.entries(assets.sideViewActors ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const image = result.images.get(sheet.png)!;
+    if (image.width % 9 || image.height % 6) throw new Error(`rmi-play: actor ${name} must have a 9x6 sheet`);
+    const w = image.width / 9;
+    const h = image.height / 6;
+    const frames = Array.from({ length: 18 }, (_, motion) => Array.from({ length: 3 }, (_, pattern) => {
+      const x = (Math.floor(motion / 6) * 3 + pattern) * w;
+      const y = (motion % 6) * h;
+      return writeAsset(`${prefix}/sv/actor-${encodeURIComponent(name)}-${motion}-${pattern}.png`, sideViewCell(image, x, y, w, h));
+    }));
+    actorFrames[name] = { frames, w, h };
+  }
+  const weaponFrames: Record<string, string[]> = {};
+  for (const [page, sheet] of Object.entries(assets.sideViewWeapons ?? {})) {
+    const image = result.images.get(sheet.png)!;
+    for (let index = 0; index < 12; index++) {
+      const id = (Number(page) - 1) * 12 + index + 1;
+      weaponFrames[id] = Array.from({ length: 3 }, (_, frame) => writeAsset(
+        `${prefix}/sv/weapon-${id}-${frame}.png`,
+        sideViewCell(image, (Math.floor(index / 6) * 3 + frame) * 96, (index % 6) * 64, 96, 64),
+      ));
+    }
+  }
+  const overlayFrames: Record<string, string[]> = {};
+  if (assets.sideViewStates) {
+    const image = result.images.get(assets.sideViewStates.png)!;
+    for (let row = 0; row < Math.floor(image.height / 96); row++) {
+      overlayFrames[row + 1] = Array.from({ length: 8 }, (_, frame) => writeAsset(
+        `${prefix}/sv/overlay-${row + 1}-${frame}.png`, sideViewCell(image, frame * 96, row * 96, 96, 96),
+      ));
+    }
+  }
+  const shadow = assets.sideViewShadow ? (() => {
+    const image = result.images.get(assets.sideViewShadow!.png)!;
+    const texture = fitPakTexture(image);
+    return writeAsset(`${prefix}/sv/shadow.png`, encodePNG(texture.data, texture.width, texture.height));
+  })() : undefined;
+  const sideViewSource = q({ actors: actorFrames, weapons: weaponFrames, overlays: overlayFrames, shadow });
+
   // --- map animations and balloons ---------------------------------------
   const animSource: string[] = [];
   const battleAnimSource: string[] = [];
@@ -378,7 +435,8 @@ for (const source of RMI_SOURCES) {
       `};\n`,
   );
   gameSources.push(
-    `const BATTLERS_${source.id}: Record<string, string> = { ${battlerSource.join(", ")} };\n`,
+    `const BATTLERS_${source.id}: Record<string, string> = { ${battlerSource.join(", ")} };\n` +
+    `const SIDEVIEW_${source.id}: RpgMakerSideViewImages = ${sideViewSource};\n`,
   );
   gameSources.push(
     `const FACES_${source.id}: Record<string, string> = { ${faceSource.join(", ")} };\n` +
@@ -451,14 +509,14 @@ writeFileSync(
     `// PocketJS pak pass bakes them.\n\n` +
     `import type { Project } from "../../../src/engine/types.ts";\n` +
     `import type { RpgMakerBattleDatabase } from "../../../src/rpgmaker-battle/types.ts";\n` +
-    `import type { RpgMakerBattleAnimationAsset } from "../../../src/ui/rpgmaker-battle/index.tsx";\n` +
+    `import type { RpgMakerBattleAnimationAsset, RpgMakerSideViewImages } from "../../../src/ui/rpgmaker-battle/index.tsx";\n` +
     `import type { CharacterFrames, GameAssets } from "../../../src/ui/game-assets.ts";\n\n` +
     `export type RmiGameId = ${RMI_SOURCES.map((s) => q(s.id)).join(" | ")};\n\n` +
     animatedSources.join("\n") + "\n" +
     tilesetSources.join("\n") + "\n" +
     gameSources.join("\n") + "\n" +
-    `export const RMI_GAMES: Record<RmiGameId, { project: Project; battle: RpgMakerBattleDatabase; enemyImages: Record<string, string>; faceImages: Record<string, string>; battlebacks1: Record<string, string>; battlebacks2: Record<string, string>; battleAnimationPositions: Record<string, 0 | 1 | 2 | 3>; battleAnimations: Record<string, RpgMakerBattleAnimationAsset>; assets: GameAssets }> = {\n` +
-    RMI_SOURCES.map((s) => `  ${s.id}: { project: PROJECT_${s.id}, battle: BATTLE_${s.id}, enemyImages: BATTLERS_${s.id}, faceImages: FACES_${s.id}, battlebacks1: BATTLEBACKS1_${s.id}, battlebacks2: BATTLEBACKS2_${s.id}, battleAnimationPositions: BATTLE_ANIMATION_POSITIONS_${s.id}, battleAnimations: BATTLE_ANIMATIONS_${s.id}, assets: ASSETS_${s.id} },`).join("\n") +
+    `export const RMI_GAMES: Record<RmiGameId, { project: Project; battle: RpgMakerBattleDatabase; enemyImages: Record<string, string>; sideViewImages: RpgMakerSideViewImages; faceImages: Record<string, string>; battlebacks1: Record<string, string>; battlebacks2: Record<string, string>; battleAnimationPositions: Record<string, 0 | 1 | 2 | 3>; battleAnimations: Record<string, RpgMakerBattleAnimationAsset>; assets: GameAssets }> = {\n` +
+    RMI_SOURCES.map((s) => `  ${s.id}: { project: PROJECT_${s.id}, battle: BATTLE_${s.id}, enemyImages: BATTLERS_${s.id}, sideViewImages: SIDEVIEW_${s.id}, faceImages: FACES_${s.id}, battlebacks1: BATTLEBACKS1_${s.id}, battlebacks2: BATTLEBACKS2_${s.id}, battleAnimationPositions: BATTLE_ANIMATION_POSITIONS_${s.id}, battleAnimations: BATTLE_ANIMATIONS_${s.id}, assets: ASSETS_${s.id} },`).join("\n") +
     `\n};\n`,
 );
 // PocketJS deliberately does not bake every string literal in a generated

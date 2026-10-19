@@ -3,10 +3,10 @@
 // importer (tools/rpgmaker-import) has converted them. gen-assets.ts runs
 // the importer and bakes the art; games.ts holds the imported projects and
 // their asset manifests. Battles use the opt-in RPG Maker reducer and
-// front-view scene; Name Input opens the kit's name-input scene.
+// front-view or opt-in side-view scene; Name Input opens the kit's name-input scene.
 //
-// The sim test picks the game with globalThis.__rmiGame ("hollow" or
-// "stage", default "hollow") before boot.
+// The sim test picks the game with globalThis.__rmiGame ("hollow", "stage" or
+// "sideview", default "hollow") before boot.
 
 import { mount } from "@pocketjs/framework";
 import { GameView } from "../../../src/ui/GameView.tsx";
@@ -310,6 +310,7 @@ const battle = createRpgMakerBattleRules(database, {
 });
 const BattleScene = createRpgMakerBattleScene(database, {
   enemyImages: game.enemyImages,
+  sideViewImages: game.sideViewImages,
   faces: game.faceImages,
   battlebacks1: game.battlebacks1,
   battlebacks2: game.battlebacks2,

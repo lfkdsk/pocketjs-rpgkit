@@ -1,0 +1,5 @@
+[
+null,
+{"actions":[{"conditionParam1":0,"conditionParam2":0,"conditionType":0,"rating":5,"skillId":1}],"battlerHue":0,"battlerName":"Golem","dropItems":[{"dataId":1,"denominator":1,"kind":0},{"dataId":1,"denominator":1,"kind":0},{"dataId":1,"denominator":1,"kind":0}],"exp":30,"gold":0,"id":1,"name":"Golem","note":"","params":[120,0,14,12,8,8,6,6],"traits":[{"code":22,"dataId":0,"value":0.95},{"code":31,"dataId":1,"value":0}]},
+{"actions":[{"conditionParam1":0,"conditionParam2":0,"conditionType":0,"rating":5,"skillId":1}],"battlerHue":0,"battlerName":"Golem","dropItems":[{"dataId":1,"denominator":1,"kind":0},{"dataId":1,"denominator":1,"kind":0},{"dataId":1,"denominator":1,"kind":0}],"exp":15,"gold":0,"id":2,"name":"Golem Echo","note":"Fixture transform target.","params":[80,20,10,10,8,8,5,5],"traits":[{"code":22,"dataId":0,"value":0.95},{"code":31,"dataId":1,"value":0}]}
+]

@@ -1,0 +1,6 @@
+[
+null,
+{"expanded":false,"id":1,"name":"Village","order":1,"parentId":0,"scrollX":0,"scrollY":0},
+{"expanded":false,"id":2,"name":"House","order":2,"parentId":1,"scrollX":0,"scrollY":0},
+{"expanded":false,"id":3,"name":"Cave","order":3,"parentId":0,"scrollX":0,"scrollY":0}
+]

@@ -1,4 +1,4 @@
-// Optional front-view renderer for the pure RPG Maker battle reducer.
+// Optional front-view and side-view renderer for the pure RPG Maker battle reducer.
 // This module is reachable only through `./ui/rpgmaker-battle`; games that
 // do not import it pay no bundle or per-frame cost.
 
@@ -48,7 +48,16 @@ export type {
   RpgMakerBattleAnimationTiming,
 } from "./animation-presentation.ts";
 
+export interface RpgMakerSideViewImages {
+  actors: Readonly<Record<string, { frames: readonly (readonly string[])[]; w: number; h: number }>>;
+  weapons: Readonly<Record<string, readonly string[]>>;
+  overlays: Readonly<Record<string, readonly string[]>>;
+  shadow?: string;
+}
+
 export interface RpgMakerBattleSceneOptions {
+  /** Pre-sliced authored side-view art; ignored for front-view databases. */
+  sideViewImages?: RpgMakerSideViewImages;
   /** Normalized enemy image id -> baked image source. */
   enemyImages?: Readonly<Record<string, RpgImageSource>>;
   /** Exact `faceName:faceIndex` -> importer-cut actor face cell. */
@@ -119,6 +128,9 @@ function targetRows(db: RpgMakerBattleDatabase, state: Readonly<RpgMakerBattleSt
   };
 }
 
+import { sideViewPose } from "./side-view-pose.ts";
+export { sideViewPose } from "./side-view-pose.ts";
+
 type BattleAnimationMarker = NonNullable<RpgMakerBattleState["battleAnimation"]> & {
   /** Absent on v1 saves and troop-event animations, which target enemies. */
   targetSide?: "actor" | "enemy";
@@ -136,10 +148,11 @@ function enemyTargetRect(
   count: number,
   width: number,
   height: number,
+  sideView = false,
 ): BattleAnimationTargetRect {
   const size = Math.max(48, Math.min(96, Math.floor(height * 0.24)));
   const x = member
-    ? clampPosition(member.x / screen.width * width - size / 2, 8, width - size - 8)
+    ? clampPosition(member.x * (sideView ? 0.67 : 1) / screen.width * width - size / 2, 8, width - size - 8)
     : (index + 1) * width / (count + 1) - size / 2;
   const y = member
     ? clampPosition(
@@ -151,12 +164,12 @@ function enemyTargetRect(
   return { x, y, width: size, height: size };
 }
 
-function FrontViewScene(
+function RpgMakerBattleScene(
   db: RpgMakerBattleDatabase,
   options: RpgMakerBattleSceneOptions,
   props: BattleSceneViewProps,
 ) {
-  const imageCache = createBattleImageCache(() => props.active, { maxEntries: 12 });
+  const imageCache = createBattleImageCache(() => props.active, { maxEntries: db.sideView ? 48 : 12 });
   const text = { ...RPGMAKER_BATTLE_UI_TEXT, ...options.text };
   const state = () => rpgMakerBattleState(props.state);
   const troop = () => db.troops.find((entry) => entry.id === state().troopId);
@@ -186,13 +199,21 @@ function FrontViewScene(
     state().enemies.length,
     props.width,
     props.height,
+    db.sideView,
   );
-  const actorRect = (index: number): BattleAnimationTargetRect => ({
-    x: 8,
-    y: props.height - 8 - state().actors.length * 30 + index * 30,
-    width: actorWidth(),
-    height: 30,
-  });
+  const actorRect = (index: number): BattleAnimationTargetRect => db.sideView
+    ? {
+        x: props.width * (0.80 + index * 0.035) - 32,
+        y: props.height * (0.48 + index * 0.10) - 64 * Math.min(1.5, props.height / 272 * 0.75),
+        width: 64,
+        height: 64 * Math.min(1.5, props.height / 272 * 0.75),
+      }
+    : {
+        x: 8,
+        y: props.height - 8 - state().actors.length * 30 + index * 30,
+        width: actorWidth(),
+        height: 30,
+      };
   const animationMarker = (): BattleAnimationMarker | undefined =>
     state().battleAnimation ?? undefined;
   const animationTargetSide = (): "actor" | "enemy" => animationMarker()?.targetSide ?? "enemy";
@@ -438,6 +459,98 @@ function FrontViewScene(
         </For>
       </Show>
 
+      <Show when={db.sideView}>
+        <For each={state().actors}>
+          {(actor, index) => {
+            const sheet = () => actor.image ? options.sideViewImages?.actors[actor.image] : undefined;
+            const pose = () => sideViewPose(db, state(), actor, index());
+            const scale = () => Math.min(1.5, props.height / 272 * 0.75);
+            const homeX = () => props.width * (0.80 + index() * 0.035);
+            const homeY = () => props.height * (0.48 + index() * 0.10);
+            const x = () => homeX() - pose().advance * 48 * scale();
+            const y = () => homeY() - (sheet()?.h ?? 64) * scale();
+            const source = () => sheet()?.frames[pose().motion]?.[pose().pattern];
+            const overlay = () => actor.states.map((active) => db.states.find((entry) => entry.id === active.id))
+              .filter((entry) => entry !== undefined).sort((a, b) => b.priority - a.priority)[0]?.overlay ?? 0;
+            const overlaySource = () => options.sideViewImages?.overlays[overlay()]?.[Math.floor(state().nowTick / 8) % 8];
+            const weaponSource = () => pose().weaponPattern < 3
+              ? options.sideViewImages?.weapons[pose().weaponImageId]?.[pose().weaponPattern] : undefined;
+            return (
+              <Show when={!actor.hidden}>
+                <Show when={options.sideViewImages?.shadow}>
+                  <SpriteSlot src={options.sideViewImages!.shadow!} cache={imageCache} active={props.active}
+                    x={homeX() - 32} y={homeY() - 8} width={64} height={16}
+                    effect={NONE} nowTick={state().nowTick} debugName={`rpgmaker-actor-shadow-${index()}`} />
+                </Show>
+                <Show when={weaponSource()}>
+                  <View class="absolute" style={{ posType: 1, insetL: x() - 64 * scale(),
+                    insetT: homeY() - 64 * scale(), width: 96 * scale(), height: 64 * scale(), overflow: 1 }}>
+                    <SpriteSlot src={weaponSource()!} cache={imageCache} active={props.active}
+                      x={0} y={0} width={128 * scale()} height={64 * scale()}
+                      effect={NONE} nowTick={state().nowTick}
+                      debugName={`rpgmaker-actor-weapon-${index()}`} />
+                  </View>
+                </Show>
+                <Show when={source()} fallback={(
+                  <View class="absolute items-center justify-center"
+                    style={{ posType: 1, insetL: x() - 24, insetT: homeY() - 48, width: 48, height: 48, bgColor: "#6a7180" }}
+                    debugName={`rpgmaker-actor-placeholder-${index()}`}>
+                    <Text class="text-xs" style={{ textColor: "#ffffff" }}>{actor.name}</Text>
+                  </View>
+                )}>
+                  <View class="absolute" style={{ posType: 1, insetL: x() - (sheet()?.w ?? 64) * scale() / 2,
+                    insetT: y(), width: (sheet()?.w ?? 64) * scale(), height: (sheet()?.h ?? 64) * scale(), overflow: 1 }}>
+                    <SpriteSlot src={source()!} cache={imageCache} active={props.active}
+                      x={0} y={0}
+                      width={2 ** Math.ceil(Math.log2(sheet()?.w ?? 64)) * scale()}
+                      height={2 ** Math.ceil(Math.log2(sheet()?.h ?? 64)) * scale()}
+                      effect={effectFor(state(), "actor", index())} nowTick={state().nowTick}
+                      debugName={`rpgmaker-actor-sprite-${index()}`} />
+                  </View>
+                </Show>
+                <Show when={overlaySource()}>
+                  <View class="absolute" style={{ posType: 1, insetL: x() - 48 * scale(),
+                    insetT: homeY() - 96 * scale(), width: 96 * scale(), height: 96 * scale(), overflow: 1 }}>
+                    <SpriteSlot src={overlaySource()!} cache={imageCache} active={props.active}
+                      x={0} y={0} width={128 * scale()} height={128 * scale()}
+                      effect={NONE} nowTick={state().nowTick}
+                      debugName={`rpgmaker-actor-overlay-${index()}`} />
+                  </View>
+                </Show>
+              </Show>
+            );
+          }}
+        </For>
+      </Show>
+
+      <Show keyed when={db.sideView && state().effect && state().nowTick - state().effect!.startTick < state().effect!.duration && state().effect!.from !== state().effect!.to ? state().effect : null}>
+        {(effect) => {
+          const actor = effect.side === "actor";
+          const member = actor ? undefined : troop()?.members[effect.index];
+          const enemySize = Math.max(48, Math.min(96, Math.floor(props.height * 0.24)));
+          const centerX = actor
+            ? props.width * (0.80 + effect.index * 0.035) - 32
+            : member
+              ? clampPosition(member.x * 0.67 / db.screen.width * props.width - enemySize / 2, 8, props.width - enemySize - 8) + enemySize / 2
+              : (effect.index + 1) * props.width / (state().enemies.length + 1);
+          const topY = actor
+            ? props.height * (0.48 + effect.index * 0.10) - 64 * Math.min(1.5, props.height / 272 * 0.75)
+            : member
+              ? clampPosition(member.y / db.screen.height * props.height - enemySize / 2, 20,
+                Math.min(props.height * 0.48, props.height - 104 - enemySize))
+              : 32;
+          return (
+            <View class="absolute items-center" style={{ posType: 1, insetL: centerX - 32,
+              insetT: topY - 18, width: 64, height: 18 }}
+              debugName={`rpgmaker-${effect.side}-damage-${effect.index}`}>
+              <Text class="text-xs" style={{ textColor: effect.from > effect.to ? "#ffe97a" : "#8ae060" }}>
+                {String(Math.abs(effect.from - effect.to))}
+              </Text>
+            </View>
+          );
+        }}
+      </Show>
+
       <View
         class="absolute flex-col"
         style={{ posType: 1, insetL: 8, insetB: 8, width: actorWidth() }}
@@ -620,5 +733,5 @@ export function createRpgMakerBattleScene(
   database: RpgMakerBattleDatabase,
   options: RpgMakerBattleSceneOptions = {},
 ): BattleSceneComponent {
-  return (props) => FrontViewScene(database, options, props);
+  return (props) => RpgMakerBattleScene(database, options, props);
 }

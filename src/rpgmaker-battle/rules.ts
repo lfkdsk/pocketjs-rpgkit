@@ -1096,6 +1096,7 @@ function actorCombatant(
     buffs: Array.from({ length: 8 }, () => ({ level: 0, turns: 0 })),
     guarding: false,
     hidden: false,
+    ...(db.sideView && (runtime.battlerName ?? actor.battlerName) ? { image: runtime.battlerName ?? actor.battlerName } : {}),
     actor: {
       classId: runtime.classId,
       level,
@@ -2271,7 +2272,21 @@ function resolveNextAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleStat
     finishTurn(db, state);
     return;
   }
+  const user = action.side === "actor" ? state.actors[action.user] : state.enemies[action.user];
   const text = resolveAction(db, state, action);
+  if (db.sideView && text && user && state.phase !== "done") {
+    const weapon = user.actor?.equips?.find((entry) => entry?.kind === "weapon");
+    const equipment = db.weapons?.find((entry) => entry.id === weapon?.id);
+    const attack = db.attackMotions?.[equipment?.typeId ?? 0];
+    const basicAttack = action.kind === "skill" && action.id === attackSkillId(db, user);
+    const motion = action.kind === "guard" ? 3 : action.kind === "item" ? 11
+      : basicAttack ? 6 + (attack?.type ?? 1) : db.skills.find((entry) => entry.id === action.id)?.hitType === 2 ? 10 : 9;
+    state.sideViewMotion = {
+      side: action.side, index: action.user, motion,
+      weaponImageId: basicAttack && action.side === "actor" ? (attack?.weaponImageId ?? 0) : 0,
+      startTick: state.nowTick,
+    };
+  }
   const pages = runTroopPages(db, state, false);
   if (state.phase === "done") return;
   const message = [text, ...pages].filter((line) => line.length > 0).join("\n");
@@ -2717,6 +2732,15 @@ function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): 
     }
     const count = value.effect.side === "actor" ? actors.length : enemies.length;
     if ((value.effect.index as number) >= count) return "effect index is outside its side";
+  }
+  if (value.sideViewMotion !== undefined && value.sideViewMotion !== null) {
+    const motion = value.sideViewMotion;
+    if (!savedStateRecord(motion) || (motion.side !== "actor" && motion.side !== "enemy") ||
+        !savedInteger(motion.index) || !savedInteger(motion.motion) || (motion.motion as number) > 17 ||
+        !savedInteger(motion.weaponImageId) || !savedInteger(motion.startTick) ||
+        (motion.startTick as number) > (value.nowTick as number)) return "sideViewMotion is malformed";
+    const count = motion.side === "actor" ? actors.length : enemies.length;
+    if ((motion.index as number) >= count) return "sideViewMotion index is outside its side";
   }
   if (value.battleAnimation !== undefined && value.battleAnimation !== null) {
     if (!savedStateRecord(value.battleAnimation) || typeof value.battleAnimation.id !== "string" ||

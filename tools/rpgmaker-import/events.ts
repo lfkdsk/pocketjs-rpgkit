@@ -1069,7 +1069,7 @@ function emitActorChange(code: number, p: readonly unknown[], st: State): Comman
         battlerName: String(p[5] ?? ""),
       };
       disposition = "Degraded";
-      reason = "actor images persist and imported faces can update live, but map walking images are not wired and front-view battle does not draw side-view battlers";
+      reason = "actor images persist; imported faces and side-view battlers update live when cooked, but map walking images do not";
       break;
     }
     case 324:
@@ -2444,14 +2444,7 @@ function emitBattle(nd: RmNode, p: readonly unknown[], st: State, scope: Scope):
   // the battle callback first records result 2, even a malformed source list
   // carrying a 603 branch never resumes that branch on the map.
   if (!canLose) cmd.onLose = [{ op: "gameOver" }, { op: "exit" }];
-  rec(
-    st,
-    301,
-    st.ctx.rm.system.optSideView === true ? "Degraded" : "Native",
-    st.ctx.rm.system.optSideView === true
-      ? "side-view battle presentation is rendered in deterministic front view"
-      : undefined,
-  );
+  rec(st, 301, "Native");
   return [cmd];
 }
 

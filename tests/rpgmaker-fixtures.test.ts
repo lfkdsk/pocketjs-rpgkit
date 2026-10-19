@@ -221,6 +221,10 @@ const WALKS: Record<string, [number, number, number, string, number, number][]> 
     [1, 8, 10, "UU", 8, 8], // the cutscene's player route
     [1, 8, 8, "DDRRRRR", 13, 10], // to the usher
   ],
+  "sideview-mz": [
+    [1, 11, 9, "R", 12, 9], // the copied authored Hollow map
+    [1, 12, 9, "LUUU", 11, 6],
+  ],
 };
 
 test("regenerating the fixtures reproduces the committed files byte for byte", () => {
@@ -244,10 +248,11 @@ for (const name of FIXTURE_PROJECTS) {
     const ts = p.system.tileSize ?? 48;
 
     test("flavour markers", () => {
-      if (name === "hollow-mz") {
+      if (name !== "stage-mv") {
         expect(p.system.tileSize).toBe(16);
         expect(p.system.advanced).toBeDefined();
         expect(existsSync(join(p.root, "game.rmmzproject"))).toBe(true);
+        expect(p.system.optSideView).toBe(name === "sideview-mz");
       } else {
         expect(p.system.tileSize).toBeUndefined();
         expect(p.system.advanced).toBeUndefined();
@@ -416,7 +421,7 @@ for (const name of FIXTURE_PROJECTS) {
       }
     });
 
-    if (name === "hollow-mz") {
+    if (name !== "stage-mv") {
       test("walkthrough landmarks", () => {
         expect([p.system.startX, p.system.startY]).toEqual([11, 9]);
         expect(eventAt(p, 1, 13, 9)?.name).toBe("Elder");

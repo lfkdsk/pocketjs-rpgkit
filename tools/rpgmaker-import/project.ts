@@ -658,7 +658,17 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       images.set(png, image);
       return { png, w: image.width, h: image.height };
     };
-    for (const name of [...new Set(rm.actors.filter((actor) => !!actor?.battlerName).map((actor) => actor!.battlerName!))].sort()) {
+    const actorSheets = new Set(rm.actors.filter((actor) => !!actor?.battlerName).map((actor) => actor!.battlerName!));
+    for (const map of rm.maps.values()) for (const event of map.events) for (const page of event?.pages ?? []) {
+      for (const command of page.list) if (command.code === 322 && typeof command.parameters[5] === "string" && command.parameters[5]) actorSheets.add(command.parameters[5]);
+    }
+    for (const troop of rm.troops) for (const page of troop?.pages ?? []) {
+      for (const command of page.list) if (command.code === 322 && typeof command.parameters[5] === "string" && command.parameters[5]) actorSheets.add(command.parameters[5]);
+    }
+    for (const common of rm.commonEvents) for (const command of common?.list ?? []) {
+      if (command.code === 322 && typeof command.parameters[5] === "string" && command.parameters[5]) actorSheets.add(command.parameters[5]);
+    }
+    for (const name of [...actorSheets].sort()) {
       const image = await importImage("sv_actors", name, `actor-${encodeURIComponent(name)}`);
       if (image) assets.sideViewActors[name] = image;
     }
