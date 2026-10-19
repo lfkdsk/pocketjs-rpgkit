@@ -93,7 +93,7 @@ import {
 } from "./dialog-pages.ts";
 import { slotMeasure } from "./text-measure.ts";
 import { Panel } from "./Panel.tsx";
-import { CLEAR_COLOR, resolveUiTheme, speakerLabel, translucentColor, type SpeakerSplit, type UiTheme } from "./theme.ts";
+import { CLEAR_COLOR, resolveUiTheme, speakerLabel, translucentColor, windowToneDecoration, windowTonePaletteColor, type SpeakerSplit, type UiTheme } from "./theme.ts";
 import type { TextBoxLayout } from "../engine/types.ts";
 import { startupProfileMark } from "../startup-profile.ts";
 import type { ChoiceIconBoxComponent, ChoiceIconResolver } from "./choice-icons.ts";
@@ -980,7 +980,7 @@ export function DialogBox(props: DialogBoxProps) {
                     rightClipped={rightMarquee() > 0}
                     textColor={rowColor()}
                     dimColor={theme().dim}
-                    paperColor={theme().paper}
+                    paperColor={windowTonePaletteColor(theme(), theme().paper)}
                     debugName={`rpgkit-shop-row-${slot}`}
                   />
                 ) : (
@@ -1069,7 +1069,7 @@ export function DialogBox(props: DialogBoxProps) {
             flexDir: 0,
             paddingL: 6,
             paddingR: 6,
-            bgColor: theme().border,
+            ...windowToneDecoration(theme(), { bgColor: theme().border }),
             display: messageDisplay() === 0 ? faceDisplay() : 1,
           }}
           debugName="rpgkit-message-name"

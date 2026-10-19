@@ -45,7 +45,7 @@ import type {
 import { Panel } from "./Panel.tsx";
 import { slotMeasure } from "./text-measure.ts";
 import type { ChoiceIconArt, ChoiceIconResolver } from "./choice-icons.ts";
-import type { UiTheme } from "./theme.ts";
+import { windowTonePaletteColor, type UiTheme } from "./theme.ts";
 
 export { resolveChoiceIcon, type ChoiceIconArt, type ChoiceIconBoxComponent, type ChoiceIconResolver } from "./choice-icons.ts";
 
@@ -304,7 +304,7 @@ function iconRow(
           lineHeight: 16,
           textAlign: 1,
           textColor: theme().dim,
-          bgColor: theme().paper,
+          bgColor: windowTonePaletteColor(theme(), theme().paper),
           borderWidth: 1,
           borderColor: theme().dim,
           display: art() === MISSING ? 0 : 1,

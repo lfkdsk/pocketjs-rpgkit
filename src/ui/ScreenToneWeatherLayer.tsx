@@ -4,11 +4,13 @@ import { createMemo, Index, Show, type Accessor } from "solid-js";
 import { View } from "@pocketjs/framework/components";
 import type { ScreenEffectsState } from "../engine/screen.ts";
 import {
-  screenToneOverlays,
+  screenToneFallbackOverlays,
+  screenToneStyle,
   WEATHER_DIMMER_COLOR,
   weatherDimmerOpacity,
   weatherParticles,
 } from "./screen-presentation.ts";
+import { nativeRenderEffectsSupported } from "./render-effects.ts";
 
 export interface ScreenToneWeatherLayerProps {
   screen: Accessor<Readonly<ScreenEffectsState> | undefined>;
@@ -16,25 +18,40 @@ export interface ScreenToneWeatherLayerProps {
   height: Accessor<number>;
 }
 
-/** Ordinary View nodes only: PocketJS currently has no portable colour
- * matrix/desaturation primitive or backend-independent particle emitter. */
+/** Screen tone is one exact destination operation; weather remains a stable
+ * pool of ordinary View nodes because PocketJS has no particle emitter. */
 export function ScreenToneWeatherLayer(props: ScreenToneWeatherLayerProps) {
-  const tone = createMemo(() => screenToneOverlays(props.screen()?.tone));
+  const tone = createMemo(() => screenToneStyle(props.screen()?.tone));
+  const fallbackTone = createMemo(() => screenToneFallbackOverlays(props.screen()?.tone));
+  const nativeTone = nativeRenderEffectsSupported();
   const dimmer = createMemo(() => weatherDimmerOpacity(props.screen()?.weather));
   const particles = createMemo(() =>
     weatherParticles(props.screen()?.weather, props.width(), props.height()));
 
   return (
     <>
-      <Index each={tone()}>
-        {(overlay) => (
+      <Show when={props.screen()?.tone}>
+        <Show
+          when={nativeTone}
+          fallback={
+            <Index each={fallbackTone()}>
+              {(overlay) => (
+                <View
+                  class="absolute w-full h-full"
+                  style={{ posType: 1, bgColor: overlay().color, opacity: overlay().opacity }}
+                  debugName={`rpgkit-screen-tone-fallback-${overlay().kind}`}
+                />
+              )}
+            </Index>
+          }
+        >
           <View
             class="absolute w-full h-full"
-            style={{ posType: 1, bgColor: overlay().color, opacity: overlay().opacity }}
-            debugName={`rpgkit-screen-tone-${overlay().kind}`}
+            style={{ posType: 1, ...tone() }}
+            debugName="rpgkit-screen-tone-filter"
           />
-        )}
-      </Index>
+        </Show>
+      </Show>
       <Show when={dimmer() > 0}>
         <View
           class="absolute w-full h-full"

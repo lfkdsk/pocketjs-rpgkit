@@ -5,6 +5,7 @@
 
 import { timerSeconds, type TimerState } from "../engine/interpreter.ts";
 import {
+  pictureToneAt,
   pictureTransformAt,
   type MapNameBannerState,
   type PictureState,
@@ -15,6 +16,24 @@ import type { ScreenLayerVariant } from "./game-assets.ts";
 import { toneOverlays, type ToneOverlay } from "./tone-overlay.ts";
 
 export type PictureToneOverlay = ToneOverlay;
+
+/** Image-local effects use PocketJS's ordinal blend contract. */
+export function pictureImageEffects(picture: Readonly<PictureState>): {
+  blendMode: number;
+  toneR: number;
+  toneG: number;
+  toneB: number;
+  toneGray: number;
+} {
+  const tone = pictureToneAt(picture);
+  return {
+    blendMode: { normal: 0, add: 1, multiply: 2, screen: 3 }[picture.blend],
+    toneR: tone.r,
+    toneG: tone.g,
+    toneB: tone.b,
+    toneGray: tone.gray,
+  };
+}
 
 export interface PictureRenderStyle {
   insetL: number;
@@ -41,16 +60,15 @@ function unit(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-/** Portable approximation of RPG Maker's per-picture tone. PocketJS has no
- * backend-independent colour-matrix primitive, so the result is expressed
- * as ordinary source-over overlays in a documented stable order:
+/** Fixed-backend approximation of RPG Maker's per-picture tone. The result is
+ * expressed as ordinary source-over overlays in a documented stable order:
  *
  * 1. gray blends toward neutral gray;
  * 2. negative RGB uses a complementary overlay (exact for white pixels);
  * 3. positive RGB uses a coloured overlay (exact for black pixels).
  *
- * This cannot be pixel-identical to a colour matrix on every source colour,
- * but it is deterministic and renders the same on every PocketJS backend. */
+ * This cannot be pixel-identical to the native tone operation on every source
+ * colour, but it is deterministic on the backends that select it. */
 export function pictureToneOverlays(tone: Readonly<PictureTone>): PictureToneOverlay[] {
   return toneOverlays(tone);
 }

@@ -15,7 +15,7 @@
 import { Text, View } from "@pocketjs/framework/components";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import { createMemo, createSignal } from "solid-js";
-import { resolveUiTheme, type UiTheme } from "../theme.ts";
+import { resolveUiTheme, windowToneDecoration, type UiTheme } from "../theme.ts";
 import { barFillWidth } from "./effects.ts";
 import { marqueeOffset } from "../list-window.ts";
 import { slotMeasure } from "../text-measure.ts";
@@ -94,7 +94,14 @@ export function StatBar(props: StatBarProps) {
     <View class="flex-row items-center" debugName={props.debugName}>
       <View
         class="flex-row"
-        style={{ width: props.width, height: height(), bgColor: props.track ?? theme().border }}
+        style={{
+          width: props.width,
+          height: height(),
+          ...windowToneDecoration(
+            props.track === undefined ? theme() : {},
+            { bgColor: props.track ?? theme().border },
+          ),
+        }}
         debugName={props.debugName ? `${props.debugName}-track` : undefined}
       >
         <View

@@ -14,7 +14,7 @@ import type {
 } from "../demo-contract.ts";
 import { ListMenu, type ListMenuRow } from "../battle/ListMenu.tsx";
 import { rpgMakerRuntimeActorFaceSource } from "../rpgmaker-face.ts";
-import { resolveUiTheme, type UiTheme } from "../theme.ts";
+import { resolveUiTheme, windowToneDecoration, type UiTheme } from "../theme.ts";
 
 export interface RpgMakerFormationOptions {
   /** Raw PocketJS button mask. Defaults to the map cancel button (CROSS). */
@@ -70,7 +70,12 @@ function FormationView(props: FormationViewProps) {
         <Show when={selectedFace()}>
           <View
             class="items-center justify-center"
-            style={{ width: 68, height: 68, marginR: 8, bgColor: theme().border }}
+            style={{
+              width: 68,
+              height: 68,
+              marginR: 8,
+              ...windowToneDecoration(theme(), { bgColor: theme().border }),
+            }}
             debugName="rpgmaker-formation-face-frame"
           >
             <Image

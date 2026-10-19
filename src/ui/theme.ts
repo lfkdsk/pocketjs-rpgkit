@@ -30,6 +30,8 @@ export interface UiTheme {
   accent: string;
   /** Full-screen backdrop behind the save menu. */
   backdrop: string;
+  /** Runtime tone applied to window chrome, never to its text/children. */
+  windowTone?: Readonly<ScreenTone>;
 }
 
 /** The kit's own look: steel-blue frame on a navy panel. */
@@ -47,49 +49,157 @@ export const DEFAULT_UI_THEME: Readonly<UiTheme> = Object.freeze({
 export function resolveUiTheme(theme?: Partial<UiTheme>): UiTheme {
   const out: UiTheme = { ...DEFAULT_UI_THEME };
   if (!theme) return out;
-  for (const key of Object.keys(theme) as (keyof UiTheme)[]) {
-    const value = theme[key];
-    if (value !== undefined) out[key] = value;
-  }
+  if (theme.border !== undefined) out.border = theme.border;
+  if (theme.rim !== undefined) out.rim = theme.rim;
+  if (theme.paper !== undefined) out.paper = theme.paper;
+  if (theme.ink !== undefined) out.ink = theme.ink;
+  if (theme.dim !== undefined) out.dim = theme.dim;
+  if (theme.accent !== undefined) out.accent = theme.accent;
+  if (theme.backdrop !== undefined) out.backdrop = theme.backdrop;
+  if (theme.windowTone !== undefined) out.windowTone = theme.windowTone;
   return out;
 }
 
-function toneChannel(value: number): string {
-  return Math.round(Math.max(0, Math.min(255, value))).toString(16).padStart(2, "0");
+export interface WindowToneStyle {
+  toneR: number;
+  toneG: number;
+  toneB: number;
+  toneGray: number;
 }
 
-/** Apply an RPG Maker tone to one flat theme colour. Window chrome is made
- * from flat fills rather than a texture, so this can transform the actual
- * colour instead of adding another translucent View. Invalid host colours
- * remain unchanged. */
-function windowToneColor(color: string, tone: Readonly<ScreenTone>): string {
+const ZERO_WINDOW_TONE_STYLE: Readonly<WindowToneStyle> = Object.freeze({
+  toneR: 0,
+  toneG: 0,
+  toneB: 0,
+  toneGray: 0,
+});
+
+function toneChannel(value: number): number {
+  return Math.max(-255, Math.min(255, Math.trunc(value)));
+}
+
+function toneGray(value: number): number {
+  return Math.max(0, Math.min(255, Math.trunc(value)));
+}
+
+function normalizedWindowTone(tone: Readonly<ScreenTone>): ScreenTone {
+  return {
+    r: toneChannel(tone.r),
+    g: toneChannel(tone.g),
+    b: toneChannel(tone.b),
+    gray: toneGray(tone.gray),
+  };
+}
+
+interface ParsedThemeColor {
+  rgb: readonly [number, number, number];
+  alpha: string;
+  opaque: boolean;
+}
+
+function parseThemeColor(color: string): ParsedThemeColor | null {
   let hex = color.startsWith("#") ? color.slice(1) : "";
   if (hex.length === 3 || hex.length === 4) hex = [...hex].map((part) => part + part).join("");
-  if ((hex.length !== 6 && hex.length !== 8) || !/^[0-9a-fA-F]+$/.test(hex)) return color;
-
-  const channels = [
-    parseInt(hex.slice(0, 2), 16) + tone.r,
-    parseInt(hex.slice(2, 4), 16) + tone.g,
-    parseInt(hex.slice(4, 6), 16) + tone.b,
-  ];
-  return `#${channels.map(toneChannel).join("")}${hex.length === 8 ? hex.slice(6).toLowerCase() : ""}`;
+  if ((hex.length !== 6 && hex.length !== 8) || !/^[0-9a-fA-F]+$/.test(hex)) return null;
+  const alpha = hex.length === 8 ? hex.slice(6).toLowerCase() : "";
+  return {
+    rgb: [
+      parseInt(hex.slice(0, 2), 16),
+      parseInt(hex.slice(2, 4), 16),
+      parseInt(hex.slice(4, 6), 16),
+    ],
+    alpha,
+    opaque: alpha === "" || alpha === "ff",
+  };
 }
 
-/** Runtime RPG Maker window tone for message/choice/menu chrome. A missing
- * or RGB-neutral tone returns the original theme reference and allocates
- * nothing. The command's gray channel and ink/accent colours are intentionally
- * ignored: MV applies only RGB offsets to its windowskin chrome. */
+function byteHex(value: number): string {
+  return value.toString(16).padStart(2, "0");
+}
+
+/** Exact straight-colour equivalent of PocketJS's destination-tone equation.
+ * It is used only when a translucent decoration or a fixed backend cannot
+ * safely execute destination tone; the source alpha is preserved verbatim. */
+function windowToneColor(color: string, tone: Readonly<ScreenTone>): string {
+  const parsed = parseThemeColor(color);
+  if (!parsed) return color;
+  const [r, g, b] = parsed.rgb;
+  const loHi = Math.min(r, g, b) + Math.max(r, g, b);
+  const gray = tone.gray;
+  const channels = parsed.rgb.map((channel, index) => {
+    const offset = index === 0 ? tone.r : index === 1 ? tone.g : tone.b;
+    const numerator = 2 * channel * (255 - gray) + loHi * gray + 2 * offset * 255;
+    const bounded = Math.max(0, Math.min(2 * 255 * 255, numerator));
+    return Math.floor((bounded + 255) / (2 * 255));
+  });
+  return `#${channels.map(byteHex).join("")}${parsed.alpha}`;
+}
+
+/** Exact source-colour projection for chrome drawn by a Text node or an
+ * extension component that cannot carry the View-only tone primitive. */
+export function windowTonePaletteColor(
+  theme: Pick<UiTheme, "windowTone">,
+  color: string,
+): string {
+  return theme.windowTone ? windowToneColor(color, theme.windowTone) : color;
+}
+
+export interface WindowToneDecoration extends WindowToneStyle {
+  bgColor: string;
+  borderColor?: string;
+}
+
+/** Project tone onto one flat piece of window chrome. Opaque rectangles use
+ * the native primitive; translucent/invalid colours are pre-toned so the
+ * destination behind them is never filtered. Zero fields are deliberately
+ * retained to clear a previously toned inline style. */
+export function windowToneDecoration(
+  theme: Pick<UiTheme, "windowTone">,
+  decoration: Readonly<{ bgColor: string; borderColor?: string }>,
+): WindowToneDecoration {
+  const tone = theme.windowTone;
+  if (!tone) return { ...decoration, ...ZERO_WINDOW_TONE_STYLE };
+  const bg = parseThemeColor(decoration.bgColor);
+  const border = decoration.borderColor === undefined ? undefined : parseThemeColor(decoration.borderColor);
+  if (bg?.opaque && (decoration.borderColor === undefined || border?.opaque)) {
+    return {
+      ...decoration,
+      toneR: tone.r,
+      toneG: tone.g,
+      toneB: tone.b,
+      toneGray: tone.gray,
+    };
+  }
+  return {
+    bgColor: windowToneColor(decoration.bgColor, tone),
+    ...(decoration.borderColor === undefined
+      ? {}
+      : { borderColor: windowToneColor(decoration.borderColor, tone) }),
+    ...ZERO_WINDOW_TONE_STYLE,
+  };
+}
+
+/** Runtime window tone for message/choice/menu chrome. The full tone is
+ * carried to Panel on exact software targets. Fixed backends retain the exact
+ * palette projection, including gray-before-RGB ordering. Neutral state keeps
+ * the caller's exact reference and allocation-free path. */
 export function windowToneTheme(
   theme: Partial<UiTheme> | undefined,
   tone: Readonly<ScreenTone> | undefined,
+  nativeEffects?: boolean,
 ): Partial<UiTheme> | undefined {
-  if (!tone || (tone.r === 0 && tone.g === 0 && tone.b === 0)) return theme;
+  if (!tone || (tone.r === 0 && tone.g === 0 && tone.b === 0 && tone.gray === 0)) return theme;
+  const normalized = normalizedWindowTone(tone);
   const resolved = resolveUiTheme(theme);
+  if (nativeEffects === true) {
+    return { ...resolved, windowTone: normalized };
+  }
   return {
     ...resolved,
-    border: windowToneColor(resolved.border, tone),
-    ...(resolved.rim === undefined ? {} : { rim: windowToneColor(resolved.rim, tone) }),
-    paper: windowToneColor(resolved.paper, tone),
+    windowTone: undefined,
+    border: windowToneColor(resolved.border, normalized),
+    ...(resolved.rim === undefined ? {} : { rim: windowToneColor(resolved.rim, normalized) }),
+    paper: windowToneColor(resolved.paper, normalized),
   };
 }
 

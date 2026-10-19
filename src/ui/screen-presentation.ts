@@ -1,34 +1,19 @@
 // Pure, portable projection of reducer-owned RPG Maker screen presentation.
 //
 // The reducer stores only a tone tween and one compact weather emitter. This
-// module turns those JSON descriptors into ordinary source-over overlays and
-// viewport-space particles. No host clock, random source or component-local
-// state participates, so a save/rewind at the same screen clock paints the
-// same result on every backend.
+// module turns those JSON descriptors into an exact PocketJS destination-tone
+// operation and viewport-space particles. No host clock, random source or
+// component-local state participates, so a save/rewind at the same screen
+// clock paints the same result on every backend.
 
 import type {
   ScreenEffectsState,
   ToneTweenState,
   WeatherEffectState,
 } from "../engine/screen.ts";
-import type { ScreenTone, WeatherKind } from "../engine/types.ts";
+import { screenToneAt } from "../engine/rpgmaker-screen.ts";
+import type { WeatherKind } from "../engine/types.ts";
 import { toneOverlays, type ToneOverlay } from "./tone-overlay.ts";
-
-const ZERO_SCREEN_TONE: Readonly<ScreenTone> = Object.freeze({ r: 0, g: 0, b: 0, gray: 0 });
-
-function screenToneAt(tone: Readonly<ToneTweenState> | undefined): ScreenTone {
-  if (!tone) return { ...ZERO_SCREEN_TONE };
-  if (tone.total <= 0 || tone.left <= 0) return { ...tone.to };
-  const elapsed = tone.total - tone.left;
-  const channel = (from: number, to: number): number =>
-    (from * (tone.total - elapsed) + to * elapsed) / tone.total;
-  return {
-    r: channel(tone.from.r, tone.to.r),
-    g: channel(tone.from.g, tone.to.g),
-    b: channel(tone.from.b, tone.to.b),
-    gray: channel(tone.from.gray, tone.to.gray),
-  };
-}
 
 function weatherPowerAt(weather: Readonly<WeatherEffectState> | undefined): number {
   if (!weather) return 0;
@@ -227,9 +212,29 @@ export function weatherParticles(
     particleAt(weather, index, viewportWidth, viewportHeight));
 }
 
-/** Screen tone uses the same documented PocketJS source-over approximation
- * as picture tone: neutral gray, complementary darkening, then brightening. */
-export function screenToneOverlays(
+export interface ScreenToneStyle {
+  toneR: number;
+  toneG: number;
+  toneB: number;
+  toneGray: number;
+}
+
+/** Exact evaluated tone for PocketJS's destination-tone View primitive. */
+export function screenToneStyle(
+  tone: Readonly<ToneTweenState> | undefined,
+): ScreenToneStyle {
+  const at = screenToneAt(tone);
+  return {
+    toneR: Math.trunc(at.r),
+    toneG: Math.trunc(at.g),
+    toneB: Math.trunc(at.b),
+    toneGray: Math.trunc(at.gray),
+  };
+}
+
+/** Stable legacy fallback for draw-list backends that only consume the
+ * appended destination-tone opcode. Exact software hosts never call it. */
+export function screenToneFallbackOverlays(
   tone: Readonly<ToneTweenState> | undefined,
 ): ToneOverlay[] {
   return tone ? toneOverlays(screenToneAt(tone)) : [];

@@ -31,7 +31,8 @@ export {
   type PictureToneOverlay,
 } from "../krm2-ui.ts";
 export {
-  screenToneOverlays,
+  screenToneFallbackOverlays,
+  screenToneStyle,
   screenToneWeatherActive,
   WEATHER_DIMMER_COLOR,
   weatherDimmerOpacity,
@@ -39,6 +40,7 @@ export {
   weatherParticleGeometry,
   weatherParticleVector,
   weatherParticles,
+  type ScreenToneStyle,
   type WeatherParticle,
   type WeatherParticleGeometry,
   type WeatherParticleVector,

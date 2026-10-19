@@ -116,6 +116,7 @@ import type {
 } from "./travel-presentation-contract.ts";
 import type { ItemIconRowComponent } from "./item-icon.ts";
 import { resolveUiTheme, windowToneTheme, type UiTheme } from "./theme.ts";
+import { nativeRenderEffectsSupported } from "./render-effects.ts";
 import type {
   GameAssets,
   GameMapLayerAssets,
@@ -1636,7 +1637,11 @@ export function GameView(props: GameViewProps) {
   };
   const effectiveTheme = createMemo(() => {
     screenRevision();
-    return windowToneTheme(props.theme, state.interp.sw.windowTone);
+    return windowToneTheme(
+      props.theme,
+      state.interp.sw.windowTone,
+      nativeRenderEffectsSupported(),
+    );
   });
   const builtInLayer = (
     id: "ground" | "upper",

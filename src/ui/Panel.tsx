@@ -15,7 +15,7 @@
 
 import { createMemo, Show, type JSX } from "solid-js";
 import { View } from "@pocketjs/framework/components";
-import { resolveUiTheme, type UiTheme } from "./theme.ts";
+import { resolveUiTheme, windowToneDecoration, type UiTheme } from "./theme.ts";
 
 export interface PanelProps {
   /** Frame and paper colours; missing keys keep DEFAULT_UI_THEME. */
@@ -30,15 +30,20 @@ export interface PanelProps {
 
 export function Panel(props: PanelProps) {
   const theme = createMemo(() => resolveUiTheme(props.theme));
+  const border = createMemo(() => windowToneDecoration(theme(), { bgColor: theme().border }));
+  const paper = createMemo(() => windowToneDecoration(theme(), {
+    bgColor: theme().paper,
+    ...(theme().rim === undefined ? {} : { borderColor: theme().rim }),
+  }));
   const hasRim = createMemo(() => theme().rim !== undefined);
   return (
-    <View class="flex-col p-[2]" style={{ ...props.style, bgColor: theme().border }} debugName={props.debugName}>
+    <View class="flex-col p-[2]" style={{ ...props.style, ...border() }} debugName={props.debugName}>
       <Show
         when={hasRim()}
         fallback={
           <View
             class={props.paperClass ?? "flex-col"}
-            style={{ posType: 1, insetL: 2, insetT: 2, insetR: 2, insetB: 2, bgColor: theme().paper }}
+            style={{ posType: 1, insetL: 2, insetT: 2, insetR: 2, insetB: 2, ...paper() }}
           >
             {props.children}
           </View>
@@ -52,9 +57,8 @@ export function Panel(props: PanelProps) {
             insetT: 2,
             insetR: 2,
             insetB: 2,
-            bgColor: theme().paper,
             borderWidth: 1,
-            borderColor: theme().rim ?? theme().paper,
+            ...paper(),
           }}
         >
           {props.children}
