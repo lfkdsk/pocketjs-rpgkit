@@ -64,11 +64,17 @@ jobs:
           key: ${{ runner.os }}-pocketjs-wasm-${{ hashFiles('vendor/pocketjs/engine/wasm/Cargo.lock', 'vendor/pocketjs/engine/wasm/Cargo.toml', 'vendor/pocketjs/engine/core/Cargo.toml', 'vendor/pocketjs/engine/wasm/src/**', 'vendor/pocketjs/engine/core/src/**') }}
           restore-keys: ${{ runner.os }}-pocketjs-wasm-
 
-      - name: Install Xvfb
+      # The RPG Maker import smoke transcodes the generated fixture's audio, and
+      # the importer requires `ffmpeg` on PATH (docs/rpgmaker-import.md).
+      - name: Install Xvfb and FFmpeg
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes xvfb
+          sudo apt-get install --yes xvfb ffmpeg
+
+      - name: Install FFmpeg
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
