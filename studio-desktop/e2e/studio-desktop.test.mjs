@@ -194,6 +194,7 @@ describe("Studio desktop", () => {
     assert.match(decoderWarning, /ffmpeg.*PATH/);
     await page.selectOption('[data-action="import-language"]', "zh");
     assert.match(await page.locator(".import-warnings summary").textContent(), /^警告/);
+    await shot("rpgmaker-import-no-ffmpeg");
     await page.click('[data-action="open-rpgmaker-result"]');
     await page.waitForFunction(() => window.__studio.files.target?.kind === "directory" && window.__studio.app.session?.kind === "pack", null, { timeout: 15_000 });
     assert.equal(await studio(() => window.__studio.files.target?.kind), "directory");
