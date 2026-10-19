@@ -1387,6 +1387,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     format: "rpgkit-project/v1",
     title: truncate(nonEmpty(rm.system.gameTitle, "Imported RPG Maker project"), 80),
     tileSize: 16,
+    ...(rm.plugins ? { plugins: rm.plugins } : {}),
     start: { map: mapId(rm.system.startMapId), x: rm.system.startX, y: rm.system.startY, dir: "down" },
     system: {
       messageBlocksPlayer: true,

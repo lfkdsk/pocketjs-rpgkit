@@ -7,6 +7,7 @@
 
 import type { RmMap, RmProject, RmSystem } from "../../tools/rpgmaker-import/rm-types.ts";
 import { rpgMakerMediaEncryption } from "../../tools/rpgmaker-import/media-crypto.ts";
+import { parseRmPlugins } from "../../tools/rpgmaker-import/semantics.ts";
 import { browserRpgMakerImportEnvironment, type BrowserRpgMakerImageCodec } from "./rpgmaker-import-browser-io.ts";
 
 export interface BrowserFileLike {
@@ -26,6 +27,8 @@ export interface BrowserDirectoryHandle {
   readonly kind: "directory";
   readonly name: string;
   values(): AsyncIterable<BrowserFileHandle | BrowserDirectoryHandle>;
+  /** Native directory handles support a targeted lookup without enumerating js/. */
+  getFileHandle?(name: string): Promise<BrowserFileHandle>;
 }
 
 export interface IndexBrowserSourceOptions {
@@ -101,6 +104,14 @@ export class BrowserRpgMakerSource {
         // enumerate them or let an unrelated permission error block maps.
         if ("values" in entry) {
           if (neededDirectory(path)) await walk(entry, path);
+          else if ((path === "js" || path === "www/js") && entry.getFileHandle) {
+            // Resolve only the registry; never enumerate or read plugin implementations.
+            try {
+              files.set(browserSourcePath(path, "plugins.js"), await entry.getFileHandle("plugins.js"));
+            } catch (error) {
+              if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
+            }
+          }
         } else files.set(path, entry);
       }
       directories.set(base, names);
@@ -228,6 +239,9 @@ export async function loadBrowserRmProject(
     environment: browserRpgMakerImportEnvironment(source, options),
     ...(mediaEncryption ? { mediaEncryption } : {}),
     system,
+    ...(source.isFile(browserSourcePath(projectRoot, "js/plugins.js"))
+      ? { plugins: parseRmPlugins(await source.readText(browserSourcePath(projectRoot, "js/plugins.js"))) }
+      : {}),
     mapInfos,
     maps,
     tilesets: await readOptional(source, dataDir, "Tilesets.json"),

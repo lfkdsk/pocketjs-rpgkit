@@ -172,6 +172,21 @@
       "items": { "$ref": "#/$defs/animation" },
       "description": "Frame animations playable with the mapAnim command; the cooker slices each sheet into one static baked image per frame."
     },
+    "plugins": {
+      "type": "array",
+      "description": "Inert RPG Maker js/plugins.js declarations; plugin JavaScript is never imported or executed.",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "description", "parameters"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "type": "boolean" },
+          "description": { "type": "string" },
+          "parameters": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      }
+    },
     "audio": {
       "type": "object",
       "additionalProperties": {

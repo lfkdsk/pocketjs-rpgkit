@@ -30,8 +30,64 @@ import {
   type EventContext,
 } from "../tools/rpgmaker-import/events.ts";
 import { audioId } from "../tools/rpgmaker-import/ids.ts";
+import { parseRmPlugins } from "../tools/rpgmaker-import/semantics.ts";
+import { BrowserRpgMakerSource, loadBrowserRmProject, type BrowserDirectoryHandle } from "../editor/studio/rpgmaker-import-browser-source.ts";
 import type { RmCommand, RmEventPage, RmMap, RmPageConditions, RmProject } from "../tools/rpgmaker-import/rm-types.ts";
 import { convertMessage } from "../tools/rpgmaker-import/text.ts";
+
+test("browser indexes only js/plugins.js and loads inert declarations", async () => {
+  let enumerated = false;
+  let implementationRead = false;
+  const registry = `var $plugins = ${JSON.stringify([{ name: "Fixture", status: true, description: "Safe", parameters: { nested: '{"x":1}' } }])};`;
+  const js: BrowserDirectoryHandle = {
+    kind: "directory", name: "js",
+    async *values() { enumerated = true; throw new Error("js must not be enumerated"); },
+    async getFileHandle(name) {
+      expect(name).toBe("plugins.js");
+      return { kind: "file", name, async getFile() {
+        return { name, size: registry.length, text: async () => registry,
+          arrayBuffer: async () => { implementationRead = true; throw new Error("no implementation bytes"); } };
+      } };
+    },
+  };
+  const root: BrowserDirectoryHandle = {
+    kind: "directory", name: "fixture",
+    async *values() {
+      yield { kind: "directory" as const, name: "data", async *values() {
+        yield { kind: "file" as const, name: "System.json", async getFile() {
+          const text = JSON.stringify({ gameTitle: "Fixture", partyMembers: [], startMapId: 0 });
+          return { name: "System.json", size: text.length, text: async () => text,
+            arrayBuffer: async () => new ArrayBuffer(0) };
+        } };
+      } };
+      yield js;
+    },
+  };
+  const source = await BrowserRpgMakerSource.index(root);
+  const loaded = await loadBrowserRmProject(source);
+  expect(loaded.project.plugins).toEqual([{ name: "Fixture", status: true,
+    description: "Safe", parameters: { nested: '{"x":1}' } }]);
+  expect(enumerated).toBe(false);
+  expect(implementationRead).toBe(false);
+  expect(source.isFile("js/Fixture.js")).toBe(false);
+});
+
+test("plugin registry parses inert declarations without evaluating JavaScript", () => {
+  const plugins = parseRmPlugins('var $plugins = [{"name":"Demo","status":true,"description":"fixture","parameters":{"count":"2","nested":"{\\\"a\\\":1}"}}];');
+  expect(plugins).toEqual([{ name: "Demo", status: true, description: "fixture", parameters: { count: "2", nested: '{"a":1}' } }]);
+  expect(parseRmPlugins('// Generated registry\nvar $plugins = [];')).toEqual([]);
+  expect(parseRmPlugins(`var $plugins = ${JSON.stringify([
+    { name: "First", status: false, description: "disabled", parameters: { count: "0" } },
+    { name: "Second", status: true, description: "enabled", parameters: { value: "02" } },
+  ])};`).map(({ name, status, parameters }) => ({ name, status, parameters }))).toEqual([
+    { name: "First", status: false, parameters: { count: "0" } },
+    { name: "Second", status: true, parameters: { value: "02" } },
+  ]);
+  const source = { format: "rpgkit-project/v1", title: "fixture", tileSize: 16, start: { map: "a", x: 0, y: 0, dir: "down" }, sheets: [{ id: "s", cols: 1, rows: 1, pak: "p" }], items: [], maps: [{ id: "a", name: "Fixture", width: 1, height: 1, sheets: ["s"], ground: [null], events: [] }], plugins };
+  expect(validateSchema(schema, source)).toEqual([]);
+  expect(() => parseRmPlugins('var $plugins = []; globalThis.hacked = true;')).toThrow("expected a JSON plugin registry");
+  expect(() => parseRmPlugins('var $plugins = [{"name":"Demo","status":true,"description":"fixture","parameters":{"x":1}}];')).toThrow("invalid plugin declaration");
+});
 
 // --- fixtures ----------------------------------------------------------------
 

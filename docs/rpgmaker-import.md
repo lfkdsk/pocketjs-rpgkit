@@ -35,9 +35,10 @@ Replace the source and output paths for a real project. The full syntax is
 `bun tools/rpgmaker-import <project-dir> --out <dir> [--shard]
 [--placeholders visible|silent]`. The destination must not already contain
 files from an older import. `--placeholders silent` omits visible text boxes
-for unsupported Script/plugin commands while still counting them as
-Placeholder. Repeated fixture imports are byte-stable within the same importer
-and media-tool environment.
+for unsupported Script commands. MV 356 and MZ 357 (+657 annotations)
+import as `rpgmaker.pluginCommand` extension calls; without a registered
+handler they show a visible non-executing notice. Repeated fixture imports
+are byte-stable within the same importer and media-tool environment.
 
 A completed import with omitted media exits 0 and prints a warning for each
 track. Command-line usage errors exit 2; source, destination and other fatal
@@ -97,8 +98,8 @@ for the registrations and their absence behavior.
 ## Support matrix
 
 The static catalogue runs a minimal sample of each independent/head command
-through the real converter. It contains **107 commands**: **100 Native, 4
-Degraded, 2 Placeholder and 1 Dropped**. Continuation and branch-marker codes
+through the real converter. It contains **107 commands**: **100 Native, 6
+Degraded, 0 Placeholder and 1 Dropped**. Continuation and branch-marker codes
 such as text lines and battle-result branches are handled with their parent
 but are not separate catalogue rows.
 
@@ -113,8 +114,7 @@ but are not separate catalogue rows.
 | Handling | Command codes and reason |
 | --- | --- |
 | Native | The 100 rows marked Native in the [full command table](#full-command-table). Code 355 is Native only for its minimal safe `requestRefresh()` sample; each real Script block is classified separately. Battle presentation commands still require the imported media and opt-in battle integration to be visible or audible. |
-| Degraded | **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** tones flat kit chrome instead of an RPG Maker windowskin; **223** uses exact destination tone on core-software hosts and an overlay fallback on fixed draw backends; **322** persists actor images and updates imported faces live, but does not wire map walking images or draw side-view battlers in the front-view battle. |
-| Placeholder | **356, 357** (MV/MZ plugin commands) need a per-plugin port. |
+| Degraded | **137** gates a formation overlay whose swaps reorder follower/battle slots while the project-level walking-player artwork stays fixed; **138** tones flat kit chrome instead of an RPG Maker windowskin; **223** uses exact destination tone on core-software hosts and an overlay fallback on fixed draw backends; **322** persists actor images and updates imported faces live, but does not wire map walking images or draw side-view battlers in the front-view battle; **356, 357** retain typed plugin calls that require a game-registered extension handler. |
 | Dropped | **261** (Play Movie) has no video host. |
 
 The generated code-137 reason in the full table says that the "walking leader"
@@ -226,7 +226,8 @@ omitted.
 ## Known limitations
 
 - Plugins and JavaScript outside the exact safe subset are not ported.
-  `js/plugins.js` parameters are not interpreted.
+  `js/plugins.js` declarations and string parameters are retained as inert
+  project data; plugin source files are never loaded or run.
 - Browser Studio produces an editable maps/images pack, not the complete
   CLI/desktop directory. It drops audio and does not persist `battle.json`,
   manifests or coverage files in the pack.
@@ -551,8 +552,8 @@ for that project, to `coverage.md`.
 | 353 | Game Over | MV/MZ | Native |  |  |
 | 354 | Return to Title Screen | MV/MZ | Native |  |  |
 | 355 | Script | MV/MZ | Native |  | hand-porting for JavaScript outside the import-time safe subset |
-| 356 | Plugin Command (MV) | MV | Placeholder | plugin command not ported | a per-plugin port (an ext handler) |
-| 357 | Plugin Command (MZ) | MZ | Placeholder | plugin command not ported | a per-plugin port (an ext handler) |
+| 356 | Plugin Command (MV) | MV | Degraded | typed extension call with original line; fallback notice | a per-plugin port (an ext handler) |
+| 357 | Plugin Command (MZ) | MZ | Degraded | typed extension call with plugin, command, arguments and 657 annotations; fallback notice | a per-plugin port (an ext handler) |
 <!-- rpgmaker-commands:end -->
 
 Besides the commands, the report counts conditional branch types, page
@@ -648,8 +649,9 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
 - **Plugins and arbitrary scripts are not ported.** The exact import-time
   Script subset above lowers without executing source. Everything else in
   Script commands, Script conditions and script variable operands becomes a
-  placeholder; plugin commands always do. Plugin parameters in
-  `js/plugins.js` are not read.
+  placeholder; plugin commands become inert `rpgmaker.pluginCommand` extension calls.
+  `js/plugins.js` declarations and parameters are retained as project data;
+  plugin JavaScript is never imported or executed.
 - **RTP assets.** The RPG Maker runtime package (RTP) art and audio is
   licensed for use in RPG Maker games only. The importer reads whatever
   images a project folder holds and does not ship or fetch any; do not

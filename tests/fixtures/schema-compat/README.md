@@ -6,7 +6,8 @@ the RPG Kit revision of that generation; `maps/` holds the map entries, which
 are byte-identical in every generation. `tests/schema-compat.test.ts` opens
 each shell and restores each save with the current runtime.
 
-The current `a59ec3e0` generation directly supersedes `f3a5eb5d`, which
+The current `f6071d84` generation directly supersedes `a59ec3e0`, which
+directly supersedes `f3a5eb5d`, which
 directly superseded `c394541c`. The `4c049fc2`,
 `ff111378`, `ad6d3cd1` and `39d5c151` identities existed only while additive
 schema work was in progress, so they are deliberately absent from both the

@@ -1353,7 +1353,16 @@ export interface ActorDef {
   moveSeconds?: number;
 }
 
+export interface ProjectPluginDeclaration {
+  name: string;
+  status: boolean;
+  description: string;
+  parameters: Record<string, string>;
+}
+
 export interface Project {
+  /** Inert RPG Maker plugin declarations; no plugin scripts are imported or run. */
+  plugins?: ProjectPluginDeclaration[];
   format: "rpgkit-project/v1";
   title: string;
   tileSize: 16;

@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RmMap, RmProject, RmSystem } from "./rm-types.ts";
+import { parseRmPlugins } from "./semantics.ts";
 import { rpgMakerMediaEncryption } from "./media.ts";
 import { NODE_RPGMAKER_IMPORT_ENVIRONMENT } from "./environment-node.ts";
 
@@ -72,6 +73,9 @@ export function loadRmProject(rootArg: string): RmProject {
     environment: NODE_RPGMAKER_IMPORT_ENVIRONMENT,
     ...(mediaEncryption ? { mediaEncryption } : {}),
     system,
+    ...(existsSync(join(projectRoot, "js", "plugins.js"))
+      ? { plugins: parseRmPlugins(readFileSync(join(projectRoot, "js", "plugins.js"), "utf8")) }
+      : {}),
     mapInfos,
     maps,
     tilesets: readOptional(dataDir, "Tilesets.json"),

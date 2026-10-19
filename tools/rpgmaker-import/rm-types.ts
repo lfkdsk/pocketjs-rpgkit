@@ -438,7 +438,16 @@ export interface RmSystem {
 /** Everything the importer reads from one project's `data/` directory.
  *  Arrays keep the files' own layout: index 0 is null and ids index the
  *  array; a missing optional file reads as `[null]`. */
+export interface RmPluginDeclaration {
+  name: string;
+  status: boolean;
+  description: string;
+  parameters: Record<string, string>;
+}
+
 export interface RmProject {
+  /** Parsed js/plugins.js declarations only; never plugin JavaScript. */
+  plugins?: RmPluginDeclaration[];
   /** Absolute project root (the directory holding `data/` and `img/`). */
   root: string;
   /** "MZ" when System.json has the MZ-only fields, else "MV". */

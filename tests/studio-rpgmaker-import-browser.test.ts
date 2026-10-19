@@ -3,7 +3,7 @@
 // and a browser bundle that contains no Node/Bun runtime dependency.
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseShardedPack } from "../editor/api/pack.ts";
 import { EditSession } from "../editor/api/session.ts";
@@ -54,6 +54,12 @@ class FsDirectoryHandle implements BrowserDirectoryHandle {
 
   constructor(private readonly path: string) {
     this.name = path.split("/").at(-1)!;
+  }
+
+  async getFileHandle(name: string): Promise<BrowserFileHandle> {
+    const path = join(this.path, name);
+    if (!existsSync(path)) throw new DOMException("File not found", "NotFoundError");
+    return new FsFileHandle(path);
   }
 
   async *values(): AsyncIterable<BrowserFileHandle | BrowserDirectoryHandle> {
@@ -111,6 +117,43 @@ describe("browser RPG Maker import", () => {
     const loaded = await loadBrowserRmProject(source, { codec: NODE_TEST_CODEC });
     expect(enteredJs).toBe(false);
     expect(loaded.project.system.gameTitle).toBe("Small");
+  });
+
+  test("targeted browser registry lookup keeps declarations inert without enumerating js", async () => {
+    let enumerated = false;
+    let implementationRead = false;
+    const registry = `var $plugins = ${JSON.stringify([{ name: "Fixture", status: true, description: "Safe", parameters: { nested: '{"x":1}' } }])};`;
+    const js: BrowserDirectoryHandle = {
+      kind: "directory", name: "js",
+      async *values() { enumerated = true; throw new Error("js must not be enumerated"); },
+      async getFileHandle(name) {
+        expect(name).toBe("plugins.js");
+        return { kind: "file", name, async getFile() {
+          return { name, size: registry.length, text: async () => registry,
+            arrayBuffer: async () => { implementationRead = true; throw new Error("no implementation bytes"); } };
+        } };
+      },
+    };
+    const root: BrowserDirectoryHandle = {
+      kind: "directory", name: "fixture",
+      async *values() {
+        yield { kind: "directory" as const, name: "data", async *values() {
+          yield { kind: "file" as const, name: "System.json", async getFile() {
+            const text = JSON.stringify({ gameTitle: "Fixture", partyMembers: [], startMapId: 0 });
+            return { name: "System.json", size: text.length, text: async () => text,
+              arrayBuffer: async () => new ArrayBuffer(0) };
+          } };
+        } };
+        yield js;
+      },
+    };
+    const source = await BrowserRpgMakerSource.index(root);
+    const loaded = await loadBrowserRmProject(source, { codec: NODE_TEST_CODEC });
+    expect(loaded.project.plugins).toEqual([{ name: "Fixture", status: true,
+      description: "Safe", parameters: { nested: '{"x":1}' } }]);
+    expect(enumerated).toBe(false);
+    expect(implementationRead).toBe(false);
+    expect(source.isFile("js/Fixture.js")).toBe(false);
   });
 
   test("read-only folder pick imports maps and PNGs, reports audio, and stages an openable pack", async () => {
