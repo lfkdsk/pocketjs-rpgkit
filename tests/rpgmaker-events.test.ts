@@ -1577,20 +1577,25 @@ describe("battle, shop, name input", () => {
   test.each([
     ["visible", [
       { op: "text", lines: ["[Script not ported:", "$gameVariables.setValue(1, 2); foo();]"] },
-      { op: "text", lines: ["[Plugin command not ported:", "ShowMap 1]"] },
-      { op: "text", lines: ["[Plugin command not ported:", "Quest:start]"] },
     ]],
     ["silent", []],
-  ] as const)("script and plugin placeholders (%s)", (mode, expected) => {
+  ] as const)("script placeholders and typed plugin calls (%s)", (mode, expected) => {
     const { cmds, cov } = conv([
       C(355, 0, ["$gameVariables.setValue(1, 2);"]), C(655, 0, ["foo();"]),
       C(356, 0, ["ShowMap 1"]),
       C(357, 0, ["Quest", "start", "Start", { id: "3" }]), C(657, 0, ["Id = 3"]),
     ], { placeholders: mode });
-    expect(cmds).toEqual(expected as unknown as Command[]);
+    expect(cmds).toEqual([
+      ...expected,
+      { op: "ext", call: "rpgmaker.pluginCommand", args: { source: "MV", line: "ShowMap 1" } },
+      { op: "ext", call: "rpgmaker.pluginCommand", args: {
+        source: "MZ", plugin: "Quest", command: "start", displayName: "Start",
+        arguments: { id: "3" }, annotations: ["Id = 3"],
+      } },
+    ] as Command[]);
     expect(only(cov, 355)).toBe("Placeholder");
-    expect(only(cov, 356)).toBe("Placeholder");
-    expect(only(cov, 357)).toBe("Placeholder");
+    expect(only(cov, 356)).toBe("Degraded");
+    expect(only(cov, 357)).toBe("Degraded");
   });
 });
 

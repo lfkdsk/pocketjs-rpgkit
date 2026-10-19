@@ -924,7 +924,7 @@ function emitNode(nd: RmNode, st: State, scope: Scope): Command[] {
       return emitScript(nd, p, st, scope);
     case 356:
     case 357:
-      return emitPlaceholder(nd, p, st);
+      return emitPluginCommand(nd, p, st);
     default: {
       const info = RM_COMMAND_BY_CODE.get(code);
       rec(st, code, "Dropped", info ? needs(code) : "unknown command code");
@@ -2869,18 +2869,29 @@ function placeholderText(st: State, head: string, detail: string): Command[] {
   return [{ op: "text", lines: [head, `${snippet}]`] }];
 }
 
-/** MV Plugin Command (356), MZ Plugin Command (357/657), plus the fallback
- * for a 355 source outside the safe subset: visible mode names it. */
+/** Scripts outside the recognized safe subset remain visible placeholders. */
 function emitPlaceholder(nd: RmNode, p: readonly unknown[], st: State): Command[] {
+  const src = [String(p[0] ?? ""), ...nd.lines.map((l) => String(l.parameters?.[0] ?? ""))].join(" ");
+  rec(st, 355, "Placeholder", "script not ported");
+  return placeholderText(st, "[Script not ported:", src);
+}
+
+/** Plugin source is project data, never JavaScript to evaluate. The single
+ * namespaced hook lets a game register its own deterministic dispatcher. */
+function emitPluginCommand(nd: RmNode, p: readonly unknown[], st: State): Command[] {
   const code = nd.cmd.code;
-  if (code === 355) {
-    const src = [String(p[0] ?? ""), ...nd.lines.map((l) => String(l.parameters?.[0] ?? ""))].join(" ");
-    rec(st, 355, "Placeholder", "script not ported");
-    return placeholderText(st, "[Script not ported:", src);
-  }
-  const name = code === 356 ? String(p[0] ?? "") : `${String(p[0] ?? "")}:${String(p[1] ?? "")}`;
-  rec(st, code, "Placeholder", "plugin command not ported");
-  return placeholderText(st, "[Plugin command not ported:", name);
+  const args: JsonValue = code === 356
+    ? { source: "MV", line: String(p[0] ?? "") }
+    : {
+        source: "MZ",
+        plugin: String(p[0] ?? ""),
+        command: String(p[1] ?? ""),
+        displayName: String(p[2] ?? ""),
+        arguments: (p[3] ?? {}) as JsonValue,
+        annotations: nd.lines.map((line) => String(line.parameters?.[0] ?? "")),
+      };
+  rec(st, code, "Degraded", "plugin call preserved; requires game-registered handler");
+  return [{ op: "ext", call: "rpgmaker.pluginCommand", args }];
 }
 
 // --- self switches ------------------------------------------------------------------
