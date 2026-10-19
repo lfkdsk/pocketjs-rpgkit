@@ -53,7 +53,7 @@
 // Without the entry nothing of it is built.
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { validateAndResolveBuildPlan } from "../vendor/pocketjs/framework/src/manifest/resolve.ts";
 import type { ResolvedBuildPlan } from "../vendor/pocketjs/framework/src/manifest/plan.ts";
 import {
@@ -1126,10 +1126,17 @@ function showcaseCard(entry: ShowcaseEntry): string {
 
 /** Copy the license files of the fonts an app bakes (tools/lib/font-licenses.ts)
  *  into its site directory; returns their file names. */
+export function fontLicenseOutputName(file: string): string {
+  // The build can run on either host, while tests deliberately exercise both
+  // path syntaxes. Normalize the separator before basename so a Windows drive
+  // path can never become part of the destination below.
+  return basename(file.replace(/\\/g, "/"));
+}
+
 export function copyFontLicenses(appDir: string, dir: string): string[] {
   const names: string[] = [];
   for (const file of fontLicenseFiles(appDir)) {
-    const name = file.slice(file.lastIndexOf("/") + 1);
+    const name = fontLicenseOutputName(file);
     copyFileSync(file, join(dir, name));
     names.push(name);
   }

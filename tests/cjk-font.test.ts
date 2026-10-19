@@ -27,7 +27,7 @@ import {
 import { createFontMeasure } from "../tools/lib/font-measure.ts";
 import { fontLicenseFiles } from "../tools/lib/font-licenses.ts";
 import { appModules, appTextInventory, fileStrings } from "../tools/lib/text-inventory.ts";
-import { copyFontLicenses } from "../tools/web.ts";
+import { copyFontLicenses, fontLicenseOutputName } from "../tools/web.ts";
 import { unpack } from "../vendor/pocketjs/framework/compiler/pak.ts";
 
 const DEMO = join(REPO_ROOT, "vendor/pocketjs/assets/fonts/NotoSansCJK-Demo.otf");
@@ -268,6 +268,12 @@ describe("license shipping", () => {
       join(REPO_ROOT, "tests/fixtures/cjk-text/fonts/LICENSE-NotoSansCJK.txt"),
     ]);
     expect(fontLicenseFiles(join(REPO_ROOT, "examples/sunstone"))).toEqual([]);
+  });
+
+  test("web license destinations keep only the basename on every host path syntax", () => {
+    expect(fontLicenseOutputName("D:\\work\\game\\fonts\\LICENSE-Inter.txt")).toBe("LICENSE-Inter.txt");
+    expect(fontLicenseOutputName("\\\\server\\share\\fonts\\LICENSE-Noto.txt")).toBe("LICENSE-Noto.txt");
+    expect(fontLicenseOutputName("/work/game/fonts/LICENSE-Inter.txt")).toBe("LICENSE-Inter.txt");
   });
 
   test("the web site copies the license beside the game and links it", () => {
