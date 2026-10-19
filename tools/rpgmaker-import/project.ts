@@ -128,6 +128,15 @@ export interface ImportAssets {
   /** Exact RPG Maker battleback basename -> imported source image. */
   battlebacks1: Record<string, { png: string; w: number; h: number }>;
   battlebacks2: Record<string, { png: string; w: number; h: number }>;
+  /** Side-view actor name -> complete 9x6 motion sheet. Optional for older cookers. */
+  sideViewActors?: Record<string, { png: string; w: number; h: number }>;
+  /** Side-view enemy database id -> battler PNG. */
+  sideViewEnemies?: Record<string, { png: string; w: number; h: number }>;
+  /** Weapon sheet number (1..3) -> 12x8 animation sheet. */
+  sideViewWeapons?: Record<string, { png: string; w: number; h: number }>;
+  /** State overlay sheet and shadow, when present. */
+  sideViewStates?: { png: string; w: number; h: number };
+  sideViewShadow?: { png: string; w: number; h: number };
   /** The balloon sheet (8 columns x 15 rows of 16 px frames), when used. */
   balloon?: string;
   /** Sprite key of the starting party leader's walking character. */
@@ -631,13 +640,41 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     cov.record("battle", `actor battler ${name}`, "Native");
   }
 
-  // --- front-view battlers and normalized battle database -----------------
+  // --- battlers and normalized battle database ----------------------------
+  const sideView = rm.system.optSideView === true;
+  if (sideView) {
+    assets.sideViewActors = {};
+    assets.sideViewEnemies = {};
+    assets.sideViewWeapons = {};
+    const importImage = async (folder: string, name: string, output: string): Promise<{ png: string; w: number; h: number } | undefined> => {
+      const path = findNamedPng(environment, environment.join(rm.root, "img", folder), name, rm.mediaEncryption);
+      if (!path) {
+        warnings.push(`${folder}/${name}.png not found`);
+        cov.record("battle", `${folder}/${name}`, "Degraded", `image ${folder}/${name}.png is missing`);
+        return undefined;
+      }
+      const image = await environment.readPng(path, rm.mediaEncryption);
+      const png = `battlers/${output}.png`;
+      images.set(png, image);
+      return { png, w: image.width, h: image.height };
+    };
+    for (const name of [...new Set(rm.actors.filter((actor) => !!actor?.battlerName).map((actor) => actor!.battlerName!))].sort()) {
+      const image = await importImage("sv_actors", name, `actor-${encodeURIComponent(name)}`);
+      if (image) assets.sideViewActors[name] = image;
+    }
+    for (let index = 1; index <= 3; index++) {
+      const image = await importImage("system", `Weapons${index}`, `weapons-${index}`);
+      if (image) assets.sideViewWeapons[String(index)] = image;
+    }
+    assets.sideViewStates = await importImage("system", "States", "states");
+    assets.sideViewShadow = await importImage("system", "Shadow2", "shadow");
+  }
   const enemyImages = new Map<number, string>();
   for (const enemy of rm.enemies) {
     if (!enemy?.battlerName) continue;
     const front = findNamedPng(environment, environment.join(rm.root, "img", "enemies"), enemy.battlerName, rm.mediaEncryption);
     const side = findNamedPng(environment, environment.join(rm.root, "img", "sv_enemies"), enemy.battlerName, rm.mediaEncryption);
-    const path = front ?? side;
+    const path = (sideView ? side ?? front : front ?? side);
     if (!path) continue;
     const id = `enemy${String(enemy.id).padStart(3, "0")}`;
     const png = `battlers/${id}.png`;
@@ -645,9 +682,9 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     images.set(png, image);
     assets.battlers[id] = { png, w: image.width, h: image.height };
     enemyImages.set(enemy.id, id);
-    if (!front && side) {
-      warnings.push(`enemy ${enemy.id}: side-view battler ${enemy.battlerName} is shown in the front-view renderer`);
-    }
+    if (sideView && side) assets.sideViewEnemies![id] = assets.battlers[id]!;
+    if (sideView && !side) warnings.push(`enemy ${enemy.id}: img/sv_enemies/${enemy.battlerName}.png not found; using front-view image`);
+    if (!sideView && !front && side) warnings.push(`enemy ${enemy.id}: side-view battler ${enemy.battlerName} is shown in the front-view renderer`);
   }
   // --- tilesets -----------------------------------------------------------
   const atlases = new Map<number, TileAtlas>();
