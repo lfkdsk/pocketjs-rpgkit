@@ -777,7 +777,8 @@ function assertRegisteredExtensions(runtime: ExtensionRuntime, found: ReadonlySe
     if (!extensionCallNameValid(call)) {
       missing.push(`${kind} ${call} (invalid namespaced call)`);
     } else if (
-      kind === "command" ? !runtime.commands[call]
+      kind === "command" && call === "rpgmaker.pluginCommand" ? false
+      : kind === "command" ? !runtime.commands[call]
       : kind === "choice" ? !runtime.choices[call]
       : !runtime.conditions[call]
     ) {

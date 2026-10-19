@@ -5723,8 +5723,12 @@ function runFiber(
   }
   if (f.mode === "text") {
     const top = f.stack[0]!;
-    const ins = top.prog[top.pc]!;
-    if (ins.op === "text") {
+    const current = top.prog[top.pc]!;
+    const fallback = current.op === "ext" && current.call === "rpgmaker.pluginCommand" && !extension.runtime.commands[current.call];
+    const ins: Extract<Instr, { op: "text" }> | null = fallback
+      ? { op: "text", lines: s.modal?.kind === "text" && s.modal.fiber === f.key ? s.modal.lines : [], cps: DEFAULT_CPS }
+      : current.op === "text" ? current : null;
+    if (ins) {
       if (s.modal && s.modal.fiber !== f.key) return; // another fiber's box
       // The slot became free while this fiber parked waiting for it: the
       // reveal clock starts on the install frame, not the wait frame, or a
@@ -6808,6 +6812,19 @@ function runFiber(
         break;
       }
       case "ext":
+        if (ins.call === "rpgmaker.pluginCommand" && !extension.runtime.commands[ins.call]) {
+          if (s.modal) return;
+          const data = ins.args && typeof ins.args === "object" && !Array.isArray(ins.args)
+            ? ins.args as Record<string, unknown>
+            : {};
+          const name = data.source === "MV"
+            ? typeof data.line === "string" ? data.line : ""
+            : `${typeof data.plugin === "string" ? data.plugin : ""}:${typeof data.command === "string" ? data.command : ""}`;
+          f.mode = "text";
+          f.since = s.frame;
+          s.modal = openTextModal(w, f.key, ["[Plugin command not ported:", `${name.replace(/\s+/g, " ").trim().slice(0, 40)}]`], undefined);
+          return;
+        }
         runExtensionCommand(s, w, extension, ins.call, ins.args);
         top.pc++;
         break;

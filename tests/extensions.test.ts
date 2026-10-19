@@ -199,6 +199,39 @@ function choiceModal(state: SessionState) {
 }
 
 describe("KB1 extension commands and conditions", () => {
+  test("plugin fallback displays a notice and continues exactly once", () => {
+    const p = project([
+      { op: "ext", call: "rpgmaker.pluginCommand", args: null },
+      { op: "variable", id: "after", set: { op: "add", value: 1 } },
+      { op: "erase" },
+    ]);
+    const session = createSession(p);
+    let state = step(session, startSession(p, session));
+    expect(state.interp.modal).toMatchObject({ kind: "text", lines: ["[Plugin command not ported:", ":]"] });
+    expect(state.sw.variables.after).toBeUndefined();
+    state = step(session, state, { buttons: 0, confirmEdge: true });
+    expect(state.interp.modal?.kind).toBe("text");
+    state = step(session, state, { buttons: 0, confirmEdge: true });
+    expect(state.interp.modal).toBeNull();
+    expect(state.sw.variables.after).toBe(1);
+    state = step(session, state);
+    expect(state.sw.variables.after).toBe(1);
+  });
+  test("registered plugin commands receive imported data without a fallback", () => {
+    const args = { source: "MZ", plugin: "Example", command: "Action", arguments: { count: "2" }, annotations: ["count"] };
+    const p = project([
+      { op: "ext", call: "rpgmaker.pluginCommand", args },
+      { op: "erase" },
+    ]);
+    const session = createSession(p, 60, { extensions: {
+      initial: null,
+      commands: { "rpgmaker.pluginCommand": (_context, received) => ({ ext: received }) },
+    } });
+    const state = step(session, startSession(p, session));
+    expect(state.interp.modal).toBeNull();
+    expect(state.ext).toEqual(args);
+  });
+
   test("playerStep runs on ordinary and forced landings but not placement or a blocked route", () => {
     const stepHook: ExtensionOptions = {
       initial: { steps: 0 },
