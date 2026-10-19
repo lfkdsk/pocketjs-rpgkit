@@ -18,7 +18,7 @@ import { decodeOggVorbisPcm } from "../tools/rpgmaker-import/ogg-decode.ts";
 
 const FFMPEG = Bun.which("ffmpeg");
 if (!FFMPEG) throw new Error("rpgmaker-audio-media tests require ffmpeg on PATH");
-const SCRATCH_ROOT = "/var/tmp/fleet/4306";
+const SCRATCH_ROOT = join(process.cwd(), ".pocket-build", "tests", "rpgmaker-audio-media");
 const PARITY_OGG = join(import.meta.dir, "fixtures", "rpgmaker", "hollow-mz", "audio", "bgm", "hollow-map.ogg");
 mkdirSync(SCRATCH_ROOT, { recursive: true });
 
