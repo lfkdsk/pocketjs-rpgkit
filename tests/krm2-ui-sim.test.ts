@@ -25,11 +25,46 @@ const BACKDROP: Rgba = [0x05, 0x09, 0x14, 255];
 const PANEL_BG: Rgba = [0x14, 0x1c, 0x30, 255];
 const CELL_BG: Rgba = [0x0b, 0x16, 0x26, 255];
 const CURSOR: Rgba = [0xff, 0xe1, 0x7a, 255];
+const EFFECT_SOURCE: Rgba = [120, 80, 40, 255];
+const EFFECT_DESTINATION: Rgba = [60, 40, 20, 255];
+
+type EffectMode = "normal" | "add" | "multiply" | "screen";
+
+function clampByte(value: number): number {
+  return Math.max(0, Math.min(255, value));
+}
+
+/** Independent opaque-pixel oracle for MZ's HSL-lightness gray projection
+ * followed by Pixi's blend factors. It intentionally works from the public
+ * equations rather than PocketJS command words or renderer helpers. */
+function expectedEffectPixel(
+  mode: EffectMode,
+  tone: readonly [number, number, number, number] = [0, 0, 0, 0],
+): number[] {
+  const source = EFFECT_SOURCE.slice(0, 3);
+  const lo = Math.min(...source);
+  const hi = Math.max(...source);
+  const gray = clampByte(tone[3]);
+  const toned = source.map((channel, index) => clampByte(Math.round(
+    (channel * (255 - gray) + ((lo + hi) / 2) * gray) / 255 + tone[index]!,
+  )));
+  const destination = EFFECT_DESTINATION.slice(0, 3);
+  const rgb = toned.map((channel, index) => {
+    const under = destination[index]!;
+    switch (mode) {
+      case "add": return Math.min(255, channel + under);
+      case "multiply": return Math.round((channel * under) / 255);
+      case "screen": return Math.round(channel + under * (1 - channel / 255));
+      case "normal": return channel;
+    }
+  });
+  return [...rgb, 255];
+}
 
 const FINAL_HASHES: Readonly<Record<string, string>> = {
-  "hud.480x272": "49ebe0cf",
+  "hud.480x272": "2a1f4e3c",
   "number.480x272": "83ea1dd3",
-  "hud.960x544": "f947fdc1",
+  "hud.960x544": "af4ce01c",
   "number.960x544": "8fcbf623",
 };
 
@@ -111,6 +146,7 @@ simDescribe("KRM2 HUD and number-input visuals", () => {
       expect(state.scene).toBeNull();
       expect(state.sw.timer).toMatchObject({ running: true, expired: false });
       expect(state.interp.screen?.pictures?.["7"]).toBeDefined();
+      expect(Object.keys(state.interp.screen?.pictures ?? {})).toEqual(["1", "2", "3", "4", "7"]);
       expect(state.interp.screen?.mapNameBanner?.text).toContain("Unbroken Lanterns");
 
       const hud = world.render().slice();
@@ -131,6 +167,22 @@ simDescribe("KRM2 HUD and number-input visuals", () => {
         }
       }
       expect(bright).toBeGreaterThan(150);
+      const scale = viewport.width / 480;
+      const swatches = [
+        { x: 16, mode: "add" as const, tone: [0, 0, 0, 0] as const },
+        { x: 40, mode: "multiply" as const, tone: [0, 0, 0, 0] as const },
+        { x: 64, mode: "screen" as const, tone: [0, 0, 0, 0] as const },
+        { x: 88, mode: "normal" as const, tone: [20, -30, 100, 255] as const },
+      ];
+      for (const swatch of swatches) {
+        const pixel = rgbaAt(
+          hud,
+          viewport.width,
+          swatch.x + 8,
+          232 + 8,
+        );
+        expect(pixel, `${swatch.mode} effect pixel`).toEqual(expectedEffectPixel(swatch.mode, swatch.tone));
+      }
       const hudHash = await golden(`hud.${viewport.width}x${viewport.height}`, hud, viewport.width, viewport.height);
       if (!process.env.KRM2_UPDATE_GOLDENS) expect(hudHash).toBe(FINAL_HASHES[`hud.${viewport.width}x${viewport.height}`]);
 
@@ -142,7 +194,6 @@ simDescribe("KRM2 HUD and number-input visuals", () => {
       const numberTree = JSON.stringify(world.getTree());
       expect(numberTree).toContain("rpgkit-number-input-digit-7");
 
-      const scale = viewport.width / 480;
       const panelX = (viewport.width - 360 * scale) / 2;
       const panelY = (viewport.height - 112 * scale) / 2;
       // A full-screen game scene owns the foreground: HUD/pictures from the

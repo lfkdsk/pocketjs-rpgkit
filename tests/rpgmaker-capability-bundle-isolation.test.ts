@@ -80,14 +80,18 @@ const EXPECTED_BYTES = {
   // not reach GameView, and the capability needles below remain unchanged.
   // The shared Japanese kinsoku codepoint table adds 216 B to every graph;
   // the capability reachability checks below remain unchanged.
-  meadow: 684_741,
+  // Exact blend/tone projection and its fixed-backend capability fallback add
+  // 3,303 B to Meadow, 3,497 B to Sunstone and 5,281 B to the fully opted-in
+  // fixture. The graph and bundle needles below continue to prove that the
+  // optional RPG Maker implementations stay outside both negative controls.
+  meadow: 688_044,
   // Bucketed upper rows and ordinary-row write suppression add 159 B to both
   // GameView graphs without changing their capability boundaries.
-  sunstone: 1_110_878,
+  sunstone: 1_114_375,
   // The positive control also opts into imported battlebacks, legacy battle
   // animations, changed actor faces and result audio. Their complete optional
   // presentation adds a measured 45,162 B; neither negative control changes.
-  "rmi-play": 1_345_766,
+  "rmi-play": 1_351_047,
 } as const;
 
 function implementationModules(app: string): string[] {

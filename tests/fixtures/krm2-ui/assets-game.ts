@@ -36,6 +36,10 @@ export const GAME_ASSETS: GameAssets = {
       defaultVisible: false,
       variants: {
         "clockwork-card": { image: "assets/clockwork-card.png", w: 128, h: 64 },
+        "effect-add": { image: "assets/effect-swatch.png", color: "#3c2814", w: 16, h: 16 },
+        "effect-multiply": { image: "assets/effect-swatch.png", color: "#3c2814", w: 16, h: 16 },
+        "effect-screen": { image: "assets/effect-swatch.png", color: "#3c2814", w: 16, h: 16 },
+        "effect-tone": { image: "assets/effect-swatch.png", color: "#3c2814", w: 16, h: 16 },
       },
     },
   },

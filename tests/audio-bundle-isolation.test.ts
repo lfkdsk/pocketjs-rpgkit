@@ -318,9 +318,13 @@ const maybeTest = preflight.ok ? test : test.skip;
 // GameView graph without reaching either decoder.
 // The shared Japanese kinsoku codepoint table adds 216 B to every graph;
 // decoder reachability remains unchanged.
-const EXPECTED_MEADOW_BYTES = 684_741;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_110_878;
-const EXPECTED_WAV_FIXTURE_BYTES = 873_244;
+// Exact blend/tone projection and fixed-backend capability fallback add
+// 3,303 B to Meadow and 3,497 B to both GameView graphs. The decoder needles
+// below continue to prove that this shared presentation plumbing admits no
+// optional audio implementation.
+const EXPECTED_MEADOW_BYTES = 688_044;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_114_375;
+const EXPECTED_WAV_FIXTURE_BYTES = 876_741;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

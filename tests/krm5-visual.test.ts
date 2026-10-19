@@ -7,8 +7,8 @@ import { decodePng } from "../vendor/pocketjs/framework/compiler/pak.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import type { SessionState } from "../src/engine/session.ts";
+import { screenToneAt } from "../src/engine/rpgmaker-screen.ts";
 import {
-  screenToneOverlays,
   weatherDimmerOpacity,
   weatherParticleGeometry,
   weatherParticles,
@@ -122,11 +122,6 @@ function countColour(frame: Uint8Array, colour: Rgba): number {
   return count;
 }
 
-function parseHex(colour: string): [number, number, number] {
-  const hex = colour.slice(1);
-  return [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16)) as [number, number, number];
-}
-
 function over(
   destination: readonly number[],
   source: readonly [number, number, number],
@@ -136,12 +131,28 @@ function over(
     Math.round(channel * opacity + destination[index]! * (1 - opacity)));
 }
 
-function projectedTonePixel(pixel: readonly number[], state: Readonly<SessionState>): number[] {
-  let out = [...pixel.slice(0, 3)];
-  for (const overlay of screenToneOverlays(state.interp.screen?.tone)) {
-    out = over(out, parseHex(overlay.color), overlay.opacity);
-  }
-  return out;
+function projectedTonePixel(pixel: readonly number[], state: Readonly<SessionState>): Rgba {
+  return exactTonePixel(pixel, screenToneAt(state.interp.screen?.tone));
+}
+
+/** Independent integer form of the PocketJS/MZ HSL-gray then signed-offset
+ * equation. One common-denominator round avoids floating tie drift. */
+function exactTonePixel(
+  pixel: readonly number[],
+  tone: Readonly<{ r: number; g: number; b: number; gray: number }>,
+): Rgba {
+  const alpha = pixel[3] ?? 255;
+  const gray = Math.max(0, Math.min(255, Math.trunc(tone.gray)));
+  const offsets = [tone.r, tone.g, tone.b].map((value) =>
+    Math.max(-255, Math.min(255, Math.trunc(value))));
+  const rgb = pixel.slice(0, 3);
+  const loHi = Math.min(...rgb) + Math.max(...rgb);
+  const toned = rgb.map((channel, index) => {
+      const numerator = 2 * channel! * (255 - gray) + loHi * gray + 2 * offsets[index]! * alpha;
+      const bounded = Math.max(0, Math.min(2 * 255 * alpha, numerator));
+      return Math.floor((bounded + 255) / (2 * 255));
+    });
+  return [toned[0]!, toned[1]!, toned[2]!, alpha];
 }
 
 function expectRgbClose(actual: readonly number[], expected: readonly number[], label: string): void {
@@ -313,14 +324,13 @@ simDescribe("K-RPGM5 imported map presentation", () => {
       waitForMessage(world, "show begins");
       tap(world, BTN.CIRCLE);
       const state = world.probes().state;
+      const windowTone = state.sw.windowTone!;
       expect(state.frame).toBe(baseState.frame);
       expect(state.sw.formationAccess).toBe(false);
-      expect(state.sw.windowTone).toEqual({ r: -72, g: 36, b: -18, gray: 0 });
+      expect(windowTone).toEqual({ r: -72, g: 36, b: -18, gray: 96 });
       expect(state.interp.screen?.tone?.to).toEqual({ r: -68, g: 34, b: -17, gray: 96 });
       expect(nodesWithPrefix(world.getTree() as TreeNode, "rpgkit-screen-tone-").map((node) => node.n)).toEqual([
-        "rpgkit-screen-tone-gray",
-        "rpgkit-screen-tone-darken",
-        "rpgkit-screen-tone-brighten",
+        "rpgkit-screen-tone-filter",
       ]);
 
       const frame = world.render().slice();
@@ -332,11 +342,12 @@ simDescribe("K-RPGM5 imported map presentation", () => {
         );
       }
 
-      const themed = windowToneTheme(undefined, state.sw.windowTone)!;
-      expect(themed.paper).toBe("#003a14");
-      expect(themed.border).toBe("#15a391");
-      expect(countColour(frame, [0x00, 0x3a, 0x14, 0xff]), "toned window paper pixels").toBeGreaterThan(8_000);
-      expect(countColour(frame, [0x15, 0xa3, 0x91, 0xff]), "toned window frame pixels").toBeGreaterThan(700);
+      const themed = windowToneTheme(undefined, windowTone, true)!;
+      expect(themed.windowTone).toEqual(windowTone);
+      const paper = exactTonePixel([0x0b, 0x16, 0x26, 0xff], windowTone);
+      const border = exactTonePixel([0x5d, 0x7f, 0xa3, 0xff], windowTone);
+      expect(countColour(frame, paper), "toned window paper pixels").toBeGreaterThan(8_000);
+      expect(countColour(frame, border), "toned window frame pixels").toBeGreaterThan(700);
       await golden("tone-window", frame, viewport.width, viewport.height);
 
       dismissMessage(world, "show begins");
@@ -379,7 +390,7 @@ simDescribe("K-RPGM5 battle presentation", () => {
       const battle = findNode(tree, "rpgmaker-battle-scene");
       expect(battle).not.toBeNull();
       expect(nodesWithPrefix(battle!, "rpgkit-weather-particle-")).toHaveLength(30);
-      expect(nodesWithPrefix(battle!, "rpgkit-screen-tone-")).toHaveLength(3);
+      expect(nodesWithPrefix(battle!, "rpgkit-screen-tone-")).toHaveLength(1);
       expect(findNode(battle!, "rpgmaker-target-menu")).not.toBeNull();
 
       const frame = world.render().slice();

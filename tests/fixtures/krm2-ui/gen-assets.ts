@@ -50,3 +50,9 @@ const card = image(cardW, cardH, (x, y) => {
   return x < cardW / 2 ? [76, 201, 240, 255] : [167, 139, 250, 255];
 });
 writeFileSync(join(HERE, "assets/clockwork-card.png"), encodePNG(card, cardW, cardH));
+
+// A uniform opaque source keeps blend/tone semantic pixels independent from
+// texture interpolation and from the map beneath each picture. The fixture's
+// picture variants provide a known opaque destination colour.
+const effectSwatch = image(16, 16, () => [120, 80, 40, 255]);
+writeFileSync(join(HERE, "assets/effect-swatch.png"), encodePNG(effectSwatch, 16, 16));

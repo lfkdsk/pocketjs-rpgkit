@@ -6,6 +6,7 @@ import type { TimerState } from "../src/engine/interpreter.ts";
 import type { PictureState, ScreenEffectsState } from "../src/engine/screen.ts";
 import {
   mapNameBannerOpacity,
+  pictureImageEffects,
   pictureRenderStyle,
   pictureToneOverlays,
   screenEffectsFingerprint,
@@ -74,6 +75,16 @@ describe("KRM2 picture presentation", () => {
       height: 360,
       originX: -0.5,
       originY: -0.5,
+    });
+  });
+
+  test("picture image effects map blend ordinals and evaluated tone", () => {
+    for (const [blend, blendMode] of [["normal", 0], ["add", 1], ["multiply", 2], ["screen", 3]] as const) {
+      expect(pictureImageEffects(picture(1, { blend, tone: { r: -128, g: 0, b: 64, gray: 32 } })))
+        .toEqual({ blendMode, toneR: -128, toneG: 0, toneB: 64, toneGray: 32 });
+    }
+    expect(pictureImageEffects(picture(1))).toEqual({
+      blendMode: 0, toneR: 0, toneG: 0, toneB: 0, toneGray: 0,
     });
   });
 

@@ -103,7 +103,15 @@ function screenPreviewProject(
     : kind === "tone"
       ? [
         command(imported, "formationAccess", 0),
-        command(imported, "windowTone", 0),
+        // Stock MV stores three window-tone channels. Exercise the kit's
+        // accepted hand-authored gray extension without replacing the
+        // imported RGB command or its reducer path.
+        (() => {
+          const importedTone = command(imported, "windowTone", 0);
+          return importedTone.op === "windowTone"
+            ? { ...importedTone, tone: { ...importedTone.tone, gray: 96 } }
+            : importedTone;
+        })(),
         command(imported, "screenTone", 0),
         textCommands[textCommands.length - 1]!,
         command(imported, "formationAccess", 1),

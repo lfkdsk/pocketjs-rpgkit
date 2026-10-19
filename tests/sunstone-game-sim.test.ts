@@ -548,8 +548,9 @@ simDescribe("sunstone — render budget", () => {
     // 1,101,055 B. Same-tick scripted facing/route startup and the bounded
     // backdrop stack add 10,485 B of shared interpreter/session/save code,
     // producing 1,111,540 B; this fixture authors neither additive behavior.
-    // Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_113_500);
+    // Exact blend/tone projection and fixed-backend capability fallback then
+    // measure 1,114,375 B. Keep a narrow margin above that value.
+    expect(jsBytes).toBeLessThan(1_116_500);
   });
 });
 

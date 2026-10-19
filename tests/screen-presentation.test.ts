@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import type { WeatherEffectState } from "../src/engine/screen.ts";
 import {
-  screenToneOverlays,
+  screenToneStyle,
   screenToneWeatherActive,
   WEATHER_DIMMER_COLOR,
   weatherDimmerOpacity,
@@ -12,7 +12,8 @@ import {
   weatherParticleVector,
   weatherParticles,
 } from "../src/ui/screen-presentation.ts";
-import { windowToneTheme, type UiTheme } from "../src/ui/theme.ts";
+import { resolveUiTheme, windowToneDecoration, windowToneTheme, type UiTheme } from "../src/ui/theme.ts";
+import { nativeRenderEffectsSupported } from "../src/ui/render-effects.ts";
 import {
   mapScopedAnimatedSource,
   mapScopedLayerSource,
@@ -37,25 +38,31 @@ function weather(overrides: Partial<WeatherEffectState> = {}): WeatherEffectStat
 }
 
 describe("portable screen tone", () => {
-  test("projects neutral, gray and signed RGB channels in stable order", () => {
-    expect(screenToneOverlays(undefined)).toEqual([]);
-    expect(screenToneOverlays({
+  test("projects interpolated gray and signed RGB into one exact operation", () => {
+    expect(screenToneStyle(undefined)).toEqual({
+      toneR: 0, toneG: 0, toneB: 0, toneGray: 0,
+    });
+    expect(screenToneStyle({
       from: { r: 0, g: 0, b: 0, gray: 0 },
       to: { r: 128, g: 64, b: 0, gray: 128 },
       total: 10,
       left: 5,
-    })).toEqual([
-      { kind: "gray", color: "#808080", opacity: 64 / 255 },
-      { kind: "brighten", color: "#ff8000", opacity: 64 / 255 },
-    ]);
-    expect(screenToneOverlays({
+    })).toEqual({ toneR: 64, toneG: 32, toneB: 0, toneGray: 64 });
+    expect(screenToneStyle({
       from: { r: -128, g: 0, b: -64, gray: 0 },
       to: { r: -128, g: 0, b: -64, gray: 0 },
       total: 0,
       left: 0,
-    })).toEqual([
-      { kind: "darken", color: "#00ff80", opacity: 128 / 255 },
-    ]);
+    })).toEqual({ toneR: -128, toneG: 0, toneB: -64, toneGray: 0 });
+  });
+
+  test("uses native effects only on exact software render targets", () => {
+    expect(nativeRenderEffectsSupported("psp", "injected")).toBe(true);
+    expect(nativeRenderEffectsSupported("web-app", "injected")).toBe(true);
+    expect(nativeRenderEffectsSupported("pocketbook", "native")).toBe(true);
+    for (const target of ["macos-app", "linux-app", "macos-widget", "psp", "vita", "3ds"]) {
+      expect(nativeRenderEffectsSupported(target, "native"), target).toBe(false);
+    }
   });
 });
 
@@ -144,29 +151,51 @@ describe("deterministic weather projection", () => {
 });
 
 describe("runtime window tone", () => {
-  test("missing and RGB-neutral tones keep the caller's exact theme reference", () => {
+  test("missing and fully neutral tones keep the caller's exact theme reference", () => {
     const theme: Partial<UiTheme> = { paper: "#102030" };
     expect(windowToneTheme(theme, undefined)).toBe(theme);
     expect(windowToneTheme(theme, { r: 0, g: 0, b: 0, gray: 0 })).toBe(theme);
-    expect(windowToneTheme(theme, { r: 0, g: 0, b: 0, gray: 255 })).toBe(theme);
     expect(windowToneTheme(undefined, undefined)).toBeUndefined();
   });
 
-  test("tones chrome with RGB only while preserving text colours and alpha", () => {
+  test("carries full tone without rewriting chrome or text colours", () => {
     const theme: Partial<UiTheme> = {
       border: "#10203080",
       paper: "#ff0000",
       ink: "#abcdef",
       accent: "#fedcba",
     };
-    const toned = windowToneTheme(theme, { r: -16, g: 16, b: 32, gray: 255 })!;
-    expect(toned.paper).toBe("#ef1020");
-    expect(toned.border).toBe("#00305080");
+    const toned = windowToneTheme(theme, { r: -16, g: 16, b: 32, gray: 255 }, true)!;
+    expect(toned.paper).toBe("#ff0000");
+    expect(toned.border).toBe("#10203080");
     expect(toned.ink).toBe("#abcdef");
     expect(toned.accent).toBe("#fedcba");
+    expect(toned.windowTone).toEqual({ r: -16, g: 16, b: 32, gray: 255 });
+    expect(windowToneDecoration(resolveUiTheme(toned), { bgColor: toned.paper! })).toEqual({
+      bgColor: "#ff0000", toneR: -16, toneG: 16, toneB: 32, toneGray: 255,
+    });
 
-    const shifted = windowToneTheme({ paper: "#102030" }, { r: 32, g: -16, b: 100, gray: 0 })!;
-    expect(shifted.paper).toBe("#301094");
+    expect(windowToneDecoration(resolveUiTheme(theme), { bgColor: theme.paper! })).toEqual({
+      bgColor: "#ff0000", toneR: 0, toneG: 0, toneB: 0, toneGray: 0,
+    });
+  });
+
+  test("uses exact palette fallback for fixed backends and translucent chrome", () => {
+    const tone = { r: -16, g: 16, b: 32, gray: 255 };
+    const fixed = windowToneTheme({ border: "#10203080", paper: "#ff0000" }, tone, false)!;
+    expect(fixed.border).toBe("#10304080");
+    expect(fixed.paper).toBe("#7090a0");
+    expect(fixed.windowTone).toBeUndefined();
+
+    const native = resolveUiTheme(windowToneTheme({ paper: "#10203080" }, tone, true));
+    expect(windowToneDecoration(native, { bgColor: native.paper })).toEqual({
+      bgColor: "#10304080", toneR: 0, toneG: 0, toneB: 0, toneGray: 0,
+    });
+    expect(windowToneDecoration(resolveUiTheme({ paper: "system-paper", windowTone: tone }), {
+      bgColor: "system-paper",
+    })).toEqual({
+      bgColor: "system-paper", toneR: 0, toneG: 0, toneB: 0, toneGray: 0,
+    });
   });
 });
 

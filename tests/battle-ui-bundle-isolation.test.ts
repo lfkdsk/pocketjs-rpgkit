@@ -284,7 +284,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // without admitting battle UI.
 // The shared Japanese kinsoku codepoint table adds 216 B without admitting
 // battle UI.
-const EXPECTED_BYTES = 1_110_878;
+// Exact blend/tone projection and fixed-backend capability fallback add a
+// measured 3,497 B of shared presentation plumbing. The battle needles below
+// continue to prove that no optional battle UI became reachable.
+const EXPECTED_BYTES = 1_114_375;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
