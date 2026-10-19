@@ -75,7 +75,7 @@ compact dialog uses two metric columns without horizontal clipping.
 
 | Wide result | Compact result |
 | --- | --- |
-| ![RPG Maker import coverage in wide Studio](screenshots/studio/studio-rpgmaker-import-wide.png) | ![RPG Maker import coverage in compact Studio](screenshots/studio/studio-rpgmaker-import-compact-2x.png) |
+| ![RPG Maker import coverage and browser audio guidance in wide Studio](screenshots/studio/studio-rpgmaker-import-web-wide.png) | ![RPG Maker import coverage and browser audio guidance in compact Studio](screenshots/studio/studio-rpgmaker-import-web-compact-2x.png) |
 
 ### Run the imported result
 

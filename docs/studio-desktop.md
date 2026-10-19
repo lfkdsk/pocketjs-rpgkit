@@ -109,6 +109,8 @@ M4A/AAC without `ffmpeg`, and an Ogg stream rejected by the selected decoder,
 are recorded as omitted media with bilingual installation/recovery guidance;
 they do not abort the maps, events, images or other audio.
 
+![A completed desktop import without system ffmpeg, showing the per-file bilingual audio warning](screenshots/studio-desktop/rpgmaker-import-no-ffmpeg.png)
+
 Save writes back where the document came from:
 
 - **A folder.** Studio compares every file it is about to replace with the
