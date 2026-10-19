@@ -13,8 +13,10 @@ the same web build; the desktop app adds what a web page cannot do:
   `reach`) on your computer. Their findings join the problems list.
 - **RPG Maker import.** Pick an MV/MZ source folder and destination with
   native dialogs, review bilingual coverage and warnings, then open the
-  published kit project. Conversion is staged, cancellable and never
-  overwrites an existing destination.
+  published kit project. Ogg Vorbis uses a bundled decoder when system
+  `ffmpeg` is unavailable; unsupported audio is omitted per file with recovery
+  guidance while the rest of the project still publishes. Conversion is
+  staged, cancellable and never overwrites an existing destination.
 - **A desktop window.** File, Edit, View and Help menus, Open Recent, a
   prompt before closing with unsaved changes, and files handed over by the
   operating system ("Open With", the Dock, the command line).
@@ -56,6 +58,7 @@ bun run start                             # opens the app
 | `app/site/studio/` | Studio, built by `tools/studio-build.ts` with the desktop entry (`editor/studio/main-desktop.ts`) and the desktop host |
 | `app/site/preview/`, `player.js`, `pocketjs.wasm`, `site.css` | The play-test's game page, built by `tools/web.ts` |
 | `app/helper/rpgkit-studio-helper` | `studio-desktop/src/helper.ts` compiled with `bun build --compile`: local agents, the agent's MCP server and the engine checks |
+| `app/helper/stb-vorbis-LICENSE.txt` | Apache-2.0 notice for the Ogg Vorbis fallback embedded in the helper |
 
 Packages:
 
@@ -100,6 +103,11 @@ helper imports into a hidden sibling directory, reports progress, exact
 Native/Degraded/Placeholder/Dropped totals and reasons in English and Chinese,
 then publishes with a rename. Cancelling or failing removes the staging
 directory; **Open result** opens the completed folder through an opaque token.
+The helper prefers system `ffmpeg`, preserving that path's output. When the
+process cannot be started it decodes Ogg Vorbis with its bundled decoder.
+M4A/AAC without `ffmpeg`, and an Ogg stream rejected by the selected decoder,
+are recorded as omitted media with bilingual installation/recovery guidance;
+they do not abort the maps, events, images or other audio.
 
 Save writes back where the document came from:
 
@@ -204,7 +212,10 @@ config for the kit's offline fake agent `tests/fixtures/fake-local-agent.ts`,
 and `tests/fixtures/rpgkit-check/broken.json`). Then
 `e2e/studio-desktop.test.mjs` drives the built app with Playwright's
 Electron support. Native dialogs are answered by replacing them in the main
-process; everything after them is the real app. The tests check:
+process; everything after them is the real app. The RPG Maker fixture is
+imported with a `PATH` that contains no `ffmpeg`: six Ogg tracks must succeed,
+one present M4A must be omitted with English/Chinese guidance, and **Open
+result** must still open the complete non-audio content. The tests also check:
 
 - the page's isolation, sandbox, CSP, bridge and refused path traversal;
 - open the Sunstone folder, paint one cell, save: exactly `maps/village.json`

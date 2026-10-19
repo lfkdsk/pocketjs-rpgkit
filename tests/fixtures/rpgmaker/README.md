@@ -23,9 +23,10 @@ character sheet geometry (`$` single-character and `!` object prefixes), the
 Balloon.png grid, Window.png text-colour grid, and the JSON field names.
 
 Most audio is referenced by name only (`hollow-*`, `stage-*` BGM/BGS/ME/SE
-names). The Stage fixture includes two tiny, original synthesized Ogg tones for
-the BGM decode path and media-derived ME duration; all other audio files are
-intentionally absent so missing-media reporting stays covered.
+names). Hollow includes six tiny, original synthesized Ogg tones spanning the
+four audio kinds; Stage includes two for its BGM decode path and media-derived
+ME duration. The other referenced audio files are intentionally absent so
+missing-media reporting stays covered.
 
 `hollow-mz/test-art/Window.png` is standalone generated test art with a
 deliberately non-stock 32-colour palette. Importer tests copy it into a project

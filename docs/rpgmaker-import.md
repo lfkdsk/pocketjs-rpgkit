@@ -18,9 +18,12 @@ during review but does not store it in the resulting pack.
 ### Command line
 
 The source directory must contain `data/System.json`; an MV deployment with
-`www/data/System.json` is accepted too. `ffmpeg` must be on `PATH` when the
-project references audio. This repository includes a small fixture for a
-complete smoke import:
+`www/data/System.json` is accepted too. Audio uses `ffmpeg` when it is
+available. If that process cannot be started, the importer falls back to its
+bundled Ogg Vorbis decoder; M4A/AAC still needs `ffmpeg`. An undecodable track
+is omitted with an actionable English/Chinese warning while maps, events,
+images and the other tracks continue importing. This repository includes a
+small fixture for a complete smoke import:
 
 ```sh
 rm -rf build/rpgmaker-import
@@ -35,6 +38,12 @@ files from an older import. `--placeholders silent` omits visible text boxes
 for unsupported Script/plugin commands while still counting them as
 Placeholder. Repeated fixture imports are byte-stable within the same importer
 and media-tool environment.
+
+A completed import with omitted media exits 0 and prints a warning for each
+track. Command-line usage errors exit 2; source, destination and other fatal
+import errors remain nonzero. Install `ffmpeg` and ensure it is on `PATH` when
+the project uses M4A/AAC or when an Ogg file is not accepted by the bundled
+decoder.
 
 The CLI and desktop helper write the complete directory:
 
@@ -58,7 +67,7 @@ the current document.
 
 | Browser Studio | Desktop Studio |
 | --- | --- |
-| Chrome and Edge request read-only folder access. Conversion stays in the page. The resulting pack contains the project shell, map entries and imported PNG assets. The review coverage is not stored in that pack; audio is reported Dropped because a page has no ffmpeg/QOA host, and the pack does not carry `battle.json` or the CLI manifests. Studio play-test uses its generic battle stand-in. Use CLI/desktop when the complete battle/audio output is required. | Native dialogs select the source and destination parent. A helper runs the complete importer, including audio, into a hidden sibling staging directory. It refuses an existing destination and publishes a completed import with one rename. See [Studio desktop](studio-desktop.md#files-and-folders). |
+| Chrome and Edge request read-only folder access. Conversion stays in the page. The resulting pack contains the project shell, map entries and imported PNG assets. The lightweight browser path does not invoke system `ffmpeg` or run the complete audio/QOA pipeline, so it reports audio as Dropped with bilingual recovery guidance; it also omits `battle.json` and the CLI manifests. Studio play-test uses its generic battle stand-in. Use CLI/desktop when the complete battle/audio output is required. | Native dialogs select the source and destination parent. A helper runs the complete importer, including audio, into a hidden sibling staging directory. Ogg Vorbis imports even when `ffmpeg` is absent; unsupported tracks are omitted per file and shown as bilingual warnings without losing the rest of the project. The helper refuses an existing destination and publishes a completed import with one rename. See [Studio desktop](studio-desktop.md#files-and-folders). |
 
 The checked-in wide result is English at a 1440 × 900 CSS viewport and device
 scale 1; the compact result is Chinese at 600 × 900 and device scale 2. The
@@ -237,8 +246,10 @@ omitted.
   behavior is not simulated; their passage remains.
 - RTP and third-party assets retain their own licenses. The importer reads the
   supplied project and does not fetch or grant redistribution rights.
-- Missing/corrupt audio is omitted with a reason. Standard RPG Maker encrypted
-  media is supported only when `System.json` supplies a valid key/header.
+- Missing/corrupt audio is omitted with a reason. With no system `ffmpeg`, the
+  bundled decoder handles Ogg Vorbis while M4A/AAC is omitted with installation
+  guidance. Standard RPG Maker encrypted media is supported only when
+  `System.json` supplies a valid key/header.
 
 More edge cases are documented in [detailed limitations](#detailed-limitations).
 
@@ -616,11 +627,18 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
 - **Audio media**: logical names are matched case-insensitively under
   `audio/{bgm,bgs,me,se}`. Ogg is preferred when both deployment formats are
   present; a corrupt preferred file is reported rather than silently changing
-  source. `ffmpeg` decodes the selected stream to stable 44.1 kHz stereo
-  signed-16 PCM and the repository QOA encoder writes the final bytes. The
-  decoded ME frame count supplies `playMe.duration` at 60 reference ticks per
-  second. Volume, pitch and pan (-100..100) are retained on every audio
-  command. `ffmpeg` must be on `PATH` while importing.
+  source. When `ffmpeg` can be started, it remains the primary decoder and the
+  emitted bytes are unchanged. If the process cannot be started, the bundled
+  Apache-2.0 `stb-vorbis` module decodes Ogg Vorbis; M4A/AAC is omitted with an
+  English/Chinese reason explaining how to install `ffmpeg`. An installed
+  `ffmpeg` which rejects a stream is still treated as a corrupt source rather
+  than silently switching decoders. Both successful paths produce stable
+  signed-16 PCM and use the repository QOA encoder. The fallback comparison
+  test decodes the committed two-second tone to 11.025 kHz mono through both
+  paths, requires the same frame count, a maximum per-sample difference of 64
+  or less and at least 60 dB signal-to-noise ratio. The decoded ME frame count
+  supplies `playMe.duration` at 60 reference ticks per second. Volume, pitch
+  and pan (-100..100) are retained on every audio command.
 
 ## Detailed limitations
 
@@ -640,9 +658,12 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   header or encrypted suffix that disagrees with `System.json` fails with a
   specific error. This is media decryption only; plugins and arbitrary scripts
   are still not ported.
-- **Missing or corrupt audio is omitted.** The reference remains in event
-  intent but no `project.audio` entry or QOA file is emitted; `coverage.md`,
-  `coverage.json`, `audio-media.json` and the CLI warning carry the reason.
+- **Missing, corrupt or unsupported audio is omitted per file.** The reference
+  remains in event intent but no `project.audio` entry or QOA file is emitted;
+  `coverage.md`, `coverage.json`, `audio-media.json` and the CLI warning carry
+  the reason. This is a completed degraded import (CLI exit 0), not a
+  project-wide failure. With no system `ffmpeg`, Ogg Vorbis uses the bundled
+  decoder and M4A/AAC records explain that `ffmpeg` is required.
 - **RPG Maker battle support is opt-in and partial.** The deterministic
   front-view module imports actor/class parameter curves, enemy action patterns,
   troops and positions, skills/items, states, rewards, weighted region-aware
