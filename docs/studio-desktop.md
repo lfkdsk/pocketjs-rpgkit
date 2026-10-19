@@ -25,13 +25,14 @@ Play-test, art, checks and every editing feature work as on the web page.
 
 ## Status
 
-Built and tested on Linux: the build, an unpacked package, and an end-to-end
-test of the real app (below). The GitHub Actions smoke matrix builds Linux and
-Windows packages and runs the same Playwright flow on both. Windows produces
-an unsigned x64 NSIS installer; no published installer has been code-signed.
-macOS packages are built, signed and notarized by the release job. That job
-has not run with signing secrets yet; without them it produces an unsigned
-build.
+Built and tested end to end on Linux and native Windows. A
+[release-candidate workflow run](https://github.com/lfkdsk/pocketjs-rpgkit/actions/runs/39181687629)
+built the real Linux package and unsigned x64 NSIS installer, checked each
+package's structure, and passed the same 11-test Playwright flow on both
+hosts. The manual run also built and uploaded the unsigned universal macOS
+dmg and zip. The macOS job signs and notarizes when its release secrets are
+set, but that signed path has not run yet. No published Windows installer has
+been code-signed.
 
 ## Build and run
 

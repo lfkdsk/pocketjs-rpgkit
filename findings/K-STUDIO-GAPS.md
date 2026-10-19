@@ -21,10 +21,11 @@ retain their fixed atlas-boundary limitation and say so in the UI.
 The desktop project now emits an unsigned x64 NSIS Windows installer, and the
 desktop workflow has Linux and `windows-latest` package-and-smoke legs. The
 same Playwright scenario opens a project, imports, saves and playtests on both
-legs. A local cross-package completed and the Linux desktop smoke passed. No
-hosted Windows run or URL is claimed: this delivery was forbidden to push, so
-`workflow_dispatch` could not execute the unpushed workflow revision. That is
-the remaining difference from a native Windows-hosted validation.
+legs. A local cross-package and Linux desktop smoke passed, followed by a
+[native hosted run](https://github.com/lfkdsk/pocketjs-rpgkit/actions/runs/39181687629)
+that built and structure-checked the real Linux and Windows packages and
+passed the 11-test Playwright flow on both. Its manual macOS job also built
+and uploaded the unsigned universal dmg and zip.
 
 The optional interactive PNG-to-tileset/character importer was not implemented.
 The existing local-PNG preview path remains unchanged; a separate follow-up is
@@ -113,8 +114,9 @@ task-local portable Wine runtime exited zero and produced:
 The cross-package proves electron-builder, the helper and NSIS inputs compose;
 it is not represented as a native Windows execution. An additional Wine
 silent-installer probe timed out after 120 seconds and is not acceptance
-evidence. Native packaging, structure checks and the Playwright smoke will run
-on the new `windows-latest` leg after publication.
+evidence. Native packaging, structure checks, the installer-artifact upload
+and all 11 Playwright tests subsequently passed on the workflow's
+`windows-latest` leg in the hosted run linked above.
 
 ## Automated and visual coverage
 
@@ -122,7 +124,7 @@ Focused unit coverage includes API history and reference protection, nested
 rename rewriting, CLI round trips, sharded behavior, common-event Explain and
 Problems navigation, passage precedence/normalization/direction geometry, and
 Windows packaging/workflow contracts. The focused Windows contract suite is
-3 pass, 0 fail.
+4 pass, 0 fail, including slash-stable desktop snapshots.
 
 Browser verification exercises common-event creation, rename, nested command
 editing, reference-aware deletion, undo/redo, Problems navigation and Explain.
