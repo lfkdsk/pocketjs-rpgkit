@@ -210,9 +210,15 @@ describe("Studio host boundary", () => {
 
 // ---- the document flow on the memory host -------------------------------------------
 
-function studio(host = new MemoryHost()): { host: MemoryHost; app: StudioApp; files: StudioFiles } {
+class HeadlessArtRegistry extends ArtRegistry {
+  override loadProjectSheet(_id: string, _path: string, _url: string): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+function studio(host = new MemoryHost(), art: ArtRegistry = new ArtRegistry()): { host: MemoryHost; app: StudioApp; files: StudioFiles } {
   const app = new StudioApp();
-  return { host, app, files: new StudioFiles(app, new ArtRegistry(), host) };
+  return { host, app, files: new StudioFiles(app, art, host) };
 }
 
 async function pick(host: MemoryHost, name: string, text: string): Promise<void> {
@@ -366,6 +372,43 @@ describe("Studio folders (loose sharded projects) on the memory host", () => {
     expect(dir.writes).toEqual([]);
     const again = await openProjectDirectory(dir);
     expect(again.packText).toBe(app.session!.exportText());
+  });
+
+  test("existing folder art does not block map-only saves", async () => {
+    const { host, app, files } = studio(new MemoryHost(), new HeadlessArtRegistry());
+    const dir = looseSunstone();
+    const art = readFileSync(join(ROOT, "examples", "sunstone", "assets", "player-dir1.png"));
+    dir.binary.set("art/sheets/town.png", art);
+    host.directoryPicks.push(dir);
+    await files.openDirectory();
+    await Bun.sleep(0);
+    expect(app.session!.assets().has("art/sheets/town.png")).toBe(true);
+    expect(app.session!.assetsDirty()).toBe(false);
+
+    app.run("paint-cells", { map: "forest", layer: "ground", cells: [[1, 1]], value: "town.37" });
+    expect(app.session!.isDirty()).toBe(true);
+    expect(app.session!.assetsDirty()).toBe(false);
+    expect(await files.save()).toBe(true);
+    expect(dir.writes).toEqual(["maps/forest.json", "project.json"]);
+    expect(dir.binary.get("art/sheets/town.png")).toEqual(art);
+    expect(app.session!.isDirty()).toBe(false);
+  });
+
+  test("newly imported art is not acknowledged by a folder save that cannot write it", async () => {
+    const { host, app, files } = studio(new MemoryHost(), new HeadlessArtRegistry());
+    const dir = looseSunstone();
+    host.directoryPicks.push(dir);
+    await files.openDirectory();
+    await Bun.sleep(0);
+    const art = readFileSync(join(ROOT, "examples", "sunstone", "assets", "player-dir1.png"));
+    const grid = { cellWidth: 16, cellHeight: 16, offsetX: 0, offsetY: 0, spacingX: 0, spacingY: 0 };
+    expect(app.importPng({ kind: "sheet", id: "local", bytes: art, grid, map: "forest" }, art).ok).toBe(true);
+    expect(app.session!.assetsDirty()).toBe(true);
+
+    expect(await files.save()).toBe(false);
+    expect(dir.writes).toEqual([]);
+    expect(app.session!.isDirty()).toBe(true);
+    expect(app.notices.at(-1)?.text).toBe("Not saved: folder saves cannot write imported PNG art. Export a self-contained project pack instead.");
   });
 
   test("a file changed on disk since opening blocks the save and nothing is written", async () => {

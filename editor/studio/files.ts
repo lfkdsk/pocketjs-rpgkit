@@ -349,7 +349,7 @@ export class StudioFiles {
     }
     // Directory saves currently write the shell and shards, but not pack assets.
     // Never acknowledge an imported PNG as saved when its bytes would be lost.
-    if (target?.kind === "directory" && session.assets().size > 0 && session.isDirty()) {
+    if (target?.kind === "directory" && session.assetsDirty()) {
       this.app.notify("error", "Not saved: folder saves cannot write imported PNG art. Export a self-contained project pack instead.");
       return false;
     }

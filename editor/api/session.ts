@@ -259,12 +259,17 @@ export class EditSession {
     return [...this.state.shards].filter(([entry, text]) => saved.shards.get(entry) !== text).map(([entry]) => entry);
   }
 
+  /** Whether carried PNG bytes differ from the last markSaved() baseline. */
+  assetsDirty(): boolean {
+    return this.packAssets.size !== this.savedAssets.size ||
+      [...this.packAssets].some(([path, asset]) => {
+        const saved = this.savedAssets.get(path);
+        return saved?.type !== asset.type || saved.data !== asset.data;
+      });
+  }
+
   isDirty(): boolean {
-    if (this.packAssets.size !== this.savedAssets.size ||
-        [...this.packAssets].some(([path, asset]) => {
-          const saved = this.savedAssets.get(path);
-          return saved?.type !== asset.type || saved.data !== asset.data;
-        })) return true;
+    if (this.assetsDirty()) return true;
     if (this.state.kind === "inline") return this.saved.kind === "inline" && this.saved.source !== this.state.source;
     return this.saved.kind === "pack" && (this.saved.shellText !== this.state.shellText || this.dirtyEntries().length > 0);
   }
