@@ -102,7 +102,8 @@ const EXPECTED_BYTES = {
   // variants its walkers receive from special tile traits, are measured
   // together; neither negative control changes.
   // Shared GameView (+286 B) plus bush-aware travel actor projection (+336 B).
-  "rmi-play": 1_523_640,
+  // Two follower-only fixture preview selectors add 363 B to the opted-in app.
+  "rmi-play": 1_524_003,
 } as const;
 
 function implementationModules(app: string): string[] {

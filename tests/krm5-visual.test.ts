@@ -287,6 +287,37 @@ simDescribe("K-RPGM5 imported map presentation", () => {
       await golden("bush-depth", bushFrame, viewport.width, viewport.height);
     }, 60_000);
 
+    test(`follower foot pixels fade on imported bush at ${viewport.width}x${viewport.height}`, async () => {
+      const capture = async (preview: "bush-follower" | "bush-follower-base") => {
+        const world = await bootGameWorld(appBundle("rmi-play"), 60,
+          { __rmiGame: "hollow", __rmiScreenPreview: preview }, undefined, viewport);
+        waitFor(world, (state) => state.sw.self["map001/ev001"] === "A", `${preview} setup`);
+        pump(world);
+        return { state: world.probes().state, frame: world.render().slice(), tree: world.getTree() as TreeNode };
+      };
+      const bush = await capture("bush-follower");
+      const base = await capture("bush-follower-base");
+      expect(bush.state.travel?.followers?.members.map((member) => [member.move.tx, member.move.ty]))
+        .toEqual([[20, 12]]);
+      expect(nodesWithPrefix(bush.tree, "rpgkit-follower-")).toHaveLength(1);
+      const mapX = Math.max(0, Math.floor((viewport.width - 384) / 2));
+      const mapY = Math.max(0, Math.floor((viewport.height - 256) / 2));
+      const actorX = mapX + 20 * 16;
+      const actorY = mapY + 12 * 16;
+      let changed = 0;
+      for (let y = 0; y < viewport.height; y++) {
+        for (let x = 0; x < viewport.width; x++) {
+          const normal = rgbaAt(base.frame, viewport.width, x, y);
+          const faded = rgbaAt(bush.frame, viewport.width, x, y);
+          if (normal.every((value, channel) => value === faded[channel])) continue;
+          expect(x >= actorX && x < actorX + 16 && y >= actorY + 12 && y < actorY + 16).toBe(true);
+          changed++;
+        }
+      }
+      expect(changed).toBeGreaterThan(6);
+      await golden("bush-follower", bush.frame, viewport.width, viewport.height);
+    }, 60_000);
+
     test(`weather and tileset art at ${viewport.width}x${viewport.height}`, async () => {
       const base = await bootGameWorld(
         appBundle("rmi-play"),
