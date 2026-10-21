@@ -292,7 +292,8 @@ const maybeTest = preflight.ok ? test : test.skip;
 // reachability assertions below still prove that battle UI remains absent.
 // Autosave admission for the visible plugin fallback adds 61 B to the shared
 // save validator without admitting any optional battle implementation.
-const EXPECTED_BYTES = 1_120_900;
+// Airship bush-depth exclusion adds 286 B to the shared GameView; battle stays excluded.
+const EXPECTED_BYTES = 1_121_186;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

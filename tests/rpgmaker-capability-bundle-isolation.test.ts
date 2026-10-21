@@ -94,13 +94,15 @@ const EXPECTED_BYTES = {
   // GameView graphs without changing their capability boundaries.
   // Autosave admission for the visible plugin fallback adds 61 B to the
   // shared validator without admitting an optional RPG Maker runtime.
-  sunstone: 1_120_900,
+  // Airship bush-depth exclusion adds 286 B to shared GameView; optional travel stays out.
+  sunstone: 1_121_186,
   // The positive control also opts into imported battlebacks, legacy battle
   // animations, changed actor faces, result audio and stock side-view
   // presentation. The side-view fixture and renderer, plus the bush-depth
   // variants its walkers receive from special tile traits, are measured
   // together; neither negative control changes.
-  "rmi-play": 1_523_018,
+  // Shared GameView (+286 B) plus bush-aware travel actor projection (+336 B).
+  "rmi-play": 1_523_640,
 } as const;
 
 function implementationModules(app: string): string[] {

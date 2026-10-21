@@ -341,7 +341,12 @@ uses them as follows:
   named below.
 - `GameAssets.bushSrc` maps each normal actor texture to a pre-baked variant.
   `GameView` selects it only while the committed actor cell has the bush
-  trait, retaining one image node, position and depth per actor. At the kit's
+  trait, retaining one image node, position and depth per actor. Followers
+  and parked boats/ships use their own committed cells; airships never use
+  bush depth (their stock priority is not normal). Ridden boats/ships use
+  the player node's source and airships remain opaque. Static sprites are
+  padded transparently to legal texture dimensions, so the alpha mask lands
+  on their original painted foot rows rather than the padding. At the kit's
   16 px logical scale the bottom four rows preserve RGB and multiply alpha by
   `128/255`, corresponding to stock's bottom 12 of 48 pixels. Stock depth and
   split-sprite rendering are in MV
