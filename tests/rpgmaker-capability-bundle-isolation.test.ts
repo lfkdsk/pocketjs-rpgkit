@@ -97,9 +97,10 @@ const EXPECTED_BYTES = {
   sunstone: 1_120_900,
   // The positive control also opts into imported battlebacks, legacy battle
   // animations, changed actor faces, result audio and stock side-view
-  // presentation. The side-view fixture and renderer add a measured 137,728 B
-  // to that complete optional presentation; neither negative control changes.
-  "rmi-play": 1_509_416,
+  // presentation. The side-view fixture and renderer, plus the bush-depth
+  // variants its walkers receive from special tile traits, are measured
+  // together; neither negative control changes.
+  "rmi-play": 1_523_018,
 } as const;
 
 function implementationModules(app: string): string[] {
