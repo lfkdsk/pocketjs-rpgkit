@@ -10,7 +10,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { _electron } from "playwright-core";
@@ -89,8 +89,70 @@ const dialogCalls = () => electronApp.evaluate(() => globalThis.__dialogCalls ??
 const studio = (fn, arg) => page.evaluate(fn, arg);
 
 async function clickCell(x, y) {
+  await studio(() => { delete window.__studioCellReady; });
+  await page.waitForFunction(([x, y]) => {
+    const studio = window.__studio;
+    const canvas = studio.canvas?.canvas;
+    if (!canvas || !studio.canvas.settled) {
+      delete window.__studioCellReady;
+      return false;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const view = studio.app.view;
+    const point = studio.cellToClient(x, y);
+    if (document.elementFromPoint(point.x, point.y) !== canvas) {
+      delete window.__studioCellReady;
+      return false;
+    }
+    const key = [rect.left, rect.top, rect.width, rect.height, view.zoom, view.panX, view.panY].join("|");
+    const previous = window.__studioCellReady;
+    window.__studioCellReady = { key, frames: previous?.key === key ? previous.frames + 1 : 1 };
+    // Panel open/close schedules fit() two frames later. Two unchanged,
+    // settled observations prove that resize and camera work have finished.
+    return window.__studioCellReady.frames >= 2;
+  }, [x, y], { timeout: 5_000 });
   const point = await studio(([x, y]) => window.__studio.cellToClient(x, y), [x, y]);
   await page.mouse.click(point.x, point.y);
+}
+
+async function paintCell(plan) {
+  assert.ok(plan, "no cell differs from the brush");
+  const before = await studio(({ x, y }) => {
+    const studio = window.__studio;
+    window.__studioPaintSession = studio.app.session;
+    return {
+      tile: studio.tileAt(x, y),
+      brush: studio.app.brush,
+      layer: studio.app.layer,
+      tool: studio.app.tool,
+      revision: studio.app.session.revision,
+      history: studio.app.session.history().length,
+    };
+  }, plan);
+  assert.equal(before.tool, "pencil");
+  assert.equal(before.layer, "ground");
+  assert.equal(before.brush, plan.brush);
+  assert.notEqual(before.tile, plan.brush, "paint target already has the brush tile");
+  await clickCell(plan.x, plan.y);
+  await page.waitForFunction(({ x, y, brush, revision, history }) => {
+    const studio = window.__studio;
+    return studio.app.session === window.__studioPaintSession &&
+      studio.tileAt(x, y) === brush &&
+      studio.app.session.revision > revision &&
+      studio.app.session.history().length === history + 1 &&
+      studio.app.session.isDirty();
+  }, { x: plan.x, y: plan.y, brush: plan.brush, revision: before.revision, history: before.history }, { timeout: 5_000 });
+}
+
+async function selectCell(x, y) {
+  await studio(() => { window.__studioSelectSession = window.__studio.app.session; });
+  await clickCell(x, y);
+  await page.waitForFunction(([x, y]) => {
+    const studio = window.__studio;
+    const selection = studio.app.selection;
+    return studio.app.session === window.__studioSelectSession &&
+      selection.kind === "cell" && selection.x === x && selection.y === y;
+  }, [x, y], { timeout: 5_000 });
 }
 
 /** A cell of the open map whose ground is not the brush, from row `from` down. */
@@ -110,6 +172,20 @@ function cellToPaint(from = 2) {
 async function openMenuItem(label) {
   await page.click("#studio-open");
   await page.locator(".menu button, .menu [role=menuitem]").filter({ hasText: label }).first().click();
+}
+
+async function openProject(label, expected) {
+  await studio(() => { window.__studioOpeningFrom = window.__studio.app.session; });
+  await openMenuItem(label);
+  await page.waitForFunction((expected) => {
+    const studio = window.__studio;
+    const target = studio.files.target;
+    return studio.app.session !== window.__studioOpeningFrom &&
+      studio.app.session?.kind === expected.sessionKind &&
+      studio.app.currentMap()?.id === expected.map &&
+      (target?.kind ?? null) === expected.targetKind &&
+      (target?.name ?? null) === expected.targetName;
+  }, expected, { timeout: 15_000 });
 }
 
 async function waitForFile(path, timeout = 15_000) {
@@ -250,13 +326,11 @@ describe("Studio desktop", () => {
   test("open the Sunstone folder, paint one cell, save: only that map file (and the shell) change on disk", async () => {
     await answerDialogs({ open: FOLDER, box: 0 });
     const before = snapshot(FOLDER);
-    await openMenuItem("Open folder");
-    await page.waitForFunction(() => window.__studio.files.target?.kind === "directory" && window.__studio.app.session?.kind === "pack", null, { timeout: 15_000 });
+    await openProject("Open folder", { sessionKind: "pack", map: "village", targetKind: "directory", targetName: `${basename(FOLDER)}/` });
     await studio(() => window.__studio.app.openMap("village"));
     await page.keyboard.press("b");
     const plan = await cellToPaint();
-    assert.ok(plan, "no village cell differs from the brush");
-    await clickCell(plan.x, plan.y);
+    await paintCell(plan);
     assert.equal(await studio(([x, y]) => window.__studio.tileAt(x, y), [plan.x, plan.y]), plan.brush);
     assert.equal(await studio(() => window.__studio.app.session.isDirty()), true);
     await page.keyboard.press("Control+S");
@@ -285,7 +359,7 @@ describe("Studio desktop", () => {
     writeFileSync(shardPath, external);
     const before = snapshot(FOLDER);
     const plan = await cellToPaint(6);
-    await clickCell(plan.x, plan.y);
+    await paintCell(plan);
     await page.keyboard.press("Control+S");
     await page.waitForFunction(() => window.__studio.files.saving === 0 && window.__studio.app.notices.some((n) => n.level === "error"), null, { timeout: 15_000 });
     const notice = await studio(() => window.__studio.app.notices.filter((n) => n.level === "error").at(-1).text);
@@ -307,10 +381,9 @@ describe("Studio desktop", () => {
 
   test("a local agent (the offline fake) returns a proposal; accepting it is one undo step", async () => {
     await answerDialogs({ box: 0 });
-    await openMenuItem("Example: The Sunstone of Bramble Hollow");
-    await page.waitForFunction(() => window.__studio.app.session?.kind === "inline" && window.__studio.app.currentMap()?.id === "village", null, { timeout: 15_000 });
+    await openProject("Example: The Sunstone of Bramble Hollow", { sessionKind: "inline", map: "village", targetKind: null, targetName: null });
     await page.keyboard.press("v");
-    await clickCell(8, 5);
+    await selectCell(8, 5);
     assert.deepEqual(await studio(() => window.__studio.app.selection), { kind: "cell", x: 8, y: 5 });
     const tileBefore = await studio(() => window.__studio.tileAt(8, 5));
     await page.click("#studio-agent");
@@ -338,8 +411,7 @@ describe("Studio desktop", () => {
 
   test("common events and tile-sheet passage edit through the shared Studio UI", async () => {
     await answerDialogs({ box: 0 });
-    await openMenuItem("Example: The Sunstone of Bramble Hollow");
-    await page.waitForFunction(() => window.__studio.app.session?.kind === "inline" && window.__studio.app.currentMap()?.id === "village", null, { timeout: 15_000 });
+    await openProject("Example: The Sunstone of Bramble Hollow", { sessionKind: "inline", map: "village", targetKind: null, targetName: null });
 
     await page.click('[data-action="new-common-event"]');
     await page.waitForFunction(() => window.__studio.app.selection.kind === "common");
@@ -394,8 +466,7 @@ describe("Studio desktop", () => {
 
   test("imports PNG tile and walker sheets through the native picker, then exports and reopens them", async () => {
     await answerDialogs({ box: 0 });
-    await openMenuItem("Example: The Sunstone of Bramble Hollow");
-    await page.waitForFunction(() => window.__studio.app.session?.kind === "inline" && window.__studio.app.currentMap()?.id === "village", null, { timeout: 15_000 });
+    await openProject("Example: The Sunstone of Bramble Hollow", { sessionKind: "inline", map: "village", targetKind: null, targetName: null });
     await page.click('[data-layer="ground"]');
 
     await answerDialogs({ open: PNG_SHEET });
@@ -457,7 +528,8 @@ describe("Studio desktop", () => {
     const atlas = page.locator('.palette-canvas[data-sheet="desktop_tiles"]');
     await atlas.waitFor();
     await atlas.click({ position: { x: 8, y: 8 } });
-    await clickCell(1, 1);
+    await page.waitForFunction(() => window.__studio.app.brush === "desktop_tiles.0");
+    await paintCell({ x: 1, y: 1, brush: "desktop_tiles.0" });
     assert.equal(await studio(() => window.__studio.tileAt(1, 1)), "desktop_tiles.0");
 
     await answerDialogs({ open: PNG_WALKER });
@@ -493,8 +565,7 @@ describe("Studio desktop", () => {
     assert.ok(exported.assets["art/sprites/desktop_walker.png"]);
 
     await answerDialogs({ open: PNG_PACK, box: 0 });
-    await openMenuItem("Open file");
-    await page.waitForFunction(() => window.__studio.files.target?.kind === "file" && window.__studio.app.session?.kind === "pack", null, { timeout: 15_000 });
+    await openProject("Open file", { sessionKind: "pack", map: "village", targetKind: "file", targetName: basename(PNG_PACK) });
     assert.deepEqual(await studio(() => {
       const session = window.__studio.app.session;
       const map = session.map("village");
@@ -517,8 +588,7 @@ describe("Studio desktop", () => {
 
   test("engine checks run on this computer and their findings join the problems list", async () => {
     await answerDialogs({ open: BROKEN, box: 0 });
-    await openMenuItem("Open file");
-    await page.waitForFunction(() => window.__studio.files.target?.kind === "file", null, { timeout: 15_000 });
+    await openProject("Open file", { sessionKind: "inline", map: "m1", targetKind: "file", targetName: basename(BROKEN) });
     // The lint pass that follows opening comes first (it replaces the list).
     await page.click("#status-problems");
     await page.waitForSelector("#problems button.problem[title^='lint/']", { timeout: 15_000 });
@@ -534,8 +604,7 @@ describe("Studio desktop", () => {
 
   test("a project folder's own art is drawn on the canvas and in the play-test", async () => {
     await answerDialogs({ open: ART_FOLDER, box: 0 });
-    await openMenuItem("Open folder");
-    await page.waitForFunction(() => window.__studio.files.target?.name === "sunstone-art/", null, { timeout: 15_000 });
+    await openProject("Open folder", { sessionKind: "pack", map: "village", targetKind: "directory", targetName: `${basename(ART_FOLDER)}/` });
     await page.waitForFunction(() => window.__studio.art.sheetStatus("town").source === "project" && window.__studio.art.spriteStatus("wiz").source === "project", null, { timeout: 15_000 });
     const status = await studio(() => ({ town: window.__studio.art.sheetStatus("town"), wiz: window.__studio.art.spriteStatus("wiz"), dun: window.__studio.art.sheetStatus("dun") }));
     assert.equal(status.town.from, "art/sheets/town.png");
@@ -555,7 +624,7 @@ describe("Studio desktop", () => {
     await shot("project-art");
     // The play-test gets the same images.
     await page.keyboard.press("v");
-    await clickCell(9, 7);
+    await selectCell(9, 7);
     await page.click("#studio-play");
     await page.waitForFunction(() => (window.__studio.play.status === "running" && window.__studio.play.readings > 0) || window.__studio.play.status === "error", null, { timeout: 40_000 });
     const play = await studio(() => ({ status: window.__studio.play.status, error: window.__studio.play.error, art: window.__studio.play.art, note: window.__studio.play.artNote }));
@@ -571,10 +640,9 @@ describe("Studio desktop", () => {
 
   test("the play-test panel starts the game from the selected cell", async () => {
     await answerDialogs({ box: 0 });
-    await openMenuItem("Example: The Sunstone of Bramble Hollow");
-    await page.waitForFunction(() => window.__studio.app.session?.kind === "inline" && window.__studio.app.currentMap()?.id === "village", null, { timeout: 15_000 });
+    await openProject("Example: The Sunstone of Bramble Hollow", { sessionKind: "inline", map: "village", targetKind: null, targetName: null });
     await page.keyboard.press("v");
-    await clickCell(9, 7);
+    await selectCell(9, 7);
     await page.click("#studio-play");
     await page.waitForFunction(() => (window.__studio.play.status === "running" && window.__studio.play.readings > 0) || window.__studio.play.status === "error", null, { timeout: 40_000 });
     const status = await studio(() => ({ status: window.__studio.play.status, error: window.__studio.play.error, state: window.__studio.play.state }));
@@ -596,9 +664,11 @@ describe("Studio desktop", () => {
 
   test("closing with unsaved changes asks first; Cancel keeps the window", async () => {
     await page.click("#playtest-close", { timeout: 5_000 });
+    await page.waitForFunction(() => !window.__studio.play.open && document.querySelector("#playtest").hidden);
     await page.click("[data-tool='pencil']");
+    await page.waitForFunction(() => window.__studio.app.tool === "pencil");
     const plan = await cellToPaint();
-    await clickCell(plan.x, plan.y);
+    await paintCell(plan);
     assert.equal(await studio(() => window.__studio.app.session.isDirty()), true);
     await page.waitForTimeout(700); // the page reports dirtiness a few times a second
     await answerDialogs({ boxSync: 1 });

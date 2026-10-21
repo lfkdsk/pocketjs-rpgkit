@@ -92,9 +92,12 @@ describe("Studio interactive PNG import (Playwright, offline route)", () => {
       await atlas.waitFor({ state: "attached" });
       expect(await atlas.count()).toBe(1);
       await atlas.click({ position: { x: 8, y: 8 } });
+      await page.waitForFunction(() => (window as any).__studio.app.brush === "pw_tiles.0");
       expect(await page.evaluate(() => (window as any).__studio.app.brush)).toBe("pw_tiles.0");
+      await page.waitForFunction(() => (window as any).__studio.canvas.settled);
       const cell = await page.evaluate(() => (window as any).__studio.cellToClient(1, 1));
       await page.mouse.click(cell.x, cell.y);
+      await page.waitForFunction(() => (window as any).__studio.tileAt(1, 1) === "pw_tiles.0");
       expect(await page.evaluate(() => (window as any).__studio.tileAt(1, 1))).toBe("pw_tiles.0");
 
       await openImport(page);
