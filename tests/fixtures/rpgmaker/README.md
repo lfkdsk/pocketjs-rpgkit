@@ -1,14 +1,14 @@
 # RPG Maker MV/MZ fixture projects
 
-Two small projects in the public RPG Maker MV/MZ `data/*.json` layout, used to
+Three small projects in the public RPG Maker MV/MZ `data/*.json` layout, used to
 test `tools/rpgmaker-import/`.
 
 ## Provenance
 
-Both projects were authored for this repository and are MIT licensed like the
-rest of it. Every file under `hollow-mz/` and `stage-mv/` is written by
-`gen-fixtures.ts` (data and feature-specific procedural art) and `art.ts`
-(shared procedural tile/character art):
+All three projects were authored for this repository and are MIT licensed like
+the rest of it. Every file under `hollow-mz/`, `sideview-mz/` and `stage-mv/`
+is written by `gen-fixtures.ts` (data and feature-specific procedural art) and
+`art.ts` (shared procedural tile/character art):
 
     bun tests/fixtures/rpgmaker/gen-fixtures.ts [outDir]
 
@@ -31,7 +31,7 @@ missing-media reporting stays covered.
 `hollow-mz/test-art/Window.png` is standalone generated test art with a
 deliberately non-stock 32-colour palette. Importer tests copy it into a project
 under mixed-case spelling to cover case-insensitive `img/system/Window.png`
-lookup without changing either playthrough fixture's stock-palette omission.
+lookup without changing the playthrough fixtures' stock-palette omission.
 
 ## Conventions
 
@@ -47,8 +47,12 @@ lookup without changing either playthrough fixture's stock-palette omission.
 | MV animations | - | `Sparkle`, five original 192 px cells in a 960x192 sheet |
 | Pictures | - | `Curtain` 816x624 (the MV screen) |
 
-Both `System.json` files carry `versionId` (MV writes it too); flavour is
+The base `System.json` files carry `versionId` (MV writes it too); flavour is
 signalled by `tileSize` / `advanced`.
+
+`sideview-mz` inherits the `hollow-mz` map, database and 16 px MZ conventions,
+then opts into stock side-view battle and adds only repository-authored battle
+art used by the presentation tests.
 
 JSON layout follows the editors: keys in alphabetical order, database files one
 record per line, maps with `data` and `events` last. `Map.data` holds six
@@ -171,6 +175,21 @@ Expected final state:
 
 Ticks reaches 5 about 300 frames after the start (one per 60-frame wait), long
 before the path ends.
+
+## sideview-mz: stock side-view battle laboratory
+
+This generated variant keeps the Hollow journey while starting both actors in
+the party and setting `System.optSideView`. Its battle art includes three 9x6
+actor sheets plus a live replacement sheet, side-view enemies, all three
+weapon pages, an eight-frame state overlay and `Shadow2.png`. Distinct opaque
+motion-row and overlay-frame markers make row selection and the 12/8-tick
+cadences observable as semantic pixels rather than golden-only differences.
+
+The battle database also exercises actor equipment and image changes, the
+stock attack-motion table, two authored enemy homes, state motion/overlay
+priority and explicit two-layer battlebacks. Missing and malformed copies of
+the generated art are made only in temporary importer tests; the committed
+fixture remains complete and deterministic.
 
 ## stage-mv: autorun opening cutscene
 

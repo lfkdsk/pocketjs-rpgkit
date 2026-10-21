@@ -584,7 +584,7 @@ for that project, to `coverage.md`.
 | 319 | Change Equipment | MV/MZ | Native |  | equipment slots |
 | 320 | Change Name | MV/MZ | Native |  | runtime names for actors other than actor 1 |
 | 321 | Change Class | MV/MZ | Native |  | actor classes |
-| 322 | Change Actor Images | MV/MZ | Degraded | actor images persist; imported faces and side-view battlers update live when cooked, but map walking images do not | per-actor walking/face/battler images (the player sprite can change via appearance) |
+| 322 | Change Actor Images | MV/MZ | Degraded | actor images persist and imported faces can update live, but map walking images are not wired and front-view battle does not draw side-view battlers | per-actor walking/face/battler images (the player sprite can change via appearance) |
 | 323 | Change Vehicle Image | MV/MZ | Native |  |  |
 | 324 | Change Nickname | MV/MZ | Native |  | actor profiles |
 | 325 | Change Profile | MV/MZ | Native |  | actor profiles |

@@ -33,9 +33,9 @@ the parts an RPG-Maker-style game needs without any specific game:
   atlases, 16×16 or 16×32 static walker frames, and the `GameAssets` manifest
   a game mounts;
 - **RPG Maker MV/MZ import** (`tools/rpgmaker-import`) — maps, passage,
-  events, database records, images, audio and opt-in front-view battle data,
-  with a generated Native/Degraded/Placeholder/Dropped coverage report and a
-  bounded, non-evaluating Script subset;
+  events, database records, images, audio and opt-in front-view or side-view
+  battle data, with a generated Native/Degraded/Placeholder/Dropped coverage
+  report and a bounded, non-evaluating Script subset;
 - **explicit optional capabilities** — RPG Maker text/screen rules, travel,
   battle, connected-world rendering, audio and presentation helpers use
   separate registrations and package entries; ordinary projects neither

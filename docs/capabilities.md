@@ -139,8 +139,8 @@ bundle intends to pay for them.
 | `pocket-rpgkit/ui/audio` | WAV/QOA host bridge and decoder | Silent deterministic audio state | `tests/audio-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/demo` | Chapter, warp and autoplay controls | Attract playback can still run without the menu | `tests/demo-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/battle` | Generic state-driven battle widgets | No generic battle UI implementation in the bundle | `tests/battle-ui-bundle-isolation.test.ts` |
-| `pocket-rpgkit/rpgmaker-battle` | RPG Maker front-view battle rules and importer extensions | Imported battle commands need another registered `BattleRules` or fail | `tests/rpgmaker-battle-isolation.test.ts` |
-| `pocket-rpgkit/ui/rpgmaker-battle` | RPG Maker front-view battle scene | `GameView` requires it together with the RPG Maker battle rules | `tests/rpgmaker-battle-isolation.test.ts` |
+| `pocket-rpgkit/rpgmaker-battle` | RPG Maker front-view and side-view battle rules and importer extensions | Imported battle commands need another registered `BattleRules` or fail | `tests/rpgmaker-battle-isolation.test.ts` |
+| `pocket-rpgkit/ui/rpgmaker-battle` | RPG Maker front-view and side-view battle scene | `GameView` requires it together with the RPG Maker battle rules | `tests/rpgmaker-battle-isolation.test.ts` |
 | `pocket-rpgkit/ui/rpgmaker-formation` | Formation overlay | Formation access state persists, but no formation menu is drawn | **No bundle-isolation assertion.** Functional coverage: `tests/rpgmaker-formation.test.ts` |
 | `pocket-rpgkit/ui/parallax` | Map parallax layer | Authored/runtime parallax state persists without a backdrop node | `tests/krm3v-ui-bundle-isolation.test.ts` |
 | `pocket-rpgkit/ui/item-icons` | Item/shop icon rows | Text-only item and shop rows keep their dimensions | `tests/krm3v-ui-bundle-isolation.test.ts` |
