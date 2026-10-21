@@ -92,7 +92,9 @@ const EXPECTED_BYTES = {
   meadow: 692_566,
   // Bucketed upper rows and ordinary-row write suppression add 159 B to both
   // GameView graphs without changing their capability boundaries.
-  sunstone: 1_120_839,
+  // Autosave admission for the visible plugin fallback adds 61 B to the
+  // shared validator without admitting an optional RPG Maker runtime.
+  sunstone: 1_120_900,
   // The positive control also opts into imported battlebacks, legacy battle
   // animations, changed actor faces and result audio. Their complete optional
   // presentation adds a measured 45,162 B; neither negative control changes.

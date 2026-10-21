@@ -553,6 +553,8 @@ simDescribe("sunstone — render budget", () => {
     // Inert imported-plugin diagnostics plus sparse special-tile/encounter
     // plumbing and GameView bush-texture selection add 6,464 B, producing
     // 1,120,839 B without opting Sunstone into those authored features.
+    // Resumable autosave validation for the plugin fallback adds 61 B,
+    // producing 1,120,900 B without adding a project-side plugin handler.
     // Keep a narrow margin above the newly measured value.
     expect(jsBytes).toBeLessThan(1_123_000);
   });

@@ -290,7 +290,9 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Inert imported-plugin diagnostics and sparse special-tile/encounter
 // plumbing add 4,522 B; GameView bush-texture selection adds 1,942 B. The
 // reachability assertions below still prove that battle UI remains absent.
-const EXPECTED_BYTES = 1_120_839;
+// Autosave admission for the visible plugin fallback adds 61 B to the shared
+// save validator without admitting any optional battle implementation.
+const EXPECTED_BYTES = 1_120_900;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {

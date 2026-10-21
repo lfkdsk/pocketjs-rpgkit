@@ -326,8 +326,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // encounter plumbing add 4,522 B to the engine-only graph. GameView's
 // opt-in bush-texture selection adds another 1,942 B to both rendered apps;
 // neither change admits an audio decoder into Meadow.
+// Autosave admission for the visible plugin fallback adds 61 B to Sunstone's
+// shared save validator without changing decoder reachability.
 const EXPECTED_MEADOW_BYTES = 692_566;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_120_839;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_120_900;
 const EXPECTED_WAV_FIXTURE_BYTES = 883_205;
 
 const HOST_AUDIO_NEEDLES = [
