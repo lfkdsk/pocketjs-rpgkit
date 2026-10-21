@@ -36,6 +36,8 @@ import {
 } from "./sharded.ts";
 import { semanticEqual } from "../engine/document.ts";
 import { parseShardedPack, serializeShardedPack, SHARDED_PACK_KIND, sourceDeclaresShardedPack, type PackAsset } from "./pack.ts";
+import { validatePngAssetRecord } from "./assets.ts";
+import { splitProjectMaps } from "../../tools/lib/map-project.ts";
 import type {
   EditCommandName,
   EditFailure,
@@ -52,6 +54,8 @@ export interface SessionHistoryEntry {
   patch: EditPatch;
   /** Commands that produced the step, in order (for history panels). */
   commands: string[];
+  /** PNG art travels with the same undo/redo step as its catalog edit. */
+  assetChange?: { path: string; before?: PackAsset; after: PackAsset };
 }
 
 export interface SessionMapSummary {
@@ -117,14 +121,15 @@ export class EditSession {
   private textCacheChars = 0;
   /** Bumped on every document change; cheap change detection for views. */
   revision = 0;
-  /** A pack's embedded images. No operation edits them, so they sit outside
-   * the document state and history and every export writes them back. */
-  private readonly packAssets: ReadonlyMap<string, PackAsset>;
+  /** Imported PNGs follow catalog edits through history and pack export. */
+  private readonly packAssets: Map<string, PackAsset>;
+  private savedAssets: Map<string, PackAsset>;
 
   private constructor(state: DocState, assets: ReadonlyMap<string, PackAsset> = new Map()) {
     this.state = state;
     this.saved = cloneState(state);
-    this.packAssets = assets;
+    this.packAssets = new Map(assets);
+    this.savedAssets = new Map(assets);
   }
 
   /** Open inline project JSON or a sharded pack. Throws EditApiError (with
@@ -255,12 +260,18 @@ export class EditSession {
   }
 
   isDirty(): boolean {
+    if (this.packAssets.size !== this.savedAssets.size ||
+        [...this.packAssets].some(([path, asset]) => {
+          const saved = this.savedAssets.get(path);
+          return saved?.type !== asset.type || saved.data !== asset.data;
+        })) return true;
     if (this.state.kind === "inline") return this.saved.kind === "inline" && this.saved.source !== this.state.source;
     return this.saved.kind === "pack" && (this.saved.shellText !== this.state.shellText || this.dirtyEntries().length > 0);
   }
 
   markSaved(): void {
     this.saved = cloneState(this.state);
+    this.savedAssets = new Map(this.packAssets);
     this.changed();
   }
 
@@ -270,10 +281,15 @@ export class EditSession {
     return this.packAssets;
   }
 
-  /** Exact export bytes: the project JSON, or the complete replacement pack
-   * (with the assets it was opened with). */
+  /** Export an inline project unchanged until it acquires PNG art; thereafter
+   * emit a self-contained pack so imported images survive save and download. */
   exportText(): string {
-    if (this.state.kind === "inline") return this.state.source;
+    if (this.state.kind === "inline") {
+      if (this.packAssets.size === 0) return this.state.source;
+      const split = splitProjectMaps(this.project());
+      return serializeShardedPack(split.shellText, split.shell.mapIndex,
+        new Map(split.entries.map((entry) => [entry.path, entry.text])), this.packAssets);
+    }
     return serializeShardedPack(this.state.shellText, this.shell().mapIndex, this.state.shards, this.packAssets);
   }
 
@@ -337,6 +353,28 @@ export class EditSession {
     if (!response.ok || !next || !response.changed || !response.patch) return response;
     this.commit(next, { label, patch: response.patch, commands: [command] });
     return response;
+  }
+
+  /** Commit a catalog operation and its PNG together, or change neither. */
+  importPngAsset(operations: readonly SessionOperation[], path: string, asset: PackAsset, label: string): { ok: boolean; message: string } {
+    const supplied = Object.fromEntries(this.packAssets);
+    supplied[path] = asset;
+    const validated = validatePngAssetRecord(supplied);
+    if (!validated.ok) return { ok: false, message: validated.issue.message };
+    let state = this.state;
+    const commands: string[] = [];
+    for (const operation of operations) {
+      const { response, next } = this.execute(state, operation.command, operation.args ?? {});
+      if (!response.ok) return { ok: false, message: response.error.message };
+      commands.push(operation.command);
+      if (next && response.changed) state = next;
+    }
+    if (state === this.state && this.packAssets.get(path)?.data === asset.data) return { ok: false, message: "Import did not change the project." };
+    const patch = this.patchBetween(this.state, state);
+    const before = this.packAssets.get(path);
+    this.packAssets.set(path, asset);
+    this.commit(state, { label, patch, commands, assetChange: { path, before, after: asset } });
+    return { ok: true, message: label };
   }
 
   /** Run several operations as one history step: all apply or none does.
@@ -441,6 +479,12 @@ export class EditSession {
       const hash = direction === "reverse" ? entry.patch.beforeHash : entry.patch.afterHash;
       const exact = next.kind === "inline" ? this.textsByHash.get(hash) : undefined;
       this.state = exact === undefined ? next : { kind: "inline", source: exact };
+      if (entry.assetChange) {
+        const { path, before, after } = entry.assetChange;
+        const asset = direction === "reverse" ? before : after;
+        if (asset) this.packAssets.set(path, asset);
+        else this.packAssets.delete(path);
+      }
     }
     return response;
   }

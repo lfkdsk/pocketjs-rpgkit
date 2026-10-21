@@ -1,10 +1,16 @@
 #!/usr/bin/env bun
 // JSON-only CLI for the headless RPG Kit editing API.
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { MAX_PNG_BYTES } from "../../editor/api/limits.ts";
+import { basename, dirname, resolve } from "node:path";
 import { EDIT_COMMANDS } from "../../editor/api/types.ts";
+import { atomicWriteProjectFile, withProjectFileLock, WriteConflictError } from "../../editor/api/file.ts";
 import { runFileEdit } from "../../editor/api/file.ts";
+import { EditSession } from "../../editor/api/session.ts";
+import { cropGrid, importPng, pngImportProblem, type PngGrid, type PngImportKind } from "../../editor/api/png-import.ts";
+import { sourceDeclaresProjectShell } from "../../editor/api/sharded.ts";
+import { decodePngBytes, writePngBytes } from "../rpgmaker-import/png.ts";
 import { PROPOSAL_COMMANDS, runProposalFileCommand } from "../../editor/api/proposals.ts";
 import { runMaterializeCommand } from "../../editor/api/materialize.ts";
 
@@ -22,6 +28,8 @@ Commands:
   ${[...EDIT_COMMANDS, ...PROPOSAL_COMMANDS].join("\n  ")}
   materialize            convert between an inline document and a sharded
                          ProjectShell (--json '{"direction":"inline|pack",...}')
+  import-sheet           import a local PNG tile sheet (--json '{"png":"art.png","id":"tiles","grid":{"cellWidth":16,"cellHeight":16,"offsetX":0,"offsetY":0,"spacingX":0,"spacingY":0},"map":"village"}')
+  import-walker          import a local 3×4 PNG walker (same JSON fields; omit map)
 
 --json accepts an inline JSON object or @path/to/args.json. Relative @paths
 resolve next to --file. A "file" key inside --json is ignored: the explicit
@@ -93,6 +101,46 @@ export function parseCliArgs(argv: readonly string[]): CliOptions | { help: true
   return { command, file, args, dryRun };
 }
 
+function runPngImport(options: CliOptions): { ok: boolean; command: string; file: string; dryRun: boolean; written: boolean; message?: string; error?: { code: string; message: string } } {
+  const { command, dryRun } = options;
+  const kind: PngImportKind = command === "import-sheet" ? "sheet" : "walker";
+  let file = resolve(options.file);
+  const fail = (code: string, message: string) => ({ ok: false, command, file, dryRun, written: false, error: { code, message } });
+  try {
+    if (!options.args || typeof options.args !== "object" || Array.isArray(options.args)) return fail("INVALID_ARGS", "--json must be an object");
+    const args = options.args as Record<string, unknown>;
+    if (typeof args.png !== "string" || !args.png || typeof args.id !== "string" ||
+        !args.grid || typeof args.grid !== "object" || Array.isArray(args.grid) ||
+        (args.map !== undefined && typeof args.map !== "string") || (args.replace !== undefined && typeof args.replace !== "boolean")) {
+      return fail("INVALID_ARGS", "png, id and grid are required; map must be a string and replace must be a boolean");
+    }
+    file = realpathSync(file);
+    const png = realpathSync(resolve(dirname(file), args.png));
+    if (statSync(png).size > MAX_PNG_BYTES) return fail("INVALID_PNG", "Local PNG exceeds the permitted file size");
+    const bytes = readFileSync(png);
+    const request = { kind, id: args.id, sourceName: basename(png), grid: args.grid as PngGrid, bytes,
+      ...(args.map === undefined ? {} : { map: args.map }), ...(args.replace === undefined ? {} : { replace: args.replace }) };
+    const problem = pngImportProblem(request);
+    if (problem) return fail("INVALID_PNG", problem);
+    const image = decodePngBytes(bytes);
+    const cropped = cropGrid(image.data, image.width, image.height, request.grid);
+    const cooked = writePngBytes({ width: cropped.width, height: cropped.height, data: cropped.rgba });
+    return withProjectFileLock(file, () => {
+      const source = readFileSync(file, "utf8");
+      if (sourceDeclaresProjectShell(source)) return fail("UNSUPPORTED_DOCUMENT", "Import a self-contained pack or inline project; bare ProjectShell files cannot hold PNG assets");
+      const session = EditSession.open(source);
+      const result = importPng(session, request, cooked);
+      if (!result.ok) return fail("INVALID_IMPORT", result.message);
+      const output = session.exportText();
+      EditSession.open(output);
+      if (!dryRun && output !== source) atomicWriteProjectFile(file, output, source);
+      return { ok: true, command, file, dryRun, written: !dryRun && output !== source, message: result.message };
+    });
+  } catch (error) {
+    return fail(error instanceof WriteConflictError ? "WRITE_CONFLICT" : "IMPORT_FAILED", error instanceof Error ? error.message : String(error));
+  }
+}
+
 export function runCli(argv: readonly string[]): number {
   try {
     const options = parseCliArgs(argv);
@@ -100,7 +148,9 @@ export function runCli(argv: readonly string[]): number {
       process.stdout.write(`${CLI_USAGE}\n`);
       return 0;
     }
-    const response = (PROPOSAL_COMMANDS as readonly string[]).includes(options.command)
+    const response = options.command === "import-sheet" || options.command === "import-walker"
+      ? runPngImport(options)
+      : (PROPOSAL_COMMANDS as readonly string[]).includes(options.command)
       ? runProposalFileCommand({
           command: options.command as (typeof PROPOSAL_COMMANDS)[number],
           file: options.file,
