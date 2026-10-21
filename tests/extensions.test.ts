@@ -14,6 +14,7 @@ import {
 } from "../src/engine/session.ts";
 import {
   canonicalJson,
+  createAutosaveSessionSnapshot,
   createSessionSnapshot,
   encodeEnvelope,
   fnv1aText,
@@ -217,6 +218,77 @@ describe("KB1 extension commands and conditions", () => {
     state = step(session, state);
     expect(state.sw.variables.after).toBe(1);
   });
+
+  test("plugin fallback is cadence-stable through autosave and rewind", () => {
+    const p = project([
+      { op: "ext", call: "rpgmaker.pluginCommand", args: null },
+      { op: "variable", id: "after", set: { op: "add", value: 1 } },
+      { op: "erase" },
+    ]);
+    const evidence: Array<{ after: string | number | undefined; modal: string | undefined }> = [];
+
+    for (const hz of [60, 30, 20]) {
+      const session = createSession(p, hz);
+      let direct = step(session, startSession(p, session));
+      expect(direct.interp.modal).toMatchObject({
+        kind: "text",
+        lines: ["[Plugin command not ported:", ":]"],
+      });
+
+      // Manual saves reject open dialogs; reducer autosaves retain the live
+      // modal and its parked extension fiber for an exact continuation.
+      const autosave = createAutosaveSessionSnapshot(session, direct, 0);
+      expect(autosave).not.toBeNull();
+      let restored = restoreSessionEnvelope(session, encodeEnvelope(autosave!));
+      expect(restored).toEqual(direct);
+
+      for (let press = 0; press < 2; press++) {
+        direct = step(session, direct, { buttons: 0, confirmEdge: true });
+        restored = step(session, restored, { buttons: 0, confirmEdge: true });
+        expect(restored).toEqual(direct);
+      }
+      direct = step(session, direct);
+      restored = step(session, restored);
+      expect(restored).toEqual(direct);
+      expect(direct.interp.modal).toBeNull();
+      expect(direct.sw.variables.after).toBe(1);
+      evidence.push({
+        after: direct.sw.variables.after,
+        modal: direct.interp.modal?.kind,
+      });
+
+      const rewound = new AttractController(p, [], {
+        hz,
+        attractEnabled: false,
+        rewindSeconds: 3 / hz,
+      });
+      rewound.startPlay();
+      rewound.step(0); // open fallback
+      rewound.step(CIRCLE); // reveal it
+      const rewindTarget = structuredClone(rewound.state);
+      rewound.step(0); // release
+      rewound.step(CIRCLE); // dismiss and continue
+      rewound.step(0); // release
+      const completed = structuredClone(rewound.state);
+      expect(completed.sw.variables.after).toBe(1);
+
+      rewound.step(L);
+      expect(rewound.length).toBe(2);
+      expect(rewound.state).toEqual(rewindTarget);
+      rewound.step(0);
+      rewound.step(CIRCLE);
+      rewound.step(0);
+      expect(rewound.state).toEqual(completed);
+      expect(rewound.state.sw.variables.after).toBe(1);
+    }
+
+    expect(evidence).toEqual([
+      { after: 1, modal: undefined },
+      { after: 1, modal: undefined },
+      { after: 1, modal: undefined },
+    ]);
+  });
+
   test("registered plugin commands receive imported data without a fallback", () => {
     const args = { source: "MZ", plugin: "Example", command: "Action", arguments: { count: "2" }, annotations: ["count"] };
     const p = project([

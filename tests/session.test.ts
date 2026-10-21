@@ -5,6 +5,7 @@
 // projects plus the three-map sample game.
 
 import { describe, expect, test } from "bun:test";
+import { AttractController } from "../src/engine/attract.ts";
 import {
   createSession,
   startSession,
@@ -14,6 +15,8 @@ import {
   type SessionState,
 } from "../src/engine/session.ts";
 import { createSwitchState } from "../src/engine/interpreter.ts";
+import { canonicalJson, createSessionSnapshot, encodeEnvelope } from "../src/engine/save.ts";
+import { restoreSessionEnvelope } from "../src/engine/save-restore.ts";
 import { buildMiniProject } from "../examples/meadow/mini-project.ts";
 import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
 import type { ExtensionOptions } from "../src/engine/extensions.ts";
@@ -235,6 +238,98 @@ describe("RPG Maker tile traits", () => {
       const sess = createSession(p, hz, { extensions });
       const out = run(sess, startSession(p, sess), 8 / (60 / hz), { buttons: 0x0010 });
       expect([out.move.tx, out.move.ty, out.sw.variables.landedInBush]).toEqual([2, 1, 1]);
+    }
+  });
+
+  test("tile traits survive save/load and rewind at every host rate", () => {
+    const UP = 0x0010;
+    const RIGHT = 0x0020;
+    const L = 0x0100;
+    const CIRCLE = 0x2000;
+    const makeFixture = () => {
+      const m = map("a", 7, 7, [ge("shop", 5, 3, page("action", [
+        { op: "switch", id: "counterTalk", value: true },
+      ]))]);
+      m.ground[4 * m.width + 3] = "town.2"; // ladder start
+      m.ground[3 * m.width + 3] = "town.4"; // bush landing
+      m.ground[3 * m.width + 4] = "town.1"; // blocked counter
+      m.ground[2 * m.width + 3] = "town.3"; // stop a 20 Hz held input at the bush
+      const p = project([m], { map: "a", x: 3, y: 4, dir: "down" });
+      p.sheets[0] = {
+        ...p.sheets[0]!,
+        block: [1, 3],
+        counter: [1],
+        ladder: [2],
+        bush: [4],
+      };
+      const extensions: ExtensionOptions = {
+        commands: {
+          "test.step": (context) => ({
+            writes: { landedInBush: context.playerCell?.bush === true ? 1 : 0 },
+          }),
+        },
+        playerStep: { call: "test.step" },
+      };
+      return { p, extensions };
+    };
+
+    for (const hz of [60, 30, 20]) {
+      const { p, extensions } = makeFixture();
+      const moveFrames = Math.ceil(8 / (60 / hz));
+      const session = createSession(p, hz, { extensions });
+      let state = stepSession(session, startSession(p, session), { buttons: 0 });
+      expect([state.move.tx, state.move.ty, state.move.facing]).toEqual([3, 4, 2]);
+      state = run(session, state, moveFrames, { buttons: UP });
+      expect([state.move.tx, state.move.ty, state.sw.variables.landedInBush]).toEqual([3, 3, 1]);
+      state = stepSession(session, state, { buttons: 0 });
+      state = stepSession(session, state, { buttons: RIGHT });
+      expect([state.move.tx, state.move.ty, state.move.facing]).toEqual([3, 3, 3]);
+      state = stepSession(session, state, { buttons: 0, confirmEdge: true });
+      expect(state.sw.switches.counterTalk).toBe(true);
+
+      const snapshot = createSessionSnapshot(session, state, 0);
+      const restored = restoreSessionEnvelope(session, encodeEnvelope(snapshot));
+      expect(canonicalJson(createSessionSnapshot(session, restored, 0))).toBe(canonicalJson(snapshot));
+      expect([
+        restored.move.tx,
+        restored.move.ty,
+        restored.move.facing,
+        restored.sw.variables.landedInBush,
+        restored.sw.switches.counterTalk,
+      ]).toEqual([3, 3, 3, 1, true]);
+
+      const inputs = [
+        0,
+        ...new Array<number>(moveFrames).fill(UP),
+        0,
+        RIGHT,
+        0,
+        CIRCLE,
+        0,
+      ];
+      const controller = new AttractController(p, [], {
+        hz,
+        attractEnabled: false,
+        rewindSeconds: 1,
+        extensions,
+      });
+      controller.startPlay();
+      const origin = structuredClone(controller.state);
+      for (const mask of inputs) controller.step(mask);
+      const completed = structuredClone(controller.state);
+      expect([
+        completed.move.tx,
+        completed.move.ty,
+        completed.move.facing,
+        completed.sw.variables.landedInBush,
+        completed.sw.switches.counterTalk,
+      ]).toEqual([3, 3, 3, 1, true]);
+
+      controller.step(L);
+      expect(controller.length).toBe(0);
+      expect(controller.state).toEqual(origin);
+      for (const mask of inputs) controller.step(mask);
+      expect(controller.state).toEqual(completed);
     }
   });
 });

@@ -1614,8 +1614,13 @@ function validateFiber(
     case "choices":
     case "shop": {
       const ins = top.pc < top.prog.length ? top.prog[top.pc] : undefined;
+      // The inert RPG Maker plugin bridge renders its visible fallback by
+      // parking the original ext instruction in text mode. It is therefore
+      // just as resumable as an authored text instruction when the autosave
+      // carries the matching modal and fiber identity.
       const instructionMatches = isRecord(ins) && (
-        v.mode === "text" ? ins.op === "text" :
+        v.mode === "text" ? ins.op === "text" ||
+          (ins.op === "ext" && ins.call === "rpgmaker.pluginCommand") :
         v.mode === "scrollText" ? ins.op === "scrollText" :
         v.mode === "choices" ? ins.op === "choices" || ins.op === "extChoice" :
         ins.op === "shop"
