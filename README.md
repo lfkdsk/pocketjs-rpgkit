@@ -376,8 +376,13 @@ For editing in a browser there is also **Studio**
 [desktop app](docs/studio-desktop.md) that saves project folders in place,
 runs local agents and runs `rpgkit-check`'s engine checks): a DOM + canvas
 editor with a zoomable canvas, tile palette, inspector forms and a history
-panel. Both Studio and this PocketJS editor make every change through the
-`editor/api` operations that `rpgkit-edit` runs and keep reversible
+panel. Studio's component library can import a local PNG with an adjustable
+grid as a paintable tile sheet or a three-column, four-row walker sheet for
+events. The catalog and image bytes share one undo/redo step and export in a
+self-contained pack; see [Studio art](docs/studio.md#art). The matching
+`rpgkit-edit` commands are `import-sheet` and `import-walker`. Both Studio
+and this PocketJS editor make every change through the `editor/api`
+operations that `rpgkit-edit` runs and keep reversible
 `rpgkit-edit/patch-v1` undo/redo history; a test in
 `tests/editor-api-equivalence.test.ts` checks that the same edits produce
 identical patches, history and saved bytes in both. This PocketJS editor is

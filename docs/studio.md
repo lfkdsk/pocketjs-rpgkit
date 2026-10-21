@@ -333,13 +333,31 @@ map shards so no caller is silently missed.
 
 ## Art
 
-Projects name tile sheets and sprites by id; the pixels are not in the JSON.
-Studio uses the bundled Sunstone and Meadow art for ids those examples
-define. For other ids, **Art…** lists every sheet and sprite with its status
-and lets you choose a local PNG for it. The file is used only in this page:
-it is not uploaded, not saved, and does not change the project. Ids without
-art draw as hatched, numbered placeholders in a colour derived from the id,
-so tiles stay distinguishable.
+Projects name tile sheets and sprites by id; the pixels are not in the
+project JSON. Studio uses the bundled Sunstone and Meadow art for ids those
+examples define. For other ids, **Art…** lists every sheet and sprite with
+its status and lets you attach a local PNG temporarily. This attachment is
+used only in this page: it is not uploaded, not saved, and does not change
+the project. Ids without art draw as hatched, numbered placeholders in a
+colour derived from the id, so tiles stay distinguishable.
+
+To add art to the project instead, choose **Import PNG into project…** in
+the component library. Pick a local PNG, preview the grid, adjust cell width
+and height, X/Y offsets and X/Y spacing, and give the asset an id. That id is
+also the label shown by the tile palette and project catalog.
+Choose a tile sheet (16×16 cells) or a walker sheet (exactly three columns
+and four rows of 16×16 or 16×32 cells); optionally attach a tile sheet to a
+map. Imported tiles can be painted, and imported walkers can be selected for
+events. Import refuses an existing id unless you explicitly confirm
+replacement; it also refuses to replace a sheet used by a map with fewer
+cells. The catalog and PNG bytes form one undoable and redoable edit, and
+**Download** exports them together in a self-contained sharded pack, even
+when the project began as an inline JSON file. Each source PNG must be at
+most 16 MiB, at most 8192 pixels on either side, and at most 16,777,216
+pixels overall; packs allow at most 4096 assets and 32 MiB of asset bytes.
+Nothing is uploaded. For equivalent command-line imports, use
+`rpgkit-edit import-sheet` or `rpgkit-edit import-walker` with a PNG path,
+id and grid settings.
 
 ### Project art
 

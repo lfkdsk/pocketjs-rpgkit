@@ -204,6 +204,7 @@ with unsaved changes asks first (**Discard Changes** or **Cancel**).
 ```sh
 cd studio-desktop
 bun run build
+bun run e2e:png-browser # browser Studio PNG picker/import flow; Chrome or Chromium required
 bun run e2e        # needs a display; starts Xvfb itself when DISPLAY is unset (or set XVFB to its path)
 ```
 
