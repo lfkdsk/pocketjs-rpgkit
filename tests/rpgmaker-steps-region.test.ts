@@ -98,6 +98,26 @@ describe("RPG Maker Steps", () => {
     expect(state.sw.steps).toBe(1);
   });
 
+  test("transfer placement does not count as a walking step", () => {
+    const source = project([event("porter", "action", [
+      { op: "transfer", map: "arrival", x: 2, y: 0, dir: "left" },
+    ])]);
+    source.maps.push({ id: "arrival", name: "Arrival", width: 3, height: 1,
+      sheets: ["floor"], ground: [FLOOR, FLOOR, FLOOR], events: [] });
+    const session = createSession(source);
+    let state = startSession(source, session);
+    expect(state.sw.steps ?? 0).toBe(0);
+    for (let frame = 0; frame < 45 && state.mapId !== "arrival"; frame++) {
+      state = stepSession(session, state, { buttons: 0, confirmEdge: frame === 0 });
+    }
+    expect(state.mapId).toBe("arrival");
+    expect([state.move.tx, state.move.ty]).toEqual([2, 0]);
+    expect(state.sw.steps ?? 0).toBe(0);
+    state = run(session, state, 8, 0x0080);
+    expect([state.move.tx, state.move.ty]).toEqual([1, 0]);
+    expect(state.sw.steps).toBe(1);
+  });
+
   test("forced player routes count their successful landings", () => {
     const route = event("route", "action", [{
       op: "moveRoute",
