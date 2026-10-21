@@ -103,7 +103,8 @@ const EXPECTED_BYTES = {
   // together; neither negative control changes.
   // Shared GameView (+286 B) plus bush-aware travel actor projection (+336 B).
   // Two follower-only fixture preview selectors add 363 B to the opted-in app.
-  "rmi-play": 1_524_003,
+  // Hidden-follower backdrop selector adds another 62 B to that fixture.
+  "rmi-play": 1_524_065,
 } as const;
 
 function implementationModules(app: string): string[] {

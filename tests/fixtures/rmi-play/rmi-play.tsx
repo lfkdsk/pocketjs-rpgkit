@@ -39,7 +39,8 @@ type ScreenPreview =
   | "bush-base"
   | "bush-ground"
   | "bush-follower"
-  | "bush-follower-base";
+  | "bush-follower-base"
+  | "bush-follower-ground";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -101,7 +102,7 @@ function screenPreviewProject(
   const imported = importedPage.commands;
   const textCommands = imported.filter((candidate) => candidate.op === "text");
   if (kind === "bush" || kind === "bush-base" || kind === "bush-ground" ||
-      kind === "bush-follower" || kind === "bush-follower-base") {
+      kind === "bush-follower" || kind === "bush-follower-base" || kind === "bush-follower-ground") {
     const previewEvent: GameEvent = {
       ...importedEvent,
       pages: [
@@ -119,7 +120,7 @@ function screenPreviewProject(
       ...source,
       start: { map: map.id, x: 20, y: 12, dir: "down" },
       ...(kind.startsWith("bush-follower") ? {
-        followers: { enabled: true, members: [{ id: "actor002", sprite: "chr-people-4" }] },
+        followers: { enabled: kind !== "bush-follower-ground", members: [{ id: "actor002", sprite: "chr-people-4" }] },
       } : {}),
       // The base preview keeps the imported map art and placement but removes
       // only the sheet trait, proving that GameView selects the alternate

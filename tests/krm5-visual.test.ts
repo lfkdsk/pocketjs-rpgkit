@@ -288,7 +288,7 @@ simDescribe("K-RPGM5 imported map presentation", () => {
     }, 60_000);
 
     test(`follower foot pixels fade on imported bush at ${viewport.width}x${viewport.height}`, async () => {
-      const capture = async (preview: "bush-follower" | "bush-follower-base") => {
+      const capture = async (preview: "bush-follower" | "bush-follower-base" | "bush-follower-ground") => {
         const world = await bootGameWorld(appBundle("rmi-play"), 60,
           { __rmiGame: "hollow", __rmiScreenPreview: preview }, undefined, viewport);
         waitFor(world, (state) => state.sw.self["map001/ev001"] === "A", `${preview} setup`);
@@ -297,6 +297,7 @@ simDescribe("K-RPGM5 imported map presentation", () => {
       };
       const bush = await capture("bush-follower");
       const base = await capture("bush-follower-base");
+      const ground = await capture("bush-follower-ground");
       expect(bush.state.travel?.followers?.members.map((member) => [member.move.tx, member.move.ty]))
         .toEqual([[20, 12]]);
       expect(nodesWithPrefix(bush.tree, "rpgkit-follower-")).toHaveLength(1);
@@ -311,6 +312,10 @@ simDescribe("K-RPGM5 imported map presentation", () => {
           const faded = rgbaAt(bush.frame, viewport.width, x, y);
           if (normal.every((value, channel) => value === faded[channel])) continue;
           expect(x >= actorX && x < actorX + 16 && y >= actorY + 12 && y < actorY + 16).toBe(true);
+          const backdrop = rgbaAt(ground.frame, viewport.width, x, y);
+          const expected = normal.slice(0, 3).map((value, channel) =>
+            Math.round(value! * 128 / 255 + backdrop[channel]! * 127 / 255));
+          expectRgbClose(faded, expected, `follower foot ${x},${y}`);
           changed++;
         }
       }
