@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fitPakTexture, resampleRgba } from "../tools/lib/pak-image.ts";
+import { bakeBushDepth, fitPakTexture, resampleRgba } from "../tools/lib/pak-image.ts";
 
 const pixel = (data: Uint8Array, width: number, x: number, y: number): number[] =>
   [...data.subarray((y * width + x) * 4, (y * width + x + 1) * 4)];
@@ -32,5 +32,31 @@ describe("pak image fitting", () => {
     expect(() => fitPakTexture({ width: 3, height: 5, data: new Uint8Array(4) })).toThrow("invalid RGBA source");
     expect(() => resampleRgba({ width: 1, height: 1, data: new Uint8Array(4) }, 0, 1)).toThrow("invalid target");
     expect(() => fitPakTexture({ width: 1, height: 1, data: new Uint8Array(4) }, 500)).toThrow("max edge");
+  });
+});
+
+describe("RPG Maker bush-depth texture", () => {
+  test("halves only the bottom four logical rows without changing source bytes or RGB", () => {
+    const data = new Uint8Array(2 * 7 * 4);
+    for (let y = 0; y < 7; y++) {
+      for (let x = 0; x < 2; x++) data.set([10 + x, 20 + y, 30 + x + y, x === 0 ? 255 : 127], (y * 2 + x) * 4);
+    }
+    const original = data.slice();
+
+    const bush = bakeBushDepth({ width: 2, height: 7, data });
+
+    expect(data).toEqual(original);
+    for (let y = 0; y < 7; y++) {
+      for (let x = 0; x < 2; x++) {
+        expect(pixel(bush.data, 2, x, y).slice(0, 3)).toEqual(pixel(original, 2, x, y).slice(0, 3));
+        expect(pixel(bush.data, 2, x, y)[3]).toBe(y < 3 ? (x === 0 ? 255 : 127) : (x === 0 ? 128 : 64));
+      }
+    }
+  });
+
+  test("validates source dimensions, depth and opacity", () => {
+    expect(() => bakeBushDepth({ width: 1, height: 1, data: new Uint8Array(3) })).toThrow("invalid RGBA source");
+    expect(() => bakeBushDepth({ width: 1, height: 1, data: new Uint8Array(4) }, 2)).toThrow("invalid depth");
+    expect(() => bakeBushDepth({ width: 1, height: 1, data: new Uint8Array(4) }, 1, 256)).toThrow("invalid opacity");
   });
 });

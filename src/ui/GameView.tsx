@@ -94,6 +94,11 @@ import type { MapContentVersion } from "../engine/map-repository.ts";
 import { PlayerSprite, playerImageKey } from "./PlayerSprite.tsx";
 import { startTapWalk, stepTapWalk, TAP_WALK_DIR_BITS, type TapWalkRoute } from "./tap-to-walk.ts";
 import { walkPose, type WalkPose } from "../engine/movement.ts";
+import {
+  cellHasTileFeature,
+  TILE_FEATURE_BUSH,
+  type PassageTable,
+} from "../engine/passability.ts";
 import { TILE } from "../engine/tiles.ts";
 import {
   cameraFocusAt,
@@ -358,6 +363,40 @@ function playerFrame(
   };
 }
 
+function bushActorSource(
+  source: string,
+  tx: number,
+  ty: number,
+  bushSrc: GameAssets["bushSrc"],
+  passage: PassageTable | undefined,
+): string {
+  if (!bushSrc || !passage || !cellHasTileFeature(passage, tx, ty, TILE_FEATURE_BUSH)) return source;
+  return bushSrc[source] ?? source;
+}
+
+function bushNpcFrame(
+  frame: NpcFrame,
+  tx: number,
+  ty: number,
+  bushSrc: GameAssets["bushSrc"],
+  passage: PassageTable | undefined,
+): NpcFrame {
+  const source = bushActorSource(frame[2], tx, ty, bushSrc, passage);
+  return source === frame[2]
+    ? frame
+    : [frame[0], frame[1], source, frame[3], frame[4], frame[5]];
+}
+
+function bushPlayerFrame(
+  frame: PlayerRenderFrame,
+  state: SessionState,
+  bushSrc: GameAssets["bushSrc"],
+  passage: PassageTable | undefined,
+): PlayerRenderFrame {
+  const source = bushActorSource(frame.src, state.move.tx, state.move.ty, bushSrc, passage);
+  return source === frame.src ? frame : { ...frame, src: source };
+}
+
 function ordinaryPlayerY(state: SessionState): number {
   return state.move.py;
 }
@@ -396,6 +435,8 @@ function CurrentMapActors(props: {
   space?: Accessor<ActorRenderSpace>;
   sprites: Sprites;
   npcSrc: GameAssets["npcSrc"];
+  bushSrc?: GameAssets["bushSrc"];
+  passage?: () => PassageTable;
   tileEventVariants?: GameAssets["tileEventVariants"];
   extensions: ExtensionRuntime;
   travelPresentation?: TravelPresentation;
@@ -445,6 +486,13 @@ function CurrentMapActors(props: {
     width: props.worldWidth,
   };
   let space = props.space?.() ?? localSpace;
+  const actorPassage = (): PassageTable | undefined => props.bushSrc ? props.passage?.() : undefined;
+  const renderPlayerFrame = (state: SessionState): PlayerRenderFrame => bushPlayerFrame(
+    renderPlayer(state, props.sprites, props.npcSrc, props.player, props.playerHeight),
+    state,
+    props.bushSrc,
+    actorPassage(),
+  );
   const depthPoint = (x: number, y: number): readonly [number, number] => [
     space.offsetX + x - space.minX,
     space.offsetY + y - space.minY,
@@ -458,7 +506,7 @@ function CurrentMapActors(props: {
   const newSlot = (index: number, hidden = false): NpcRenderSlot => {
     const source = hidden ? undefined : slots[index];
     const frame = source
-      ? npcFrame(
+      ? bushNpcFrame(npcFrame(
           initial,
           source,
           props.sprites,
@@ -466,7 +514,9 @@ function CurrentMapActors(props: {
           props.extensions,
           props.handover,
           props.tileEventVariants,
-        )
+        ), initial.chars.chars[source.id]?.tx ?? initial.interp.placements[source.id]?.x ?? source.x,
+        initial.chars.chars[source.id]?.ty ?? initial.interp.placements[source.id]?.y ?? source.y,
+        props.bushSrc, actorPassage())
       : HIDDEN_NPC_FRAME;
     const node = createElement("image");
     setProp(node, "style", npcStyle(
@@ -522,7 +572,7 @@ function CurrentMapActors(props: {
 
   const [playerDepth, setPlayerDepth] = createSignal(actorDepthInSpace(initial.move.px, initial.move.py, space));
   const [playerVisual, setPlayerVisual] = createSignal(
-    renderPlayer(initial, props.sprites, props.npcSrc, props.player, props.playerHeight),
+    renderPlayerFrame(initial),
   );
   let hero: NodeMirror | undefined;
   let positions: JumpBatch | undefined;
@@ -577,6 +627,7 @@ function CurrentMapActors(props: {
   let previousCharacters = initial.chars.chars;
   let previousAppearances = initial.interp.eventAppearances;
   let previousTileset = initial.interp.tileset;
+  let previousTileProperties = initial.interp.tileProperties;
   const fallbackSlots: number[] = [];
   for (let index = 0; index < slots.length; index++) {
     const source = slots[index]!;
@@ -640,7 +691,8 @@ function CurrentMapActors(props: {
     const scanAll = transfer || !props.immutableState ||
       previousCharacters !== state.chars.chars ||
       previousAppearances !== state.interp.eventAppearances ||
-      (props.tileEventVariants !== undefined && previousTileset !== state.interp.tileset);
+      ((props.tileEventVariants !== undefined || props.bushSrc !== undefined) && previousTileset !== state.interp.tileset) ||
+      (props.bushSrc !== undefined && previousTileProperties !== state.interp.tileProperties);
     const touched = transfer ? npcs.length : slots.length;
     const scanCount = scanAll ? touched : fallbackSlots.length;
     if (scanAll) fallbackSlots.length = 0;
@@ -653,11 +705,14 @@ function CurrentMapActors(props: {
       if (scanAll && source && character === undefined) fallbackSlots.push(index);
       const cached = props.immutableState && !transfer && character !== undefined &&
         npc.character === character && npc.appearance === appearance &&
-        (props.tileEventVariants === undefined || previousTileset === state.interp.tileset);
+        (props.tileEventVariants === undefined || previousTileset === state.interp.tileset) &&
+        (props.bushSrc === undefined || (
+          previousTileset === state.interp.tileset && previousTileProperties === state.interp.tileProperties
+        ));
       const computed: NpcFrame = cached
         ? npc.frame
         : source
-          ? npcFrame(
+          ? bushNpcFrame(npcFrame(
               state,
               source,
               props.sprites,
@@ -665,7 +720,9 @@ function CurrentMapActors(props: {
               props.extensions,
               props.handover,
               props.tileEventVariants,
-            )
+            ), character?.tx ?? state.interp.placements[source.id]?.x ?? source.x,
+            character?.ty ?? state.interp.placements[source.id]?.y ?? source.y,
+            props.bushSrc, actorPassage())
           : HIDDEN_NPC_FRAME;
       if (!cached && source) recomputed?.push(source.id);
       const frame = sameNpcFrame(npc.frame, computed) ? npc.frame : computed;
@@ -685,6 +742,7 @@ function CurrentMapActors(props: {
     previousCharacters = state.chars.chars;
     previousAppearances = state.interp.eventAppearances;
     previousTileset = state.interp.tileset;
+    previousTileProperties = state.interp.tileProperties;
     let reorder = transfer || spaceChanged;
     if (dirty) {
       const nextOrder = depthOrder([
@@ -737,7 +795,7 @@ function CurrentMapActors(props: {
     heroPy = nextHeroPy;
     cx = camera.x;
     cy = camera.y;
-    const nextPlayer = renderPlayer(state, props.sprites, props.npcSrc, props.player, props.playerHeight);
+    const nextPlayer = renderPlayerFrame(state);
     setPlayerVisual((current) =>
       current.src === nextPlayer.src &&
       current.height === nextPlayer.height &&
@@ -2243,6 +2301,8 @@ export function GameView(props: GameViewProps) {
                 space={worldRenderer ? () => actorSpace?.() ?? localActorSpace : undefined}
                 sprites={sprites}
                 npcSrc={assets.npcSrc}
+                bushSrc={assets.bushSrc}
+                passage={assets.bushSrc ? () => sessionPassageTable(session, state) : undefined}
                 tileEventVariants={assets.tileEventVariants}
                 extensions={session.extensions}
                 travelPresentation={props.travelPresentation}

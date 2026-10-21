@@ -8,6 +8,38 @@ export interface RgbaBitmap {
   data: Uint8Array;
 }
 
+/**
+ * Bake RPG Maker's bush-depth presentation into one otherwise-identical
+ * actor texture. The bottom `depth` logical rows keep their RGB channels and
+ * receive the same 128/255 opacity that the stock renderer applies to its
+ * lower-body sprite. Returning a separate bitmap lets GameView retain one
+ * image node per actor and switch only its source while standing in bush.
+ */
+export function bakeBushDepth(
+  image: RgbaBitmap,
+  depth = 4,
+  opacity = 128,
+): RgbaBitmap {
+  if (!Number.isInteger(image.width) || image.width <= 0 ||
+      !Number.isInteger(image.height) || image.height <= 0 ||
+      image.data.length !== image.width * image.height * 4) {
+    throw new Error(`bush depth: invalid RGBA source ${image.width}x${image.height}`);
+  }
+  if (!Number.isInteger(depth) || depth < 0 || depth > image.height) {
+    throw new Error(`bush depth: invalid depth ${depth} for ${image.width}x${image.height}`);
+  }
+  if (!Number.isInteger(opacity) || opacity < 0 || opacity > 255) {
+    throw new Error(`bush depth: invalid opacity ${opacity}`);
+  }
+
+  const data = image.data.slice();
+  const firstAlpha = (image.height - depth) * image.width * 4 + 3;
+  for (let at = firstAlpha; at < data.length; at += 4) {
+    data[at] = Math.round(data[at]! * opacity / 255);
+  }
+  return { width: image.width, height: image.height, data };
+}
+
 const isPowerOfTwo = (value: number): boolean =>
   Number.isInteger(value) && value > 0 && (value & (value - 1)) === 0;
 

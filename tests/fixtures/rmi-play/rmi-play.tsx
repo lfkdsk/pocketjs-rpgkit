@@ -29,6 +29,16 @@ import { createRpgMakerFormation } from "../../../src/ui/rpgmaker-formation/inde
 import type { Command, GameEvent, Project } from "../../../src/engine/types.ts";
 import { RMI_GAMES, type RmiGameId } from "./games.ts";
 
+type ScreenPreview =
+  | "weather"
+  | "weather-base"
+  | "tone"
+  | "tone-base"
+  | "tileset"
+  | "bush"
+  | "bush-base"
+  | "bush-ground";
+
 declare global {
   // eslint-disable-next-line no-var
   var __rmiGame: RmiGameId | undefined;
@@ -37,7 +47,7 @@ declare global {
   // eslint-disable-next-line no-var
   var __rmiBattleScreenEffects: boolean | undefined;
   // eslint-disable-next-line no-var
-  var __rmiScreenPreview: "weather" | "weather-base" | "tone" | "tone-base" | "tileset" | undefined;
+  var __rmiScreenPreview: ScreenPreview | undefined;
   // eslint-disable-next-line no-var
   var __rmiWeatherPower: number | undefined;
 }
@@ -78,7 +88,7 @@ function previewWeatherCommand(commands: readonly Command[], occurrence: number)
  * importer, cooked assets, GameView and renderer together. */
 function screenPreviewProject(
   source: Project,
-  kind: "weather" | "weather-base" | "tone" | "tone-base" | "tileset",
+  kind: ScreenPreview,
 ): Project {
   const map = source.maps.find((candidate) => candidate.id === "map001");
   const importedEvent = map?.events?.find((candidate) => candidate.id === "ev001");
@@ -88,14 +98,42 @@ function screenPreviewProject(
   }
   const imported = importedPage.commands;
   const textCommands = imported.filter((candidate) => candidate.op === "text");
+  if (kind === "bush" || kind === "bush-base" || kind === "bush-ground") {
+    const previewEvent: GameEvent = {
+      ...importedEvent,
+      pages: [
+        {
+          ...importedPage,
+          commands: [
+            { op: "appearance", target: "player", visible: kind !== "bush-ground" },
+            command(imported, "selfSwitch", 0),
+          ],
+        },
+        importedEvent.pages[1] ?? { trigger: "action", commands: [] },
+      ],
+    };
+    return {
+      ...source,
+      start: { map: map.id, x: 20, y: 12, dir: "down" },
+      // The base preview keeps the imported map art and placement but removes
+      // only the sheet trait, proving that GameView selects the alternate
+      // actor source because of the imported bush bit rather than location.
+      sheets: kind === "bush-base"
+        ? source.sheets.map(({ bush: _bush, ...sheet }) => sheet)
+        : source.sheets,
+      maps: source.maps.map((candidate) => candidate.id === map.id
+        ? { ...candidate, events: [previewEvent] }
+        : candidate),
+    };
+  }
   const commands: Command[] = kind === "weather"
     ? [
         previewWeatherCommand(imported, 0),
-        textCommands[2]!,
+        textCommands.at(-2)!,
         command(imported, "weather", 1),
         command(imported, "changeTileset", 0),
         command(imported, "weather", 2),
-        textCommands[3]!,
+        textCommands.at(-1)!,
         command(imported, "changeTileset", 1),
         command(imported, "weather", 3),
         command(imported, "selfSwitch", 0),
@@ -122,18 +160,18 @@ function screenPreviewProject(
             // Pause on all three states so the sim can inspect the same
             // tile-image event before, during and after the imported swap.
             command(imported, "changeTileset", 1),
-            textCommands[2]!,
+            textCommands.at(-2)!,
             command(imported, "changeTileset", 0),
-            textCommands[3]!,
+            textCommands.at(-1)!,
             command(imported, "changeTileset", 1),
-            textCommands[2]!,
+            textCommands.at(-2)!,
             command(imported, "selfSwitch", 0),
           ]
         : [
           // Match the imported 30-frame wait so base/effect raster
           // comparisons observe identical map/parallax animation clocks.
           { op: "wait", seconds: 0.5 },
-          kind === "weather-base" ? textCommands[2]! : textCommands[textCommands.length - 1]!,
+          kind === "weather-base" ? textCommands.at(-2)! : textCommands.at(-1)!,
           command(imported, "selfSwitch", 0),
         ];
   if (commands.some((entry) => entry === undefined)) {

@@ -24,7 +24,7 @@ import { bakeMapChunks, cutCell } from "../../../tools/lib/chunks.ts";
 import { sliceWalkerSheet, TUXEMON_WALKER_LAYOUT } from "../../../tools/lib/bake.ts";
 import { animatedManifestSource, cookAnimationAtlases, type AnimationSequenceInput } from "../../../tools/lib/animated.ts";
 import { sliceAnimationSheet } from "../../../tools/lib/anim-sheet.ts";
-import { fitPakTexture, resampleRgba } from "../../../tools/lib/pak-image.ts";
+import { bakeBushDepth, fitPakTexture, resampleRgba } from "../../../tools/lib/pak-image.ts";
 import { fallbackCharacters } from "../../../tools/lib/cjk-font.ts";
 import { appTextInventory } from "../../../tools/lib/text-inventory.ts";
 import { importToDirectory } from "../../../tools/rpgmaker-import/index.ts";
@@ -59,6 +59,12 @@ const nextPow2 = (value: number): number => {
   let result = 1;
   while (result < value) result <<= 1;
   return result;
+};
+
+const bushPng = (png: Uint8Array, depth = 4): Uint8Array => {
+  const decoded = decodePng(png);
+  const bush = bakeBushDepth({ width: decoded.width, height: decoded.height, data: decoded.rgba }, depth);
+  return encodePNG(bush.data, bush.width, bush.height);
 };
 
 /** PocketJS static textures are power-of-two. Pad at the bottom/right so
@@ -210,17 +216,33 @@ for (const source of RMI_SOURCES) {
   // --- characters ---------------------------------------------------------
   const walkerSource: string[] = [];
   const staticSource: string[] = [];
+  const bushSource: string[] = [];
+  const hasBush = project.sheets.some((sheet) => (sheet.bush?.length ?? 0) > 0);
   for (const [key, sprite] of Object.entries(assets.sprites)) {
     const img = result.images.get(sprite.png)!;
     if (sprite.kind === "image") {
       const texture = fitPakTexture(img);
-      staticSource.push(`${q(key)}: ${q(writeAsset(`${prefix}/sprite-${key}.png`, encodePNG(texture.data, texture.width, texture.height)))}`);
+      const normal = writeAsset(`${prefix}/sprite-${key}.png`, encodePNG(texture.data, texture.width, texture.height));
+      staticSource.push(`${q(key)}: ${q(normal)}`);
+      if (hasBush) {
+        const depth = Math.max(1, Math.round(texture.height / 4));
+        const bush = bakeBushDepth(texture, depth);
+        const variant = writeAsset(`${prefix}/sprite-${key}-bush.png`, encodePNG(bush.data, bush.width, bush.height));
+        bushSource.push(`${q(normal)}: ${q(variant)}`);
+      }
       continue;
     }
     const frames = sliceWalkerSheet(asSheet(img), { cellW: TILE, cellH: sprite.h, layout: RM_WALKER_LAYOUT }, key);
     const names = { idle: [] as string[], walkL: [] as string[], walkR: [] as string[] };
     for (const pose of ["idle", "walkL", "walkR"] as const) {
-      frames[pose].forEach((png, facing) => names[pose].push(writeAsset(`${prefix}/chr/${key}-${pose}-${facing}.png`, png)));
+      frames[pose].forEach((png, facing) => {
+        const normal = writeAsset(`${prefix}/chr/${key}-${pose}-${facing}.png`, png);
+        names[pose].push(normal);
+        if (hasBush) {
+          const variant = writeAsset(`${prefix}/chr/${key}-${pose}-${facing}-bush.png`, bushPng(png));
+          bushSource.push(`${q(normal)}: ${q(variant)}`);
+        }
+      });
     }
     walkerSource.push(
       `${q(key)}: { idle: ${q(names.idle)}, walkL: ${q(names.walkL)}, walkR: ${q(names.walkR)}, h: ${sprite.h} }`,
@@ -344,6 +366,7 @@ for (const source of RMI_SOURCES) {
       `  maxChunks: ${maxChunks},\n  maxActors: ${maxActors},\n  world: ${q(world)},\n` +
       `  order: ${q(project.maps.map((m) => m.id))},\n` +
       `  npcSrc: { ...WALKERS_${source.id}, ${staticSource.join(", ")} },\n` +
+      (bushSource.length > 0 ? `  bushSrc: { ${bushSource.join(", ")} },\n` : "") +
       (assets.tileEventVariants ? `  tileEventVariants: ${q(assets.tileEventVariants)},\n` : "") +
       `  itemSrc: { ${itemSource.join(", ")} },\n` +
       `  player: ${player},\n  playerHeight: ${assets.player ? `${assets.sprites[assets.player]!.h}` : 16},\n` +

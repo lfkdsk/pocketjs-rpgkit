@@ -220,6 +220,10 @@ export interface GameAssets {
   order: readonly string[];
   /** Page.sprite key -> static 16x16 image src or a 12-frame walker. */
   npcSrc: Readonly<Record<string, NpcArt>>;
+  /** Normal actor image src -> pre-baked RPG Maker bush-depth variant. Each
+   * variant keeps one image node and halves alpha only in its bottom four
+   * logical rows. Omit for projects without bush tiles. */
+  bushSrc?: Readonly<Record<string, string>>;
   /** Base tile-event page sprite -> active tileset -> matching static art.
    * Optional and render-only; reducer pages keep their authored sprite. */
   tileEventVariants?: Readonly<Record<string, Readonly<Record<string, string>>>>;

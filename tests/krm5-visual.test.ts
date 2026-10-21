@@ -222,6 +222,71 @@ async function golden(
 
 simDescribe("K-RPGM5 imported map presentation", () => {
   for (const viewport of VIEWPORTS) {
+    test(`bush depth keeps one actor node and fades only four foot rows at ${viewport.width}x${viewport.height}`, async () => {
+      const capture = async (preview: "bush" | "bush-base" | "bush-ground") => {
+        const world = await bootGameWorld(
+          appBundle("rmi-play"),
+          60,
+          { __rmiGame: "hollow", __rmiScreenPreview: preview },
+          undefined,
+          viewport,
+        );
+        waitFor(world, (state) => state.sw.self["map001/ev001"] === "A", `${preview} setup`);
+        pump(world); // paint the reducer state that completed during the prior tick
+        return {
+          state: world.probes().state,
+          frame: world.render().slice(),
+          tree: world.getTree() as TreeNode,
+        };
+      };
+
+      const base = await capture("bush-base");
+      const bush = await capture("bush");
+      const ground = await capture("bush-ground");
+      const baseState = base.state;
+      const bushState = bush.state;
+      expect([bushState.move.tx, bushState.move.ty]).toEqual([20, 12]);
+      expect(bushState.frame).toBe(baseState.frame);
+      expect(ground.state.frame).toBe(baseState.frame);
+      expect(nodesWithPrefix(base.tree, "rpgkit-player")).toHaveLength(1);
+      expect(nodesWithPrefix(bush.tree, "rpgkit-player")).toHaveLength(1);
+      expect(nodesWithPrefix(ground.tree, "rpgkit-player")).toHaveLength(1);
+
+      const baseFrame = base.frame;
+      const bushFrame = bush.frame;
+      const groundFrame = ground.frame;
+      const mapX = Math.max(0, Math.floor((viewport.width - 384) / 2));
+      const mapY = Math.max(0, Math.floor((viewport.height - 256) / 2));
+      const actorX = mapX + 20 * 16;
+      const actorY = mapY + 12 * 16;
+      const changed: [number, number][] = [];
+      for (let y = 0; y < viewport.height; y++) {
+        for (let x = 0; x < viewport.width; x++) {
+          if (rgbaAt(baseFrame, viewport.width, x, y).some((value, channel) =>
+            value !== rgbaAt(bushFrame, viewport.width, x, y)[channel])) changed.push([x, y]);
+        }
+      }
+      expect(changed.length, "visible half-alpha foot pixels").toBeGreaterThan(6);
+      expect(changed.every(([x, y]) =>
+        x >= actorX && x < actorX + 16 && y >= actorY + 12 && y < actorY + 16),
+      "all visual changes stay inside the bottom four logical sprite rows").toBe(true);
+
+      let composited = 0;
+      for (let y = actorY + 12; y < actorY + 16; y++) {
+        for (let x = actorX; x < actorX + 16; x++) {
+          const normal = rgbaAt(baseFrame, viewport.width, x, y);
+          const backdrop = rgbaAt(groundFrame, viewport.width, x, y);
+          if (normal.slice(0, 3).every((value, channel) => value === backdrop[channel])) continue;
+          const expected = normal.slice(0, 3).map((value, channel) =>
+            Math.round(value! * 128 / 255 + backdrop[channel]! * 127 / 255));
+          expectRgbClose(rgbaAt(bushFrame, viewport.width, x, y), expected, `bush foot ${x},${y}`);
+          composited++;
+        }
+      }
+      expect(composited, "normal actor ink under the bush alpha mask").toBeGreaterThan(6);
+      await golden("bush-depth", bushFrame, viewport.width, viewport.height);
+    }, 60_000);
+
     test(`weather and tileset art at ${viewport.width}x${viewport.height}`, async () => {
       const base = await bootGameWorld(
         appBundle("rmi-play"),
