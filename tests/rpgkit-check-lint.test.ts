@@ -92,6 +92,49 @@ describe("rpgkit-check lint: clean fixture", () => {
   });
 });
 
+describe("rpgkit-check lint: imported plugin commands", () => {
+  test("reports MV and nested MZ calls at their exact command paths", () => {
+    const p = cleanProject();
+    p.maps[0]!.events![0]!.pages[0]!.commands = [
+      {
+        op: "ext",
+        call: "rpgmaker.pluginCommand",
+        args: { source: "MV", line: "ShowMap 1" },
+      },
+      {
+        op: "if",
+        if: { kind: "gold", atLeast: 0 },
+        then: [{
+          op: "ext",
+          call: "rpgmaker.pluginCommand",
+          args: {
+            source: "MZ",
+            plugin: "Quest",
+            command: "start",
+            arguments: { target: { map: "harbor", point: { x: 4, y: 7 } } },
+          },
+        }],
+      },
+    ];
+
+    const found = findingsOf(lint(p), "lint/plugin-command-unregistered");
+    expect(found).toHaveLength(2);
+    expect(found.map((finding) => finding.severity)).toEqual(["warning", "warning"]);
+    expect(found.map((finding) => finding.loc.commandPath)).toEqual([[0], [1, "then", 0]]);
+    expect(found[0]!.message).toContain('MV plugin command "ShowMap 1"');
+    expect(found[1]!.message).toContain('MZ plugin command "Quest":"start"');
+    expect(found.every((finding) => finding.suggestion.includes("rpgmaker.pluginCommand"))).toBe(true);
+  });
+
+  test("ordinary game extensions are not mistaken for imported plugin commands", () => {
+    const p = cleanProject();
+    p.maps[0]!.events![0]!.pages[0]!.commands = [
+      { op: "ext", call: "game.quest", args: { id: "intro" } },
+    ];
+    expect(findingsOf(lint(p), "lint/plugin-command-unregistered")).toEqual([]);
+  });
+});
+
 describe("rpgkit-check lint: scene commands", () => {
   function sceneProject(): Project {
     const p = cleanProject();

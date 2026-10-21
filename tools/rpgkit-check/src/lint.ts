@@ -55,6 +55,10 @@
 //   lint/scene-id                   a scene id used by the document; scene
 //                                   rules are code-side, so the id is listed
 //                                   for a registration review (info)
+//   lint/plugin-command-unregistered
+//                                   an imported RPG Maker plugin command needs
+//                                   the game-side rpgmaker.pluginCommand handler
+//                                   (warning; project JSON cannot register it)
 //   lint/text-variable-token-off    a text/choices string carries `{v:<id>}`
 //                                   but system.textVariables is off, so the
 //                                   token prints verbatim (warning). With it
@@ -782,6 +786,24 @@ function walkCommandTree(
         if (command.write?.index) note(ctx, "variables", command.write.index, "writes", cloc);
         if (command.write?.key) note(ctx, "variables", command.write.key, "writes", cloc);
         if (command.write?.cancelled) note(ctx, "variables", command.write.cancelled, "writes", cloc);
+        break;
+      case "ext":
+        if (command.call === "rpgmaker.pluginCommand") {
+          const args = typeof command.args === "object" && command.args !== null && !Array.isArray(command.args)
+            ? command.args as Record<string, unknown>
+            : {};
+          const source = args.source === "MV" ? "MV" : "MZ";
+          const label = source === "MV"
+            ? JSON.stringify(typeof args.line === "string" ? args.line : "")
+            : `${JSON.stringify(typeof args.plugin === "string" ? args.plugin : "")}:${JSON.stringify(typeof args.command === "string" ? args.command : "")}`;
+          ctx.findings.push(makeFinding(
+            "lint/plugin-command-unregistered",
+            "warning",
+            `${source} plugin command ${label} requires a game-registered handler`,
+            "register an rpgmaker.pluginCommand extension dispatcher for this plugin command; otherwise the runtime shows its visible not-ported fallback",
+            cloc,
+          ));
+        }
         break;
       case "scene":
         if (!ctx.sceneIds.has(command.id)) {

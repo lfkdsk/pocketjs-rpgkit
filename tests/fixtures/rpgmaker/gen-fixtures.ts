@@ -1393,7 +1393,11 @@ function hollowVillage(): RmMap {
         list: list(
           comment("Opening: waited rain, storm and snow, a tileset change, a plugin call and a script line.", "Runs once (self switch A)."),
           cmd(236, "rain", 3, 30, true),
-          cmd(357, "HollowLog", "mark", "Mark Chapter", { chapter: "1", label: "Arrival" }),
+          cmd(357, "HollowLog", "mark", "Mark Chapter", {
+            chapter: "1",
+            marker: { label: "Arrival", location: { map: 1, x: 11, y: 9 } },
+            tags: ["intro", { weather: "rain" }],
+          }),
           cmd(657, "Chapter = 1"),
           cmd(657, "Label = Arrival"),
           script("const tag = \"hollow-intro\";", "$gameTemp.hollowTag = tag;"),

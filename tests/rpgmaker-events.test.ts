@@ -1639,14 +1639,23 @@ describe("battle, shop, name input", () => {
     const { cmds, cov } = conv([
       C(355, 0, ["$gameVariables.setValue(1, 2);"]), C(655, 0, ["foo();"]),
       C(356, 0, ["ShowMap 1"]),
-      C(357, 0, ["Quest", "start", "Start", { id: "3" }]), C(657, 0, ["Id = 3"]),
+      C(357, 0, ["Quest", "start", "Start", {
+        id: "3",
+        target: { map: "harbor", point: { x: 4, y: 7 } },
+        tags: ["main", { chapter: 1 }],
+      }]), C(657, 0, ["Id = 3"]),
     ], { placeholders: mode });
     expect(cmds).toEqual([
       ...expected,
       { op: "ext", call: "rpgmaker.pluginCommand", args: { source: "MV", line: "ShowMap 1" } },
       { op: "ext", call: "rpgmaker.pluginCommand", args: {
         source: "MZ", plugin: "Quest", command: "start", displayName: "Start",
-        arguments: { id: "3" }, annotations: ["Id = 3"],
+        arguments: {
+          id: "3",
+          target: { map: "harbor", point: { x: 4, y: 7 } },
+          tags: ["main", { chapter: 1 }],
+        },
+        annotations: ["Id = 3"],
       } },
     ] as Command[]);
     expect(only(cov, 355)).toBe("Placeholder");
