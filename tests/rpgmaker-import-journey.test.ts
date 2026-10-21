@@ -239,7 +239,8 @@ describe("rpgmaker-import journey: hollow-mz (village, house, cave, battle)", ()
     const village = shots.get("village")!;
     expect(census(village, grass)).toBeGreaterThan(W * H / 4);
     expect(census(village, water)).toBeGreaterThan(16 * 16 * 6);
-    // The plugin placeholder text box (navy dialog) during the intro.
+    // The runtime's visible fallback for the imported plugin call during the
+    // intro (the project carries an ext call rather than baked placeholder text).
     expect(census(shots.get("intro")!, navy)).toBeGreaterThan(W * 40);
     // The elder's choices box.
     expect(census(shots.get("elder-choices")!, navy)).toBeGreaterThan(W * 20);

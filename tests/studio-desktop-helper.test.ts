@@ -301,8 +301,8 @@ describe("studio desktop helper", () => {
       expect(existsSync(join(outputDir, "coverage.json"))).toBe(true);
       expect(imported.coverage.totals).toEqual({
         Native: 115,
-        Degraded: 11,
-        Placeholder: 2,
+        Degraded: 12,
+        Placeholder: 1,
         Dropped: 0,
         total: 128,
       });
@@ -314,7 +314,6 @@ describe("studio desktop helper", () => {
         ["audio", "se/hollow-gate", 0, 1],
         ["audio", "se/hollow-steps", 0, 1],
         ["command", "355", 1, 0],
-        ["command", "357", 1, 0],
         ["script", "syntax rejected", 1, 0],
       ]);
       expect(imported.warnings.length).toBeLessThanOrEqual(25);

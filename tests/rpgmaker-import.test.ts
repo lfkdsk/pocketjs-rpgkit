@@ -458,10 +458,30 @@ describe("rpgmaker-import: output", () => {
     expect(stage.project.system?.stepCounter).toBeUndefined();
   });
 
-  test("plugin and script commands are visible placeholders, battles a battle op", () => {
+  test("plugin calls retain typed data, unsupported scripts stay visible, and battles use a battle op", () => {
     const texts = allCommands(hollow.project).filter((c) => c.op === "text") as unknown as { lines: string[] }[];
-    expect(texts.some((t) => t.lines.join(" ").includes("Plugin command not ported"))).toBe(true);
+    expect(texts.some((t) => t.lines.join(" ").includes("Plugin command not ported"))).toBe(false);
     expect(texts.some((t) => t.lines.join(" ").includes("Script not ported"))).toBe(true);
+    const pluginCall = (allCommands(hollow.project) as Command[]).find(
+      (c): c is Extract<Command, { op: "ext" }> =>
+        c.op === "ext" && c.call === "rpgmaker.pluginCommand",
+    );
+    expect(pluginCall).toEqual({
+      op: "ext",
+      call: "rpgmaker.pluginCommand",
+      args: {
+        source: "MZ",
+        plugin: "HollowLog",
+        command: "mark",
+        displayName: "Mark Chapter",
+        arguments: {
+          chapter: "1",
+          marker: { label: "Arrival", location: { map: 1, x: 11, y: 9 } },
+          tags: ["intro", { weather: "rain" }],
+        },
+        annotations: ["Chapter = 1", "Label = Arrival"],
+      },
+    });
     const battles = allCommands(hollow.project).filter((c) => c.op === "battle") as unknown as {
       setup: Record<string, unknown>;
       onWin?: unknown[];
@@ -473,12 +493,9 @@ describe("rpgmaker-import: output", () => {
     expect(battles[0]!.onWin?.length).toBeGreaterThan(0);
     expect(battles[0]!.onLose?.length).toBeGreaterThan(0);
     expect(battles[0]!.onEscape?.length).toBeGreaterThan(0);
-    for (const code of ["355", "357"]) {
-      const row = hollow.cov.list("command").find((r) => r.key === code)!;
-      expect(row.counts.Placeholder).toBeGreaterThan(0);
-      expect(row.counts.Native + row.counts.Degraded + row.counts.Dropped).toBe(0);
-    }
-    expect(stage.cov.list("command").find((r) => r.key === "356")!.counts.Placeholder).toBe(1);
+    expect(hollow.cov.list("command").find((r) => r.key === "355")!.counts).toMatchObject({ Placeholder: 1 });
+    expect(hollow.cov.list("command").find((r) => r.key === "357")!.counts).toMatchObject({ Degraded: 1, Placeholder: 0 });
+    expect(stage.cov.list("command").find((r) => r.key === "356")!.counts).toMatchObject({ Degraded: 1, Placeholder: 0 });
   });
 
   test("legacy MV/MZ animations retain deterministic scoped timing windows and SE", async () => {
@@ -652,11 +669,14 @@ describe("rpgmaker-import: output", () => {
     expect(cavePass.sprite).toBe("iconset.195");
   });
 
-  test("silent placeholders drop the text but still count as Placeholder", async () => {
+  test("silent mode drops Script text but retains typed plugin calls and their Degraded count", async () => {
     const silent = await importRmProject(loadRmProject(HOLLOW), { placeholders: "silent" });
     const texts = allCommands(silent.project).filter((c) => c.op === "text") as unknown as { lines: string[] }[];
     expect(texts.some((t) => t.lines.join(" ").includes("not ported"))).toBe(false);
-    expect(silent.cov.list("command").find((r) => r.key === "357")!.counts.Placeholder).toBeGreaterThan(0);
+    expect((allCommands(silent.project) as Command[]).some((c) =>
+      c.op === "ext" && c.call === "rpgmaker.pluginCommand")).toBe(true);
+    expect(silent.cov.list("command").find((r) => r.key === "355")!.counts.Placeholder).toBe(1);
+    expect(silent.cov.list("command").find((r) => r.key === "357")!.counts).toMatchObject({ Degraded: 1, Placeholder: 0 });
   });
 
   test("tile passage: walls block, the fence blocks one edge, and a touch door keeps a body-only bump path", () => {
@@ -911,7 +931,9 @@ describe("rpgmaker-import: output", () => {
     expect(by.get(119)!.disposition).toBe("Native");
     expect(by.get(355)!.disposition).toBe("Native");
     expect(by.get(355)!.needsKit).toContain("outside the import-time safe subset");
-    expect(by.get(357)!.disposition).toBe("Placeholder");
+    expect(by.get(356)!.disposition).toBe("Degraded");
+    expect(by.get(357)!.disposition).toBe("Degraded");
+    expect(by.get(357)!.needsKit).toContain("ext handler");
     expect(by.get(301)!.disposition).toBe("Native");
     expect(by.get(301)!.needsKit).toBe("");
   });

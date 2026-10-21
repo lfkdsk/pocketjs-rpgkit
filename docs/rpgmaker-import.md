@@ -132,9 +132,9 @@ rows:
 
 | Fixture | Uses | Native | Degraded | Placeholder | Dropped | Native share |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Hollow MZ | 128 | 115 | 11 | 2 | 0 | 89.8% |
-| Stage MV | 61 | 52 | 8 | 1 | 0 | 85.2% |
-| Combined | 189 | 167 | 19 | 3 | 0 | 88.4% |
+| Hollow MZ | 128 | 115 | 12 | 1 | 0 | 89.8% |
+| Stage MV | 61 | 52 | 9 | 0 | 0 | 85.2% |
+| Combined | 189 | 167 | 21 | 1 | 0 | 88.4% |
 
 Every conversion computes per-project counts; CLI and desktop imports write
 them to `coverage.md` and `coverage.json`. Those counts, not the static minimal
@@ -244,8 +244,9 @@ omitted.
   effect. Changed imported faces do update the battle HUD and optional
   formation/menu surface, but map walking art and side-view battlers do not;
   some actor conditions still use imported initial facts.
-- Maps larger than **256 × 256** are rejected. Ladder, bush and counter special
-  behavior is not simulated; their passage remains.
+- Maps larger than **256 × 256** are rejected. Ladder, bush and counter traits
+  are imported; the consuming cooker must provide bush-depth actor variants as
+  described under [tiles and autotiles](#tiles-and-autotiles).
 - RTP and third-party assets retain their own licenses. The importer reads the
   supplied project and does not fetch or grant redistribution rights.
 - Missing/corrupt audio is omitted with a reason. With no system `ffmpeg`, the
@@ -328,6 +329,53 @@ time:
    `tileSize`) are composed at their own size and averaged down by an
    integer factor.
 
+The generated sheet also keeps sparse `ladder`, `bush` and `counter` atlas-cell
+lists. A cell combines the traits from every ground and upper tile layer, and
+Change Tileset swaps the lists with the rest of the active sheet. The runtime
+uses them as follows:
+
+- A player or event on a ladder is normalized to face up before trigger
+  selection. This deliberately follows this kit's stronger persistent-lock
+  contract: stock MV/MZ calls `setDirection(8)` after a successful ladder
+  landing but a later failed move or explicit turn can change it. See MV
+  `js/rpg_objects/Game_CharacterBase.js:231-236,403-408,455-466` and MZ
+  `rmmz_objects.js:7120-7125,7299-7304,7354-7366` at the pinned revisions
+  named below.
+- `GameAssets.bushSrc` maps each normal actor texture to a pre-baked variant.
+  `GameView` selects it only while the committed actor cell has the bush
+  trait, retaining one image node, position and depth per actor. At the kit's
+  16 px logical scale the bottom four rows preserve RGB and multiply alpha by
+  `128/255`, corresponding to stock's bottom 12 of 48 pixels. Stock depth and
+  split-sprite rendering are in MV
+  `js/rpg_objects/Game_CharacterBase.js:310-325,376-385` and
+  `js/rpg_sprites/Sprite_Character.js:106-119,168-200,218-222`; MZ
+  `rmmz_objects.js:7202-7217,7268-7280` and
+  `rmmz_sprites.js:321-335,383-417,425-429`. The reference `rmi-play` cooker
+  generates this map only when an imported sheet has bush cells.
+- A completed bush landing doubles encounter progress. Encounter Half and a
+  ship each independently halve it; boats retain walking progress and
+  airships freeze the countdown. These factors multiply, matching MV
+  `js/rpg_objects/Game_Player.js:366-383,469-488` and MZ
+  `rmmz_objects.js:8418-8432,8518-8542`.
+- Confirm first checks the occupied/front event. Only if neither starts and
+  the front cell is a counter does it check exactly one further cell in the
+  same direction. See MV `js/rpg_objects/Game_Player.js:227-232,497-510` and
+  MZ `rmmz_objects.js:8272-8279,8551-8564`.
+- A transfer or direct placement can notify an extension through the explicit
+  relocation hook, but neither increments `system.stepCounter` nor advances
+  the imported encounter countdown. Stock likewise increments party steps
+  from `increaseSteps`, not `locate`: MV
+  `js/rpg_objects/Game_Player.js:88-99,131-133,163-182` plus
+  `Game_Party.js:211-217`; MZ
+  `rmmz_objects.js:5578-5584,8132-8142,8174-8176,8206-8225`.
+
+The upstream references above are pinned to MV
+`rpgtkoolmv/corescript@182e31449707ba7e406db0485c44c2a9d11e2dcd` and MZ
+`stak/rmmz-corescript@5ecc09ae5170c6aee71c7d9513e553e3dbea116b`. Their map
+trait scans (all layers; ladder `0x20`, bush `0x40`, counter `0x80`) are MV
+`js/rpg_objects/Game_Map.js:572-588` and MZ
+`rmmz_objects.js:6613-6627`.
+
 The editor stores each autotile's shape in the map data, so the runtime
 never computes it. `reshapeAutotiles` reproduces the editor's rule (eight
 neighbours, the map edge counts as joined) for hand-written maps such as the
@@ -369,10 +417,15 @@ In short:
   between two variables goes through a scratch variable; a transfer to a
   map held in a variable becomes a chain of `if` branches over the map
   ids).
-- Plugin commands (356, 357) remain placeholders. Script (355/655) uses the
-  bounded import-time subset above; a block outside that subset becomes a
-  visible text box (or nothing with `--placeholders silent`) and is counted
-  as Placeholder.
+- MV Plugin Command (356) and MZ Plugin Command (357) become typed
+  `rpgmaker.pluginCommand` extension calls. MV keeps the raw command line; MZ
+  keeps the plugin, command, display name, nested argument object and annotation
+  lines. A registered dispatcher runs through the normal pure extension
+  contract. Without one, the runtime shows the visible non-executing fallback
+  and `rpgkit-check` reports `lint/plugin-command-unregistered`. Script
+  (355/655) uses the bounded import-time subset above; a block outside that
+  subset becomes a visible text box (or nothing with `--placeholders silent`)
+  and is counted as Placeholder.
 - Battle Processing becomes the kit's `battle` command with
   `{ troop, name, canEscape, canLose }`, a hash binding it to `battle.json`,
   and real If Win / If Escape / If Lose branches. Fixed troops, variable troop
@@ -434,7 +487,7 @@ behavior byte-for-byte.
 ## Full command table
 
 Each independent/head MV/MZ event command code and what the importer does with
-a minimal use of it: 95 of the 107 commands map natively, 9 run degraded, 2
+a minimal use of it: 100 of the 107 commands map natively, 6 run degraded, 0
 become placeholders and 1 is dropped. Script's minimal entry is the exact
 native refresh no-op above; other shapes are classified per use. "Needs kit"
 names the remaining or presentation-only runtime capability. The static table
@@ -552,8 +605,8 @@ for that project, to `coverage.md`.
 | 353 | Game Over | MV/MZ | Native |  |  |
 | 354 | Return to Title Screen | MV/MZ | Native |  |  |
 | 355 | Script | MV/MZ | Native |  | hand-porting for JavaScript outside the import-time safe subset |
-| 356 | Plugin Command (MV) | MV | Degraded | typed extension call with original line; fallback notice | a per-plugin port (an ext handler) |
-| 357 | Plugin Command (MZ) | MZ | Degraded | typed extension call with plugin, command, arguments and 657 annotations; fallback notice | a per-plugin port (an ext handler) |
+| 356 | Plugin Command (MV) | MV | Degraded | plugin call preserved; requires game-registered handler | a per-plugin port (an ext handler) |
+| 357 | Plugin Command (MZ) | MZ | Degraded | plugin call preserved; requires game-registered handler | a per-plugin port (an ext handler) |
 <!-- rpgmaker-commands:end -->
 
 Besides the commands, the report counts conditional branch types, page
@@ -649,7 +702,9 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
 - **Plugins and arbitrary scripts are not ported.** The exact import-time
   Script subset above lowers without executing source. Everything else in
   Script commands, Script conditions and script variable operands becomes a
-  placeholder; plugin commands become inert `rpgmaker.pluginCommand` extension calls.
+  placeholder; plugin commands become inert `rpgmaker.pluginCommand` extension
+  calls. Games may register one deterministic dispatcher; otherwise a visible
+  fallback explains which call was skipped and `rpgkit-check` warns about it.
   `js/plugins.js` declarations and parameters are retained as project data;
   plugin JavaScript is never imported or executed.
 - **RTP assets.** The RPG Maker runtime package (RTP) art and audio is
@@ -690,9 +745,9 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   Change Actor Images faces update the MZ battle-status HUD and the optional
   MV/MZ formation/menu surface, while MV front-view status remains text-only
   and map walking art and side-view battlers remain limited.
-  Encounter Disable works; Encounter Half halves progress, ships halve it
-  again, boats keep the walking rate and airships freeze the saved countdown.
-  Stock bush doubling is not modelled.
+  Encounter Disable works; a bush doubles progress, Encounter Half halves it,
+  ships halve it again, boats keep the walking rate and airships freeze the
+  saved countdown. The factors multiply and fractional progress is saved.
   One targeting edge intentionally differs from stock: MV/MZ can resolve an
   explicitly indexed hidden-but-living troop member because hiding does not
   change `isAlive()`, while the kit redirects that explicit target to the first
@@ -725,8 +780,9 @@ size, decoded duration/format, or the exact missing/corrupt reason. Of note:
   (Get Location Info, the `region` condition and authored region-crossing
   pages read them). The opt-in battle module consumes encounter region sets
   and map encounters; damage floors are not modelled. RPG Maker has no stock
-  region-enter/leave event trigger for the importer to synthesize. Ladders,
-  bushes and counters keep their passage but not their special behaviour.
+  region-enter/leave event trigger for the importer to synthesize. Ladder,
+  bush and counter traits are sparse sheet data and keep their active-tileset
+  movement, rendering, encounter and interaction behavior described above.
 - Import-time message wrapping protects complete escape spellings but still
   budgets the raw source length, not the final visible pixel width after
   expansion. Runtime pagination then wraps the expanded visible text safely.

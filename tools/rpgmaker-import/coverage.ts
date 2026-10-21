@@ -6,8 +6,8 @@
 //   Native       represented by kit v1 commands without a gameplay loss
 //                (including importer lowerings that preserve behavior)
 //   Degraded     runs with a documented limitation
-//   Placeholder  a deliberate visible stand-in (plugin and script commands,
-//                behavior the kit has no runtime for yet)
+//   Placeholder  a deliberate visible stand-in (unsupported Script commands
+//                and other behavior the kit has no runtime for yet)
 //   Dropped      no output at all
 //
 // The same four buckets as the Tuxemon importer's coverage report, so the

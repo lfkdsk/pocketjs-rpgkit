@@ -1208,7 +1208,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
         "tile",
         "map encounters",
         "Degraded",
-        "walking countdown, weights, regions, Encounter Half and vehicle rates are native; bush doubling is not modelled",
+        "weights, regions, bush doubling, Encounter Half and vehicle rates are native; the saved deterministic countdown does not reproduce stock random reseeding",
       );
     }
   }
