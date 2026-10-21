@@ -3,6 +3,7 @@
 // live component own only node lifetime/reactivity.
 
 import { walkPose } from "../engine/movement.ts";
+import { cellHasTileFeature, TILE_FEATURE_BUSH, type PassageTable } from "../engine/passability.ts";
 import type { SessionState } from "../engine/session.ts";
 import type { SpriteDef } from "../engine/types.ts";
 import type { GameAssets, NpcArt } from "./game-assets.ts";
@@ -88,13 +89,18 @@ function travelFrame(
   npcSrc: GameAssets["npcSrc"],
   worldWidth: number,
   space?: ActorRenderSpace,
+  bushSrc?: GameAssets["bushSrc"],
+  passage?: PassageTable,
+  canUseBush = true,
 ): TravelActorFrame {
   const art = actorArt(sprite, sprites, npcSrc);
+  const source = actorArtKey(art, move.phase, move.facing);
   return {
     id,
     px: (space?.offsetX ?? 0) + move.px,
     py: (space?.offsetY ?? 0) + move.py,
-    src: actorArtKey(art, move.phase, move.facing),
+    src: canUseBush && passage && cellHasTileFeature(passage, move.tx, move.ty, TILE_FEATURE_BUSH)
+      ? bushSrc?.[source] ?? source : source,
     height: typeof art === "string" ? 16 : art.h,
     visible: visible && art !== "",
     depth: space
@@ -111,6 +117,8 @@ export function travelActorFrames(
   npcSrc: GameAssets["npcSrc"],
   worldWidth: number,
   space?: ActorRenderSpace,
+  bushSrc?: GameAssets["bushSrc"],
+  passage?: PassageTable,
 ): { followers: TravelActorFrame[]; vehicles: TravelActorFrame[] } {
   const riding = state.travel?.vehicles?.riding ?? null;
   const followers = state.travel?.followers;
@@ -124,6 +132,8 @@ export function travelActorFrames(
       npcSrc,
       worldWidth,
       space,
+      bushSrc,
+      passage,
     )),
     vehicles: (state.travel?.vehicles?.entries ?? []).map((vehicle) => travelFrame(
       vehicle.id,
@@ -134,6 +144,9 @@ export function travelActorFrames(
       npcSrc,
       worldWidth,
       space,
+      bushSrc,
+      passage,
+      vehicle.kind !== "airship",
     )),
   };
 }

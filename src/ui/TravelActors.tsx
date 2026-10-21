@@ -60,7 +60,7 @@ function airshipShadowStyle(frame: AirshipShadowFrame) {
 
 export function TravelActors(props: TravelActorsProps): JSX.Element {
   const initialSpace = props.space?.();
-  const initial = travelActorFrames(props.initial, props.sprites, props.npcSrc, props.worldWidth, initialSpace);
+  const initial = travelActorFrames(props.initial, props.sprites, props.npcSrc, props.worldWidth, initialSpace, props.bushSrc, props.passage?.());
   const initialShadow = airshipShadowFrame(props.initial, props.worldWidth, initialSpace);
   const [followers, setFollowers] = createSignal<readonly TravelActorFrame[]>(initial.followers);
   const [vehicles, setVehicles] = createSignal<readonly TravelActorFrame[]>(initial.vehicles);
@@ -69,7 +69,7 @@ export function TravelActors(props: TravelActorsProps): JSX.Element {
   onFrame(() => {
     if (props.active && !props.active()) return;
     const space = props.space?.();
-    const next = travelActorFrames(props.state(), props.sprites, props.npcSrc, props.worldWidth, space);
+    const next = travelActorFrames(props.state(), props.sprites, props.npcSrc, props.worldWidth, space, props.bushSrc, props.passage?.());
     const nextShadow = airshipShadowFrame(props.state(), props.worldWidth, space);
     setFollowers((current) => sameTravelActorFrames(current, next.followers) ? current : next.followers);
     setVehicles((current) => sameTravelActorFrames(current, next.vehicles) ? current : next.vehicles);

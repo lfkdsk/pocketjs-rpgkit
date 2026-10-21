@@ -393,7 +393,9 @@ function bushPlayerFrame(
   bushSrc: GameAssets["bushSrc"],
   passage: PassageTable | undefined,
 ): PlayerRenderFrame {
-  const source = bushActorSource(frame.src, state.move.tx, state.move.ty, bushSrc, passage);
+  const riding = state.travel?.vehicles?.riding;
+  const airship = riding && state.travel?.vehicles?.entries.find((entry) => entry.id === riding)?.kind === "airship";
+  const source = airship ? frame.src : bushActorSource(frame.src, state.move.tx, state.move.ty, bushSrc, passage);
   return source === frame.src ? frame : { ...frame, src: source };
 }
 
@@ -830,6 +832,8 @@ function CurrentMapActors(props: {
           state={props.state}
           sprites={props.sprites}
           npcSrc={props.npcSrc}
+          bushSrc={props.bushSrc}
+          passage={actorPassage}
           worldWidth={space.width}
           space={() => space}
           active={props.active}
