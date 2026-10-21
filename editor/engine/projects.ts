@@ -207,6 +207,21 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
       "items": { "$ref": "#/$defs/animation" },
       "description": "Frame animations playable with the mapAnim command; the cooker slices each sheet into one static baked image per frame."
     },
+    "plugins": {
+      "type": "array",
+      "description": "Inert RPG Maker js/plugins.js declarations; plugin JavaScript is never imported or executed.",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "description", "parameters"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "type": "boolean" },
+          "description": { "type": "string" },
+          "parameters": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      }
+    },
     "audio": {
       "type": "object",
       "additionalProperties": {
@@ -287,6 +302,24 @@ export const PROJECT_SCHEMA: Record<string, unknown> = {
           "uniqueItems": true,
           "items": { "type": "integer", "minimum": 0 },
           "description": "Cells that are walkable despite defaultPassage=block."
+        },
+        "ladder": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0 },
+          "description": "Sparse atlas cells with the ladder trait. Ground and upper traits combine at a map cell."
+        },
+        "bush": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0 },
+          "description": "Sparse atlas cells with the bush trait. Ground and upper traits combine at a map cell."
+        },
+        "counter": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0 },
+          "description": "Sparse atlas cells with the counter trait. Ground and upper traits combine at a map cell."
         },
         "dirBlock": {
           "type": "object",

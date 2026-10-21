@@ -6,7 +6,8 @@ the RPG Kit revision of that generation; `maps/` holds the map entries, which
 are byte-identical in every generation. `tests/schema-compat.test.ts` opens
 each shell and restores each save with the current runtime.
 
-The current `f6071d84` generation directly supersedes `a59ec3e0`, which
+The current `04dbdb17` generation directly supersedes `4f112fd7`, which
+directly supersedes `24945cdb`, which directly supersedes `a59ec3e0`, which
 directly supersedes `f3a5eb5d`, which
 directly superseded `c394541c`. The `4c049fc2`,
 `ff111378`, `ad6d3cd1` and `39d5c151` identities existed only while additive
@@ -79,6 +80,9 @@ continuation must match.
 
 | Directory | Written by | Loads | Counterexample |
 | --- | --- | --- | --- |
+| `gen-4f112fd7` | `6af6fc5e` | yes | |
+| `gen-24945cdb` | `e1ddad27` | yes | |
+| `gen-a59ec3e0` | `aeba52c9` | yes | |
 | `gen-f3a5eb5d` | `49b19d5a` | yes | |
 | `gen-c394541c` | `a54c0316` | yes | |
 | `gen-4f6e1e73` | `7323c5d7` | yes | |

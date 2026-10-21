@@ -39,6 +39,7 @@ under the row's schema.
 
 | Identity | Change | Older |
 | --- | --- | --- |
+| `04dbdb1774b047e46b8d4894319afbfca941c7fd3da280a6b7915c6cbc596dd0` | optional per-sheet `ladder`, `bush` and `counter` atlas-cell traits. Projects that omit them retain their previous terrain, movement, interaction and rendering behavior | additive |
 | `4f112fd749e7594dac4e1d0662cfbe5dc559ba878715253af70006b898387cf2` | optional inert RPG Maker plugin declarations and string parameters; projects omitting them retain existing behavior | additive |
 | `24945cdb48da82c863a7e5f4c467698699ced3ba85cdb4cbdb43f10b2948fc34` | optional `scope` on animation flash timings (`screen` or `target`) and optional target `hide` timing windows. Existing timings omit both fields, retain their full-screen flash behavior and validate unchanged | additive |
 | `a59ec3e0a1ee74fe08fb75dff938e56b01b8b6b66ccfd102cb9dbb2866d23444` | `face` command; optional `moveRoute.start: "immediate"`; and additive `screenBackdrop.whenModalOpen: "push"` with an eight-frame saved stack. Documents that omit them keep delayed route startup and the prior single-slot backdrop behavior | additive |
