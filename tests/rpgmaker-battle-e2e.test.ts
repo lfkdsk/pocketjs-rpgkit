@@ -18,12 +18,15 @@ import {
   rpgMakerBattleState,
 } from "../src/rpgmaker-battle/rules.ts";
 import type { RpgMakerBattleDatabase } from "../src/rpgmaker-battle/types.ts";
+import { sideViewPose } from "../src/ui/rpgmaker-battle/side-view-pose.ts";
 import { travelRuntime } from "../src/travel.ts";
 import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
 import { importRmProject } from "../tools/rpgmaker-import/project.ts";
 
 const HOLLOW = join(import.meta.dir, "fixtures/rpgmaker/hollow-mz");
 const imported = await importRmProject(loadRmProject(HOLLOW));
+const SIDEVIEW = join(import.meta.dir, "fixtures/rpgmaker/sideview-mz");
+const sideImported = await importRmProject(loadRmProject(SIDEVIEW));
 const RIGHT = 0x0020;
 const LTRIGGER = 0x0100;
 const CIRCLE = 0x2000;
@@ -399,6 +402,73 @@ describe("imported RPG Maker Battle Processing end to end", () => {
     expect(keyed.state).toEqual(target);
     for (const mask of suffix) keyed.step(mask);
     expect(keyed.state).toEqual(forward);
+  });
+
+  for (const hz of [60, 30, 20]) test(`side-view mid-motion save and keyframe rewind replay exactly at ${hz} Hz`, () => {
+    const db = structuredClone(sideImported.battle);
+    db.enemies[0]!.params[0] = 999;
+    const project = battleProject(sideImported.project);
+    const ticksPerFrame = 60 / hz;
+    const suffixFrames = 1 + 18 / ticksPerFrame;
+    const makeController = (keyframes: boolean): AttractController => new AttractController(project, [], {
+      hz,
+      idleFrames: 60_000,
+      rewindSeconds: suffixFrames / hz,
+      attractEnabled: false,
+      keyframeMaxBytes: keyframes ? 2 * 1024 * 1024 : 0,
+      keyframeMaxCount: keyframes ? 64 : 0,
+      ...options(db),
+    });
+
+    const keyed = makeController(true);
+    const prefix: number[] = [];
+    for (let frame = 0; frame < 800; frame++) {
+      const battle = keyed.state.scene?.kind === "battle"
+        ? rpgMakerBattleState(keyed.state.scene.state) : null;
+      if (battle?.phase === "command" && battle.actorIndex === 1) break;
+      const mask = frame % 2 === 0 ? CIRCLE : 0;
+      keyed.step(mask);
+      prefix.push(mask);
+    }
+    if (keyed.foldedMask() !== 0) {
+      keyed.step(0);
+      prefix.push(0);
+    }
+    expect(keyed.state.scene?.kind).toBe("battle");
+    expect(rpgMakerBattleState(keyed.state.scene!.state)).toMatchObject({ phase: "command", actorIndex: 1 });
+    const beforeAction = structuredClone(keyed.state);
+
+    const suffix = [CIRCLE, ...Array.from({ length: suffixFrames - 1 }, () => 0)];
+    for (const mask of suffix) keyed.step(mask);
+    const middle = structuredClone(keyed.state);
+    const middleBattle = rpgMakerBattleState(middle.scene!.state);
+    expect(middleBattle.sideViewMotion).toMatchObject({ side: "actor", index: 0 });
+    expect(middleBattle.nowTick - middleBattle.sideViewMotion!.startTick).toBe(18);
+    expect(sideViewPose(db, middleBattle, middleBattle.actors[0]!, 0)).toMatchObject({
+      motion: 7, pattern: 1, advance: 1, weaponImageId: 2, weaponPattern: 1,
+    });
+
+    const battleRules = createRpgMakerBattleRules(db, { animations: sideImported.project.animations });
+    const decoded = battleRules.save!.decode(battleRules.save!.encode(middle.scene!.state));
+    const restored = structuredClone(middle);
+    restored.scene!.state = decoded;
+    expect(restored).toEqual(middle);
+    const baseline = makeController(false);
+    const resumed = makeController(false);
+    baseline.loadState(middle, 0);
+    resumed.loadState(restored, 0);
+    for (const mask of [0, CIRCLE, 0, 0]) {
+      baseline.step(mask);
+      resumed.step(mask);
+    }
+    expect(resumed.state).toEqual(baseline.state);
+
+    keyed.step(LTRIGGER);
+    expect(keyed.status().rewound).toBe(true);
+    expect(keyed.length).toBe(prefix.length);
+    expect(keyed.state).toEqual(beforeAction);
+    for (const mask of suffix) keyed.step(mask);
+    expect(keyed.state).toEqual(middle);
   });
 
   for (const hz of [60, 30, 20]) test(`win executes 601, rewards, drops, and levels at ${hz} Hz`, () => {

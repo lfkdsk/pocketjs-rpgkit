@@ -33,8 +33,9 @@ import { RMI_GAMES } from "./fixtures/rmi-play/games.ts";
 const ROOT = join(import.meta.dir, "..");
 const HOLLOW = join(ROOT, "tests/fixtures/rpgmaker/hollow-mz");
 const STAGE = join(ROOT, "tests/fixtures/rpgmaker/stage-mv");
+const SIDEVIEW = join(ROOT, "tests/fixtures/rpgmaker/sideview-mz");
 const WINDOW_PALETTE = join(HOLLOW, "test-art/Window.png");
-const SCRATCH_ROOT = "/var/tmp/fleet/4306";
+const SCRATCH_ROOT = join(ROOT, ".pocket-build", "tests", "rpgmaker-import");
 mkdirSync(SCRATCH_ROOT, { recursive: true });
 
 const CUSTOM_WINDOW_COLOURS = [
@@ -46,6 +47,7 @@ const CUSTOM_WINDOW_COLOURS = [
 
 const hollow = await importRmProject(loadRmProject(HOLLOW));
 const stage = await importRmProject(loadRmProject(STAGE));
+const sideview = await importRmProject(loadRmProject(SIDEVIEW));
 
 function files(dir: string): Map<string, Buffer> {
   const out = new Map<string, Buffer>();
@@ -114,7 +116,7 @@ function allCommands(project: Project): { op: string }[] {
 }
 
 describe("rpgmaker-import: output", () => {
-  for (const [name, result] of [["hollow-mz", hollow], ["stage-mv", stage]] as const) {
+  for (const [name, result] of [["hollow-mz", hollow], ["stage-mv", stage], ["sideview-mz", sideview]] as const) {
     test(`${name}: the project validates against the kit schema`, () => {
       expect(validateSchema(result.project, schema as Record<string, unknown>)).toEqual([]);
     });
@@ -125,25 +127,37 @@ describe("rpgmaker-import: output", () => {
   }
 
   test("side-view import is opt-in, preserves front-view normalization, and reports missing actor art", async () => {
-    const source = loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/sideview-mz"));
+    const source = loadRmProject(SIDEVIEW);
     const side = await importRmProject(source);
     expect(side.battle.sideView).toBe(true);
+    expect(side.battle.sideViewPresentation).toBe("stock");
+    expect(side.battle.magicSkillTypes).toEqual([]);
     expect(side.assets.sideViewActors?.WrenSV).toMatchObject({ w: 576, h: 384 });
     expect(side.assets.sideViewActors?.MossSV).toMatchObject({ w: 576, h: 384 });
     expect(side.assets.sideViewWeapons?.["1"]).toMatchObject({ w: 576, h: 384 });
+    expect(side.assets.sideViewWeapons?.["2"]).toMatchObject({ w: 576, h: 384 });
+    expect(side.assets.sideViewWeapons?.["3"]).toMatchObject({ w: 576, h: 384 });
+    expect(side.assets.sideViewEnemies?.enemy001).toMatchObject({ w: 64, h: 64 });
     expect(side.assets.sideViewStates).toMatchObject({ w: 768, h: 96 });
     expect(side.assets.sideViewShadow).toMatchObject({ w: 64, h: 16 });
     expect(side.battle.attackMotions?.[1]).toEqual({ type: 1, weaponImageId: 1 });
     expect(hollow.assets.sideViewActors).toBeUndefined();
     expect(hollow.battle.attackMotions).toBeUndefined();
+    expect(hollow.battle.sideViewPresentation).toBeUndefined();
+    expect(hollow.battle.magicSkillTypes).toBeUndefined();
     expect(hollow.battle.states.every((entry) => entry.overlay === undefined && entry.motion === undefined)).toBe(true);
-    const missing = loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/sideview-mz"));
+    const missing = loadRmProject(SIDEVIEW);
     missing.actors[1]!.battlerName = "IntentionallyAbsentSV";
     const degraded = await importRmProject(missing);
     expect(degraded.assets.sideViewActors?.IntentionallyAbsentSV).toBeUndefined();
-    expect(degraded.warnings).toContain("sv_actors/IntentionallyAbsentSV.png not found");
+    expect(degraded.warnings).toContain(
+      "actor battler IntentionallyAbsentSV: img/sv_actors/IntentionallyAbsentSV.png is missing",
+    );
+    expect(degraded.warnings.filter((warning) => warning.includes("IntentionallyAbsentSV"))).toHaveLength(1);
+    expect(degraded.cov.list("battle").find((row) => row.key === "actor battler IntentionallyAbsentSV")
+      ?.counts.Degraded).toBe(1);
     expect(degraded.assets.sideViewActors?.MossSV).toBeDefined();
-    const changed = loadRmProject(join(ROOT, "tests/fixtures/rpgmaker/sideview-mz"));
+    const changed = loadRmProject(SIDEVIEW);
     changed.actors[1]!.battlerName = "";
     const golem = changed.maps.get(3)?.events.find((event) => event?.id === 2);
     expect(golem).toBeDefined();
@@ -152,6 +166,56 @@ describe("rpgmaker-import: output", () => {
     const eventImage = await importRmProject(changed);
     expect(eventImage.assets.sideViewActors?.WrenSV).toMatchObject({ w: 576, h: 384 });
     expect(eventImage.warnings).not.toContain("sv_actors/WrenSV.png not found");
+  });
+
+  test("side-view system layers and enemy fallback report one deterministic degradation each", async () => {
+    const root = mkdtempSync(join(SCRATCH_ROOT, "rmi-side-missing-"));
+    try {
+      cpSync(SIDEVIEW, root, { recursive: true });
+      rmSync(join(root, "img/sv_enemies/Golem.png"));
+      rmSync(join(root, "img/system/Weapons2.png"));
+      rmSync(join(root, "img/system/States.png"));
+      rmSync(join(root, "img/system/Shadow2.png"));
+      const result = await importRmProject(loadRmProject(root));
+      expect(result.assets.battlers.enemy001).toBeDefined();
+      expect(result.assets.sideViewEnemies?.enemy001).toBeUndefined();
+      expect(result.assets.sideViewWeapons?.["1"]).toBeDefined();
+      expect(result.assets.sideViewWeapons?.["2"]).toBeUndefined();
+      expect(result.assets.sideViewWeapons?.["3"]).toBeDefined();
+      expect(result.assets.sideViewStates).toBeUndefined();
+      expect(result.assets.sideViewShadow).toBeUndefined();
+      const rows = new Map(result.cov.list("battle").map((row) => [row.key, row]));
+      expect(rows.get("side-view enemy 1")?.counts.Degraded).toBe(1);
+      expect(rows.get("system/Weapons2")?.counts.Degraded).toBe(1);
+      expect(rows.get("system/States")?.counts.Degraded).toBe(1);
+      expect(rows.get("system/Shadow2")?.counts.Degraded).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("malformed side-view sheets degrade during import instead of failing in a cooker", async () => {
+    const project = loadRmProject(SIDEVIEW);
+    const environment = project.environment!;
+    project.environment = {
+      ...environment,
+      async readPng(path, encryption) {
+        if (path.endsWith("/sv_actors/WrenSV.png")) {
+          return { width: 575, height: 384, data: new Uint8Array(575 * 384 * 4) };
+        }
+        if (path.endsWith("/system/Weapons3.png")) {
+          return { width: 575, height: 384, data: new Uint8Array(575 * 384 * 4) };
+        }
+        return environment.readPng(path, encryption);
+      },
+    };
+    const result = await importRmProject(project);
+    expect(result.assets.sideViewActors?.WrenSV).toBeUndefined();
+    expect(result.assets.sideViewWeapons?.["3"]).toBeUndefined();
+    expect(result.warnings).toContain(
+      "actor battler WrenSV: img/sv_actors/WrenSV.png must be a non-empty 9x6 grid (got 575x384)",
+    );
+    expect(result.warnings).toContain("system/Weapons3.png must be 576x384 (got 575x384)");
   });
 
   test("maps, sheets and start come from the RM data", () => {
@@ -1093,6 +1157,8 @@ describe("rpgmaker-import: files and determinism", () => {
     // a stale copy would test yesterday's importer.
     expect(RMI_GAMES.hollow.project).toEqual(JSON.parse(JSON.stringify(hollow.project)));
     expect(RMI_GAMES.stage.project).toEqual(JSON.parse(JSON.stringify(stage.project)));
+    expect(RMI_GAMES.sideview.project).toEqual(JSON.parse(JSON.stringify(sideview.project)));
+    expect(RMI_GAMES.sideview.battle).toEqual(JSON.parse(JSON.stringify(sideview.battle)));
   });
 
   test("the importer is not part of any game bundle", () => {

@@ -212,8 +212,9 @@ describe("RPG Maker battle database import", () => {
     expect(battleCoverage.get("actor battler MissingMapBattler")?.counts.Degraded).toBe(1);
     expect(battleCoverage.get("actor battler MissingTroopBattler")?.counts.Degraded).toBe(1);
     const imageCommand = first.cov.list("command").find((row) => row.key === "322")!;
-    expect(imageCommand.reasons.join(" ")).toContain("imported faces and side-view battlers update live when cooked");
-    expect(imageCommand.reasons.join(" ")).toContain("map walking images do not");
+    expect(imageCommand.reasons.join(" ")).toContain("imported faces can update live");
+    expect(imageCommand.reasons.join(" ")).toContain("front-view battle does not draw side-view battlers");
+    expect(imageCommand.reasons.join(" ")).toContain("map walking images are not wired");
   });
 
   test("converts battle-event presentation commands and finalizes their ME clocks", async () => {

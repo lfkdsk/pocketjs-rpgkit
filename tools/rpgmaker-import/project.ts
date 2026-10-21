@@ -620,6 +620,7 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     cov.record("battle", `face ${key}`, "Native");
   }
 
+  const sideView = rm.system.optSideView === true;
   const usedActorBattlerPngs = new Set<string>();
   for (const name of [...actorBattlerCandidates].sort()) {
     const path = findNamedPng(environment, environment.join(rm.root, "img", "sv_actors"), name, rm.mediaEncryption);
@@ -630,6 +631,12 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
       continue;
     }
     const image = await environment.readPng(path, rm.mediaEncryption);
+    if (image.width <= 0 || image.height <= 0 || image.width % 9 !== 0 || image.height % 6 !== 0) {
+      const reason = `img/sv_actors/${name}.png must be a non-empty 9x6 grid (got ${image.width}x${image.height})`;
+      cov.record("battle", `actor battler ${name}`, "Degraded", reason);
+      warnings.push(`actor battler ${name}: ${reason}`);
+      continue;
+    }
     const base = slug(name) || "battler";
     let id = base;
     for (let suffix = 2; usedActorBattlerPngs.has(`actor-battlers/${id}.png`); suffix++) id = `${base}-${suffix}`;
@@ -641,12 +648,16 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
   }
 
   // --- battlers and normalized battle database ----------------------------
-  const sideView = rm.system.optSideView === true;
   if (sideView) {
     assets.sideViewActors = {};
     assets.sideViewEnemies = {};
     assets.sideViewWeapons = {};
-    const importImage = async (folder: string, name: string, output: string): Promise<{ png: string; w: number; h: number } | undefined> => {
+    const importImage = async (
+      folder: string,
+      name: string,
+      output: string,
+      valid: (image: RgbaImage) => string | undefined,
+    ): Promise<{ png: string; w: number; h: number } | undefined> => {
       const path = findNamedPng(environment, environment.join(rm.root, "img", folder), name, rm.mediaEncryption);
       if (!path) {
         warnings.push(`${folder}/${name}.png not found`);
@@ -654,30 +665,34 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
         return undefined;
       }
       const image = await environment.readPng(path, rm.mediaEncryption);
+      const invalid = valid(image);
+      if (invalid) {
+        warnings.push(`${folder}/${name}.png ${invalid}`);
+        cov.record("battle", `${folder}/${name}`, "Degraded", `image ${folder}/${name}.png ${invalid}`);
+        return undefined;
+      }
       const png = `battlers/${output}.png`;
       images.set(png, image);
       return { png, w: image.width, h: image.height };
     };
-    const actorSheets = new Set(rm.actors.filter((actor) => !!actor?.battlerName).map((actor) => actor!.battlerName!));
-    for (const map of rm.maps.values()) for (const event of map.events) for (const page of event?.pages ?? []) {
-      for (const command of page.list) if (command.code === 322 && typeof command.parameters[5] === "string" && command.parameters[5]) actorSheets.add(command.parameters[5]);
-    }
-    for (const troop of rm.troops) for (const page of troop?.pages ?? []) {
-      for (const command of page.list) if (command.code === 322 && typeof command.parameters[5] === "string" && command.parameters[5]) actorSheets.add(command.parameters[5]);
-    }
-    for (const common of rm.commonEvents) for (const command of common?.list ?? []) {
-      if (command.code === 322 && typeof command.parameters[5] === "string" && command.parameters[5]) actorSheets.add(command.parameters[5]);
-    }
-    for (const name of [...actorSheets].sort()) {
-      const image = await importImage("sv_actors", name, `actor-${encodeURIComponent(name)}`);
-      if (image) assets.sideViewActors[name] = image;
+    // The general Change Actor Images pass above already imports and reports
+    // every reachable actor sheet. Reuse it so one missing file produces one
+    // diagnostic and one coverage row.
+    for (const name of [...actorBattlerCandidates].sort()) {
+      const png = assets.actorBattlers[name];
+      const image = png ? images.get(png) : undefined;
+      if (png && image) assets.sideViewActors[name] = { png, w: image.width, h: image.height };
     }
     for (let index = 1; index <= 3; index++) {
-      const image = await importImage("system", `Weapons${index}`, `weapons-${index}`);
+      const image = await importImage("system", `Weapons${index}`, `weapons-${index}`, (entry) =>
+        entry.width === 576 && entry.height === 384 ? undefined : `must be 576x384 (got ${entry.width}x${entry.height})`);
       if (image) assets.sideViewWeapons[String(index)] = image;
     }
-    assets.sideViewStates = await importImage("system", "States", "states");
-    assets.sideViewShadow = await importImage("system", "Shadow2", "shadow");
+    assets.sideViewStates = await importImage("system", "States", "states", (entry) =>
+      entry.width === 768 && entry.height >= 96 && entry.height % 96 === 0
+        ? undefined : `must be an 8-column grid of 96px cells (got ${entry.width}x${entry.height})`);
+    assets.sideViewShadow = await importImage("system", "Shadow2", "shadow", (entry) =>
+      entry.width > 0 && entry.height > 0 ? undefined : `must be non-empty (got ${entry.width}x${entry.height})`);
   }
   const enemyImages = new Map<number, string>();
   for (const enemy of rm.enemies) {
@@ -692,8 +707,15 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     images.set(png, image);
     assets.battlers[id] = { png, w: image.width, h: image.height };
     enemyImages.set(enemy.id, id);
-    if (sideView && side) assets.sideViewEnemies![id] = assets.battlers[id]!;
-    if (sideView && !side) warnings.push(`enemy ${enemy.id}: img/sv_enemies/${enemy.battlerName}.png not found; using front-view image`);
+    if (sideView && side) {
+      assets.sideViewEnemies![id] = assets.battlers[id]!;
+      cov.record("battle", `side-view enemy ${enemy.id}`, "Native");
+    }
+    if (sideView && !side && front) {
+      const reason = `img/sv_enemies/${enemy.battlerName}.png not found; using front-view image`;
+      warnings.push(`enemy ${enemy.id}: ${reason}`);
+      cov.record("battle", `side-view enemy ${enemy.id}`, "Degraded", reason);
+    }
     if (!sideView && !front && side) warnings.push(`enemy ${enemy.id}: side-view battler ${enemy.battlerName} is shown in the front-view renderer`);
   }
   // --- tilesets -----------------------------------------------------------

@@ -1069,7 +1069,9 @@ function emitActorChange(code: number, p: readonly unknown[], st: State): Comman
         battlerName: String(p[5] ?? ""),
       };
       disposition = "Degraded";
-      reason = "actor images persist; imported faces and side-view battlers update live when cooked, but map walking images do not";
+      reason = st.ctx.rm.system.optSideView === true
+        ? "actor images persist; imported faces and side-view battlers update live when cooked, but map walking images do not"
+        : "actor images persist and imported faces can update live, but map walking images are not wired and front-view battle does not draw side-view battlers";
       break;
     }
     case 324:

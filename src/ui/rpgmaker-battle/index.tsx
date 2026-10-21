@@ -50,6 +50,9 @@ export type {
 
 export interface RpgMakerSideViewImages {
   actors: Readonly<Record<string, { frames: readonly (readonly string[])[]; w: number; h: number }>>;
+  /** Authored enemy bitmap dimensions keep troop screenX/screenY placement
+   * bottom-centred without forcing non-square art into a stock slot. */
+  enemySizes?: Readonly<Record<string, { w: number; h: number }>>;
   weapons: Readonly<Record<string, readonly string[]>>;
   overlays: Readonly<Record<string, readonly string[]>>;
   shadow?: string;
@@ -94,9 +97,10 @@ function effectFor(
   const effect = state.effect;
   if (!effect || effect.side !== side || effect.index !== index) return NONE;
   return {
-    kind: effect.kind === "hit" ? "shake" : effect.kind === "heal" ? "flash" : "faint",
+    kind: effect.kind === "hit" ? "shake" : effect.kind === "heal" ? "flash"
+      : effect.kind === "faint" ? "faint" : "none",
     startTick: effect.startTick,
-    duration: effect.duration,
+    duration: effect.kind === "faint" ? Math.min(effect.duration, 32) : Math.min(effect.duration, 18),
   };
 }
 
@@ -105,7 +109,8 @@ function shownHp(state: Readonly<RpgMakerBattleState>, side: "actor" | "enemy", 
   if (!battler) return 0;
   const effect = state.effect;
   return effect && effect.side === side && effect.index === index
-    ? tweenAt({ from: effect.from, to: effect.to, startTick: effect.startTick, duration: effect.duration }, state.nowTick)
+    ? tweenAt({ from: effect.from, to: effect.to, startTick: effect.startTick,
+        duration: Math.min(effect.duration, 18) }, state.nowTick)
     : battler.hp;
 }
 
@@ -128,7 +133,7 @@ function targetRows(db: RpgMakerBattleDatabase, state: Readonly<RpgMakerBattleSt
   };
 }
 
-import { sideViewPose } from "./side-view-pose.ts";
+import { sideViewActorHome, sideViewPose, sideViewState } from "./side-view-pose.ts";
 export { sideViewPose } from "./side-view-pose.ts";
 
 type BattleAnimationMarker = NonNullable<RpgMakerBattleState["battleAnimation"]> & {
@@ -149,19 +154,25 @@ function enemyTargetRect(
   width: number,
   height: number,
   sideView = false,
+  authoredSize?: Readonly<{ w: number; h: number }>,
 ): BattleAnimationTargetRect {
+  const scale = Math.min(width / screen.width, height / screen.height);
   const size = Math.max(48, Math.min(96, Math.floor(height * 0.24)));
+  const rectWidth = sideView ? (authoredSize?.w ?? 64) * scale : size;
+  const rectHeight = sideView ? (authoredSize?.h ?? 64) * scale : size;
   const x = member
-    ? clampPosition(member.x * (sideView ? 0.67 : 1) / screen.width * width - size / 2, 8, width - size - 8)
-    : (index + 1) * width / (count + 1) - size / 2;
+    ? sideView ? member.x * width / screen.width - rectWidth / 2
+      : clampPosition(member.x / screen.width * width - rectWidth / 2, 8, width - rectWidth - 8)
+    : (index + 1) * width / (count + 1) - rectWidth / 2;
   const y = member
-    ? clampPosition(
-        member.y / screen.height * height - size / 2,
+    ? sideView ? member.y * height / screen.height - rectHeight
+      : clampPosition(
+        member.y / screen.height * height - rectHeight / 2,
         20,
-        Math.min(height * 0.48, height - 104 - size),
+        Math.min(height * 0.48, height - 104 - rectHeight),
       )
     : 32;
-  return { x, y, width: size, height: size };
+  return { x, y, width: rectWidth, height: rectHeight };
 }
 
 function RpgMakerBattleScene(
@@ -169,7 +180,8 @@ function RpgMakerBattleScene(
   options: RpgMakerBattleSceneOptions,
   props: BattleSceneViewProps,
 ) {
-  const imageCache = createBattleImageCache(() => props.active, { maxEntries: db.sideView ? 48 : 12 });
+  const sideView = db.sideViewPresentation === "stock";
+  const imageCache = createBattleImageCache(() => props.active, { maxEntries: sideView ? 48 : 12 });
   const text = { ...RPGMAKER_BATTLE_UI_TEXT, ...options.text };
   const state = () => rpgMakerBattleState(props.state);
   const troop = () => db.troops.find((entry) => entry.id === state().troopId);
@@ -199,15 +211,15 @@ function RpgMakerBattleScene(
     state().enemies.length,
     props.width,
     props.height,
-    db.sideView,
+    sideView,
+    state().enemies[index]?.image ? options.sideViewImages?.enemySizes?.[state().enemies[index]!.image!] : undefined,
   );
-  const actorRect = (index: number): BattleAnimationTargetRect => db.sideView
-    ? {
-        x: props.width * (0.80 + index * 0.035) - 32,
-        y: props.height * (0.48 + index * 0.10) - 64 * Math.min(1.5, props.height / 272 * 0.75),
-        width: 64,
-        height: 64 * Math.min(1.5, props.height / 272 * 0.75),
-      }
+  const actorRect = (index: number): BattleAnimationTargetRect => sideView
+    ? (() => {
+        const home = sideViewActorHome(props.width, props.height, index);
+        const scale = Math.min(props.width / db.screen.width, props.height / db.screen.height);
+        return { x: home.x - 32 * scale, y: home.y - 64 * scale, width: 64 * scale, height: 64 * scale };
+      })()
     : {
         x: 8,
         y: props.height - 8 - state().actors.length * 30 + index * 30,
@@ -350,7 +362,9 @@ function RpgMakerBattleScene(
           const rect = () => enemyRect(index());
           const source = () => enemy.image ? options.enemyImages?.[enemy.image] : undefined;
           return (
-            <Show when={!enemy.hidden}>
+            <Show when={!enemy.hidden && (!sideView || enemy.hp > 0 ||
+                (state().effect?.side === "enemy" && state().effect?.index === index() &&
+                  state().effect?.kind === "faint" && state().nowTick - state().effect!.startTick < 32))}>
               <View
                 class="absolute flex-col"
                 style={{ posType: 1, insetL: rect().x, insetT: Math.max(4, rect().y - 16), width: rect().width }}
@@ -459,27 +473,30 @@ function RpgMakerBattleScene(
         </For>
       </Show>
 
-      <Show when={db.sideView}>
+      <Show when={sideView}>
         <For each={state().actors}>
           {(actor, index) => {
             const sheet = () => actor.image ? options.sideViewImages?.actors[actor.image] : undefined;
             const pose = () => sideViewPose(db, state(), actor, index());
-            const scale = () => Math.min(1.5, props.height / 272 * 0.75);
-            const homeX = () => props.width * (0.80 + index() * 0.035);
-            const homeY = () => props.height * (0.48 + index() * 0.10);
-            const x = () => homeX() - pose().advance * 48 * scale();
+            const scale = () => Math.min(props.width / db.screen.width, props.height / db.screen.height);
+            const home = () => sideViewActorHome(props.width, props.height, index());
+            const homeX = () => home().x;
+            const homeY = () => home().y;
+            const x = () => homeX() + (pose().retreat - pose().advance * 48) * scale();
             const y = () => homeY() - (sheet()?.h ?? 64) * scale();
             const source = () => sheet()?.frames[pose().motion]?.[pose().pattern];
-            const overlay = () => actor.states.map((active) => db.states.find((entry) => entry.id === active.id))
-              .filter((entry) => entry !== undefined).sort((a, b) => b.priority - a.priority)[0]?.overlay ?? 0;
-            const overlaySource = () => options.sideViewImages?.overlays[overlay()]?.[Math.floor(state().nowTick / 8) % 8];
+            const overlay = () => sideViewState(db, actor)?.overlay ?? 0;
+            // Stock initializes with an empty frame, then samples the active
+            // state and advances to pattern 1 on update 8.
+            const overlaySource = () => state().nowTick < 8 ? undefined
+              : options.sideViewImages?.overlays[overlay()]?.[Math.floor(state().nowTick / 8) % 8];
             const weaponSource = () => pose().weaponPattern < 3
               ? options.sideViewImages?.weapons[pose().weaponImageId]?.[pose().weaponPattern] : undefined;
             return (
               <Show when={!actor.hidden}>
                 <Show when={options.sideViewImages?.shadow}>
                   <SpriteSlot src={options.sideViewImages!.shadow!} cache={imageCache} active={props.active}
-                    x={homeX() - 32} y={homeY() - 8} width={64} height={16}
+                    x={x() - 32 * scale()} y={homeY() - 8 * scale()} width={64 * scale()} height={16 * scale()}
                     effect={NONE} nowTick={state().nowTick} debugName={`rpgmaker-actor-shadow-${index()}`} />
                 </Show>
                 <Show when={weaponSource()}>
@@ -504,7 +521,8 @@ function RpgMakerBattleScene(
                       x={0} y={0}
                       width={2 ** Math.ceil(Math.log2(sheet()?.w ?? 64)) * scale()}
                       height={2 ** Math.ceil(Math.log2(sheet()?.h ?? 64)) * scale()}
-                      effect={effectFor(state(), "actor", index())} nowTick={state().nowTick}
+                      effect={state().effect?.kind === "faint" ? NONE : effectFor(state(), "actor", index())}
+                      nowTick={state().nowTick}
                       debugName={`rpgmaker-actor-sprite-${index()}`} />
                   </View>
                 </Show>
@@ -523,25 +541,26 @@ function RpgMakerBattleScene(
         </For>
       </Show>
 
-      <Show keyed when={db.sideView && state().effect && state().nowTick - state().effect!.startTick < state().effect!.duration && state().effect!.from !== state().effect!.to ? state().effect : null}>
+      <Show keyed when={sideView && state().effect && state().effect!.kind !== "evade" &&
+          state().nowTick - state().effect!.startTick < state().effect!.duration &&
+          state().effect!.from !== state().effect!.to ? state().effect : null}>
         {(effect) => {
           const actor = effect.side === "actor";
           const member = actor ? undefined : troop()?.members[effect.index];
-          const enemySize = Math.max(48, Math.min(96, Math.floor(props.height * 0.24)));
+          const scale = Math.min(props.width / db.screen.width, props.height / db.screen.height);
           const centerX = actor
-            ? props.width * (0.80 + effect.index * 0.035) - 32
+            ? sideViewActorHome(props.width, props.height, effect.index).x - 32 * scale
             : member
-              ? clampPosition(member.x * 0.67 / db.screen.width * props.width - enemySize / 2, 8, props.width - enemySize - 8) + enemySize / 2
+              ? member.x / db.screen.width * props.width
               : (effect.index + 1) * props.width / (state().enemies.length + 1);
           const topY = actor
-            ? props.height * (0.48 + effect.index * 0.10) - 64 * Math.min(1.5, props.height / 272 * 0.75)
+            ? sideViewActorHome(props.width, props.height, effect.index).y - 40 * scale
             : member
-              ? clampPosition(member.y / db.screen.height * props.height - enemySize / 2, 20,
-                Math.min(props.height * 0.48, props.height - 104 - enemySize))
+              ? member.y / db.screen.height * props.height - 48 * scale
               : 32;
           return (
             <View class="absolute items-center" style={{ posType: 1, insetL: centerX - 32,
-              insetT: topY - 18, width: 64, height: 18 }}
+              insetT: topY, width: 64, height: 18 }}
               debugName={`rpgmaker-${effect.side}-damage-${effect.index}`}>
               <Text class="text-xs" style={{ textColor: effect.from > effect.to ? "#ffe97a" : "#8ae060" }}>
                 {String(Math.abs(effect.from - effect.to))}

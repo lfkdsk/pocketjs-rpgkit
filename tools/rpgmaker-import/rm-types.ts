@@ -403,6 +403,8 @@ export interface RmSystem {
   optSideView?: boolean;
   /** Weapon type index -> attack pose (0 thrust, 1 swing, 2 missile) and sheet id. */
   attackMotions?: { type: number; weaponImageId: number }[];
+  /** Skill-type ids which use RPG Maker's magic chant and spell motions. */
+  magicSkills?: number[];
   optDisplayTp?: boolean;
   optExtraExp?: boolean;
   elements?: string[];

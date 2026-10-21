@@ -118,7 +118,7 @@ const tilesetChunks = new Map<string, {
   columns: Record<string, Record<string, number>>;
 }>();
 const summaries: string[] = [];
-const pakAudio = new Map<string, string>();
+const pakAudio = new Map<string, { file: string; bytes: Uint8Array }>();
 
 for (const source of RMI_SOURCES) {
   const out = join(ASSETS, "imported", source.id);
@@ -347,7 +347,9 @@ for (const source of RMI_SOURCES) {
     const texture = fitPakTexture(image);
     return writeAsset(`${prefix}/sv/shadow.png`, encodePNG(texture.data, texture.width, texture.height));
   })() : undefined;
-  const sideViewSource = q({ actors: actorFrames, weapons: weaponFrames, overlays: overlayFrames, shadow });
+  const enemySizes = Object.fromEntries(Object.entries(assets.battlers)
+    .sort(([a], [b]) => a.localeCompare(b)).map(([id, image]) => [id, { w: image.w, h: image.h }]));
+  const sideViewSource = q({ actors: actorFrames, enemySizes, weapons: weaponFrames, overlays: overlayFrames, shadow });
 
   // --- map animations and balloons ---------------------------------------
   const animSource: string[] = [];
@@ -405,10 +407,15 @@ for (const source of RMI_SOURCES) {
     const bytes = result.audioFiles.get(rel);
     const key = project.audio?.[id];
     if (!bytes || !key) throw new Error(`rmi-play: imported audio ${id} has no QOA bytes or project key`);
-    const file = writeAsset(`${prefix}/${rel}`, bytes);
     const duplicate = pakAudio.get(key);
-    if (duplicate && duplicate !== file) throw new Error(`rmi-play: duplicate pak audio key ${key}`);
-    pakAudio.set(key, file);
+    if (duplicate) {
+      if (duplicate.bytes.length !== bytes.length || duplicate.bytes.some((byte, index) => byte !== bytes[index])) {
+        throw new Error(`rmi-play: duplicate pak audio key ${key} has different bytes`);
+      }
+      continue;
+    }
+    const file = writeAsset(`${prefix}/${rel}`, bytes);
+    pakAudio.set(key, { file, bytes });
   }
 
   const player = assets.player ? `WALKERS_${source.id}[${q(assets.player)}]!` : "undefined!";
@@ -497,7 +504,7 @@ writeFileSync(
   join(HERE, "pak.json"),
   JSON.stringify([
     { key: "license:NotoSansCJK.txt", file: "fonts/LICENSE-NotoSansCJK.txt" },
-    ...[...pakAudio].sort(([a], [b]) => a.localeCompare(b)).map(([key, file]) => ({ key, file })),
+    ...[...pakAudio].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, file: value.file })),
   ], null, 2) + "\n",
 );
 const gamesPath = join(HERE, "games.ts");

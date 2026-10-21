@@ -640,7 +640,15 @@ export function importBattleDatabase(
     format: "rpgmaker-battle/v1",
     flavor: rm.flavor,
     sideView: rm.system.optSideView === true,
-    ...(rm.system.optSideView === true ? { attackMotions: (rm.system.attackMotions ?? []).map((entry) => ({ type: clamp(entry.type, 0, 2, 0), weaponImageId: nonNegative(entry.weaponImageId) })) } : {}),
+    ...(rm.system.optSideView === true ? {
+      sideViewPresentation: "stock" as const,
+      attackMotions: (rm.system.attackMotions ?? []).map((entry) => ({
+        type: clamp(entry.type, 0, 2, 0),
+        weaponImageId: nonNegative(entry.weaponImageId),
+      })),
+      magicSkillTypes: [...new Set((rm.system.magicSkills ?? [])
+        .map((id) => nonNegative(id)).filter((id) => id > 0))].sort((a, b) => a - b),
+    } : {}),
     displayTp: rm.system.optDisplayTp === true,
     screen: {
       width: Math.max(1, nonNegative(rm.system.advanced?.screenWidth, 816)),

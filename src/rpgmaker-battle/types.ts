@@ -317,10 +317,18 @@ export interface RpgMakerBattleDatabase {
    * the same value, binding separately packaged battle.json to map content. */
   databaseHash: string;
   flavor: RpgMakerFlavor;
-  /** Authored System.optSideView; opts in to the optional side-view scene. */
+  /** Authored System.optSideView. Databases produced before the stock
+   * side-view renderer may set this without changing their legacy layout. */
   sideView: boolean;
+  /** Additive opt-in for the stock MV/MZ side-view presentation. Its absence
+   * preserves the front-view rendering used by older rpgmaker-battle/v1
+   * payloads whose authored project happened to set `sideView`. */
+  sideViewPresentation?: "stock";
   /** Optional authored attack pose and weapon image for each weapon type. */
   attackMotions?: { type: number; weaponImageId: number }[];
+  /** Skill-type ids which RPG Maker classifies as magic for chant/spell
+   * motion selection. Kept optional for pre-side-view databases. */
+  magicSkillTypes?: number[];
   displayTp: boolean;
   /** Authored battle canvas used to scale troop member coordinates. */
   screen: { width: number; height: number };
@@ -509,6 +517,9 @@ export interface RpgMakerBattleState {
     weaponImageId: number;
     startTick: number;
   } | null;
+  /** Tick at which the current actor entered command input. Optional so old
+   * saves retain their exact shape and fall back to a stable pose phase. */
+  sideViewInputStartTick?: number;
   /** Most recently committed HP change, used only for state-driven tweening. */
   effect: {
     side: "actor" | "enemy";
@@ -517,7 +528,7 @@ export interface RpgMakerBattleState {
     to: number;
     startTick: number;
     duration: number;
-    kind: "hit" | "heal" | "faint";
+    kind: "hit" | "heal" | "faint" | "evade";
   } | null;
   pageRuns: { battle: boolean; lastTurn: number; active: boolean }[];
   variables: Record<string, number | string>;

@@ -1678,6 +1678,7 @@ describe("RPG Maker battle rules", () => {
     const { sideViewPose } = await import("../src/ui/rpgmaker-battle/side-view-pose.ts");
     const db = structuredClone((await importRmProject(loadRmProject(join(import.meta.dir, "fixtures/rpgmaker/sideview-mz")))).battle);
     const initial = mutable(start(db, 91).state);
+    initial.phase = "party";
     const actor = initial.actors[0]!;
     const marked = db.states.find((entry) => entry.id === 3)!;
     marked.motion = 1;
@@ -1689,19 +1690,131 @@ describe("RPG Maker battle rules", () => {
     expect(sideViewPose(db, initial, actor, 0).motion).toBe(16);
     actor.states = [{ id: 3, turns: 2 }];
     expect(sideViewPose(db, initial, actor, 0).motion).toBe(15);
+    db.states.push({ ...marked, id: 2, priority: marked.priority, motion: 2, overlay: 2 });
+    actor.states = [{ id: 3, turns: 2 }, { id: 2, turns: 2 }];
+    expect(sideViewPose(db, initial, actor, 0).motion).toBe(16);
+    actor.states.reverse();
+    expect(sideViewPose(db, initial, actor, 0).motion).toBe(16);
     actor.states = [];
     initial.sideViewMotion = { side: "actor", index: 0, motion: 7, weaponImageId: 1, startTick: 0 };
     for (const [tick, pattern, advance, weapon] of [
       [0, 0, 0, 0], [11, 0, 11 / 12, 0], [12, 1, 1, 1],
       [24, 2, 1, 2], [35, 2, 1, 2], [36, 1, 1, 3],
-      [47, 1, 1 / 12, 3], [48, 0, 0, 4],
+      [47, 1, 1 / 12, 3], [48, 0, 0, 3],
     ]) {
       initial.nowTick = tick!;
       expect(sideViewPose(db, initial, actor, 0)).toMatchObject({
         motion: tick! < 36 ? 7 : 1, pattern, advance,
-        weaponImageId: tick! < 48 ? 1 : 0, weaponPattern: weapon,
+        weaponImageId: tick! < 36 ? 1 : 0, weaponPattern: weapon,
       });
     }
+  });
+
+  test("side-view derives every stock actor motion and resets each transient cadence", async () => {
+    const { sideViewPose } = await import("../src/ui/rpgmaker-battle/side-view-pose.ts");
+    const db = structuredClone((await importRmProject(loadRmProject(join(import.meta.dir, "fixtures/rpgmaker/sideview-mz")))).battle);
+    db.magicSkillTypes = [1];
+    db.skills.push({ ...structuredClone(db.skills[0]!), id: 2, stypeId: 1, hitType: 1 });
+    const base = mutable(start(db, 101).state);
+    base.phase = "party";
+    base.nowTick = 0;
+    base.actors[0]!.states = [];
+    const pose = (mutate: (value: RpgMakerBattleState) => void) => {
+      const value = structuredClone(base);
+      mutate(value);
+      return sideViewPose(db, value, value.actors[0]!, 0);
+    };
+
+    expect(pose((value) => {
+      value.phase = "command";
+      value.actorIndex = 0;
+      value.sideViewInputStartTick = 0;
+    }).motion).toBe(0);
+    expect(pose(() => {}).motion).toBe(1);
+    expect(pose((value) => {
+      value.actorActions = [{ side: "actor", user: 0, kind: "skill", id: 2, target: 0, speed: 0 }];
+    }).motion).toBe(2);
+    expect(pose((value) => { value.actors[0]!.guarding = true; }).motion).toBe(3);
+    for (const [kind, motion] of [["hit", 4], ["evade", 5]] as const) {
+      expect(pose((value) => {
+        value.effect = { side: "actor", index: 0, from: 10, to: kind === "hit" ? 9 : 10,
+          startTick: 0, duration: 90, kind };
+      }).motion).toBe(motion);
+    }
+    for (let motion = 6; motion <= 11; motion++) {
+      expect(pose((value) => {
+        value.sideViewMotion = { side: "actor", index: 0, motion, weaponImageId: 0, startTick: 0 };
+      }).motion).toBe(motion);
+    }
+    expect(pose((value) => {
+      value.phase = "message";
+      value.afterMessage = "escape";
+      value.messageStart = 0;
+    }).motion).toBe(12);
+    expect(pose((value) => {
+      value.phase = "message";
+      value.afterMessage = "win";
+      value.messageStart = 0;
+    }).motion).toBe(13);
+    expect(pose((value) => { value.actors[0]!.hp = 1; }).motion).toBe(14);
+    for (const [stateMotion, motion] of [[1, 15], [2, 16], [3, 17]] as const) {
+      const id = 10 + stateMotion;
+      db.states.push({ ...structuredClone(db.states[0]!), id, priority: 200, motion: stateMotion });
+      expect(pose((value) => { value.actors[0]!.states = [{ id, turns: 1 }]; }).motion).toBe(motion);
+    }
+
+    const loop = structuredClone(base);
+    for (const [tick, pattern] of [[0, 0], [12, 1], [24, 2], [36, 1], [48, 0]]) {
+      loop.nowTick = tick;
+      expect(sideViewPose(db, loop, loop.actors[0]!, 0).pattern).toBe(pattern);
+    }
+    const reaction = structuredClone(base);
+    reaction.effect = { side: "actor", index: 0, from: 10, to: 9, startTick: 7, duration: 90, kind: "hit" };
+    for (const [tick, pattern] of [[7, 0], [19, 1], [31, 2]]) {
+      reaction.nowTick = tick;
+      expect(sideViewPose(db, reaction, reaction.actors[0]!, 0)).toMatchObject({ motion: 4, pattern });
+    }
+  });
+
+  test("side-view action classification follows magic skill types rather than hit type", async () => {
+    const db = structuredClone((await importRmProject(loadRmProject(join(import.meta.dir, "fixtures/rpgmaker/sideview-mz")))).battle);
+    db.magicSkillTypes = [1];
+    db.skills.push({ ...structuredClone(db.skills[0]!), id: 2, stypeId: 1, hitType: 1 });
+    db.skills.push({ ...structuredClone(db.skills[0]!), id: 3, stypeId: 2, hitType: 2 });
+    const { rules, state: initial } = start(db, 102);
+    const magic = forceAction(rules, initial,
+      { side: "actor", user: 0, kind: "skill", id: 2, target: 0, speed: 0 });
+    expect(state(magic).sideViewMotion?.motion).toBe(10);
+    const nonMagic = forceAction(rules, initial,
+      { side: "actor", user: 0, kind: "skill", id: 3, target: 0, speed: 0 });
+    expect(state(nonMagic).sideViewMotion?.motion).toBe(9);
+  });
+
+  test("side-view Change Actor Images repaints the live battler and legacy v1 data keeps front-view behavior", async () => {
+    const importedSide = (await importRmProject(loadRmProject(join(import.meta.dir, "fixtures/rpgmaker/sideview-mz")))).battle;
+    const db = structuredClone(importedSide);
+    db.troops[0]!.pages = [{
+      span: 0, condition: { turn: { a: 0, b: 0 } }, unsupported: 0,
+      effects: [{ kind: "images", actorId: 1, characterName: "People", characterIndex: 0,
+        faceName: "WrenFaces", faceIndex: 5, battlerName: "WrenBattlerAlt" }],
+    }];
+    const { rules, state: started } = start(db, 103);
+    expect(state(started).actors[0]).toMatchObject({
+      image: "WrenBattlerAlt",
+      actor: { faceName: "WrenFaces", faceIndex: 5, battlerName: "WrenBattlerAlt" },
+    });
+    expect(rules.save!.decode(rules.save!.encode(started))).toEqual(started);
+
+    const legacy = structuredClone(importedSide);
+    delete legacy.sideViewPresentation;
+    delete legacy.attackMotions;
+    delete legacy.magicSkillTypes;
+    legacy.troops[0]!.pages = db.troops[0]!.pages;
+    const legacyStart = start(legacy, 103);
+    expect(state(legacyStart.state).actors[0]!.image).toBeUndefined();
+    const acted = forceAction(legacyStart.rules, legacyStart.state,
+      { side: "actor", user: 0, kind: "skill", id: 1, target: 0, speed: 0 });
+    expect(state(acted).sideViewMotion).toBeUndefined();
   });
 
   test("database identity mismatch fails before publishing battle state", () => {

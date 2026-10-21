@@ -53,6 +53,9 @@ export const RPGMAKER_BATTLE_SETTING_CALL = "rpgmaker.battleSetting";
 const RPGMAKER_BATTLEBACK1_VARIABLE = "local.rpgmaker.battleback1";
 const RPGMAKER_BATTLEBACK2_VARIABLE = "local.rpgmaker.battleback2";
 
+const stockSideView = (db: Readonly<RpgMakerBattleDatabase>): boolean =>
+  db.sideViewPresentation === "stock";
+
 interface RpgMakerBattleSetup {
   system?: unknown;
   databaseHash?: unknown;
@@ -1096,7 +1099,8 @@ function actorCombatant(
     buffs: Array.from({ length: 8 }, () => ({ level: 0, turns: 0 })),
     guarding: false,
     hidden: false,
-    ...(db.sideView && (runtime.battlerName ?? actor.battlerName) ? { image: runtime.battlerName ?? actor.battlerName } : {}),
+    ...(stockSideView(db) && (runtime.battlerName ?? actor.battlerName)
+      ? { image: runtime.battlerName ?? actor.battlerName } : {}),
     actor: {
       classId: runtime.classId,
       level,
@@ -1442,6 +1446,10 @@ function applyTroopPageEffect(
       combatant.actor.faceName = effect.faceName;
       combatant.actor.faceIndex = effect.faceIndex;
       combatant.actor.battlerName = effect.battlerName;
+      if (stockSideView(db)) {
+        if (effect.battlerName) combatant.image = effect.battlerName;
+        else delete combatant.image;
+      }
     }
     return [];
   }
@@ -1666,6 +1674,7 @@ function chooseActorInput(db: RpgMakerBattleDatabase, state: RpgMakerBattleState
       state.actorIndex = index;
       state.menuIndex = 0;
       state.phase = "command";
+      if (stockSideView(db)) state.sideViewInputStartTick = state.nowTick;
       return;
     }
     if (actorRestriction < 4) {
@@ -1981,7 +1990,15 @@ function applyDamage(
     text: `${used}\n${usable.hitType === 2
       ? sideMessage(db, target, "actorMagicEvasion", "enemyMagicEvasion", target.name)
       : sideMessage(db, target, "actorEvasion", "enemyEvasion", target.name)}`,
-    effect: null,
+    effect: stockSideView(db) && target.side === "actor" ? {
+      side: "actor",
+      index: state.actors.indexOf(target),
+      from: target.hp,
+      to: target.hp,
+      startTick: state.nowTick,
+      duration: 36,
+      kind: "evade",
+    } : null,
   };
 
   const critical = usable.damage.critical && draw(state) <
@@ -2020,7 +2037,7 @@ function applyDamage(
       from: before,
       to: target.hp,
       startTick: state.nowTick,
-      duration: EFFECT_TICKS,
+      duration: stockSideView(db) ? 90 : EFFECT_TICKS,
       kind: target.hp === 0 ? "faint" : changed >= 0 ? "hit" : "heal",
     };
     if (changed > 0) removeStatesByDamage(db, state, target);
@@ -2166,6 +2183,11 @@ function levelActor(
 }
 
 function beginVictory(db: RpgMakerBattleDatabase, state: RpgMakerBattleState): void {
+  if (stockSideView(db)) {
+    for (const actor of state.actors) {
+      actor.states = actor.states.filter((active) => stateDef(db, active.id)?.removeAtBattleEnd !== true);
+    }
+  }
   let exp = 0;
   let gold = 0;
   const drops: Record<string, number> = {};
@@ -2274,13 +2296,15 @@ function resolveNextAction(db: RpgMakerBattleDatabase, state: RpgMakerBattleStat
   }
   const user = action.side === "actor" ? state.actors[action.user] : state.enemies[action.user];
   const text = resolveAction(db, state, action);
-  if (db.sideView && text && user && state.phase !== "done") {
+  if (stockSideView(db) && text && user && state.phase !== "done") {
     const weapon = user.actor?.equips?.find((entry) => entry?.kind === "weapon");
     const equipment = db.weapons?.find((entry) => entry.id === weapon?.id);
     const attack = db.attackMotions?.[equipment?.typeId ?? 0];
     const basicAttack = action.kind === "skill" && action.id === attackSkillId(db, user);
+    const skill = action.kind === "skill" ? db.skills.find((entry) => entry.id === action.id) : undefined;
     const motion = action.kind === "guard" ? 3 : action.kind === "item" ? 11
-      : basicAttack ? 6 + (attack?.type ?? 1) : db.skills.find((entry) => entry.id === action.id)?.hitType === 2 ? 10 : 9;
+      : basicAttack ? attack ? 6 + attack.type : 0
+        : skill && db.magicSkillTypes?.includes(skill.stypeId) ? 10 : 9;
     state.sideViewMotion = {
       side: action.side, index: action.user, motion,
       weaponImageId: basicAttack && action.side === "actor" ? (attack?.weaponImageId ?? 0) : 0,
@@ -2468,6 +2492,7 @@ function createInitialState(
     gold: context.gold,
     initialGold: context.gold,
     reward: { exp: 0, gold: 0, items: {}, levels: [] },
+    ...(stockSideView(db) ? { sideViewInputStartTick: 0 } : {}),
     settings: effectiveBattleSettings(db, runtime, {
       ...context,
       mapId: typeof setup.map === "string" ? setup.map : context.mapId,
@@ -2727,7 +2752,7 @@ function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): 
     if (!savedStateRecord(value.effect) || (value.effect.side !== "actor" && value.effect.side !== "enemy") ||
         !savedInteger(value.effect.index) || !savedNumber(value.effect.from) || !savedNumber(value.effect.to) ||
         !savedInteger(value.effect.startTick) || !savedInteger(value.effect.duration) ||
-        !["hit", "heal", "faint"].includes(value.effect.kind as string)) {
+        !["hit", "heal", "faint", "evade"].includes(value.effect.kind as string)) {
       return "effect is malformed";
     }
     const count = value.effect.side === "actor" ? actors.length : enemies.length;
@@ -2741,6 +2766,10 @@ function savedBattleStateProblem(db: RpgMakerBattleDatabase, value: JsonValue): 
         (motion.startTick as number) > (value.nowTick as number)) return "sideViewMotion is malformed";
     const count = motion.side === "actor" ? actors.length : enemies.length;
     if ((motion.index as number) >= count) return "sideViewMotion index is outside its side";
+  }
+  if (value.sideViewInputStartTick !== undefined &&
+      (!savedInteger(value.sideViewInputStartTick) || (value.sideViewInputStartTick as number) > (value.nowTick as number))) {
+    return "sideViewInputStartTick is malformed";
   }
   if (value.battleAnimation !== undefined && value.battleAnimation !== null) {
     if (!savedStateRecord(value.battleAnimation) || typeof value.battleAnimation.id !== "string" ||
