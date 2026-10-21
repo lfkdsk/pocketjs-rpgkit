@@ -16,6 +16,7 @@ import {
 import { createSwitchState } from "../src/engine/interpreter.ts";
 import { buildMiniProject } from "../examples/meadow/mini-project.ts";
 import { rpgMakerTextRuntime } from "../src/engine/rpgmaker-text.ts";
+import type { ExtensionOptions } from "../src/engine/extensions.ts";
 import type { Command, GameEvent, MapDef, MoveStep, PageCondition, Project, TileId } from "../src/engine/types.ts";
 
 const GRASS: TileId = "town.0";
@@ -168,6 +169,73 @@ describe("P1④ session — transfer", () => {
     expect(out.fade!.phase).toBe("in");
     out = run(sess, out, 12); // fade-in clears
     expect(out.fade).toBeNull();
+  });
+});
+
+describe("RPG Maker tile traits", () => {
+  const dirs = [
+    { dir: "down", facing: 0, dx: 0, dy: 1 },
+    { dir: "left", facing: 1, dx: -1, dy: 0 },
+    { dir: "up", facing: 2, dx: 0, dy: -1 },
+    { dir: "right", facing: 3, dx: 1, dy: 0 },
+  ] as const;
+
+  test("counter talk reaches exactly one extra cell in all four directions at every host rate", () => {
+    for (const hz of [60, 30, 20]) {
+      for (const { dir, dx, dy } of dirs) {
+        const m = map("a", 7, 7, [ge("shop", 3 + dx * 2, 3 + dy * 2, page("action", [
+          { op: "switch", id: `talk-${dir}`, value: true },
+        ]))]);
+        m.ground[3 * m.width + 3 + dx + dy * m.width] = "town.1";
+        const p = project([m], { map: "a", x: 3, y: 3, dir });
+        p.sheets[0]!.counter = [1];
+        const sess = createSession(p, hz);
+        const out = stepSession(sess, startSession(p, sess), { buttons: 0, confirmEdge: true });
+        expect(out.sw.switches[`talk-${dir}`]).toBe(true);
+      }
+    }
+  });
+
+  test("ladder cells force up-facing and reject turn attempts at every host rate", () => {
+    for (const hz of [60, 30, 20]) {
+      const m = map("a", 5, 5, []);
+      m.ground.fill("town.3");
+      m.ground[2 * m.width + 2] = "town.2";
+      const p = project([m], { map: "a", x: 2, y: 2, dir: "down" });
+      p.sheets[0] = {
+        ...p.sheets[0]!,
+        block: [3],
+        ladder: [2],
+      };
+      const sess = createSession(p, hz);
+      let state = startSession(p, sess);
+      state = stepSession(sess, state, { buttons: 0 });
+      expect(state.move.facing).toBe(2);
+      for (const buttons of [0x0001, 0x0002, 0x0004, 0x0008, 0x0010]) {
+        state = stepSession(sess, state, { buttons });
+        expect([state.move.tx, state.move.ty, state.move.facing]).toEqual([2, 2, 2]);
+      }
+    }
+  });
+
+  test("a player-step extension receives bush membership from the landed cell", () => {
+    const m = map("a", 5, 5, []);
+    m.ground[1 * m.width + 2] = "town.4";
+    const p = project([m], { map: "a", x: 2, y: 2, dir: "up" });
+    p.sheets[0]!.bush = [4];
+    const extensions: ExtensionOptions = {
+      commands: {
+        "test.step": (context) => ({
+          writes: { landedInBush: context.playerCell?.bush === true ? 1 : 0 },
+        }),
+      },
+      playerStep: { call: "test.step" },
+    };
+    for (const hz of [60, 30, 20]) {
+      const sess = createSession(p, hz, { extensions });
+      const out = run(sess, startSession(p, sess), 8 / (60 / hz), { buttons: 0x0010 });
+      expect([out.move.tx, out.move.ty, out.sw.variables.landedInBush]).toEqual([2, 1, 1]);
+    }
   });
 });
 

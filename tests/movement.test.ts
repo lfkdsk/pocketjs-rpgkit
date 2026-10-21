@@ -3,7 +3,7 @@
 // clamp, facing, chaining). Pure bun, no host/framework imports.
 
 import { describe, expect, test } from "bun:test";
-import { buildPassage, canEnter, canStepFrom, cellBlocksEntry, cellBlocksExit, isStandable, setPassageOverride, stampBlockedCells, BLOCK, PASS, type Dir4 } from "../src/engine/passability.ts";
+import { buildPassage, canEnter, canStepFrom, cellBlocksEntry, cellBlocksExit, cellHasTileFeature, isStandable, setPassageOverride, stampBlockedCells, BLOCK, PASS, TILE_FEATURE_BUSH, TILE_FEATURE_COUNTER, TILE_FEATURE_LADDER, type Dir4 } from "../src/engine/passability.ts";
 import {
   dirFromButtons,
   initialMovement,
@@ -72,6 +72,44 @@ describe("step geometry", () => {
     expect({ px: s.px, py: s.py }).toEqual({ px: 48, py: 80 });
     expect(s.moving).toBe(false);
     expect(s.phase).toBe(0);
+  });
+});
+
+describe("cooked tile traits", () => {
+  test("ground and upper traits OR together while trait-free maps allocate nothing", () => {
+    const sheet: Sheet = {
+      id: "terrain",
+      cols: 4,
+      rows: 1,
+      defaultPassage: "pass",
+      ladder: [1],
+      bush: [2],
+      counter: [3],
+    };
+    const map: MapDef = {
+      id: "traits",
+      name: "traits",
+      width: 2,
+      height: 1,
+      sheets: [sheet.id],
+      ground: ["terrain.1", "terrain.2"],
+      upper: [[0, "terrain.3"], [1, "terrain.1"]],
+      events: [],
+    };
+    const table = buildPassage(map, new Map([[sheet.id, sheet]]));
+    expect([...table.features!]).toEqual([
+      TILE_FEATURE_LADDER | TILE_FEATURE_COUNTER,
+      TILE_FEATURE_BUSH | TILE_FEATURE_LADDER,
+    ]);
+    expect(cellHasTileFeature(table, 0, 0, TILE_FEATURE_COUNTER)).toBe(true);
+    expect(cellHasTileFeature(table, 1, 0, TILE_FEATURE_COUNTER)).toBe(false);
+    expect(cellHasTileFeature(table, -1, 0, TILE_FEATURE_LADDER)).toBe(false);
+
+    const legacy = map10(undefined, undefined, [{
+      id: "town", cols: 1, rows: 1, defaultPassage: "pass",
+    }]).table;
+    expect(legacy.features).toBeUndefined();
+    expect(cellHasTileFeature(legacy, 1, 1, TILE_FEATURE_BUSH)).toBe(false);
   });
 });
 

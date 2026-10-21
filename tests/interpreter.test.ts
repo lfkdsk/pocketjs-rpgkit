@@ -590,6 +590,26 @@ describe("trigger arbitration", () => {
     expect(confirmAt(createInterpState(), w2, { x: 10, y: 10 }, 0).sw.switches["hit"]).toBe(true);
   });
 
+  test("counter reach is a far-side fallback and never preempts the front event", () => {
+    const far = event("a-far", 10, 8, [{ op: "switch", id: "far", value: true }]);
+    const front = event("z-front", 10, 9, [{ op: "switch", id: "front", value: true }]);
+    const w = createWorld(map([far, front]));
+    const atCounter = input({
+      confirmEdge: true,
+      playerCell: { x: 10, y: 10 },
+      facing: 2,
+      counterCell: { x: 10, y: 8 },
+    });
+    const preferred = stepInterp(w, createInterpState(), atCounter);
+    expect(preferred.sw.switches.front).toBe(true);
+    expect(preferred.sw.switches.far).toBeUndefined();
+
+    const farOnly = createWorld(map([far]));
+    expect(stepInterp(farOnly, createInterpState(), atCounter).sw.switches.far).toBe(true);
+    expect(confirmAt(createInterpState(), farOnly, { x: 10, y: 10 }, 2).sw.switches.far)
+      .toBeUndefined();
+  });
+
   test("playerTouch fires on entry and relatches only after leaving", () => {
     const pad = event("pad", 10, 10, [{ op: "switch", id: "t", value: true }], "playerTouch");
     const w = createWorld(map([pad]));

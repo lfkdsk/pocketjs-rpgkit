@@ -25,7 +25,14 @@ export interface ExtensionReadContext {
    * (for example an RPG Maker random-encounter table). Ordinary extension
    * command contexts may omit these fields. */
   readonly mapId?: string;
-  readonly playerCell?: Readonly<{ x: number; y: number; region: number }>;
+  readonly playerCell?: Readonly<{
+    x: number;
+    y: number;
+    region: number;
+    /** True when any tile layer at the cell carries the bush trait. Omitted
+     *  on ordinary contexts and on trait-free maps. */
+    bush?: boolean;
+  }>;
   /** Vehicle ridden for a spatial player-step callback. null means walking;
    * absent on ordinary extension calls and in projects without travel. */
   readonly vehicle?: string | null;

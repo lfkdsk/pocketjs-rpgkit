@@ -659,11 +659,11 @@ function encounterStepHandler(db: RpgMakerBattleDatabase) {
       ? previous.remaining
       : nextEncounterCount(encounter.step, context.random);
     // Stock encounterProgressValue: walking and boats consume one point;
-    // Encounter Half and ships independently halve it. Bush doubling is
-    // intentionally not inferred from terrain here (the importer has no
-    // stock bush flag in this extension contract).
+    // bushes double it, while Encounter Half and ships independently halve
+    // it. All factors multiply, preserving the saved fractional countdown.
     let progress = encounterPartyAbility(db, runtime, context, 0) ? 0.5 : 1;
     if (vehicle === "ship") progress *= 0.5;
+    if (context.playerCell?.bush === true) progress *= 2;
     remaining -= progress;
     const due = remaining <= 0;
     if (due) remaining = nextEncounterCount(encounter.step, context.random);

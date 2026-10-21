@@ -908,37 +908,39 @@ describe("RPG Maker battle rules", () => {
     expect((ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1);
   });
 
-  test("Encounter Half and ship progress stack while airships freeze the saved countdown", () => {
-    const db = cloneDb();
-    db.encounters = [{ map: "map003", step: 10, entries: [{ troopId: 1, weight: 1, regions: [] }] }];
-    db.actors[0]!.traits.push({ code: 64, dataId: 0, value: 1 });
-    const seeded = {
-      rpgmakerBattle: { encounter: { map: "map003", remaining: 2 } },
-    } as unknown as JsonValue;
-    const step = (ext: JsonValue, vehicle?: string | null) => runExtensionCommand(
-      db,
-      RPGMAKER_ENCOUNTER_STEP_CALL,
-      null,
-      {
-        ext,
-        ...(vehicle === undefined ? {} : { vehicle }),
+  test("bush, Encounter Half and ship rates multiply while airships freeze", () => {
+    const remaining = (half: boolean, vehicle: string | null, bush: boolean): number => {
+      const db = cloneDb();
+      db.encounters = [{ map: "map003", step: 10, entries: [{ troopId: 1, weight: 1, regions: [] }] }];
+      db.actors[0]!.traits = db.actors[0]!.traits.filter((trait) => trait.code !== 64 || trait.dataId !== 0);
+      if (half) db.actors[0]!.traits.push({ code: 64, dataId: 0, value: 1 });
+      const seeded = {
+        rpgmakerBattle: { encounter: { map: "map003", remaining: 4 } },
+      } as unknown as JsonValue;
+      const result = runExtensionCommand(db, RPGMAKER_ENCOUNTER_STEP_CALL, null, {
+        ext: JSON.parse(JSON.stringify(seeded)),
+        vehicle,
+        playerCell: { x: 2, y: 3, region: 0, ...(bush ? { bush: true } : {}) },
         random: () => { throw new Error("countdown must not reset before it is due"); },
         playerStep: { dx: 1, dy: 0, kind: "step" },
-      },
-    );
+      });
+      return (result.ext as Record<string, any>).rpgmakerBattle.encounter.remaining;
+    };
 
-    const walked = step(seeded, null);
-    expect((walked.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1.5);
-    const shipped = step(walked.ext!, "ship");
-    expect((shipped.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(1.25);
-    const boated = step(shipped.ext!, "boat");
-    expect((boated.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(0.75);
-    const airborne = step(boated.ext!, "airship");
-    expect((airborne.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(0.75);
-
-    // Re-hydration must preserve stock's fractional cursor exactly.
-    const resumed = step(JSON.parse(JSON.stringify(airborne.ext)), "ship");
-    expect((resumed.ext as Record<string, any>).rpgmakerBattle.encounter.remaining).toBe(0.5);
+    expect([
+      remaining(false, null, false),
+      remaining(false, null, true),
+      remaining(true, null, false),
+      remaining(true, null, true),
+      remaining(false, "ship", false),
+      remaining(false, "ship", true),
+      remaining(true, "ship", false),
+      remaining(true, "ship", true),
+      remaining(false, "boat", false),
+      remaining(false, "boat", true),
+    ]).toEqual([3, 2, 3.5, 3, 3.5, 3, 3.75, 3.5, 3, 2]);
+    expect(remaining(false, "airship", false)).toBe(4);
+    expect(remaining(false, "airship", true)).toBe(4);
   });
 
   test("Encounter Half follows the current four-member formation", () => {

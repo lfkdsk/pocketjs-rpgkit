@@ -1741,6 +1741,10 @@ export interface InterpInput {
   /** Player cell this frame and last frame (playerTouch fires on entry). */
   playerCell: Cell;
   prevCell: Cell;
+  /** Optional action-button cell one tile beyond a counter. The Session
+   *  supplies it only when the ordinary front cell has the counter trait;
+   *  direct interpreter users omit it and retain one-cell action reach. */
+  counterCell?: Cell;
   /** 0 down, 1 left, 2 up, 3 right — action triggers fire one tile ahead. */
   facing: Facing;
   /** Facing at the START of this frame, before the mover turned. A
@@ -3708,7 +3712,8 @@ function triggerCandidates(s: InterpState, w: World, input: InterpInput): GameEv
   }
   // Geometry is immutable. Cache the static candidate union by current cell
   // and facing; moving/placed events are merged from the live snapshot.
-  const cellKey = `${input.playerCell.x},${input.playerCell.y},${input.facing}`;
+  const cellKey = `${input.playerCell.x},${input.playerCell.y},${input.facing}` +
+    (input.counterCell ? `,${input.counterCell.x},${input.counterCell.y}` : "");
   let cache = staticCandidates.get(w);
   if (!cache) {
     cache = new Map();
@@ -3724,6 +3729,9 @@ function triggerCandidates(s: InterpState, w: World, input: InterpInput): GameEv
       x: input.playerCell.x + fx,
       y: input.playerCell.y + fy,
     })) union.set(ev.id, ev);
+    if (input.counterCell) {
+      for (const ev of indexedEventsAt(w, input.counterCell)) union.set(ev.id, ev);
+    }
     base = [...union.values()].sort((a, b) => eventIdLess(a.id, b.id) ? -1 : a.id === b.id ? 0 : 1);
     if (cache.size >= 8) cache.delete(cache.keys().next().value!);
     cache.set(cellKey, base);
@@ -3956,6 +3964,7 @@ function scanTriggers(
   let pending: Record<string, PendingParallel> | undefined;
   let regionLeaves: { key: string; pageIndex: number }[] | undefined;
   let regionEnters: { key: string; pageIndex: number }[] | undefined;
+  let counterAction: { key: string; index: number; ev: GameEvent } | undefined;
   const rectOf = (ev: GameEvent): Rect | null => eventRect(ev, eventOrigin(ev, input, local));
   const moved = input.prevCell.x !== input.playerCell.x || input.prevCell.y !== input.playerCell.y;
   const previousRegion = moved && w.hasRegionTriggers ? regionAt(w, input.prevCell) : 0;
@@ -4071,6 +4080,10 @@ function scanTriggers(
         w.onFiberStart?.(key, index, false);
         s.main = startFiber(s, key, index, false, w.pagePrograms.get(key)![index]!);
         selectionContext = { ...selectionContext, worldIdle: false };
+      } else if (!counterAction && input.counterCell && cellInRect(input.counterCell, r)) {
+        // Stock counter reach is a fallback: the ordinary occupied/front
+        // scan wins even when a lower-id event exists on the far side.
+        counterAction = { key, index, ev };
       }
     } else if (page.trigger === "playerTouch") {
       if (held) continue;
@@ -4113,6 +4126,11 @@ function scanTriggers(
         selectionContext = { ...selectionContext, worldIdle: false };
       }
     }
+  }
+  if (!touchOnly && s.main === null && counterAction) {
+    const { key, index, ev } = counterAction;
+    w.onFiberStart?.(key, index, false);
+    s.main = startFiber(s, key, index, false, w.pagePrograms.get(key)![index]!);
   }
   if (!touchOnly && (regionLeaves || regionEnters)) {
     const queue = s.pendingRegionTriggers ?? (s.pendingRegionTriggers = []);

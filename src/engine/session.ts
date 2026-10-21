@@ -194,8 +194,12 @@ import {
   canEnter,
   canEnterIgnoringTerrainSolid,
   canStepFrom,
+  cellHasTileFeature,
   cellBlocksExit,
   stampBlockedCells,
+  TILE_FEATURE_BUSH,
+  TILE_FEATURE_COUNTER,
+  TILE_FEATURE_LADDER,
   withTilePropertyOverrides,
 } from "./passability.ts";
 import type { WorldHandoffResolver } from "./world-handoff-contract.ts";
@@ -3196,6 +3200,34 @@ function advanceStepCounterAfterMovement(
   return stepsBeforeMovement !== undefined && (s.sw.steps ?? 0) !== stepsBeforeMovement;
 }
 
+/** Task contract for ladder cells: every live character faces up and an
+ * attempted turn is normalized away before trigger selection. The sparse
+ * feature array makes this a single absent-property branch on legacy maps. */
+function normalizeLadderFacings(s: SessionState, passage: PassageTable): void {
+  if (!passage.features) return;
+  if (cellHasTileFeature(passage, s.move.tx, s.move.ty, TILE_FEATURE_LADDER)) {
+    s.move.facing = 2;
+  }
+  for (const ch of Object.values(s.chars.chars)) {
+    if (cellHasTileFeature(passage, ch.tx, ch.ty, TILE_FEATURE_LADDER)) ch.facing = 2;
+  }
+}
+
+/** RPG Maker checks exactly one additional cell, in the facing direction,
+ * only when the ordinary front cell carries the counter trait. */
+function counterActionCell(
+  passage: PassageTable,
+  x: number,
+  y: number,
+  facing: Facing,
+): { x: number; y: number } | undefined {
+  if (!passage.features) return undefined;
+  const frontX = x + DX[facing];
+  const frontY = y + DY[facing];
+  if (!cellHasTileFeature(passage, frontX, frontY, TILE_FEATURE_COUNTER)) return undefined;
+  return { x: frontX + DX[facing], y: frontY + DY[facing] };
+}
+
 function commitSeamlessHandoff(sess: Session, s: SessionState): { x: number; y: number } {
   const handoff = s.handoff!;
   const left = freezeLeftMap(s, sess.maps.get(handoff.sourceMapId)!, handoff);
@@ -3668,6 +3700,7 @@ function stepReferenceTick(
     });
     travel = s.travel;
   }
+  normalizeLadderFacings(s, passage);
   const stepPageChanged = sess.stepCounter
     ? advanceStepCounterAfterMovement(
         s,
@@ -3702,6 +3735,9 @@ function stepReferenceTick(
     const ch = s.chars.chars[ev.id];
     if (liveEventCells && ch) liveEventCells[ev.id] = { x: ch.tx, y: ch.ty };
   }
+  const counterCell = input.confirmEdge
+    ? counterActionCell(passage, s.move.tx, s.move.ty, s.move.facing)
+    : undefined;
   const interpInput: InterpInput = {
     confirmEdge: handoffAtStart || vehicleAction ? false : input.confirmEdge,
     cancelEdge: handoffAtStart ? false : input.cancelEdge,
@@ -3709,6 +3745,7 @@ function stepReferenceTick(
     downEdge: handoffAtStart ? false : input.downEdge,
     playerCell: { x: s.move.tx, y: s.move.ty },
     prevCell: prevCellIn,
+    ...(counterCell ? { counterCell } : {}),
     facing: s.move.facing,
     prevFacing,
     ...(playerMovingAtTickStart === undefined
@@ -4195,6 +4232,8 @@ function runPlayerStepHook(
 ): void {
   const hook = sess.extensions.playerStep;
   if (hook === null || (kind === "relocation" && !hook.displacement) || (dx === 0 && dy === 0)) return;
+  const passage = sessionPassageTable(sess, s);
+  const bush = cellHasTileFeature(passage, s.move.tx, s.move.ty, TILE_FEATURE_BUSH);
   s.ext = runExtensionHookInPlace(
     world,
     s.interp,
@@ -4208,6 +4247,7 @@ function runPlayerStepHook(
         x: s.move.tx,
         y: s.move.ty,
         region: world.regionCells?.get(s.move.ty * world.map.width + s.move.tx) ?? 0,
+        ...(bush ? { bush: true } : {}),
       },
       ...(s.sw.partyOrder ? { partyOrder: [...s.sw.partyOrder] } : {}),
       ...(s.travel?.vehicles ? { vehicle: s.travel.vehicles.riding ?? null } : {}),

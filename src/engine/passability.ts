@@ -22,7 +22,10 @@
 // directions across 25 maps (G5 collision report).
 //
 // The upper star layer NEVER blocks (schema: "always walkable"); trees and
-// fences collide through a ground/passage entry, not by being drawn.
+// fences collide through a ground/passage entry, not by being drawn. Tile
+// traits are different: RPG Maker tests every layer, so ladder/bush/counter
+// bits from the ground and sparse upper planes are ORed into one optional
+// byte per map cell.
 //
 // Pure TS: the sheet table is injected as a Map so this module has no
 // project/schema dependency and runs under plain bun.
@@ -35,6 +38,16 @@ export type Dir4 = 0 | 1 | 2 | 3; // 0 down, 1 left, 2 up, 3 right (Facing order
 /** Per-cell edge bit: 1<<Dir4 (1 down, 2 left, 4 up, 8 right). */
 export type EdgeMask = number;
 export const EDGE_BITS = [1, 2, 4, 8] as const;
+
+/** Cooked RPG-style tile traits. Kept as bits because a layered map cell can
+ * carry more than one trait. */
+export const TILE_FEATURE_LADDER = 1;
+export const TILE_FEATURE_BUSH = 2;
+export const TILE_FEATURE_COUNTER = 4;
+export type TileFeature =
+  | typeof TILE_FEATURE_LADDER
+  | typeof TILE_FEATURE_BUSH
+  | typeof TILE_FEATURE_COUNTER;
 
 /** Pre-cooked, allocation-free lookup for one map. The static terrain
  *  opinions (void, sheet block/pass/default, passage overrides and the
@@ -61,6 +74,9 @@ export interface PassageTable {
    *  (source-side guard): undirected dirBlock plus one-sided dirEdges.exit;
    *  source edges remain active across terrain passage overrides. */
   exitMask: Uint8Array;
+  /** Optional per-cell OR of TILE_FEATURE_* bits. Omitted entirely when a
+   *  map uses no trait cells, preserving the old table shape and hot path. */
+  features?: Uint8Array;
   /** Transient blockers such as event bodies. Kept sparse so adding a small
    *  number of characters never copies or scans the whole map. */
   bodyBlocks?: ReadonlySet<number>;
@@ -94,7 +110,15 @@ function sheetCellSolid(sheet: Sheet | undefined, cell: number): boolean {
 // edges. The sheet.pass exception is already folded into the entry mask.
 const OPINION_ENTRY_SHIFT = 1;
 const OPINION_EXIT_SHIFT = 5;
+const OPINION_FEATURE_SHIFT = 9;
 const OPINION_MASK = 0b1111;
+
+function sheetCellFeatures(sheet: Sheet | undefined, cell: number): number {
+  if (!sheet) return 0;
+  return (sheet.ladder?.includes(cell) ? TILE_FEATURE_LADDER : 0) |
+    (sheet.bush?.includes(cell) ? TILE_FEATURE_BUSH : 0) |
+    (sheet.counter?.includes(cell) ? TILE_FEATURE_COUNTER : 0);
+}
 
 function tileOpinion(tile: string, sheets: ReadonlyMap<string, Sheet>): number {
   const { sheet: sheetId, cell } = parseTileId(tile);
@@ -111,7 +135,8 @@ function tileOpinion(tile: string, sheets: ReadonlyMap<string, Sheet>): number {
   const exit = undirected | directedExit;
   return (sheetCellSolid(sheet, cell) ? 1 : 0) |
     (entry << OPINION_ENTRY_SHIFT) |
-    (exit << OPINION_EXIT_SHIFT);
+    (exit << OPINION_EXIT_SHIFT) |
+    (sheetCellFeatures(sheet, cell) << OPINION_FEATURE_SHIFT);
 }
 
 /** Re-cook one cell after its override changes. Source-side edges are kept
@@ -169,6 +194,7 @@ export function buildPassage(map: MapDef, sheets: ReadonlyMap<string, Sheet>): P
   const exitMask = table.exitMask;
   const ground = map.ground;
   const opinions = new Map<string, number>();
+  let features: Uint8Array | undefined;
   let previousTile: string | null = null;
   let previousOpinion = 0;
   for (let idx = 0; idx < n; idx++) {
@@ -187,6 +213,11 @@ export function buildPassage(map: MapDef, sheets: ReadonlyMap<string, Sheet>): P
       previousTile = tile;
       previousOpinion = opinion;
     }
+    const feature = (opinion >> OPINION_FEATURE_SHIFT) & 0b111;
+    if (feature !== 0) {
+      features ??= new Uint8Array(n);
+      features[idx] = feature;
+    }
     exitMask[idx] = (opinion >> OPINION_EXIT_SHIFT) & OPINION_MASK;
     if (over === PASS) continue;
     if (over === BLOCK || (opinion & 1) !== 0) {
@@ -195,7 +226,34 @@ export function buildPassage(map: MapDef, sheets: ReadonlyMap<string, Sheet>): P
     }
     entryMask[idx] = (opinion >> OPINION_ENTRY_SHIFT) & OPINION_MASK;
   }
+  if (map.upper) {
+    const upperFeatures = new Map<string, number>();
+    for (const [idx, tile] of map.upper) {
+      if (tile === null) continue;
+      let feature = upperFeatures.get(tile);
+      if (feature === undefined) {
+        feature = (tileOpinion(tile, sheets) >> OPINION_FEATURE_SHIFT) & 0b111;
+        upperFeatures.set(tile, feature);
+      }
+      if (feature === 0) continue;
+      features ??= new Uint8Array(n);
+      features[idx] = features[idx]! | feature;
+    }
+  }
+  if (features) table.features = features;
   return table;
+}
+
+/** Test one cooked tile trait without parsing tile ids on the movement/UI
+ * hot path. Out-of-range and trait-free maps are false. */
+export function cellHasTileFeature(
+  table: PassageTable,
+  tx: number,
+  ty: number,
+  feature: TileFeature,
+): boolean {
+  if (!table.features || tx < 0 || ty < 0 || tx >= table.width || ty >= table.height) return false;
+  return (table.features[ty * table.width + tx]! & feature) !== 0;
 }
 
 /** Change one live map-passage override and immediately synchronize every
