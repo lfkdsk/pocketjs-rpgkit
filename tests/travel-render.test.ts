@@ -9,6 +9,7 @@ import type { Project } from "../src/engine/types.ts";
 import { travelRuntime } from "../src/travel.ts";
 import { airshipShadowFrame, travelActorFrames } from "../src/ui/travel-actors.ts";
 import { actorDepth } from "../src/ui/OccludingUpperLayer.tsx";
+import { buildPassage } from "../src/engine/passability.ts";
 
 const WALKER = {
   idle: ["idle-down", "idle-left", "idle-up", "idle-right"],
@@ -83,6 +84,27 @@ describe("travel actor rendering projection", () => {
     const hidden = travelActorFrames(state, sprites, npcSrc, STRIDE);
     expect(hidden.followers[0]!.visible).toBe(false);
     expect(hidden.vehicles.find((frame) => frame.id === "boat-1")!.visible).toBe(true);
+  });
+
+  test("follower and grounded vehicle use committed bush cell, but airship stays opaque", () => {
+    const session = createSession(project, 60, { travel: travelRuntime });
+    const state = startSession(project, session);
+    const friend = state.travel!.followers!.members[0]!;
+    const boat = state.travel!.vehicles!.entries.find((entry) => entry.id === "boat-1")!;
+    const airship = state.travel!.vehicles!.entries.find((entry) => entry.id === "airship-1")!;
+    airship.mapId = state.mapId;
+    friend.move.tx = boat.move.tx = airship.move.tx = 3;
+    friend.move.ty = boat.move.ty = airship.move.ty = 2;
+    const map = project.maps[0]!;
+    const passage = buildPassage(map, new Map([["terrain", project.sheets[0]!]]));
+    passage.features = new Uint8Array(map.width * map.height);
+    passage.features[2 * map.width + 3] = 2;
+    const bushSrc = { "idle-right": "friend-bush", "boat-image": "boat-bush", "idle-up": "airship-bush" };
+    const frames = travelActorFrames(state, sprites, npcSrc, STRIDE, undefined, bushSrc, passage);
+    expect(frames.followers[0]!.src).toBe("friend-bush");
+    expect(frames.vehicles.map((frame) => frame.src)).toEqual(["boat-bush", "idle-up"]);
+    friend.move.tx = 4;
+    expect(travelActorFrames(state, sprites, npcSrc, STRIDE, undefined, bushSrc, passage).followers[0]!.src).toBe("idle-right");
   });
 
   test("keeps the ridden airship shadow on the ground and fades it by altitude", () => {

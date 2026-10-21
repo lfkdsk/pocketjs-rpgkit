@@ -19,13 +19,17 @@ export function bakeBushDepth(
   image: RgbaBitmap,
   depth = 4,
   opacity = 128,
+  drawnHeight = image.height,
 ): RgbaBitmap {
   if (!Number.isInteger(image.width) || image.width <= 0 ||
       !Number.isInteger(image.height) || image.height <= 0 ||
       image.data.length !== image.width * image.height * 4) {
     throw new Error(`bush depth: invalid RGBA source ${image.width}x${image.height}`);
   }
-  if (!Number.isInteger(depth) || depth < 0 || depth > image.height) {
+  if (!Number.isInteger(drawnHeight) || drawnHeight < 1 || drawnHeight > image.height) {
+    throw new Error(`bush depth: invalid drawn height ${drawnHeight}`);
+  }
+  if (!Number.isInteger(depth) || depth < 0 || depth > drawnHeight) {
     throw new Error(`bush depth: invalid depth ${depth} for ${image.width}x${image.height}`);
   }
   if (!Number.isInteger(opacity) || opacity < 0 || opacity > 255) {
@@ -33,9 +37,10 @@ export function bakeBushDepth(
   }
 
   const data = image.data.slice();
-  const firstAlpha = (image.height - depth) * image.width * 4 + 3;
-  for (let at = firstAlpha; at < data.length; at += 4) {
-    data[at] = Math.round(data[at]! * opacity / 255);
+  for (let y = drawnHeight - depth; y < drawnHeight; y++) {
+    for (let at = (y * image.width * 4) + 3; at < (y + 1) * image.width * 4; at += 4) {
+      data[at] = Math.round(data[at]! * opacity / 255);
+    }
   }
   return { width: image.width, height: image.height, data };
 }
@@ -69,6 +74,23 @@ export function resampleRgba(image: RgbaBitmap, width: number, height: number): 
       const source = (sourceY * image.width + sourceX) * 4;
       data.set(image.data.subarray(source, source + 4), (y * width + x) * 4);
     }
+  }
+  return { width, height, data };
+}
+
+/** Preserve authored pixels and foot-row position when padding a static actor. */
+export function padPakTexture(image: RgbaBitmap, maxEdge = 512): RgbaBitmap {
+  if (!isPowerOfTwo(maxEdge) || image.width < 1 || image.height < 1 ||
+      image.width > maxEdge || image.height > maxEdge ||
+      image.data.length !== image.width * image.height * 4) {
+    throw new Error(`pak image: invalid static actor ${image.width}x${image.height}`);
+  }
+  const width = nextPowerOfTwo(image.width);
+  const height = nextPowerOfTwo(image.height);
+  if (width === image.width && height === image.height) return image;
+  const data = new Uint8Array(width * height * 4);
+  for (let y = 0; y < image.height; y++) {
+    data.set(image.data.subarray(y * image.width * 4, (y + 1) * image.width * 4), y * width * 4);
   }
   return { width, height, data };
 }

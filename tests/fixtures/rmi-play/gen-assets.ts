@@ -24,7 +24,7 @@ import { bakeMapChunks, cutCell } from "../../../tools/lib/chunks.ts";
 import { sliceWalkerSheet, TUXEMON_WALKER_LAYOUT } from "../../../tools/lib/bake.ts";
 import { animatedManifestSource, cookAnimationAtlases, type AnimationSequenceInput } from "../../../tools/lib/animated.ts";
 import { sliceAnimationSheet } from "../../../tools/lib/anim-sheet.ts";
-import { bakeBushDepth, fitPakTexture, resampleRgba } from "../../../tools/lib/pak-image.ts";
+import { bakeBushDepth, fitPakTexture, padPakTexture, resampleRgba } from "../../../tools/lib/pak-image.ts";
 import { fallbackCharacters } from "../../../tools/lib/cjk-font.ts";
 import { appTextInventory } from "../../../tools/lib/text-inventory.ts";
 import { importToDirectory } from "../../../tools/rpgmaker-import/index.ts";
@@ -237,12 +237,13 @@ for (const source of RMI_SOURCES) {
   for (const [key, sprite] of Object.entries(assets.sprites)) {
     const img = result.images.get(sprite.png)!;
     if (sprite.kind === "image") {
-      const texture = fitPakTexture(img);
+      const texture = img.width <= 512 && img.height <= 512 ? padPakTexture(img) : fitPakTexture(img);
+      const drawnHeight = img.height <= 512 ? img.height : texture.height;
       const normal = writeAsset(`${prefix}/sprite-${key}.png`, encodePNG(texture.data, texture.width, texture.height));
       staticSource.push(`${q(key)}: ${q(normal)}`);
       if (hasBush) {
-        const depth = Math.max(1, Math.round(texture.height / 4));
-        const bush = bakeBushDepth(texture, depth);
+        const depth = Math.max(1, Math.round(drawnHeight / 4));
+        const bush = bakeBushDepth(texture, depth, 128, drawnHeight);
         const variant = writeAsset(`${prefix}/sprite-${key}-bush.png`, encodePNG(bush.data, bush.width, bush.height));
         bushSource.push(`${q(normal)}: ${q(variant)}`);
       }
