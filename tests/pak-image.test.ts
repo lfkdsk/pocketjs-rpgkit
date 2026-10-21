@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bakeBushDepth, fitPakTexture, resampleRgba } from "../tools/lib/pak-image.ts";
+import { bakeBushDepth, fitPakTexture, padPakTexture, resampleRgba } from "../tools/lib/pak-image.ts";
 
 const pixel = (data: Uint8Array, width: number, x: number, y: number): number[] =>
   [...data.subarray((y * width + x) * 4, (y * width + x + 1) * 4)];
@@ -36,6 +36,17 @@ describe("pak image fitting", () => {
 });
 
 describe("RPG Maker bush-depth texture", () => {
+  test("pads a 3x5 static actor without stretching and fades authored foot rows, not transparent padding", () => {
+    const data = new Uint8Array(3 * 5 * 4).fill(255);
+    const padded = padPakTexture({ width: 3, height: 5, data });
+    expect([padded.width, padded.height]).toEqual([4, 8]);
+    const bush = bakeBushDepth(padded, 2, 128, 5);
+    for (let y = 0; y < 8; y++) {
+      expect(pixel(bush.data, 4, 1, y)[3]).toBe(y < 3 ? 255 : y < 5 ? 128 : 0);
+    }
+    expect(pixel(bush.data, 4, 3, 4)[3]).toBe(0);
+    expect(data).toEqual(new Uint8Array(3 * 5 * 4).fill(255));
+  });
   test("halves only the bottom four logical rows without changing source bytes or RGB", () => {
     const data = new Uint8Array(2 * 7 * 4);
     for (let y = 0; y < 7; y++) {
