@@ -129,7 +129,7 @@ const ASSETS_hollow: GameAssets = {
 };
 
 const BATTLERS_hollow: Record<string, string> = { "enemy001": "assets/hollow/battler-enemy001.png", "enemy002": "assets/hollow/battler-enemy002.png" };
-const SIDEVIEW_hollow: RpgMakerSideViewImages = {"actors":{},"enemySizes":{"enemy001":{"w":64,"h":64},"enemy002":{"w":64,"h":64}},"weapons":{},"overlays":{}};
+const SIDEVIEW_hollow: RpgMakerSideViewImages = {"actors":{},"weapons":{},"overlays":{}};
 
 const FACES_hollow: Record<string, string> = { "WrenFaces:0": "assets/hollow/face-WrenFaces-0.png", "WrenFaces:5": "assets/hollow/face-WrenFaces-5.png" };
 const BATTLEBACKS1_hollow: Record<string, string> = { "HollowFloor": "assets/hollow/battleback1-HollowFloor.png" };
@@ -171,7 +171,7 @@ const ASSETS_stage: GameAssets = {
 };
 
 const BATTLERS_stage: Record<string, string> = {  };
-const SIDEVIEW_stage: RpgMakerSideViewImages = {"actors":{},"enemySizes":{},"weapons":{},"overlays":{}};
+const SIDEVIEW_stage: RpgMakerSideViewImages = {"actors":{},"weapons":{},"overlays":{}};
 
 const FACES_stage: Record<string, string> = {  };
 const BATTLEBACKS1_stage: Record<string, string> = {  };

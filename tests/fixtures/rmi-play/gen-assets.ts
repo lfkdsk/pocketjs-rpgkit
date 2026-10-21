@@ -347,9 +347,12 @@ for (const source of RMI_SOURCES) {
     const texture = fitPakTexture(image);
     return writeAsset(`${prefix}/sv/shadow.png`, encodePNG(texture.data, texture.width, texture.height));
   })() : undefined;
-  const enemySizes = Object.fromEntries(Object.entries(assets.battlers)
-    .sort(([a], [b]) => a.localeCompare(b)).map(([id, image]) => [id, { w: image.w, h: image.h }]));
-  const sideViewSource = q({ actors: actorFrames, enemySizes, weapons: weaponFrames, overlays: overlayFrames, shadow });
+  const enemySizes = result.battle.sideViewPresentation === "stock"
+    ? Object.fromEntries(Object.entries(assets.battlers)
+        .sort(([a], [b]) => a.localeCompare(b)).map(([id, image]) => [id, { w: image.w, h: image.h }]))
+    : undefined;
+  const sideViewSource = q({ actors: actorFrames, ...(enemySizes ? { enemySizes } : {}),
+    weapons: weaponFrames, overlays: overlayFrames, shadow });
 
   // --- map animations and balloons ---------------------------------------
   const animSource: string[] = [];

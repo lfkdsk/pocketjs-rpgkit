@@ -74,6 +74,20 @@ function enterTargetSelection(world: BoundGameWorld): void {
   });
 }
 
+/** Stock state overlays deliberately begin with an empty cell and do not
+ * display their first authored pattern until reference tick 8. */
+function enterStateOverlayFrame(world: BoundGameWorld): void {
+  for (let guard = 0; guard < 9; guard++) {
+    const scene = world.probes().state.scene;
+    if (scene?.kind !== "battle") throw new Error("battle ended before its state overlay frame");
+    const state = scene.state as { nowTick: number; actors: { states: { id: number; turns: number }[] }[] };
+    expect(state.actors[0]?.states).toContainEqual({ id: 3, turns: 3 });
+    if (state.nowTick >= 8) return;
+    pump(world);
+  }
+  throw new Error("battle did not reach the first state overlay frame");
+}
+
 /** Confirm the selected target, then stop on the exact first tick of legacy
  * frame 1 (four 60 Hz reference ticks after the saved marker). */
 function enterAnimationFrameOne(world: BoundGameWorld): void {
@@ -108,6 +122,12 @@ function nodeText(node: TreeNode | null): string {
 function allTexts(node: TreeNode, out: string[] = []): string[] {
   if (node.t === "#text") out.push(node.x ?? "");
   for (const child of node.k ?? []) allTexts(child, out);
+  return out;
+}
+
+function namedNodeOrder(node: TreeNode, out: string[] = []): string[] {
+  if (node.n) out.push(node.n);
+  for (const child of node.k ?? []) namedNodeOrder(child, out);
   return out;
 }
 
@@ -271,33 +291,61 @@ simDescribe("RPG Maker side-view battle visuals", () => {
         const scene = world.probes().state.scene as { state?: { phase?: string; sideViewMotion?: { weaponImageId: number; startTick: number; side: string }; nowTick?: number } } | undefined;
         const motion = scene?.state?.sideViewMotion;
         if (motion?.side === "actor" && motion.weaponImageId === 2) {
-          expect(findNode(world.getTree() as TreeNode, "rpgmaker-actor-weapon-0")).not.toBeNull();
+          const actionTree = world.getTree() as TreeNode;
+          expect(findNode(actionTree, "rpgmaker-actor-weapon-0")).not.toBeNull();
+          const order = namedNodeOrder(actionTree);
+          expect(order.indexOf("rpgmaker-actor-weapon-0"), "stock weapon is inserted behind the actor")
+            .toBeLessThan(order.indexOf("rpgmaker-actor-sprite-0"));
           const effect = (scene?.state as { effect?: { side: string; index: number; from: number; to: number } | null })?.effect;
           expect(effect?.side, "attack records the enemy damage target").toBe("enemy");
           expect(effect?.from, "attack reduces enemy HP").toBeGreaterThan(effect?.to ?? Infinity);
           expect(findNode(world.getTree() as TreeNode, `rpgmaker-enemy-damage-${effect?.index}`),
             "damage number paints above the side-view enemy").not.toBeNull();
           const scale = viewport.width / 480;
-          const spritePositions = () => {
+          const spritePositions = (assertSwingMarker: boolean) => {
             const frame = world.render().slice();
             const blade: number[] = [];
             const body: number[] = [];
+            let swingMarker = 0;
             for (let y = Math.floor(50 * scale); y < Math.floor(145 * scale); y++) {
               for (let x = Math.floor(250 * scale); x < Math.floor(410 * scale); x++) {
                 const at = (y * viewport.width + x) * 4;
-                if (frame[at] === 0xe8 && frame[at + 1] === 0xdd && frame[at + 2] === 0x6c && frame[at + 3] === 0xff) blade.push(x);
-                if (frame[at] === 0x30 && frame[at + 1] === 0xb9 && frame[at + 2] === 0xe6 && frame[at + 3] === 0xff) body.push(x);
+                if (((frame[at] === 0xe8 && frame[at + 1] === 0xdd && frame[at + 2] === 0x6c) ||
+                    (frame[at] === 0xdd && frame[at + 1] === 0xdb && frame[at + 2] === 0x83)) && frame[at + 3] === 0xff) blade.push(x);
+                // The fixture's troop page changes WrenSV to
+                // WrenBattlerAlt before input, proving command 322 updates the
+                // live side-view sheet as well as the status face.
+                if (((frame[at] === 0x6a && frame[at + 1] === 0x3a && frame[at + 2] === 0x8a) ||
+                    (frame[at] === 0x72 && frame[at + 1] === 0x52 && frame[at + 2] === 0x9c)) && frame[at + 3] === 0xff) body.push(x);
+                if (frame[at] === 110 && frame[at + 1] === 181 && frame[at + 2] === 55 &&
+                    frame[at + 3] === 0xff) swingMarker++;
               }
             }
             expect(blade.length, "authored gold blade is visible over the arena").toBeGreaterThan(20);
             expect(body.length, "actor body remains visible").toBeGreaterThan(20);
+            if (assertSwingMarker) {
+              expect(swingMarker, "stock swing row 7 marker paints from the authored 9x6 sheet").toBeGreaterThan(5);
+            }
             return Math.min(...blade) - Math.min(...body);
           };
-          const first = spritePositions();
+          const first = spritePositions(true);
+          const popup = world.render().slice();
+          const popupX = [170, 310][effect?.index ?? -1];
+          expect(popupX).toBeDefined();
+          expect(countColourInRect(popup, viewport.width,
+            Math.floor((popupX! - 32) * scale), Math.floor(112 * scale),
+            Math.ceil((popupX! + 32) * scale), Math.ceil(130 * scale),
+            [0xff, 0xe9, 0x7a, 0xff]), "damage digits paint above the authored enemy home")
+            .toBeGreaterThan(0);
           for (let frame = 0; frame < 12; frame++) pump(world);
-          const second = spritePositions();
+          const second = spritePositions(false);
           expect(second, "weapon cell changes relative to the advancing actor").not.toBe(first);
-          for (let frame = 0; frame < 6; frame++) pump(world);
+          const active = (world.probes().state.scene as { state?: {
+            effect?: { duration: number; startTick: number } | null; nowTick?: number;
+          } } | undefined)?.state;
+          const remaining = Math.max(0, (active?.effect?.startTick ?? 0) + (active?.effect?.duration ?? 0) -
+            (active?.nowTick ?? 0));
+          for (let frame = 0; frame <= remaining; frame++) pump(world);
           expect(findNode(world.getTree() as TreeNode, `rpgmaker-enemy-damage-${effect?.index}`),
             "damage number expires at the reducer's effect duration").toBeNull();
           return;
@@ -313,20 +361,45 @@ simDescribe("RPG Maker side-view battle visuals", () => {
       const world = await bootGameWorld(appBundle("rmi-play"), 60,
         { __rmiGame: "sideview", __rmiBattlePreview: "en" }, undefined, viewport);
       enterTargetSelection(world);
+      enterStateOverlayFrame(world);
       const tree = world.getTree() as TreeNode;
       expect(findNode(tree, "rpgmaker-actor-sprite-0")).not.toBeNull();
       expect(findNode(tree, "rpgmaker-actor-sprite-1")).not.toBeNull();
       expect(findNode(tree, "rpgmaker-actor-shadow-0")).not.toBeNull();
       expect(findNode(tree, "rpgmaker-actor-overlay-0"), "marked actor displays the authored state overlay").not.toBeNull();
       expect(findNode(tree, "rpgmaker-enemy-sprite-0")).not.toBeNull();
+      const firstPixels = world.render().slice();
+      const firstOverlay = colourBounds(firstPixels, viewport.width, [0xff, 0x8a, 0x54, 0xff]);
+      const firstBody = colourBounds(firstPixels, viewport.width, [0x6a, 0x3a, 0x8a, 0xff]);
+      expect(firstOverlay, "state overlay frame carries its authored cadence marker").not.toBeNull();
+      expect(firstBody).not.toBeNull();
+      for (let frame = 0; frame < 8; frame++) pump(world);
       const pixels = world.render().slice();
+      const secondOverlay = colourBounds(pixels, viewport.width, [0xff, 0x8a, 0x54, 0xff]);
+      const secondBody = colourBounds(pixels, viewport.width, [0x6a, 0x3a, 0x8a, 0xff]);
+      expect(secondOverlay, "the next state overlay frame paints").not.toBeNull();
+      expect(secondBody).not.toBeNull();
       const s = viewport.width / 480;
+      expect((secondOverlay![0] - secondBody![0]) - (firstOverlay![0] - firstBody![0]),
+        "state overlay advances one authored cell every eight ticks relative to the moving actor")
+        .toBe(8 * s);
       const count = (x0: number, y0: number, x1: number, y1: number, colour: Rgba) =>
         countColourInRect(pixels, viewport.width,
           Math.floor(x0 * s), Math.floor(y0 * s), Math.floor(x1 * s), Math.floor(y1 * s), colour);
-      expect(count(340, 45, 420, 150, [0x30, 0xb9, 0xe6, 0xff]), "first actor on right").toBeGreaterThan(30);
+      expect(count(280, 45, 420, 150, [0x6a, 0x3a, 0x8a, 0xff]),
+        "live Change Actor Images battler on right").toBeGreaterThan(30);
       expect(count(360, 65, 455, 175, [0xe9, 0x5b, 0x8b, 0xff]), "second actor on right").toBeGreaterThan(30);
       expect(count(30, 40, 280, 175, [0x73, 0x51, 0xa1, 0xff]), "side-view enemy on left").toBeGreaterThan(30);
+      const firstActor = colourBounds(pixels, viewport.width, [0x6a, 0x3a, 0x8a, 0xff]);
+      const secondActor = colourBounds(pixels, viewport.width, [0xe9, 0x5b, 0x8b, 0xff]);
+      expect(firstActor).not.toBeNull();
+      expect(secondActor).not.toBeNull();
+      expect(firstActor![0], "stock actor homes stagger party members toward the right").toBeLessThan(secondActor![0]);
+      expect(rgbaAt(pixels, viewport.width, 2, 2)).toEqual([0x18, 0x38, 0x48, 0xff]);
+      expect(rgbaAt(pixels, viewport.width, 30 * s, 22 * s)).toEqual([0x76, 0x50, 0x80, 0xff]);
+      expect(countColourInRect(pixels, viewport.width, 8, viewport.height - 68, 36,
+        viewport.height - 40, [0x40, 0x28, 0x48, 0xff]), "live face cell 5 in the side-view HUD")
+        .toBeGreaterThan(80);
       // Translucent fixture art is composited over the arena, so compare the
       // resulting colour rather than the unblended source RGBA values.
       const countBlended = (x0: number, y0: number, x1: number, y1: number, matches: (r: number, g: number, b: number) => boolean) => {
@@ -341,7 +414,8 @@ simDescribe("RPG Maker side-view battle visuals", () => {
       };
       expect(countBlended(325, 35, 420, 145, (r, g, b) => r < 100 && g > 130 && b > 120 && b < 205),
         "marked actor overlay on right").toBeGreaterThan(10);
-      expect(countBlended(352, 125, 410, 140, (r, g, b) => r >= 35 && r <= 40 && g >= 48 && g <= 55 && b >= 70 && b <= 80),
+      expect(countBlended(352, 120, 416, 142, (r, g, b) =>
+        (r === 31 && g === 52 && b === 74) || (r === 35 && g === 60 && b === 81)),
         "authored shadow below actor").toBeGreaterThan(10);
       await golden("sideview.en", pixels, viewport.width, viewport.height);
     }, 60_000);

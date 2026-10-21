@@ -1163,8 +1163,15 @@ function fixtureFaceSheet(): Canvas {
   return c;
 }
 
+/** Unique opaque marker for each stock motion row. The visual suite samples
+ * these authored pixels so an off-by-one motion-table mutation cannot hide
+ * behind a whole-frame golden update. */
+function sideViewMotionMarker(motion: number): readonly [number, number, number, number] {
+  return [40 + motion * 10, 230 - motion * 7, 20 + motion * 5, 255];
+}
+
 /** Original 9x6 side-view actor sheet with stock 64 px frame geometry. */
-function fixtureActorBattler(coat: string, accent: string): Canvas {
+function fixtureActorBattler(coat: string, accent: string, motionMarkers = false): Canvas {
   const frame = 64;
   const c = new Canvas(frame * 9, frame * 6);
   for (let row = 0; row < 6; row++) {
@@ -1179,6 +1186,9 @@ function fixtureActorBattler(coat: string, accent: string): Canvas {
       c.rect(ox + 43, oy + 35 + step, 4, 15, rgb(accent));
       c.rect(ox + 23, oy + 52 + step, 7, 9, rgb("#303848"));
       c.rect(ox + 34, oy + 52 + step, 7, 9, rgb("#303848"));
+      if (motionMarkers) {
+        c.rect(ox + 3, oy + 3, 3, 5, sideViewMotionMarker(Math.floor(col / 3) * 6 + row));
+      }
     }
   }
   return c;
@@ -2418,6 +2428,10 @@ function sideViewFixture(files: Files): void {
   stateRecords[3]!.motion = 1;
   files.set(data("States.json"), recordsJson(stateRecords));
   const img = (path: string, canvas: Canvas) => files.set(`${SIDEVIEW}/img/${path}`, canvas.png());
+  // Add mutation-visible row markers only to the side-view derivative; the
+  // original front-view fixture and its generated output stay byte-identical.
+  img("sv_actors/WrenBattler.png", fixtureActorBattler("#3a8a4a", "#d8c060", true));
+  img("sv_actors/WrenBattlerAlt.png", fixtureActorBattler("#6a3a8a", "#e8e8e8", true));
   for (const [name, body, hair] of [
     ["WrenSV", "#30b9e6", "#ffcf40"], ["MossSV", "#e95b8b", "#8ae060"],
   ] as const) {
@@ -2430,7 +2444,7 @@ function sideViewFixture(files: Files): void {
       sheet.rect(x + 27, y + 14 + pattern, 3, 3, rgb("#17212c"));
       sheet.rect(x + 24, y + 48, 6, 12, rgb("#28304b"));
       sheet.rect(x + 36, y + 48, 6, 12, rgb("#28304b"));
-      sheet.rect(x + 18, y + 2, 2, 5, rgb(motion % 2 ? "#f9ef55" : "#eb583c"));
+      sheet.rect(x + 3, y + 3, 3, 5, sideViewMotionMarker(motion));
     }
     img(`sv_actors/${name}.png`, sheet);
   }
@@ -2450,7 +2464,13 @@ function sideViewFixture(files: Files): void {
     img(`system/Weapons${page}.png`, weapons);
   }
   const overlays = new Canvas(8 * 96, 96);
-  for (let frame = 0; frame < 8; frame++) overlays.frame(frame * 96 + 10, 8, 76, 80, rgb("#33dfd3", 160));
+  for (let frame = 0; frame < 8; frame++) {
+    const x = frame * 96;
+    overlays.frame(x + 10, 8, 76, 80, rgb("#33dfd3", 160));
+    // A moving opaque bead makes the stock eight-tick overlay cadence
+    // observable without changing the common outline's authored silhouette.
+    overlays.rect(x + 14 + frame * 8, 12, 5, 5, rgb("#ff8a54"));
+  }
   img("system/States.png", overlays);
   const shadow = new Canvas(64, 16);
   shadow.rect(5, 5, 54, 7, rgb("#26304b", 128));
