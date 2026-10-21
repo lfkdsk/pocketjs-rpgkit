@@ -46,6 +46,35 @@ async function choose(page: Page, name: string, bytes: Uint8Array): Promise<void
   await (await chooser).setFiles({ name, mimeType: "image/png", buffer: Buffer.from(bytes) });
 }
 
+async function clickCell(page: Page, x: number, y: number): Promise<void> {
+  // Studio may defer a fit until two animation frames after a panel changes.
+  // Drain that queue, then require stable geometry and camera state before the
+  // Playwright mouse crosses the renderer boundary.
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.evaluate(() => { delete (window as any).__studioBrowserCellReady; });
+  await page.waitForFunction(([x, y]) => {
+    const studio = (window as any).__studio;
+    const canvas = studio.canvas?.canvas as HTMLCanvasElement | undefined;
+    if (!canvas || !studio.canvas.settled) {
+      delete (window as any).__studioBrowserCellReady;
+      return false;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const view = studio.app.view;
+    const point = studio.cellToClient(x, y);
+    if (document.elementFromPoint(point.x, point.y) !== canvas) {
+      delete (window as any).__studioBrowserCellReady;
+      return false;
+    }
+    const key = [rect.left, rect.top, rect.width, rect.height, view.zoom, view.panX, view.panY].join("|");
+    const previous = (window as any).__studioBrowserCellReady;
+    (window as any).__studioBrowserCellReady = { key, frames: previous?.key === key ? previous.frames + 1 : 1 };
+    return (window as any).__studioBrowserCellReady.frames >= 2;
+  }, [x, y], { timeout: 5_000 });
+  const point = await page.evaluate(([x, y]) => (window as any).__studio.cellToClient(x, y), [x, y]);
+  await page.mouse.click(point.x, point.y);
+}
+
 beforeAll(async () => {
   await buildStudio({ outdir: SITE });
   const executablePath = process.env.CHROME ?? Bun.which("google-chrome") ?? Bun.which("chromium") ?? Bun.which("chromium-browser");
@@ -92,12 +121,10 @@ describe("Studio interactive PNG import (Playwright, offline route)", () => {
       await atlas.waitFor({ state: "attached" });
       expect(await atlas.count()).toBe(1);
       await atlas.click({ position: { x: 8, y: 8 } });
-      await page.waitForFunction(() => (window as any).__studio.app.brush === "pw_tiles.0");
+      await page.waitForFunction(() => (window as any).__studio.app.brush === "pw_tiles.0", null, { timeout: 5_000 });
       expect(await page.evaluate(() => (window as any).__studio.app.brush)).toBe("pw_tiles.0");
-      await page.waitForFunction(() => (window as any).__studio.canvas.settled);
-      const cell = await page.evaluate(() => (window as any).__studio.cellToClient(1, 1));
-      await page.mouse.click(cell.x, cell.y);
-      await page.waitForFunction(() => (window as any).__studio.tileAt(1, 1) === "pw_tiles.0");
+      await clickCell(page, 1, 1);
+      await page.waitForFunction(() => (window as any).__studio.tileAt(1, 1) === "pw_tiles.0", null, { timeout: 5_000 });
       expect(await page.evaluate(() => (window as any).__studio.tileAt(1, 1))).toBe("pw_tiles.0");
 
       await openImport(page);

@@ -89,6 +89,10 @@ const dialogCalls = () => electronApp.evaluate(() => globalThis.__dialogCalls ??
 const studio = (fn, arg) => page.evaluate(fn, arg);
 
 async function clickCell(x, y) {
+  // Dock changes queue fit() through two nested animation frames. Drain those
+  // callbacks before asking whether the resulting camera and canvas are idle;
+  // `canvas.settled` alone cannot see a fit() that has not started yet.
+  await studio(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await studio(() => { delete window.__studioCellReady; });
   await page.waitForFunction(([x, y]) => {
     const studio = window.__studio;
@@ -107,8 +111,8 @@ async function clickCell(x, y) {
     const key = [rect.left, rect.top, rect.width, rect.height, view.zoom, view.panX, view.panY].join("|");
     const previous = window.__studioCellReady;
     window.__studioCellReady = { key, frames: previous?.key === key ? previous.frames + 1 : 1 };
-    // Panel open/close schedules fit() two frames later. Two unchanged,
-    // settled observations prove that resize and camera work have finished.
+    // Two unchanged, settled observations after the queued layout callbacks
+    // prove that resize, camera interpolation and repaint have finished.
     return window.__studioCellReady.frames >= 2;
   }, [x, y], { timeout: 5_000 });
   const point = await studio(([x, y]) => window.__studio.cellToClient(x, y), [x, y]);
@@ -145,7 +149,17 @@ async function paintCell(plan) {
 }
 
 async function selectCell(x, y) {
-  await studio(() => { window.__studioSelectSession = window.__studio.app.session; });
+  const before = await studio(([x, y]) => {
+    const studio = window.__studio;
+    window.__studioSelectSession = studio.app.session;
+    const selection = studio.app.selection;
+    return {
+      tool: studio.app.tool,
+      alreadySelected: selection.kind === "cell" && selection.x === x && selection.y === y,
+    };
+  }, [x, y]);
+  assert.equal(before.tool, "select");
+  assert.equal(before.alreadySelected, false, "target cell was selected before the click");
   await clickCell(x, y);
   await page.waitForFunction(([x, y]) => {
     const studio = window.__studio;
@@ -665,8 +679,9 @@ describe("Studio desktop", () => {
   test("closing with unsaved changes asks first; Cancel keeps the window", async () => {
     await page.click("#playtest-close", { timeout: 5_000 });
     await page.waitForFunction(() => !window.__studio.play.open && document.querySelector("#playtest").hidden);
+    await page.click("[data-layer='ground']");
     await page.click("[data-tool='pencil']");
-    await page.waitForFunction(() => window.__studio.app.tool === "pencil");
+    await page.waitForFunction(() => window.__studio.app.layer === "ground" && window.__studio.app.tool === "pencil");
     const plan = await cellToPaint();
     await paintCell(plan);
     assert.equal(await studio(() => window.__studio.app.session.isDirty()), true);
