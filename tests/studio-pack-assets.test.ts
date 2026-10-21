@@ -12,6 +12,7 @@ import { MAX_PACK_ASSET_BYTES, MAX_PACK_ASSETS, MAX_PACK_BYTES, MAX_PNG_BYTES, M
 import { parseShardedPack, serializeShardedPack, SHARDED_PACK_KIND, type PackAsset } from "../editor/api/pack.ts";
 import { decodeBase64, encodeBase64, packText, readPackEnvelope } from "../editor/api/pack-format.ts";
 import { EditSession } from "../editor/api/session.ts";
+import { importPng, cropGrid, type PngGrid } from "../editor/api/png-import.ts";
 import { MemoryDirectory } from "../editor/studio/host-memory.ts";
 import { projectArtRefs, resolveProjectArt } from "../editor/studio/project-art.ts";
 import {
@@ -303,6 +304,127 @@ describe("EditSession on a pack with assets", () => {
 
   test("inline documents have no assets", () => {
     expect(EditSession.open(SUNSTONE).assets().size).toBe(0);
+  });
+});
+
+describe("PNG import edit API", () => {
+  const grid: PngGrid = { cellWidth: 16, cellHeight: 16, offsetX: 0, offsetY: 0, spacingX: 0, spacingY: 0 };
+
+  test("rejects import at the pack asset-count limit without changing the session", () => {
+    const existing = Object.fromEntries(Array.from({ length: MAX_PACK_ASSETS }, (_, i) => [`art/other/${i}.png`, asset(DOT)]));
+    const session = EditSession.open(packWithRawAssets(existing));
+    const before = session.exportText();
+    const source = png(16, 16);
+    const result = importPng(session, { kind: "sheet", id: "one_more", bytes: source, grid, map: "village" }, source);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("4,096");
+    expect(session.exportText()).toBe(before);
+    expect(session.assets().size).toBe(MAX_PACK_ASSETS);
+    expect(session.sheets().some((sheet) => sheet.id === "one_more")).toBe(false);
+  });
+
+  test("rejects import beyond the aggregate asset-byte limit atomically", () => {
+    const filler = new Uint8Array(11 * 1024 * 1024);
+    filler.set(DOT);
+    const data = encodeBase64(filler);
+    const existing = Object.fromEntries([0, 1].map((i) => [`art/other/${i}.png`, { type: "image/png", data }]));
+    const session = EditSession.open(packWithRawAssets(existing));
+    const source = png(16, 16);
+    const cooked = new Uint8Array(11 * 1024 * 1024);
+    cooked.set(source);
+    const result = importPng(session, { kind: "sheet", id: "over_total", bytes: source, grid, map: "village" }, cooked);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("32 MiB");
+    expect(session.assets().size).toBe(2);
+    expect(session.sheets().some((sheet) => sheet.id === "over_total")).toBe(false);
+    expect(session.undo()).toBeUndefined();
+  });
+
+  test("tile import attaches to a map and undoes catalog and art together", () => {
+    const session = EditSession.open(SUNSTONE);
+    const source = png(32, 16);
+    const before = session.exportText();
+    const result = importPng(session, { kind: "sheet", id: "new_tiles", bytes: source, grid, map: "village" }, source);
+    expect(result).toEqual({ ok: true, message: expect.any(String) });
+    expect(session.sheets().find((sheet) => sheet.id === "new_tiles")).toMatchObject({ id: "new_tiles", cols: 2, rows: 1 });
+    expect(session.map("village")?.sheets).toContain("new_tiles");
+    expect(session.assets().get("art/sheets/new_tiles.png")).toEqual(asset(source));
+    const imported = session.exportText();
+    expect(EditSession.open(imported).assets().get("art/sheets/new_tiles.png")).toEqual(asset(source));
+    expect(session.undo()?.ok).toBe(true);
+    expect(session.exportText()).toBe(before);
+    expect(session.assets().size).toBe(0);
+    expect(session.redo()?.ok).toBe(true);
+    expect(session.exportText()).toBe(imported);
+  });
+
+  test("rejects collisions and invalid cropped PNG without changing history", () => {
+    const session = EditSession.open(SUNSTONE);
+    const source = png(32, 16);
+    const request = { kind: "sheet" as const, id: "new_tiles", bytes: source, grid, map: "village" };
+    const before = session.exportText();
+    expect(importPng(session, request, png(16, 16)).ok).toBe(false);
+    expect(session.exportText()).toBe(before);
+    expect(importPng(session, request, source).ok).toBe(true);
+    const imported = session.exportText();
+    expect(importPng(session, request, source).ok).toBe(false);
+    expect(session.exportText()).toBe(imported);
+    expect(session.undo()?.ok).toBe(true);
+    expect(session.exportText()).toBe(before);
+  });
+
+  test("requires explicit replacement and refuses fewer cells on a map-used sheet", () => {
+    const session = EditSession.open(SUNSTONE);
+    const wide = png(32, 16);
+    const updated = png(32, 16, [40, 160, 220, 255]);
+    const narrow = png(16, 16);
+    const request = { kind: "sheet" as const, id: "replacement_tiles", bytes: wide, grid, map: "village" };
+    expect(importPng(session, request, wide).ok).toBe(true);
+    const before = session.exportText();
+    expect(importPng(session, { ...request, bytes: narrow, replace: true }, narrow).ok).toBe(false);
+    expect(session.exportText()).toBe(before);
+    expect(importPng(session, { ...request, bytes: updated, replace: true }, updated).ok).toBe(true);
+    expect(session.sheets().find((sheet) => sheet.id === "replacement_tiles")).toMatchObject({ cols: 2, rows: 1 });
+    expect(session.undo()?.ok).toBe(true);
+    expect(session.exportText()).toBe(before);
+  });
+
+  test("imported tiles paint on maps and imported walkers can be selected for events", () => {
+    const session = EditSession.open(SUNSTONE);
+    const tiles = png(32, 16);
+    expect(importPng(session, { kind: "sheet", id: "paintable", bytes: tiles, grid, map: "village" }, tiles).ok).toBe(true);
+    expect(session.run("paint-cells", { map: "village", layer: "ground", cells: [[1, 1]], value: "paintable.1" }).ok).toBe(true);
+    const walker = png(48, 128);
+    const walkerGrid = { ...grid, cellHeight: 32 };
+    expect(importPng(session, { kind: "walker", id: "new_walker", bytes: walker, grid: walkerGrid }, walker).ok).toBe(true);
+    expect(session.sprites().new_walker).toMatchObject({ kind: "walker", sheet: "art/sprites/new_walker.png", h: 32, cols: 3, rows: 4 });
+    const page = session.map("village")!.events!.find((event) => event.id === "elder")!.pages[0]!;
+    expect(session.run("update-page", { map: "village", event: "elder", page: 0, value: { ...page, sprite: "new_walker" } }).ok).toBe(true);
+    const reopened = EditSession.open(session.exportText());
+    expect(reopened.map("village")?.events?.find((event) => event.id === "elder")?.pages[0]?.sprite).toBe("new_walker");
+    expect(reopened.assets().has("art/sprites/new_walker.png")).toBe(true);
+    const village = reopened.map("village")!;
+    expect(village.ground[1 + village.width]).toBe("paintable.1");
+  });
+
+  test("rejects an oversized source PNG without changing the document", () => {
+    const session = EditSession.open(SUNSTONE);
+    const source = png(16, 16);
+    const oversized = new Uint8Array(MAX_PNG_BYTES + 1);
+    oversized.set(source);
+    const before = session.exportText();
+    const result = importPng(session, { kind: "sheet", id: "too_large", bytes: oversized, grid, map: "village" }, source);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("16 MiB");
+    expect(session.exportText()).toBe(before);
+    expect(session.assets().size).toBe(0);
+  });
+
+  test("crops offset and spacing without shifting source pixels", () => {
+    const input = Uint8Array.from({ length: 4 * 3 * 4 }, (_, i) => i);
+    const cropped = cropGrid(input, 4, 3, { cellWidth: 1, cellHeight: 1, offsetX: 1, offsetY: 0, spacingX: 1, spacingY: 1 });
+    expect([cropped.cols, cropped.rows, cropped.width, cropped.height]).toEqual([2, 2, 2, 2]);
+    expect([...cropped.rgba]).toEqual([...input.subarray(4, 8), ...input.subarray(12, 16), ...input.subarray(36, 40), ...input.subarray(44, 48)]);
   });
 });
 

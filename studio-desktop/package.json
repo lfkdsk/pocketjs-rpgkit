@@ -11,6 +11,7 @@
     "build": "bun build.ts",
     "start": "electron app/main.cjs",
     "e2e": "bun e2e/run.ts",
+    "e2e:png-browser": "bun test e2e/studio-png-import-browser.test.ts",
     "dist": "bun build.ts && electron-builder --publish never",
     "dist:linux": "bun build.ts && electron-builder --linux dir --publish never",
     "dist:mac": "bun build.ts && electron-builder --mac --universal --publish never",

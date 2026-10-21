@@ -71,6 +71,22 @@ const wiz = new Uint8Array(16 * 16 * 4);
 for (let i = 0; i < wiz.length; i += 4) wiz.set([236, 64, 200, 255], i);
 writeFileSync(join(artFolder, "assets", "npc", "wiz.png"), encodePng(16, 16, wiz));
 
+// Self-made PNGs for the component-library import flow. The sheet has a blue
+// one-pixel border, a two-pixel left offset and a two-pixel gap around red and
+// green 16px cells, so the E2E can prove the cooked art excludes both.
+const pngSheet = join(WORK, "png-import-sheet.png");
+const sheetPixels = new Uint8Array(36 * 18 * 4);
+for (let i = 0; i < sheetPixels.length; i += 4) sheetPixels.set([24, 80, 220, 255], i);
+for (let y = 1; y < 17; y++) for (let x = 2; x < 18; x++) sheetPixels.set([232, 48, 64, 255], (y * 36 + x) * 4);
+for (let y = 1; y < 17; y++) for (let x = 20; x < 36; x++) sheetPixels.set([40, 208, 96, 255], (y * 36 + x) * 4);
+writeFileSync(pngSheet, encodePng(36, 18, sheetPixels));
+
+const pngWalker = join(WORK, "png-import-walker.png");
+const walkerPixels = new Uint8Array(48 * 64 * 4);
+for (let i = 0; i < walkerPixels.length; i += 4) walkerPixels.set([184, 64, 216, 255], i);
+writeFileSync(pngWalker, encodePng(48, 64, walkerPixels));
+const pngPack = join(WORK, "png-import-pack.json");
+
 // A single-file project rpgkit-check's engine checks have something to say about.
 const broken = join(WORK, "broken.json");
 copyFileSync(join(KIT, "tests", "fixtures", "rpgkit-check", "broken.json"), broken);
@@ -128,6 +144,9 @@ try {
       STUDIO_E2E_WORK: WORK,
       STUDIO_E2E_FOLDER: folder,
       STUDIO_E2E_ART_FOLDER: artFolder,
+      STUDIO_E2E_PNG_SHEET: pngSheet,
+      STUDIO_E2E_PNG_WALKER: pngWalker,
+      STUDIO_E2E_PNG_PACK: pngPack,
       STUDIO_E2E_BROKEN: broken,
       STUDIO_E2E_AGENT_CONFIG: agentConfig,
       STUDIO_E2E_RPG_MAKER: rpgMaker,

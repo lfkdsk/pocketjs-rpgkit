@@ -3,6 +3,8 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, w
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { runFileEdit } from "../editor/api/file.ts";
+import { EditSession } from "../editor/api/session.ts";
+import { writePngBytes } from "../tools/rpgmaker-import/png.ts";
 import { buildAndVerifySunstoneAgentTask } from "../tools/rpgkit-edit/example-sunstone.ts";
 import type { EditPatch, FileEditResponse } from "../editor/api/types.ts";
 import type { MapDef, Project } from "../src/engine/types.ts";
@@ -125,6 +127,64 @@ const CLI_MUTATIONS: CliMutationCase[] = [
     bad: { args: { map: "village" }, error: { code: "MAP_DELETE_REFUSED", path: "$.map" } },
   },
 ];
+
+describe("rpgkit-edit PNG import CLI", () => {
+  const grid = { cellWidth: 16, cellHeight: 16, offsetX: 0, offsetY: 0, spacingX: 0, spacingY: 0 };
+  const png = (width: number, height: number) => writePngBytes({ width, height, data: new Uint8Array(width * height * 4).fill(255) });
+
+  test("imports a tile sheet into a reopenable pack and attaches it to a map", () => {
+    const file = tempFile("import-sheet");
+    const image = join(TEMP, `sheet-${randomUUID()}.png`);
+    writeFileSync(image, png(32, 16));
+    const result = runCliJson("import-sheet", file, { png: image, id: "new_tiles", grid, map: "village" });
+    expect(result).toMatchObject({ exitCode: 0, body: { ok: true, written: true } });
+    const session = EditSession.open(readFileSync(file, "utf8"));
+    expect(session.sheets().find((sheet) => sheet.id === "new_tiles")).toMatchObject({ id: "new_tiles", cols: 2 });
+    expect(session.map("village")?.sheets).toContain("new_tiles");
+    expect(session.assets().has("art/sheets/new_tiles.png")).toBe(true);
+    const before = readFileSync(file);
+    expect(runCliJson("import-sheet", file, { png: image, id: "new_tiles", grid }))
+      .toMatchObject({ exitCode: 1, body: { ok: false, written: false } });
+    expect(readFileSync(file)).toEqual(before);
+  });
+
+  test("dry-run keeps source bytes and walker import persists the 3 by 4 catalog", () => {
+    const file = tempFile("import-walker");
+    const image = join(TEMP, `walker-${randomUUID()}.png`);
+    writeFileSync(image, png(48, 64));
+    const args = { png: image, id: "new_walker", grid };
+    const before = readFileSync(file);
+    expect(runCliJson("import-walker", file, args, true)).toMatchObject({ exitCode: 0, body: { ok: true, written: false } });
+    expect(readFileSync(file)).toEqual(before);
+    expect(runCliJson("import-walker", file, args)).toMatchObject({ exitCode: 0, body: { ok: true, written: true } });
+    const session = EditSession.open(readFileSync(file, "utf8"));
+    expect(session.sprites().new_walker).toMatchObject({ kind: "walker", cols: 3, rows: 4 });
+    expect(session.assets().has("art/sprites/new_walker.png")).toBe(true);
+  });
+
+  test("rejects replacing a map-used tile sheet with fewer cells", () => {
+    const file = tempFile("replace-sheet");
+    const image = join(TEMP, `replace-sheet-${randomUUID()}.png`);
+    writeFileSync(image, png(32, 16));
+    const args = { png: image, id: "replacement_tiles", grid, map: "village" };
+    expect(runCliJson("import-sheet", file, args)).toMatchObject({ exitCode: 0, body: { ok: true, written: true } });
+    const before = readFileSync(file);
+    writeFileSync(image, png(16, 16));
+    expect(runCliJson("import-sheet", file, { ...args, replace: true }))
+      .toMatchObject({ exitCode: 1, body: { ok: false, written: false } });
+    expect(readFileSync(file)).toEqual(before);
+  });
+
+  test("rejects an invalid walker grid without changing the project", () => {
+    const file = tempFile("invalid-walker-grid");
+    const image = join(TEMP, `invalid-walker-${randomUUID()}.png`);
+    writeFileSync(image, png(32, 64));
+    const before = readFileSync(file);
+    const result = runCliJson("import-walker", file, { png: image, id: "invalid_walker", grid });
+    expect(result).toMatchObject({ exitCode: 1, body: { ok: false, written: false } });
+    expect(readFileSync(file)).toEqual(before);
+  });
+});
 
 describe("rpgkit-edit file and CLI adapter", () => {
   test("dry-run computes a patch without changing one source byte", () => {

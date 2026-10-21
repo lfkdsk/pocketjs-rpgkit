@@ -22,13 +22,16 @@ const ELECTRON = require("electron");
 const WORK = process.env.STUDIO_E2E_WORK;
 const FOLDER = process.env.STUDIO_E2E_FOLDER;
 const ART_FOLDER = process.env.STUDIO_E2E_ART_FOLDER;
+const PNG_SHEET = process.env.STUDIO_E2E_PNG_SHEET;
+const PNG_WALKER = process.env.STUDIO_E2E_PNG_WALKER;
+const PNG_PACK = process.env.STUDIO_E2E_PNG_PACK;
 const BROKEN = process.env.STUDIO_E2E_BROKEN;
 const AGENT_CONFIG = process.env.STUDIO_E2E_AGENT_CONFIG;
 const RPG_MAKER = process.env.STUDIO_E2E_RPG_MAKER;
 const IMPORT_PARENT = process.env.STUDIO_E2E_IMPORT_PARENT;
 const SHOTS = process.env.STUDIO_E2E_SHOTS;
 const APP_PATH = process.env.STUDIO_E2E_APP_PATH;
-if (!WORK || !FOLDER || !ART_FOLDER || !BROKEN || !AGENT_CONFIG || !RPG_MAKER || !IMPORT_PARENT || !SHOTS || !APP_PATH) throw new Error("run this through e2e/run.ts");
+if (!WORK || !FOLDER || !ART_FOLDER || !PNG_SHEET || !PNG_WALKER || !PNG_PACK || !BROKEN || !AGENT_CONFIG || !RPG_MAKER || !IMPORT_PARENT || !SHOTS || !APP_PATH) throw new Error("run this through e2e/run.ts");
 const PROFILE = join(WORK, "profile");
 mkdirSync(SHOTS, { recursive: true });
 
@@ -67,6 +70,14 @@ async function answerDialogs(answers) {
       globalThis.__dialogCalls.push(["box", args.at(-1)?.message]);
       return { response: answers.box, checkboxChecked: false };
     };
+    if (answers.save !== undefined || answers.saves !== undefined) {
+      const queue = answers.saves ? [...answers.saves] : [answers.save];
+      dialog.showSaveDialog = async (...args) => {
+        globalThis.__dialogCalls.push(["save", args.at(-1)?.title]);
+        const answer = queue.shift() ?? null;
+        return { canceled: answer === null, filePath: answer ?? undefined };
+      };
+    }
     if (answers.boxSync !== undefined) dialog.showMessageBoxSync = (...args) => {
       globalThis.__dialogCalls.push(["boxSync", args.at(-1)?.message]);
       return answers.boxSync;
@@ -99,6 +110,12 @@ function cellToPaint(from = 2) {
 async function openMenuItem(label) {
   await page.click("#studio-open");
   await page.locator(".menu button, .menu [role=menuitem]").filter({ hasText: label }).first().click();
+}
+
+async function waitForFile(path, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
+  while (!existsSync(path) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(existsSync(path), true, `file was not written: ${path}`);
 }
 
 async function shot(name) {
@@ -374,6 +391,129 @@ describe("Studio desktop", () => {
     assert.deepEqual(await studio(() => window.__studio.app.session.sheets().find((item) => item.id === "town").dirBlock?.["0"]), ["right"]);
     await shot("common-and-sheet-passage");
   });
+
+  test("imports PNG tile and walker sheets through the native picker, then exports and reopens them", async () => {
+    await answerDialogs({ box: 0 });
+    await openMenuItem("Example: The Sunstone of Bramble Hollow");
+    await page.waitForFunction(() => window.__studio.app.session?.kind === "inline" && window.__studio.app.currentMap()?.id === "village", null, { timeout: 15_000 });
+    await page.click('[data-layer="ground"]');
+
+    await answerDialogs({ open: PNG_SHEET });
+    await page.click("#studio-art");
+    await page.getByRole("button", { name: "Import PNG into project…" }).click();
+    let importDialog = page.getByRole("dialog", { name: "Import PNG" });
+    await importDialog.getByRole("button", { name: "Choose PNG…" }).click();
+    await importDialog.getByRole("status").filter({ hasText: "2 × 1 cells" }).waitFor();
+    await importDialog.getByRole("spinbutton", { name: "offsetX" }).fill("2");
+    await importDialog.getByRole("spinbutton", { name: "offsetY" }).fill("1");
+    await importDialog.getByRole("spinbutton", { name: "spacingX" }).fill("2");
+    await importDialog.getByRole("status").filter({ hasText: "2 × 1 cells" }).waitFor();
+    await importDialog.getByRole("textbox", { name: "Asset id" }).fill("desktop_tiles");
+    await importDialog.getByRole("button", { name: "Import into project" }).click();
+    await importDialog.waitFor({ state: "detached" });
+
+    const imported = await studio(async () => {
+      const session = window.__studio.app.session;
+      const record = session.assets().get("art/sheets/desktop_tiles.png");
+      const image = new Image();
+      image.src = `data:${record.type};base64,${record.data}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      return {
+        sheet: session.sheets().find((item) => item.id === "desktop_tiles"),
+        attached: session.map("village").sheets.includes("desktop_tiles"),
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        first: [...context.getImageData(0, 0, 1, 1).data],
+        second: [...context.getImageData(16, 0, 1, 1).data],
+        history: session.history().at(-1).commands,
+      };
+    });
+    assert.deepEqual(imported.sheet, { id: "desktop_tiles", pak: "chunks", cols: 2, rows: 1 });
+    assert.equal(imported.attached, true);
+    assert.deepEqual([imported.width, imported.height], [32, 16]);
+    assert.deepEqual(imported.first, [232, 48, 64, 255]);
+    assert.deepEqual(imported.second, [40, 208, 96, 255]);
+    assert.deepEqual(imported.history, ["add-sheet", "update-map"]);
+
+    await page.getByRole("dialog", { name: "Art", exact: true }).getByRole("button", { name: "Close" }).click();
+    await page.click("#studio-undo");
+    assert.deepEqual(await studio(() => {
+      const session = window.__studio.app.session;
+      return {
+        sheet: session.sheets().some((item) => item.id === "desktop_tiles"),
+        attached: session.map("village").sheets.includes("desktop_tiles"),
+        art: session.assets().has("art/sheets/desktop_tiles.png"),
+      };
+    }), { sheet: false, attached: false, art: false });
+    await page.click("#studio-redo");
+    const tab = page.getByRole("tab", { name: "desktop_tiles" });
+    await tab.waitFor();
+    await tab.click();
+    const atlas = page.locator('.palette-canvas[data-sheet="desktop_tiles"]');
+    await atlas.waitFor();
+    await atlas.click({ position: { x: 8, y: 8 } });
+    await clickCell(1, 1);
+    assert.equal(await studio(() => window.__studio.tileAt(1, 1)), "desktop_tiles.0");
+
+    await answerDialogs({ open: PNG_WALKER });
+    await page.click("#studio-art");
+    await page.getByRole("button", { name: "Import PNG into project…" }).click();
+    importDialog = page.getByRole("dialog", { name: "Import PNG" });
+    await importDialog.getByRole("button", { name: "Choose PNG…" }).click();
+    await importDialog.getByRole("combobox", { name: "Import kind" }).selectOption("walker");
+    await importDialog.getByRole("status").filter({ hasText: "3 × 4 cells" }).waitFor();
+    await importDialog.getByRole("textbox", { name: "Asset id" }).fill("desktop_walker");
+    await importDialog.getByRole("button", { name: "Import into project" }).click();
+    await importDialog.waitFor({ state: "detached" });
+    await page.getByRole("dialog", { name: "Art", exact: true }).getByRole("button", { name: "Close" }).click();
+    await studio(() => window.__studio.app.select({ kind: "event", eventId: "merchant", page: 0 }));
+    await page.locator('[data-field="page.sprite"]').fill("desktop_walker");
+    await page.locator('[data-field="page.sprite"]').press("Tab");
+    assert.deepEqual(await studio(() => ({
+      walker: window.__studio.app.session.sprites().desktop_walker,
+      art: window.__studio.app.session.assets().has("art/sprites/desktop_walker.png"),
+      selected: window.__studio.app.currentMap().events.find((item) => item.id === "merchant").pages[0].sprite,
+    })), {
+      walker: { kind: "walker", sheet: "art/sprites/desktop_walker.png", h: 16, cols: 3, rows: 4 },
+      art: true,
+      selected: "desktop_walker",
+    });
+
+    await answerDialogs({ save: PNG_PACK });
+    await page.click("#studio-download");
+    await waitForFile(PNG_PACK);
+    const exported = JSON.parse(readFileSync(PNG_PACK, "utf8"));
+    assert.equal(exported.kind, "rpgkit-edit/sharded-pack-v1");
+    assert.ok(exported.assets["art/sheets/desktop_tiles.png"]);
+    assert.ok(exported.assets["art/sprites/desktop_walker.png"]);
+
+    await answerDialogs({ open: PNG_PACK, box: 0 });
+    await openMenuItem("Open file");
+    await page.waitForFunction(() => window.__studio.files.target?.kind === "file" && window.__studio.app.session?.kind === "pack", null, { timeout: 15_000 });
+    assert.deepEqual(await studio(() => {
+      const session = window.__studio.app.session;
+      const map = session.map("village");
+      return {
+        sheet: session.sheets().find((item) => item.id === "desktop_tiles"),
+        walker: session.sprites().desktop_walker,
+        assets: [session.assets().has("art/sheets/desktop_tiles.png"), session.assets().has("art/sprites/desktop_walker.png")],
+        painted: map.ground[1 + map.width],
+        selected: map.events.find((item) => item.id === "merchant").pages[0].sprite,
+      };
+    }), {
+      sheet: { id: "desktop_tiles", pak: "chunks", cols: 2, rows: 1 },
+      walker: { kind: "walker", sheet: "art/sprites/desktop_walker.png", h: 16, cols: 3, rows: 4 },
+      assets: [true, true],
+      painted: "desktop_tiles.0",
+      selected: "desktop_walker",
+    });
+    console.log("# desktop PNG import: cropped 36x18 to 32x16, undo/redo stayed atomic, exported pack reopened with tile + walker art");
+  }, 60_000);
 
   test("engine checks run on this computer and their findings join the problems list", async () => {
     await answerDialogs({ open: BROKEN, box: 0 });
