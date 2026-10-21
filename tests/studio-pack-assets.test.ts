@@ -361,13 +361,14 @@ describe("PNG import edit API", () => {
   test("rejects collisions and invalid cropped PNG without changing history", () => {
     const session = EditSession.open(SUNSTONE);
     const source = png(32, 16);
+    const collision = png(32, 16, [32, 192, 96, 255]);
     const request = { kind: "sheet" as const, id: "new_tiles", bytes: source, grid, map: "village" };
     const before = session.exportText();
     expect(importPng(session, request, png(16, 16)).ok).toBe(false);
     expect(session.exportText()).toBe(before);
     expect(importPng(session, request, source).ok).toBe(true);
     const imported = session.exportText();
-    expect(importPng(session, request, source).ok).toBe(false);
+    expect(importPng(session, { ...request, bytes: collision }, collision).ok).toBe(false);
     expect(session.exportText()).toBe(imported);
     expect(session.undo()?.ok).toBe(true);
     expect(session.exportText()).toBe(before);
