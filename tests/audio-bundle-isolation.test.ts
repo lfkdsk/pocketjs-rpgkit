@@ -322,9 +322,13 @@ const maybeTest = preflight.ok ? test : test.skip;
 // 3,303 B to Meadow and 3,497 B to both GameView graphs. The decoder needles
 // below continue to prove that this shared presentation plumbing admits no
 // optional audio implementation.
-const EXPECTED_MEADOW_BYTES = 688_044;
-const EXPECTED_SUNSTONE_QOA_BYTES = 1_114_375;
-const EXPECTED_WAV_FIXTURE_BYTES = 876_741;
+// Inert imported-plugin diagnostics plus sparse ladder/counter/bush and
+// encounter plumbing add 4,522 B to the engine-only graph. GameView's
+// opt-in bush-texture selection adds another 1,942 B to both rendered apps;
+// neither change admits an audio decoder into Meadow.
+const EXPECTED_MEADOW_BYTES = 692_566;
+const EXPECTED_SUNSTONE_QOA_BYTES = 1_120_839;
+const EXPECTED_WAV_FIXTURE_BYTES = 883_205;
 
 const HOST_AUDIO_NEEDLES = [
   "// src/ui/audio/driver.ts",

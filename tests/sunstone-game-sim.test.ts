@@ -549,8 +549,12 @@ simDescribe("sunstone — render budget", () => {
     // backdrop stack add 10,485 B of shared interpreter/session/save code,
     // producing 1,111,540 B; this fixture authors neither additive behavior.
     // Exact blend/tone projection and fixed-backend capability fallback then
-    // measure 1,114,375 B. Keep a narrow margin above that value.
-    expect(jsBytes).toBeLessThan(1_116_500);
+    // measure 1,114,375 B.
+    // Inert imported-plugin diagnostics plus sparse special-tile/encounter
+    // plumbing and GameView bush-texture selection add 6,464 B, producing
+    // 1,120,839 B without opting Sunstone into those authored features.
+    // Keep a narrow margin above the newly measured value.
+    expect(jsBytes).toBeLessThan(1_123_000);
   });
 });
 

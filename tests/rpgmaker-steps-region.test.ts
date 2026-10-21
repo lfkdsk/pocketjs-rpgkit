@@ -99,9 +99,11 @@ describe("RPG Maker Steps", () => {
   });
 
   test("transfer placement does not count as a walking step", () => {
-    const source = project([event("porter", "action", [
+    const porter = event("porter", "action", [
       { op: "transfer", map: "arrival", x: 2, y: 0, dir: "left" },
-    ])]);
+    ]);
+    porter.x = 2;
+    const source = project([porter]);
     source.maps.push({ id: "arrival", name: "Arrival", width: 3, height: 1,
       sheets: ["floor"], ground: [FLOOR, FLOOR, FLOOR], events: [] });
     const session = createSession(source);

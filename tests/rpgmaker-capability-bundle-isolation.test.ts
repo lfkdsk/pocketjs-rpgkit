@@ -84,14 +84,19 @@ const EXPECTED_BYTES = {
   // 3,303 B to Meadow, 3,497 B to Sunstone and 5,281 B to the fully opted-in
   // fixture. The graph and bundle needles below continue to prove that the
   // optional RPG Maker implementations stay outside both negative controls.
-  meadow: 688_044,
+  // Inert imported-plugin diagnostics plus sparse ladder/counter/bush and
+  // encounter plumbing add 4,522 B to the engine-only graph. GameView bush
+  // texture selection adds another 1,942 B to rendered apps. The imported
+  // fixture's authored plugin-call data and bush asset registry add a further
+  // 14,177 B without changing the capability boundaries proved below.
+  meadow: 692_566,
   // Bucketed upper rows and ordinary-row write suppression add 159 B to both
   // GameView graphs without changing their capability boundaries.
-  sunstone: 1_114_375,
+  sunstone: 1_120_839,
   // The positive control also opts into imported battlebacks, legacy battle
   // animations, changed actor faces and result audio. Their complete optional
   // presentation adds a measured 45,162 B; neither negative control changes.
-  "rmi-play": 1_351_047,
+  "rmi-play": 1_371_688,
 } as const;
 
 function implementationModules(app: string): string[] {

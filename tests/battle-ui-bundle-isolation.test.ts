@@ -287,7 +287,10 @@ const maybeTest = preflight.ok ? test : test.skip;
 // Exact blend/tone projection and fixed-backend capability fallback add a
 // measured 3,497 B of shared presentation plumbing. The battle needles below
 // continue to prove that no optional battle UI became reachable.
-const EXPECTED_BYTES = 1_114_375;
+// Inert imported-plugin diagnostics and sparse special-tile/encounter
+// plumbing add 4,522 B; GameView bush-texture selection adds 1,942 B. The
+// reachability assertions below still prove that battle UI remains absent.
+const EXPECTED_BYTES = 1_120_839;
 
 describe("KB4 does not reach games that never opt into battle", () => {
   maybeTest("sunstone's built bundle size is pinned", () => {
