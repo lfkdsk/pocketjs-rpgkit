@@ -47,12 +47,21 @@ import {
 export const CELL = 16;
 const MAX_ROWS = 256;
 
+export type TileFeature = "ladder" | "bush" | "counter";
+
+const FEATURE_BIT: Readonly<Record<TileFeature, number>> = {
+  ladder: 1,
+  bush: 2,
+  counter: 4,
+};
+
 /** A generated kit tile sheet of 16x16 cells, filled in first-use order. */
 export class TileAtlas {
   readonly sheetId: string;
   readonly cols: number;
   private readonly cells: RgbaImage[] = [];
   private readonly passage: Dir[][] = [];
+  private readonly features: number[] = [];
   private readonly index = new Map<string, number>();
 
   constructor(sheetId: string, cols = 32) {
@@ -70,9 +79,14 @@ export class TileAtlas {
   }
 
   /** The cell for `key`, drawing it (a 16x16 image) on first use. */
-  intern(key: string, draw: () => RgbaImage, blocked: Dir[]): number {
+  intern(key: string, draw: () => RgbaImage, blocked: Dir[], features = 0): number {
     const hit = this.index.get(key);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) {
+      if (this.features[hit] !== features) {
+        throw new Error(`TileAtlas ${this.sheetId}: cell ${key} changed feature mask`);
+      }
+      return hit;
+    }
     if (Math.ceil((this.cells.length + 1) / this.cols) > MAX_ROWS) {
       throw new Error(`TileAtlas ${this.sheetId}: more than ${MAX_ROWS} rows of ${this.cols} cells`);
     }
@@ -83,6 +97,7 @@ export class TileAtlas {
     const cell = this.cells.length;
     this.cells.push(img);
     this.passage.push(blocked.slice());
+    this.features.push(features);
     this.index.set(key, cell);
     return cell;
   }
@@ -90,6 +105,16 @@ export class TileAtlas {
   /** Directions the cell blocks (its sheet dirBlock entry). */
   blocked(cell: number): Dir[] {
     return (this.passage[cell] ?? []).slice();
+  }
+
+  /** Sparse atlas cells carrying one RPG Maker tile feature. */
+  featureCells(feature: TileFeature): number[] {
+    const bit = FEATURE_BIT[feature];
+    const out: number[] = [];
+    for (let cell = 0; cell < this.features.length; cell++) {
+      if ((this.features[cell]! & bit) !== 0) out.push(cell);
+    }
+    return out;
   }
 
   /** The sheet image: cols*16 x rows*16, cells left to right, top to
@@ -190,6 +215,17 @@ export function composeMap(
     x < 0 || y < 0 || x >= width || y >= height ? 0 : (data[z * plane + y * width + x] ?? 0);
   const flagOf = (id: number): number => flags[id] ?? 0;
   const isStar = (id: number): boolean => (flagOf(id) & RM_FLAG.STAR) !== 0;
+  const featuresOf = (layers: readonly Layer[]): number => {
+    let mask = 0;
+    for (const layer of layers) {
+      if (layer.kind !== "tile") continue;
+      const flag = flagOf(layer.id);
+      if ((flag & RM_FLAG.LADDER) !== 0) mask |= FEATURE_BIT.ladder;
+      if ((flag & RM_FLAG.BUSH) !== 0) mask |= FEATURE_BIT.bush;
+      if ((flag & RM_FLAG.COUNTER) !== 0) mask |= FEATURE_BIT.counter;
+    }
+    return mask;
+  };
   const prefix = `t${tileset.id}`;
 
   const render = (layers: readonly Layer[], step: number) => (): RgbaImage => {
@@ -242,9 +278,10 @@ export function composeMap(
       // edge paints on its own even where no ordinary tile occupies the cell.
       if (lower.length > 0) {
         const blocked = blockedDirs(stack, flags);
+        const features = featuresOf(lower);
         const n = stackFrames(lower);
         const frames: number[] = [];
-        for (let s = 0; s < n; s++) frames.push(atlas.intern(stackKey(`${prefix}|g`, lower, s), render(lower, s), blocked));
+        for (let s = 0; s < n; s++) frames.push(atlas.intern(stackKey(`${prefix}|g`, lower, s), render(lower, s), blocked, features));
         out.ground.push(frames[0]!);
         if (n > 1) out.animated.push({ x, y, above: false, frames, frameSeconds: TILE_ANIM_SECONDS });
       } else {
@@ -252,9 +289,10 @@ export function composeMap(
       }
 
       if (upper.length > 0) {
+        const features = featuresOf(upper);
         const n = stackFrames(upper);
         const frames: number[] = [];
-        for (let s = 0; s < n; s++) frames.push(atlas.intern(stackKey(`${prefix}|u`, upper, s), render(upper, s), []));
+        for (let s = 0; s < n; s++) frames.push(atlas.intern(stackKey(`${prefix}|u`, upper, s), render(upper, s), [], features));
         out.upper.push([cell, frames[0]!]);
         if (n > 1) out.animated.push({ x, y, above: true, frames, frameSeconds: TILE_ANIM_SECONDS });
       }
@@ -297,9 +335,9 @@ function recordCell(
   }
   if (shadowBits !== 0) rec("shadow", "Native");
   const any = (bit: number): boolean => ids.some((id) => (flagOf(id) & bit) !== 0);
-  if (any(RM_FLAG.LADDER)) rec("ladder", "Degraded", "no ladder pose; passable as authored");
-  if (any(RM_FLAG.BUSH)) rec("bush", "Degraded", "no half-submerged character drawing");
-  if (any(RM_FLAG.COUNTER)) rec("counter", "Degraded", "talking across a counter is not modelled");
+  if (any(RM_FLAG.LADDER)) rec("ladder", "Native");
+  if (any(RM_FLAG.BUSH)) rec("bush", "Native");
+  if (any(RM_FLAG.COUNTER)) rec("counter", "Native");
   if (any(RM_FLAG.DAMAGE)) rec("damage floor", "Dropped", "damage floors are not modelled");
   if (ids.some((id) => terrainTag(flagOf(id)) !== 0)) rec("terrain tag", "Native");
   if (region !== 0) rec("region id", "Native");

@@ -1244,6 +1244,10 @@ export async function importRmProject(rm: RmProject, options: ImportOptions = {}
     const sheet: Sheet = { id: atlas.sheetId, pak: "chunks", cols: atlas.cols, rows: atlas.rows, defaultPassage: "pass" };
     if (block.length > 0) sheet.block = block;
     if (Object.keys(dirBlock).length > 0) sheet.dirBlock = dirBlock;
+    for (const feature of ["ladder", "bush", "counter"] as const) {
+      const cells = atlas.featureCells(feature);
+      if (cells.length > 0) sheet[feature] = cells;
+    }
     sheets.push(sheet);
     const png = `tiles/${atlas.sheetId}.png`;
     images.set(png, atlas.toImage());

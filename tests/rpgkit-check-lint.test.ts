@@ -103,7 +103,7 @@ describe("rpgkit-check lint: imported plugin commands", () => {
       },
       {
         op: "if",
-        if: { kind: "gold", atLeast: 0 },
+        if: { kind: "gold", amount: 0 },
         then: [{
           op: "ext",
           call: "rpgmaker.pluginCommand",

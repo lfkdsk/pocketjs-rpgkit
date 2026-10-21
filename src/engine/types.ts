@@ -131,6 +131,13 @@ export interface Sheet {
   defaultPassage?: "pass" | "block";
   block?: number[];
   pass?: number[];
+  /** Atlas cells carrying RPG-style terrain traits. A map cell has a trait
+   *  when either its ground or sparse upper tile names a listed cell. These
+   *  lists are intentionally sparse and optional so projects which do not
+   *  use the traits keep their original data and runtime shape. */
+  ladder?: number[];
+  bush?: number[];
+  counter?: number[];
   /** Cell index (as string) -> directions of the edges that cell forbids
    *  crossing: the mask blocks LEAVING that cell through a named edge and
    *  ENTERING it through that same edge from outside (P1②, task-1206). */

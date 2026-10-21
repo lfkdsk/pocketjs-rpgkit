@@ -620,16 +620,17 @@ describe("composeMap", () => {
     expect(out.ground[1]).not.toBeNull();
   });
 
-  test("table legs draw in the cell below; counter and other flags recorded", () => {
+  test("tile traits combine across layers without leaking through table legs", () => {
     const TABLE = makeAutotileId(17, 28);
     const f = flags.slice();
     f[TABLE] = RM_FLAG.COUNTER;
     f[20] = RM_FLAG.LADDER;
     f[21] = RM_FLAG.BUSH | RM_FLAG.DAMAGE | (3 << 12);
+    f[22] = RM_FLAG.STAR | RM_FLAG.COUNTER;
     const cov = new Coverage();
     const atlas = new TileAtlas("rm_tiles");
     const out = composeMap(
-      rmMap(1, 3, [[GRASS, GRASS, GRASS], [TABLE, 0, 20], [0, 0, 21]]),
+      rmMap(1, 3, [[GRASS, GRASS, GRASS], [TABLE, 0, 20], [0, 0, 21], [0, 0, 22]]),
       rmTileset(f),
       imgs,
       atlas,
@@ -645,11 +646,16 @@ describe("composeMap", () => {
     expect(cellPx(sheet, 32, out.ground[1]!, 0, 0)[2]! >> 4).toBe(4);
     // Below the legs the grass shows.
     expect(cellPx(sheet, 32, out.ground[1]!, 0, 4).slice(0, 2)).toEqual(cellPx(sheet, 32, plain.ground[0]!, 0, 4).slice(0, 2));
+    const upper = out.upper.find(([cell]) => cell === 2)![1];
+    expect(atlas.featureCells("ladder")).toEqual([out.ground[2]!]);
+    expect(atlas.featureCells("bush")).toEqual([out.ground[2]!]);
+    expect(atlas.featureCells("counter")).toEqual([out.ground[0]!, upper]);
+    expect(atlas.featureCells("counter")).not.toContain(out.ground[1]!);
     const rows = new Map(cov.list("tile").map((r) => [r.key, r.counts]));
     expect(rows.get("A2 table")!.Native).toBe(1);
-    expect(rows.get("counter")!.Degraded).toBe(1);
-    expect(rows.get("ladder")!.Degraded).toBe(1);
-    expect(rows.get("bush")!.Degraded).toBe(1);
+    expect(rows.get("counter")!.Native).toBe(2);
+    expect(rows.get("ladder")!.Native).toBe(1);
+    expect(rows.get("bush")!.Native).toBe(1);
     expect(rows.get("damage floor")!.Dropped).toBe(1);
     expect(rows.get("terrain tag")!.Native).toBe(1);
   });
@@ -683,6 +689,7 @@ describe("TileAtlas", () => {
     expect(atlas.count).toBe(3);
     expect(atlas.rows).toBe(2);
     expect(atlas.blocked(0)).toEqual(["up"]);
+    expect(atlas.featureCells("ladder")).toEqual([]);
     const img = atlas.toImage();
     expect([img.width, img.height]).toEqual([32, 32]);
     expect(px(img, 0, 0)[0]).toBe(10);
@@ -690,6 +697,7 @@ describe("TileAtlas", () => {
     expect(px(img, 0, 16)[0]).toBe(30);
     expect(px(img, 16, 16)[3]).toBe(0);
     expect(() => atlas.intern("bad", () => blankImage(8, 8), [])).toThrow();
+    expect(() => atlas.intern("a", solid(10), ["up"], 1)).toThrow("changed feature mask");
 
     const tall = new TileAtlas("t", 1);
     for (let i = 0; i < 256; i++) tall.intern(String(i), solid(1), []);
