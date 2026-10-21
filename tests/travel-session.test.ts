@@ -17,6 +17,12 @@ import {
   type SessionState,
 } from "../src/engine/session.ts";
 import { AIRSHIP_TRANSITION_TICKS, travelRuntime } from "../src/travel.ts";
+import { createRpgMakerBattleExtensions } from "../src/rpgmaker-battle/rules.ts";
+import { loadRmProject } from "../tools/rpgmaker-import/load.ts";
+import { importRmProject } from "../tools/rpgmaker-import/project.ts";
+import { travelActorFrames } from "../src/ui/travel-actors.ts";
+import { buildPassage } from "../src/engine/passability.ts";
+import { join } from "node:path";
 import type {
   Command,
   Dir,
@@ -658,6 +664,47 @@ describe("session travel persistence and clocks", () => {
     });
     expect(outcomes[1]).toEqual(outcomes[0]);
     expect(outcomes[2]).toEqual(outcomes[0]);
+  });
+
+  test("bush journey composes encounters and follower painting across save and rewind", async () => {
+    const imported = await importRmProject(loadRmProject(join(import.meta.dir, "fixtures/rpgmaker/hollow-mz")));
+    const db = structuredClone(imported.battle);
+    db.encounters = [{ map: "harbor", step: 10, entries: [{ troopId: 1, weight: 1, regions: [] }] }];
+    const terrain = { ...SHEET, cols: 2, bush: [1] };
+    const harbor = map("harbor");
+    harbor.ground[1 * harbor.width + 2] = "terrain.1";
+    harbor.ground[1 * harbor.width + 3] = "terrain.1";
+    const p = project([harbor], {
+      sheets: [terrain],
+      sprites: { friend: { kind: "image", src: "friend.png" } },
+      followers: { enabled: true, members: [{ id: "friend", sprite: "friend" }] },
+    });
+    const passage = buildPassage(harbor, new Map([[terrain.id, terrain]]));
+    const paint = (state: SessionState) => travelActorFrames(state, p.sprites!, { friend: "friend-normal" },
+      harbor.width * 16, undefined, { "friend-normal": "friend-bush" }, passage).followers[0]!.src;
+    for (const hz of [60, 30, 20]) {
+      const options = { travel: travelRuntime, extensions: createRpgMakerBattleExtensions(db) };
+      const session = createSession(p, hz, options);
+      let state = startSession(p, session);
+      state.ext = { rpgmakerBattle: { encounter: { map: "harbor", remaining: 10 } } };
+      state = stepCell(session, state, BTN.RIGHT);
+      expect([state.move.tx, (state.ext as any).rpgmakerBattle.encounter.remaining]).toEqual([2, 8]);
+      expect(paint(state)).toBe("friend-normal");
+      state = stepCell(session, state, BTN.RIGHT);
+      expect([state.move.tx, (state.ext as any).rpgmakerBattle.encounter.remaining]).toEqual([3, 6]);
+      expect(paint(state)).toBe("friend-bush");
+      const restored = restoreSessionEnvelope(session, encodeEnvelope(createSessionSnapshot(session, state, 0), session.content));
+      expect((restored.ext as any).rpgmakerBattle.encounter.remaining).toBe(6);
+      expect(paint(restored)).toBe("friend-bush");
+      const controller = new AttractController(p, [], { hz, ...options, attractEnabled: false, rewindSeconds: 1 });
+      controller.startPlay();
+      for (const button of [BTN.RIGHT, ...new Array(8).fill(0), BTN.RIGHT, ...new Array(8).fill(0)]) controller.step(button);
+      const beforeRewind = structuredClone(controller.state);
+      controller.step(BTN.LTRIGGER);
+      expect(controller.state.move.tx).toBe(1);
+      for (const button of [BTN.RIGHT, ...new Array(8).fill(0), BTN.RIGHT, ...new Array(8).fill(0)]) controller.step(button);
+      expect(controller.state).toEqual(beforeRewind);
+    }
   });
 
   test("attract rewind restores follower and vehicle positions from reducer history", () => {
