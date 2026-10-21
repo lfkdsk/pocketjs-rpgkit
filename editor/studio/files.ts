@@ -54,7 +54,7 @@ export class StudioFiles {
     // A pack parses its next shard while Studio switches maps. Refresh that
     // map's local art afterward without forcing any unopened shard.
     app.on((reason) => {
-      if (reason === "map") this.projectArt = this.attachArt();
+      if (reason === "map" || reason === "edit" || reason === "history") this.projectArt = this.attachArt();
     });
   }
 
@@ -345,6 +345,12 @@ export class StudioFiles {
         this.app.emit("problems");
       }
       this.app.notify("error", `Not saved${name ? ` to ${name}` : ""}: the document has ${problems.length} validation problem${problems.length === 1 ? "" : "s"}.`);
+      return false;
+    }
+    // Directory saves currently write the shell and shards, but not pack assets.
+    // Never acknowledge an imported PNG as saved when its bytes would be lost.
+    if (target?.kind === "directory" && session.assets().size > 0 && session.isDirty()) {
+      this.app.notify("error", "Not saved: folder saves cannot write imported PNG art. Export a self-contained project pack instead.");
       return false;
     }
     const text = session.exportText();

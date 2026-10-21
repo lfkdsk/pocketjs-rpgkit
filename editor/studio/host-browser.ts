@@ -605,8 +605,13 @@ export class BrowserHost implements StudioHost {
           }
         }
         if (problem !== null) return done({ error: problem });
-        const url = URL.createObjectURL(file);
-        done({ name: file.name, url, release: () => URL.revokeObjectURL(url) });
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const url = URL.createObjectURL(file);
+          done({ name: file.name, url, bytes, release: () => URL.revokeObjectURL(url) });
+        } catch (error) {
+          done({ error: `Could not read ${file.name}: ${message(error)}` });
+        }
       });
       input.click();
     });

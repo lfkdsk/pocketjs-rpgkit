@@ -178,10 +178,12 @@ export type RpgMakerImportOutcome =
 
 // ---- art, checks, agent ------------------------------------------------------------
 
-/** A local image the user picked. `url` is drawable until release(). */
+/** A local image the user picked. `url` is drawable until release(); `bytes`
+ * contain the original PNG so Studio can import it through the edit API. */
 export interface LocalArt {
   name: string;
   url: string;
+  bytes: Uint8Array;
   release(): void;
 }
 

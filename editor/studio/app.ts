@@ -8,6 +8,7 @@
 import type { CommandAddress } from "../engine/commands.ts";
 import type { MapDef, Project, TileId } from "../../src/engine/types.ts";
 import { EditSession, type SessionOperation, type SessionProblem } from "../api/session.ts";
+import { importPng, type PngImportRequest } from "../api/png-import.ts";
 import type { EditCommandName, EditResponse } from "../api/types.ts";
 import type { MotionChoice, StudioPreferences } from "./host.ts";
 
@@ -171,6 +172,20 @@ export class StudioApp {
     this.lastOpMs = performance.now() - started;
     this.after(response);
     return response;
+  }
+
+  /** Import the cropped PNG and its catalog changes as one history step. */
+  importPng(request: PngImportRequest, cooked: Uint8Array): { ok: boolean; message: string } {
+    if (!this.session) return { ok: false, message: "No project is open." };
+    const started = performance.now();
+    const result = importPng(this.session, request, cooked);
+    this.lastOpMs = performance.now() - started;
+    if (result.ok) {
+      this.reconcileBrush();
+      this.refreshProblems();
+      this.emit("edit");
+    } else this.notify("error", result.message);
+    return result;
   }
 
   /** Replace the whole inline project (an accepted agent proposal) as a

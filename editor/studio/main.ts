@@ -9,6 +9,8 @@
 import { AgentReview } from "./agent-model.ts";
 import { mountAgentPanel } from "./agent-panel.ts";
 import { StudioApp, type PaintLayer, type Tool } from "./app.ts";
+import { cropGrid, gridCount, pngGridProblem, pngImportProblem, type PngGrid, type PngImportKind } from "../api/png-import.ts";
+import { BROWSER_RPGMAKER_IMAGE_CODEC } from "./rpgmaker-import-browser-io.ts";
 import { ArtRegistry, parseTileId } from "./art.ts";
 import { MapCanvas, isTyping } from "./canvas.ts";
 import { CommandPalette, type StudioCommand } from "./command-palette.ts";
@@ -647,7 +649,7 @@ function renderHistory(): void {
 // ---- dialogs ---------------------------------------------------------------------------
 
 function dialog(title: string, ...content: (Node | null)[]): HTMLDialogElement {
-  const element = h("dialog", { class: "studio-dialog" },
+  const element = h("dialog", { class: "studio-dialog", "aria-label": title },
     h("div", { class: "dialog-header" }, h("h2", null, title), h("button", { type: "button", class: "icon-button tiny", "aria-label": "Close", onclick: () => element.close() }, "×")),
     ...content);
   element.addEventListener("close", () => element.remove());
@@ -1003,6 +1005,104 @@ function openMobilitySettings(): void {
   );
 }
 
+function openPngImportDialog(): void {
+  const session = app.session;
+  if (!session) return;
+  let picked: Awaited<ReturnType<StudioHost["pickImage"]>> = null;
+  let closed = false;
+  const image = new Image();
+  const preview = h("canvas", { class: "png-import-preview", width: 384, height: 256 }) as HTMLCanvasElement;
+  const message = h("p", { class: "hint png-import-status", role: "status" }, "Choose a PNG to preview its grid.");
+  const kind = h("select", { "aria-label": "Import kind" }, h("option", { value: "sheet" }, "Tile sheet"), h("option", { value: "walker" }, "Walker sheet")) as HTMLSelectElement;
+  const id = h("input", { type: "text", placeholder: "asset_id", "aria-label": "Asset id" }) as HTMLInputElement;
+  const labels = { cellWidth: "Cell width", cellHeight: "Cell height", offsetX: "Offset X", offsetY: "Offset Y", spacingX: "Spacing X", spacingY: "Spacing Y" } as const;
+  const fields = (Object.keys(labels) as (keyof typeof labels)[]).map((key) => {
+    const input = h("input", { type: "number", min: key.startsWith("cell") ? 1 : 0, step: 1, value: key.startsWith("cell") ? 16 : 0, "aria-label": key }) as HTMLInputElement;
+    return { key, input, row: h("label", { class: "png-import-field" }, h("span", null, labels[key]), input) };
+  });
+  const grid = (): PngGrid => Object.fromEntries(fields.map(({ key, input }) => [key, input.valueAsNumber])) as unknown as PngGrid;
+  const redraw = () => {
+    const ctx = preview.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, preview.width, preview.height);
+    if (!image.naturalWidth) return;
+    const scale = Math.min(preview.width / image.naturalWidth, preview.height / image.naturalHeight);
+    const w = image.naturalWidth * scale;
+    const h = image.naturalHeight * scale;
+    ctx.drawImage(image, 0, 0, w, h);
+    const g = grid();
+    const problem = pngGridProblem(image.naturalWidth, image.naturalHeight, g, kind.value as PngImportKind);
+    if (problem) { message.textContent = problem; return; }
+    const cols = gridCount(image.naturalWidth, g.cellWidth, g.offsetX, g.spacingX);
+    const rows = gridCount(image.naturalHeight, g.cellHeight, g.offsetY, g.spacingY);
+    ctx.strokeStyle = "#ffdb50";
+    ctx.lineWidth = 1;
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      ctx.strokeRect((g.offsetX + x * (g.cellWidth + g.spacingX)) * scale,
+        (g.offsetY + y * (g.cellHeight + g.spacingY)) * scale, g.cellWidth * scale, g.cellHeight * scale);
+    }
+    message.textContent = `${cols} × ${rows} cells · ${image.naturalWidth} × ${image.naturalHeight} PNG`;
+  };
+  const choose = async () => {
+    const next = await host.pickImage();
+    if (closed || app.session !== session) {
+      if (next && !("error" in next)) next.release();
+      return;
+    }
+    if (!next) return;
+    if ("error" in next) { app.notify("error", next.error); return; }
+    if (picked && !('error' in picked)) picked.release();
+    picked = next;
+    id.value = next.name.replace(/\.png$/i, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "imported";
+    image.src = next.url;
+    try {
+      await image.decode();
+      if (!closed && picked === next) redraw();
+    } catch {
+      if (!closed && picked === next) message.textContent = "Could not preview this PNG.";
+    }
+  };
+  const importNow = async () => {
+    if (!picked || "error" in picked || !image.naturalWidth) { message.textContent = "Choose a valid PNG first."; return; }
+    const selectedKind = kind.value as PngImportKind;
+    const g = grid();
+    const problem = pngImportProblem({ kind: selectedKind, id: id.value, sourceName: picked.name, bytes: picked.bytes, grid: g });
+    if (problem) { message.textContent = problem; return; }
+    const existing = selectedKind === "sheet" ? session.sheets().some((sheet) => sheet.id === id.value) : !!session.sprites()[id.value];
+    if (existing && !await host.confirm(`Replace existing ${selectedKind} ${id.value}?`)) return;
+    if (closed || app.session !== session) { message.textContent = "Project changed; reopen PNG import for the current project."; return; }
+    const source = picked;
+    try {
+      const decoded = await BROWSER_RPGMAKER_IMAGE_CODEC.decode(source.bytes);
+      const cropped = cropGrid(decoded.data, decoded.width, decoded.height, g);
+      const cooked = await BROWSER_RPGMAKER_IMAGE_CODEC.encode({ width: cropped.width, height: cropped.height, data: cropped.rgba });
+      if (closed || app.session !== session || picked !== source) { message.textContent = "Project or PNG changed; reopen import for the current selection."; return; }
+      const result = app.importPng({ kind: selectedKind, id: id.value, sourceName: source.name, bytes: source.bytes, grid: g,
+        ...(selectedKind === "sheet" && app.currentMap() ? { map: app.currentMap()!.id } : {}), replace: existing }, cooked);
+      if (result.ok) { app.notify("ok", result.message); window.close(); }
+      else message.textContent = result.message;
+    } catch (error) { message.textContent = `PNG import failed: ${error instanceof Error ? error.message : String(error)}`; }
+  };
+  kind.addEventListener("change", redraw);
+  for (const { input } of fields) input.addEventListener("input", redraw);
+  const window = dialog("Import PNG",
+    h("div", { class: "png-import" },
+      h("p", { class: "hint" }, "Import a PNG into this project. Tile sheets attach to the current map; walkers use three columns and four directional rows."),
+      h("button", { type: "button", class: "text-button png-import-pick", onclick: () => void choose() }, "Choose PNG…"),
+      h("div", { class: "png-import-meta" },
+        h("label", { class: "png-import-field" }, h("span", null, "Kind"), kind),
+        h("label", { class: "png-import-field" }, h("span", null, "Asset id"), id)),
+      h("div", { class: "png-import-grid" }, ...fields.map(({ row }) => row)),
+      preview, message,
+      h("div", { class: "dialog-actions" }, h("button", { type: "button", class: "primary-button", onclick: () => void importNow() }, "Import into project"))));
+  window.addEventListener("close", () => {
+    closed = true;
+    if (picked && !("error" in picked)) picked.release();
+    picked = null;
+    image.removeAttribute("src");
+  });
+}
+
 function openArtDialog(): void {
   const session = app.session;
   if (!session) return;
@@ -1055,7 +1155,8 @@ function openArtDialog(): void {
   };
   render();
   dialog("Art",
-    h("p", { class: "hint" }, `Tile sheets and characters are drawn from art keyed by id. A project folder brings its own (art/sheets/<id>.png, each sprite's src or sheet path, art/sprites/<id>.png), and so does a pack that carries art; bundled examples bring theirs. For other ids choose a local PNG. ${localArt.reason} The project JSON does not change.`),
+    h("p", { class: "hint" }, `Tile sheets and characters are drawn from art keyed by id. A project folder brings its own (art/sheets/<id>.png, each sprite's src or sheet path, art/sprites/<id>.png), and so does a pack that carries art; bundled examples bring theirs. The Choose PNG buttons below provide temporary art without changing the project. ${localArt.reason}`),
+    h("button", { type: "button", disabled: !localArt.available, title: localArt.reason, onclick: openPngImportDialog }, "Import PNG into project…"),
     body);
 }
 

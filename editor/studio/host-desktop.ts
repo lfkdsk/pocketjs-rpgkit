@@ -194,7 +194,7 @@ export class DesktopHost implements StudioHost {
     const picked = await this.bridge.pickImage();
     if (!picked || "error" in picked) return picked;
     const url = URL.createObjectURL(new Blob([picked.bytes as Uint8Array<ArrayBuffer>], { type: "image/png" }));
-    return { name: picked.name, url, release: () => URL.revokeObjectURL(url) };
+    return { name: picked.name, url, bytes: picked.bytes, release: () => URL.revokeObjectURL(url) };
   }
 
   async runChecks(request: CheckRequest): Promise<CheckOutcome> {

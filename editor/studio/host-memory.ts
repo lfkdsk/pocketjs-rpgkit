@@ -423,7 +423,7 @@ export class MemoryHost implements StudioHost {
     if (!image) return null;
     const problem = pngProblem(image.name, image.size ?? image.bytes.length, image.bytes.subarray(0, PNG_HEADER_BYTES));
     if (problem !== null) return { error: problem };
-    return { name: image.name, url: `memory:${image.name}`, release: () => {} };
+    return { name: image.name, url: `memory:${image.name}`, bytes: image.bytes, release: () => {} };
   }
 
   async runChecks(request: CheckRequest): Promise<CheckOutcome> {
