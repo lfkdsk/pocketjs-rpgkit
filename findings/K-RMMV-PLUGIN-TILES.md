@@ -171,26 +171,26 @@ golden hash is not the only visual oracle.
 | Import determinism | pass; identical aggregate hash on two runs |
 | Schema drift/additive guard | pass |
 | Mutation suite | all five mutations detected |
-| QuickJS interleaved guard | FINAL_BENCH_PENDING |
+| QuickJS interleaved guard | pass; 0 regressions, 0 inconclusive, 0 errors |
 
-The prior final interleaved QuickJS run, before the cold save-validator test
-addition, passed with zero regressions, inconclusive cases, or errors. Its
-branch-only medians were:
+The final interleaved QuickJS guard ran on report checkpoint `0765ab31` against
+both the rebased base `74802bf0` and the historical cumulative baseline. Both
+comparisons passed with zero failed cases, inconclusive cases, or errors. The
+rebased-base medians were:
 
 | Case | Median |
 |---|---:|
-| sunstoneIdle | +0.742899% |
-| sunstoneWalk | -0.604988% |
-| sunstoneControlWalk | +0.748229% |
-| streamedRoam | -0.153878% |
-| battleScene | -0.025173% |
-| sunstoneIdleImmutable | +0.593589% |
-| sunstoneControlWalkImmutable | -0.230135% |
-| battleSceneImmutable | -0.734678% |
+| sunstoneIdle | +1.307269% |
+| sunstoneWalk | +0.412685% |
+| sunstoneControlWalk | +1.349372% |
+| streamedRoam | -0.494805% |
+| battleScene | +0.121699% |
+| sunstoneIdleImmutable | +0.736837% |
+| sunstoneControlWalkImmutable | -1.987321% |
+| battleSceneImmutable | -0.143502% |
 
-The largest positive median was +0.748229%, below the +3% limit. A final run
-against the report HEAD will replace the pending row after system contention
-clears.
+The largest positive median was +1.349372%, below the +3% limit. The final
+report-only commit does not change the benchmarked runtime or bundles.
 
 ## Commit hygiene
 
@@ -203,4 +203,4 @@ clears.
 
 Subagent usage: 4 read-only agents — Pauli reviewed movement/encounter architecture, McClintock reviewed plugin checker/tests, Noether reviewed tile rendering/goldens, and Euclid reviewed upstream semantics; parallel reading saved time, and the main agent verified their findings and ran every gate.
 
-FINAL_VERDICT_PENDING
+PASS
